@@ -1,0 +1,2 @@
+# Clippy configuration. Empty for now; lint levels are set on the command line
+# via `task lint` (`-D warnings`). Add per-lint thresholds here as they come up.

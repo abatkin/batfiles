@@ -1,0 +1,44 @@
+# cargo-deny configuration — stub.
+#
+# We have no real third-party dependencies yet, so this is intentionally
+# minimal. Flesh out [advisories], [licenses], and [bans] when real
+# dependencies land. See specs/todo.md.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+
+[licenses]
+version = 2
+# We intentionally allow more licenses than our current (tiny) dependency tree
+# uses, so the list keeps working as real dependencies land. Don't warn about
+# allowed licenses that no crate currently uses.
+unused-allowed-license = "allow"
+# cargo-deny v2 has no "any OSI-approved" toggle (the old allow-osi-fsf-free
+# category was removed), so we enumerate the permissive and weak-copyleft
+# licenses we're willing to accept. These are all OSI-approved and mutually
+# compatible with our MIT distribution. Add more as real dependencies appear.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",          # Mozilla — weak copyleft, file-level
+    "BSL-1.0",          # Boost
+    "Zlib",
+    "Unicode-3.0",      # common in unicode-* transitive deps
+    "Unlicense",
+    "CC0-1.0",
+    "0BSD",
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

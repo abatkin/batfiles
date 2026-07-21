@@ -1,0 +1,45 @@
+# Taskfile.yml — single source of truth for tasks (go-task / https://taskfile.dev).
+#
+# Governing rule: CI must not contain logic that isn't invocable locally.
+# Humans and CI invoke the identical entry point: `task ci`.
+version: '3'
+
+tasks:
+  fmt:
+    desc: Check formatting
+    cmd: cargo fmt --all -- --check
+
+  lint:
+    desc: Run clippy with warnings denied
+    cmd: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    desc: Run the workspace test suite
+    cmd: cargo test --workspace
+
+  deny:
+    desc: Check dependencies (advisories, licenses, bans)
+    cmd: cargo deny check
+
+  build:
+    desc: Build the workspace (debug)
+    cmd: cargo build --workspace
+
+  build:release:
+    desc: Build the workspace (release)
+    cmd: cargo build --workspace --release
+
+  toolchain:
+    internal: true
+    desc: Ensure the pinned toolchain is ready before parallel tasks race to sync it
+    cmd: rustup show active-toolchain
+
+  ci:
+    desc: Everything CI runs — the single shared entry point
+    cmds:
+      - task: toolchain
+      - task: ci:checks
+
+  ci:checks:
+    internal: true
+    deps: [fmt, lint, test, deny, build, build:release]

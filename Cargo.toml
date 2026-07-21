@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/batfiles-core",
+    "crates/batfiles-config",
+    "crates/batfiles-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Adam Batkin <adam@batkin.net>"]
+repository = "https://github.com/abatkin/batfiles-rust"
+rust-version = "1.94"
+
+# Internal crates are referenced through the workspace so versions and paths
+# stay in one place. The dependency direction always points toward the domain:
+#   batfiles-cli -> batfiles-config -> batfiles-core
+[workspace.dependencies]
+batfiles-core = { path = "crates/batfiles-core", version = "0.1.0" }
+batfiles-config = { path = "crates/batfiles-config", version = "0.1.0" }
+
+# Third-party. clap drives argument parsing and help/usage generation for the
+# CLI. Dual-licensed MIT/Apache-2.0
+clap = { version = "4.5", features = ["derive"] }
+
+# serde derives the `batfiles.toml` schema structs in batfiles-config; toml is
+# the decoder used by tests (and, later, the IO layer). Both MIT/Apache-2.0.
+serde = { version = "1", features = ["derive"] }
+toml = "1.1"
+
+# simple-expressions is the `when` condition language. It
+# lives in batfiles-core (domain logic): a general-purpose expression evaluator
+# built on `pest`, pulling in no serde/TOML/XDG. Dual-licensed MIT/Apache-2.0
+simple-expressions = "0.3.0"
+
+# jiff parses the friendly-format `cache`/`command-timeout` durations and the
+# `captured-at` cache timestamps for dynamic variables. Dual-licensed
+# Unlicense OR MIT
+jiff = "0.2"
+
+# wait-timeout enforces a dynamic variable's `command-timeout` by waiting on the
+# child process with a deadline (killing it on expiry) across Unix and Windows.
+# Dual-licensed MIT/Apache-2.0
+wait-timeout = "0.2"
+
+# sha2 validates the optional `sha256` of fetched `file`/`archive` remotes (and,
+# later, `fetch-url`) before the bytes are materialized. Pure-Rust, no network;
+# dual-licensed MIT/Apache-2.0
+sha2 = "0.11"
+
+# tar reads `archive` remote tarballs entry-by-entry so batfiles can validate
+# each entry's metadata before materializing it (no extract-to-staging needed);
+# flate2 transparently decompresses gzip-wrapped tarballs (`.tar.gz`). flate2's
+# default `miniz_oxide` backend is pure-Rust (no C toolchain). Both dual-licensed
+# MIT/Apache-2.0
+tar = "0.4"
+flate2 = "1"
+
+# Dev-only. assert_cmd locates and runs the Cargo-built `batfiles` binary in the
+# end-to-end CLI tests; tempfile gives each test a self-cleaning isolated root.
+# Both dual-licensed MIT/Apache-2.0.
+assert_cmd = "2"
+tempfile = "3"

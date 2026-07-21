@@ -1,0 +1,21 @@
+[package]
+name = "batfiles-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "batfiles"
+path = "src/main.rs"
+
+[dependencies]
+batfiles-config.workspace = true
+batfiles-core.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+tempfile.workspace = true
