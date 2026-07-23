@@ -17,6 +17,12 @@ The process environment is captured once when the CLI starts. Most environment
 inputs are parsed and combined with other inputs in the configuration layer.
 Color is presentation-only and is resolved directly by the CLI.
 
+Environment variable **names** follow the host operating system's case
+sensitivity. On Unix they are used verbatim. On Windows, whose environment is
+case-insensitive, batfiles uppercases every variable name at capture so that all
+lookups and the `env` namespace are deterministic. This applies to the whole
+name, including a `BATFILES_VAR_<name>` suffix. Values are never case-folded.
+
 ## Batfiles configuration variables
 
 | Variable                   | Equivalent option        | Effect                                                                                              |
@@ -96,7 +102,9 @@ Every environment key beginning with `BATFILES_VAR_` defines a candidate
 one-shot variable:
 
 - The suffix after `BATFILES_VAR_` is the variable name exactly as written and
-  is case-sensitive.
+  is case-sensitive on Unix. On Windows the whole name is uppercased at capture
+  (see above), so `BATFILES_VAR_editor` defines the user variable `EDITOR`; name
+  the matching `[vars]`/`vars.toml` keys in uppercase for Windows.
 - A bare `BATFILES_VAR_` with an empty suffix is ignored.
 - An empty value is significant: `BATFILES_VAR_PROFILE=` defines `PROFILE` as
   the empty string.
@@ -122,8 +130,9 @@ same underlying environment variable can appear in both:
 Only the `BATFILES_VAR_` prefix creates a user variable. A raw `FOO` in the
 environment is reachable as `env.FOO` but does **not** become the user variable
 `FOO`. Environment keys in the `env` namespace follow the host operating
-system's case sensitivity, so on a case-sensitive host `env.FOO` and `env.foo`
-are different keys.
+system's case sensitivity: on Unix `env.FOO` and `env.foo` are different keys,
+while on Windows names are uppercased at capture, so reference them as `env.FOO`
+(a lowercase reference resolves to the empty string like any absent key).
 
 #### Runtime variable precedence
 
@@ -218,7 +227,9 @@ when = "env[\"XDG_CONFIG_HOME\"] != ''"
 
 Rules for `env` values:
 
-- Names follow the host operating system's case sensitivity.
+- Names follow the host operating system's case sensitivity: verbatim on Unix,
+  uppercased at capture on Windows. Reference Windows host variables by their
+  uppercase form (`env.PATH`); a lowercase reference resolves to the empty string.
 - A set variable resolves to its string value and is never re-typed as a boolean
   or number.
 - An unset variable resolves to the empty string. Resolver lookups never fail or
