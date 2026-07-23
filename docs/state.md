@@ -2,17 +2,18 @@
 
 Batfiles defines three local TOML documents outside the leaf repository:
 
-| File                | Default location                                                                                            | Classification                    | Regenerable? |
-|---------------------|-------------------------------------------------------------------------------------------------------------|-----------------------------------|--------------|
-| `vars.toml`         | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<selected-home>/.config/batfiles/vars.toml`               | Machine-local user configuration  | No           |
-| `disabled.toml`     | `$XDG_CONFIG_HOME/batfiles/disabled.toml`, otherwise `<selected-home>/.config/batfiles/disabled.toml`       | Machine-local user configuration  | No           |
-| `dynamic-vars.toml` | `$XDG_CACHE_HOME/batfiles/dynamic-vars.toml`, otherwise `<selected-home>/.cache/batfiles/dynamic-vars.toml` | Disposable dynamic-variable cache | Yes          |
+| File                | Default location                                                                                      | Classification                    | Regenerable? |
+|---------------------|-------------------------------------------------------------------------------------------------------|-----------------------------------|--------------|
+| `vars.toml`         | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<os-home>/.config/batfiles/vars.toml`               | Machine-local user configuration  | No           |
+| `disabled.toml`     | `$XDG_CONFIG_HOME/batfiles/disabled.toml`, otherwise `<os-home>/.config/batfiles/disabled.toml`       | Machine-local user configuration  | No           |
+| `dynamic-vars.toml` | `$XDG_CACHE_HOME/batfiles/dynamic-vars.toml`, otherwise `<os-home>/.cache/batfiles/dynamic-vars.toml` | Disposable dynamic-variable cache | Yes          |
 
 ## Directory selection
 
 The config directory contains the two non-regenerable files, while the cache
-directory independently contains `dynamic-vars.toml`. The environment
-specification defines the authoritative [location selection
+directory independently contains `dynamic-vars.toml`. Both default under the
+invoking user's OS home (`<os-home>`) and are independent of `--home-dir`. The
+environment specification defines the authoritative [location selection
 rules](environment.md#location-selection).
 
 ## `vars.toml`: machine-local variables

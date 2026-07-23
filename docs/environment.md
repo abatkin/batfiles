@@ -66,7 +66,7 @@ The config directory is selected in this order:
 --config-dir
 > BATFILES_CONFIG_DIR
 > $XDG_CONFIG_HOME/batfiles
-> <selected-home>/.config/batfiles when XDG_CONFIG_HOME is unset
+> <os-home>/.config/batfiles when XDG_CONFIG_HOME is unset
 ```
 
 The cache directory is selected independently in this order:
@@ -75,8 +75,17 @@ The cache directory is selected independently in this order:
 --cache-dir
 > BATFILES_CACHE_DIR
 > $XDG_CACHE_HOME/batfiles
-> <selected-home>/.cache/batfiles when XDG_CACHE_HOME is unset
+> <os-home>/.cache/batfiles when XDG_CACHE_HOME is unset
 ```
+
+The config and cache directories hold batfiles' own machine-local state rather
+than installed content, so their home-based fallbacks use the invoking user's OS
+home directory (`<os-home>`, the same home used when `--home-dir` is absent) and
+do **not** follow `--home-dir` or `BATFILES_HOME`. Only the leaf-repository
+default (`<selected-home>/dotfiles`), `~` expansion, and home-relative
+destinations track the selected home. To root config or cache under an alternate
+install home, set `--config-dir`/`--cache-dir` or the corresponding
+`XDG_*`/`BATFILES_*` variable explicitly.
 
 An absent or empty location variable is treated as unset. Location values are
 not trimmed; whitespace is part of the path value.
