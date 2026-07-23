@@ -97,6 +97,25 @@ one-shot variable:
 - The override lasts only for the current invocation and is not written to
   `vars.toml`.
 
+#### Two distinct destinations
+
+`BATFILES_VAR_<NAME>` and the `env` namespace are separate channels, and the
+same underlying environment variable can appear in both:
+
+- `BATFILES_VAR_FOO` defines the **user variable** `FOO`, referenced in
+  expressions as a bare identifier (`FOO`) and subject to the runtime variable
+  precedence below.
+- The read-only [`env` namespace](#host-environment-in-conditions) exposes the
+  *raw* process environment under `env.*` (for example `env.FOO`, and also
+  `env["BATFILES_VAR_FOO"]`). It does not participate in user-variable
+  precedence.
+
+Only the `BATFILES_VAR_` prefix creates a user variable. A raw `FOO` in the
+environment is reachable as `env.FOO` but does **not** become the user variable
+`FOO`. Environment keys in the `env` namespace follow the host operating
+system's case sensitivity, so on a case-sensitive host `env.FOO` and `env.foo`
+are different keys.
+
 #### Runtime variable precedence
 
 Leaf variable precedence is:
