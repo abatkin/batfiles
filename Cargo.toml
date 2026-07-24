@@ -30,6 +30,11 @@ clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 
+# etcetera resolves the OS home directory and the XDG config/cache bases used as
+# the built-in defaults for batfiles' location roots. It lives in batfiles-config
+# (path resolution), never in the domain core. Dual-licensed MIT/Apache-2.0.
+etcetera = "0.11"
+
 # simple-expressions is the `when` condition language. It
 # lives in batfiles-core (domain logic): a general-purpose expression evaluator
 # built on `pest`, pulling in no serde/TOML/XDG. Dual-licensed MIT/Apache-2.0

@@ -7,6 +7,10 @@ use std::ffi::OsString;
 
 use clap::ColorChoice;
 
+// The two color inputs arrive as `Option<&str>` pulled from the captured
+// `Environment`, so this module never touches `OsString`. `OsString` survives
+// only in `preparse_choice`, which scans the raw process arguments.
+
 /// The outcome of resolving color inputs.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ColorResolution {
@@ -34,50 +38,35 @@ impl ColorResolution {
     }
 }
 
-/// The color-relevant slice of the captured process environment.
-///
-/// The values are kept as `OsString`s because "set to text batfiles cannot
-/// read" and "not set" call for different behavior: the first is an invalid
-/// value, the second is silence.
-#[derive(Debug, Default)]
-pub struct ColorEnv {
-    pub batfiles_color: Option<OsString>,
-    pub no_color: Option<OsString>,
-}
-
-impl ColorEnv {
-    /// Capture the color-relevant environment.
-    pub fn from_process() -> Self {
-        Self {
-            batfiles_color: std::env::var_os("BATFILES_COLOR"),
-            no_color: std::env::var_os("NO_COLOR"),
-        }
-    }
-}
-
 /// Resolve `--color > BATFILES_COLOR > non-empty NO_COLOR > auto`.
-pub fn resolve(choice: Option<ColorChoice>, env: &ColorEnv) -> ColorResolution {
+///
+/// The two environment values are pulled from the captured `Environment` and
+/// passed in already decoded. "Set but empty" survives as `Some("")` and "unset"
+/// as `None`; a value batfiles cannot interpret was lossily decoded upstream and
+/// simply lands on the invalid branch, warning and falling back.
+pub fn resolve(
+    choice: Option<ColorChoice>,
+    batfiles_color: Option<&str>,
+    no_color: Option<&str>,
+) -> ColorResolution {
     let mut warning = None;
 
-    let selected = choice.or_else(|| match env.batfiles_color.as_deref() {
-        // An empty value is treated as unset, as it is for the location
-        // variables, rather than as an invalid mode.
-        None => None,
-        Some(raw) if raw.is_empty() => None,
-        // Anything else that is not one of the three modes is an invalid value,
-        // including text that is not valid Unicode.
-        Some(raw) => raw.to_str().and_then(parse_choice).or_else(|| {
+    let selected = choice.or_else(|| match batfiles_color {
+        // An absent or empty value is treated as unset, as it is for the
+        // location variables, rather than as an invalid mode.
+        None | Some("") => None,
+        // Anything else that is not one of the three modes is invalid.
+        Some(raw) => parse_choice(raw).or_else(|| {
             warning = Some(format!(
-                "ignoring invalid BATFILES_COLOR value `{}`; expected auto, always, or never",
-                raw.to_string_lossy()
+                "ignoring invalid BATFILES_COLOR value `{raw}`; expected auto, always, or never"
             ));
             None
         }),
     });
 
     // NO_COLOR follows the cross-tool convention: presence alone is not enough,
-    // but any non-empty value counts, readable as text or not.
-    let mode = selected.unwrap_or(match env.no_color.as_deref() {
+    // but any non-empty value counts.
+    let mode = selected.unwrap_or(match no_color {
         Some(value) if !value.is_empty() => ColorChoice::Never,
         _ => ColorChoice::Auto,
     });
@@ -126,61 +115,43 @@ fn parse_choice(raw: &str) -> Option<ColorChoice> {
 mod tests {
     use super::*;
 
-    fn env(batfiles_color: Option<&str>, no_color: Option<&str>) -> ColorEnv {
-        ColorEnv {
-            batfiles_color: batfiles_color.map(OsString::from),
-            no_color: no_color.map(OsString::from),
-        }
-    }
-
-    /// An environment value that is set but is not valid Unicode. Only Unix
-    /// permits building one this way, which is also the only place batfiles can
-    /// encounter one from a byte-oriented environment.
-    #[cfg(unix)]
-    fn invalid_unicode() -> OsString {
-        use std::os::unix::ffi::OsStringExt;
-        OsString::from_vec(vec![0xff, 0xfe])
-    }
-
     #[test]
     fn nothing_selected_leaves_auto_unresolved() {
-        assert_eq!(resolve(None, &ColorEnv::default()).mode, ColorChoice::Auto);
+        assert_eq!(resolve(None, None, None).mode, ColorChoice::Auto);
     }
 
     #[test]
     fn auto_follows_stdout_for_our_own_output() {
-        let resolution = resolve(None, &ColorEnv::default());
+        let resolution = resolve(None, None, None);
         assert!(resolution.enabled(true));
         assert!(!resolution.enabled(false));
     }
 
     #[test]
     fn the_option_outranks_the_environment() {
-        let env = env(Some("never"), Some("1"));
         assert_eq!(
-            resolve(Some(ColorChoice::Always), &env).mode,
+            resolve(Some(ColorChoice::Always), Some("never"), Some("1")).mode,
             ColorChoice::Always
         );
     }
 
     #[test]
     fn batfiles_color_outranks_no_color() {
-        let env = env(Some("always"), Some("1"));
-        assert_eq!(resolve(None, &env).mode, ColorChoice::Always);
+        assert_eq!(
+            resolve(None, Some("always"), Some("1")).mode,
+            ColorChoice::Always
+        );
     }
 
     #[test]
     fn no_color_acts_as_never_only_when_non_empty() {
-        assert_eq!(
-            resolve(None, &env(None, Some("1"))).mode,
-            ColorChoice::Never
-        );
-        assert_eq!(resolve(None, &env(None, Some(""))).mode, ColorChoice::Auto);
+        assert_eq!(resolve(None, None, Some("1")).mode, ColorChoice::Never);
+        assert_eq!(resolve(None, None, Some("")).mode, ColorChoice::Auto);
     }
 
     #[test]
     fn an_invalid_batfiles_color_warns_and_falls_back() {
-        let resolution = resolve(None, &env(Some("sometimes"), Some("1")));
+        let resolution = resolve(None, Some("sometimes"), Some("1"));
         assert_eq!(
             resolution.mode,
             ColorChoice::Never,
@@ -191,14 +162,14 @@ mod tests {
 
     #[test]
     fn an_invalid_batfiles_color_falls_back_to_auto_without_no_color() {
-        let resolution = resolve(None, &env(Some("sometimes"), None));
+        let resolution = resolve(None, Some("sometimes"), None);
         assert_eq!(resolution.mode, ColorChoice::Auto);
         assert!(resolution.warning.is_some());
     }
 
     #[test]
     fn an_empty_batfiles_color_is_unset_rather_than_invalid() {
-        let resolution = resolve(None, &env(Some(""), None));
+        let resolution = resolve(None, Some(""), None);
         assert_eq!(resolution.mode, ColorChoice::Auto);
         assert!(
             resolution.warning.is_none(),
@@ -206,43 +177,15 @@ mod tests {
         );
 
         // Being unset, it leaves the next input in precedence to decide.
-        assert_eq!(
-            resolve(None, &env(Some(""), Some("1"))).mode,
-            ColorChoice::Never
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_unreadable_batfiles_color_is_invalid_rather_than_absent() {
-        let env = ColorEnv {
-            batfiles_color: Some(invalid_unicode()),
-            no_color: None,
-        };
-        let resolution = resolve(None, &env);
-        assert_eq!(resolution.mode, ColorChoice::Auto);
-        assert!(
-            resolution.warning.is_some(),
-            "an unreadable value should still be reported"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_unreadable_no_color_still_counts_as_non_empty() {
-        let env = ColorEnv {
-            batfiles_color: None,
-            no_color: Some(invalid_unicode()),
-        };
-        assert_eq!(resolve(None, &env).mode, ColorChoice::Never);
+        assert_eq!(resolve(None, Some(""), Some("1")).mode, ColorChoice::Never);
     }
 
     #[test]
     fn an_explicit_mode_ignores_the_terminal() {
-        let always = resolve(Some(ColorChoice::Always), &ColorEnv::default());
+        let always = resolve(Some(ColorChoice::Always), None, None);
         assert!(always.enabled(false));
 
-        let never = resolve(Some(ColorChoice::Never), &ColorEnv::default());
+        let never = resolve(Some(ColorChoice::Never), None, None);
         assert!(!never.enabled(true));
     }
 
@@ -297,6 +240,6 @@ mod tests {
 
     #[test]
     fn a_valid_selection_produces_no_warning() {
-        assert!(resolve(None, &env(Some("never"), None)).warning.is_none());
+        assert!(resolve(None, Some("never"), None).warning.is_none());
     }
 }
