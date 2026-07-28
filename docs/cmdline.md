@@ -133,6 +133,11 @@ Persistently add one or more action or group addresses to, or remove them from,
 the machine-local disabled lists. These commands do not run synchronization or
 remove installed content.
 
+They read and write `disabled.toml` only. They do not resolve or load the leaf
+repository, and they validate each supplied address for [syntax](#address-forms)
+alone, as described in the state specification's [`disabled.toml`
+lifecycle](state.md#semantics-and-lifecycle-1).
+
 ### `apply-action`
 
 ```text

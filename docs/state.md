@@ -88,14 +88,23 @@ groups = ["work", "core.shell"]
 
 ### Semantics and lifecycle
 
-Enable and disable commands validate requested names syntactically before
-writing. Each dot-separated address segment must match the repository format's
+Explicit enable and disable commands validate the supplied address for syntax
+only. Each dot-separated address segment must match the repository format's
 [shared ID syntax](repoformat.md#names-and-ids); the CLI specification defines
-the available [address forms](cmdline.md#address-forms). Semantic validation
-against the selected leaf repository is best effort: an unknown name or an
-unreadable/invalid leaf `batfiles.toml` produces a warning, but a syntactically
-valid requested name is still persisted. This lets users pre-disable names that
-may appear after changing branches or updating a repository.
+the available [address forms](cmdline.md#address-forms). A syntactically valid
+address is persisted as given.
+
+These commands do not load the leaf repository at all, so they perform no
+semantic validation and emit no unknown-name warning. An unreadable or invalid
+leaf `batfiles.toml` therefore cannot fail an enable or disable. This is
+deliberate: a syntactically valid future action, group, inclusion, or
+manifest-entry address may be pre-enabled or pre-disabled before a later branch
+change or Git update introduces it, and manifest entries are not known until
+their action executes.
+
+Bootstrap adoption is the other writer of this file, and it is not an explicit
+mutation: it is decided by the domain core during `clone` planning and
+persisted on the core's behalf.
 
 Mutations are idempotent. Adding an existing item or removing an absent item is
 a no-op and does not rewrite the document merely to sort or deduplicate it.

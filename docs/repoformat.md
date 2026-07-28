@@ -413,6 +413,27 @@ dest = "~/.local/share/zsh-plugins"
 An action `id` is required only if its individual manifest entries need
 qualified addresses.
 
+#### Deferred manifest expansion
+
+The manifest is not read during structural planning. A selected `git-clone-list`
+stays one opaque node in the plan, carrying its resolved configuration, where its
+manifest source comes from, the variable, fact, and environment context needed to
+evaluate entry conditions, and any requested, disabled, or skipped entry
+addresses that execution must apply. The plan does not claim to know or validate
+the entries.
+
+When the action executes, batfiles materializes or refreshes the manifest's
+source remote if required, reads and validates the manifest, expands its entries
+into a nested execution-time plan, evaluates each entry's condition, and performs
+the selected clones. This holds even when the manifest is already readable at
+planning time, because a remote refresh or an earlier ordered action may change
+it before this action runs.
+
+Entry existence is therefore checked during execution, not during planning. A
+targeted `apply-action --id <action>.<entry>` produces a deferred manifest node
+carrying the requested entry ID; an entry address that no manifest entry matches
+fails when the action executes.
+
 ### `git-clone`
 
 ```toml

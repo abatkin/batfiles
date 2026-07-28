@@ -235,7 +235,9 @@ filesystem state at the beginning of the run.
 Instead, execution has two levels:
 
 1. Structural planning resolves variables, conditions, included actions,
-   sources, and the final action order.
+   sources, and the final action order. A `git-clone-list` remains one opaque
+   node whose entries are expanded at execution time, per the repository
+   format's [deferred manifest expansion](repoformat.md#deferred-manifest-expansion).
 2. Each enabled action inspects the filesystem and determines its concrete
    effects as the first phase of that action's execution, then performs those
    effects.

@@ -1,0 +1,22 @@
+[package]
+name = "batfiles-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+batfiles-core.workspace = true
+
+# Reusable I/O mechanisms live here, not in the domain core: archive reading
+# (tar/flate2), digest verification (sha2), and the subprocess deadline used to
+# enforce a dynamic variable's `command-timeout` (wait-timeout).
+flate2.workspace = true
+sha2.workspace = true
+tar.workspace = true
+wait-timeout.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

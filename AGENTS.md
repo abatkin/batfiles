@@ -22,17 +22,35 @@ The dependency direction always points **toward the domain**:
 
 ```
 batfiles-cli  ──→  batfiles-config  ──→  batfiles-core
+            └──→  batfiles-io      ──→  batfiles-core
 ```
 
-- `batfiles-core` — domain logic and domain types (the testable heart).
-  Depends on nothing batfiles-specific. **No `serde`, no TOML, no XDG/`dirs`.**
-- `batfiles-config` — `batfiles.toml` schema (`serde`), XDG path resolution,
-  and the conversion layer mapping on-disk representation → core domain types.
-  Depends on `batfiles-core`.
-- `batfiles-cli` — argument parsing (clap), output formatting, the binary.
-  Stays thin and delegates to core. Depends on both.
+- `batfiles-core` — domain logic and domain types (the testable heart):
+  repository and action semantics, selection, conditions, variable precedence,
+  refresh policy, include expansion, structural planning, and dynamic-variable
+  resolver policy. It defines every outward-facing capability interface it
+  needs and depends on nothing batfiles-specific. **No `serde`, no TOML, no
+  XDG/`dirs`, and no direct I/O.**
+- `batfiles-config` — the `batfiles.toml` and state-file schemas (`serde`),
+  XDG path resolution, filesystem I/O for configuration documents, source-aware
+  parse diagnostics, atomic state-file writes, and the conversion layer mapping
+  on-disk representation → core domain types. Its documents are leaf and
+  included `batfiles.toml`, the three state files, and `git-clone-list`
+  manifests. Depends on `batfiles-core`.
+- `batfiles-io` — reusable, non-configuration side effects: Git
+  materialization, URL fetch, archive extraction, subprocess execution, and the
+  clock. Plain reusable primitives plus thin adapters implementing core's
+  capability interfaces. Decides no policy. Depends on `batfiles-core`.
+- `batfiles-cli` — the composition root: argument parsing (clap), environment
+  capture, output formatting, the binary. It constructs the concrete
+  capabilities, invokes core, persists what core hands back, and renders
+  results and diagnostics. Stays thin and delegates to core. Depends on all
+  three.
 
-`batfiles-core` must **never** depend on `batfiles-config`.
+`batfiles-core` must **never** depend on or name `batfiles-config` or
+`batfiles-io`. Reads and effects core needs mid-computation are pull
+capabilities it defines; terminal writes it has decided but need not observe
+are pushed back to the CLI in the command outcome.
 
 Keep logic in the testable core, not tangled in argument parsing.
 

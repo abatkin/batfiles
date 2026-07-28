@@ -80,6 +80,7 @@ dependencies = [
  "assert_cmd",
  "batfiles-config",
  "batfiles-core",
+ "batfiles-io",
  "clap",
  "tempfile",
 ]
@@ -98,11 +99,19 @@ dependencies = [
 name = "batfiles-core"
 version = "0.1.0"
 dependencies = [
- "flate2",
  "jiff",
- "sha2",
  "simple-expressions",
+]
+
+[[package]]
+name = "batfiles-io"
+version = "0.1.0"
+dependencies = [
+ "batfiles-core",
+ "flate2",
+ "sha2",
  "tar",
+ "tempfile",
  "wait-timeout",
 ]
 
