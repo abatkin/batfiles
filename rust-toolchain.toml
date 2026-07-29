@@ -1,0 +1,5 @@
+# Pinned toolchain for local + CI parity. This pin is where parity usually
+# breaks first, so it does the heavy lifting. Bump deliberately.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]

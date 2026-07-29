@@ -1,0 +1,2 @@
+# Use the default stable rustfmt style. Tweak deliberately and document why.
+edition = "2024"

@@ -1,0 +1,27 @@
+[package]
+name = "batfiles"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Adam Batkin <adam@batkin.net>"]
+repository = "https://github.com/abatkin/batfiles-rust"
+rust-version = "1.94"
+
+# Only dependencies implemented code actually uses are declared here. Serde/TOML,
+# expression evaluation, timestamps, hashing, archives, and subprocess timeouts
+# arrive with the features that need them.
+[dependencies]
+# clap drives argument parsing and help/usage generation. Dual-licensed
+# MIT/Apache-2.0.
+clap = { version = "4.5", features = ["derive"] }
+
+# etcetera resolves the OS home directory used as the last-resort default for
+# batfiles' location roots. Dual-licensed MIT/Apache-2.0.
+etcetera = "0.11"
+
+[dev-dependencies]
+# assert_cmd locates and runs the Cargo-built `batfiles` binary in the
+# end-to-end CLI tests; tempfile gives each test a self-cleaning isolated root.
+# Both dual-licensed MIT/Apache-2.0.
+assert_cmd = "2"
+tempfile = "3"
