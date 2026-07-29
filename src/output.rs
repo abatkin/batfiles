@@ -5,7 +5,7 @@
 
 /// Verbosity derived from `--quiet` and repeated `--verbose`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verbosity {
+pub(crate) enum Verbosity {
     Quiet,
     Normal,
     /// One level per `-v`, starting at 1.
@@ -30,7 +30,7 @@ impl Verbosity {
 
 /// Writes diagnostics honoring the resolved verbosity and color.
 #[derive(Debug)]
-pub struct Reporter {
+pub(crate) struct Reporter {
     color: bool,
     verbosity: Verbosity,
 }

@@ -11,17 +11,15 @@ use std::process::ExitCode;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, GlobalOptions};
-use crate::color;
+use crate::cli::{Cli, Command, GlobalOptions, color, trace};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::output::{Reporter, Verbosity};
-use crate::trace;
 
 /// Exit status for a command that ran but failed. Usage errors exit with 2,
 /// which clap chooses for the errors it renders.
 const EXIT_FAILURE: u8 = 1;
 
-pub fn run() -> ExitCode {
+pub(crate) fn run() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
 
     // The process environment is captured once, before anything interprets it.

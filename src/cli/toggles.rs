@@ -6,7 +6,7 @@ use clap::Args;
 
 /// Addresses for `disable-action` and `enable-action`.
 #[derive(Debug, Args)]
-pub struct ActionAddresses {
+pub(crate) struct ActionAddresses {
     /// Action addresses
     #[arg(value_name = "ID", required = true)]
     pub ids: Vec<String>,
@@ -14,7 +14,7 @@ pub struct ActionAddresses {
 
 /// Addresses for `disable-group` and `enable-group`.
 #[derive(Debug, Args)]
-pub struct GroupAddresses {
+pub(crate) struct GroupAddresses {
     /// Group addresses
     #[arg(value_name = "GROUP", required = true)]
     pub groups: Vec<String>,

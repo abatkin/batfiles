@@ -6,36 +6,30 @@ keeping its rules understandable and testable.
 
 ## Source shape
 
-Use ordinary Rust modules to group cohesive behavior. The initial source shape
-is:
+Use ordinary Rust modules to group cohesive behavior.
 
-```text
-src/
-  main.rs
-  app.rs
-  cli/
-  config/
-    mod.rs
-    env.rs
-    paths.rs
-  var.rs
-  color.rs
-  output.rs
-  trace.rs
-tests/
-  cli.rs
-```
+`main` should remain a small entry point. `app` may perform straightforward
+command orchestration. Configuration, planning, execution, and presentation
+code should live near the data and operations they use rather than being
+separated solely to enforce dependency direction.
 
-This is a description of implemented responsibilities, not a requirement to
-pre-create every possible future module. Add behavior-oriented modules such as
-repository loading, state, planning, or actions when their implementations
-need a distinct home.
+`cli` owns everything specific to the command line. That is the clap argument
+definitions, and also the two things that exist only to serve them: `color`,
+which scans the raw arguments and resolves `--color` into the `ColorChoice`
+clap needs back before it can render help or a usage error, and `trace`, which
+renders a parsed invocation for verbose output and therefore holds the one
+exhaustive match over every command. Both name the argument types; the argument
+definitions name neither, so they stay free of formatting.
 
-`main` should remain a small entry point. `cli` owns clap argument definitions.
-`app` may perform straightforward command orchestration. Configuration,
-planning, execution, and presentation code should live near the data and
-operations they use rather than being separated solely to enforce dependency
-direction.
+`output` deliberately stays outside `cli`. The reporter is the diagnostic sink
+every subsystem writes to and it depends on no argument parsing, so filing it
+under `cli` would imply a dependency that does not exist.
+
+### Visibility
+
+Module-level items are `pub(crate)`; fields and inherent methods are `pub`.
+The crate builds one binary, so the two spellings behave identically — the
+convention exists only so the source reads consistently.
 
 ## Data and control flow
 

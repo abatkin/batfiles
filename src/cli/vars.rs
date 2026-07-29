@@ -7,7 +7,7 @@
 use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
-pub enum VarsCommand {
+pub(crate) enum VarsCommand {
     /// Set one persisted machine-local variable
     Set { key: String, value: String },
 

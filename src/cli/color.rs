@@ -1,7 +1,10 @@
 //! Color selection, as specified by `docs/environment.md#color`.
 //!
 //! Color is presentation-only, so unlike the other environment inputs it is
-//! resolved directly by the CLI and never passed into domain logic.
+//! resolved here rather than in `crate::config` and never passed into domain
+//! logic. It belongs to `cli` because it is the semantics of one option: it
+//! scans the raw arguments and yields the `clap::ColorChoice` that clap needs
+//! back in order to render its own help and errors.
 
 use std::ffi::OsString;
 
@@ -13,7 +16,7 @@ use clap::ColorChoice;
 
 /// The outcome of resolving color inputs.
 #[derive(Debug, PartialEq, Eq)]
-pub struct ColorResolution {
+pub(crate) struct ColorResolution {
     /// The selected mode. `Auto` is deliberately left unresolved so that each
     /// consumer can apply its own terminal detection.
     pub mode: ColorChoice,
@@ -44,7 +47,7 @@ impl ColorResolution {
 /// passed in already decoded. "Set but empty" survives as `Some("")` and "unset"
 /// as `None`; a value batfiles cannot interpret was lossily decoded upstream and
 /// simply lands on the invalid branch, warning and falling back.
-pub fn resolve(
+pub(crate) fn resolve(
     choice: Option<ColorChoice>,
     batfiles_color: Option<&str>,
     no_color: Option<&str>,
@@ -81,7 +84,7 @@ pub fn resolve(
 /// parsed `Cli`. This scan is deliberately forgiving: anything it cannot
 /// interpret — a missing value, an unrecognized value, a value after `--` — is
 /// left to clap, which reports it properly.
-pub fn preparse_choice(args: &[OsString]) -> Option<ColorChoice> {
+pub(crate) fn preparse_choice(args: &[OsString]) -> Option<ColorChoice> {
     let mut found = None;
     // Skip the program name.
     let mut args = args.iter().skip(1);

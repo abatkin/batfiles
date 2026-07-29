@@ -1,16 +1,17 @@
 //! Human-readable rendering of a parsed invocation.
 //!
-//! This is presentation, not parsing, so it lives outside `crate::cli`: the
-//! argument definitions stay free of formatting, and the one exhaustive match
-//! over every command has a single home.
+//! This is presentation, not parsing, so it stays out of the argument
+//! definitions themselves — but it names every one of them, so it lives beside
+//! them. Keeping it here means the one exhaustive match over every command sits
+//! next to the types it must track.
 
-use crate::cli::{
+use super::{
     ActionAddresses, ActionOptions, ApplyActionArgs, ApplyGroupArgs, BootstrapOptions, CloneArgs,
     Command, GroupAddresses, InitArgs, SelectionOptions, SyncArgs, VarsCommand,
 };
 
 /// The command name as written on the command line.
-pub fn name(command: &Command) -> &'static str {
+pub(crate) fn name(command: &Command) -> &'static str {
     match command {
         Command::Init(_) => "init",
         Command::Version => "version",
@@ -27,7 +28,7 @@ pub fn name(command: &Command) -> &'static str {
 }
 
 /// A one-line description of what was requested, for verbose output.
-pub fn summary(command: &Command) -> String {
+pub(crate) fn summary(command: &Command) -> String {
     let parts = match command {
         Command::Init(args) => args.parts(),
         Command::Version => Vec::new(),

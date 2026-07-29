@@ -1,20 +1,31 @@
 //! The command-line surface described by `docs/cmdline.md`.
 //!
-//! This module tree owns argument definitions and nothing else. Rendering a
-//! parsed invocation for humans belongs to `crate::trace`, and environment
-//! inputs other than color are deliberately not read here: the environment
-//! specification places the merge of command-line arguments, environment
-//! variables, configuration files, and defaults in `crate::config`.
+//! This module tree owns everything that is specific to the command line: the
+//! argument definitions, the `--color` option's resolution, and the rendering
+//! of a parsed invocation for verbose output. Environment inputs other than
+//! color are deliberately not read here — the environment specification places
+//! the merge of command-line arguments, environment variables, configuration
+//! files, and defaults in `crate::config`.
+//!
+//! The argument definitions live in the submodules below and stay free of
+//! formatting: `color` and `trace` name them, never the reverse.
 
 mod actions;
+mod init;
 mod options;
 mod toggles;
 mod vars;
 
-pub use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
-pub use options::{ActionOptions, BootstrapOptions, SelectionOptions};
-pub use toggles::{ActionAddresses, GroupAddresses};
-pub use vars::VarsCommand;
+pub(crate) mod color;
+pub(crate) mod trace;
+
+// The argument types appear in `Command`'s variants, so they are re-exported
+// here rather than reached through their submodule paths.
+pub(crate) use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
+pub(crate) use init::InitArgs;
+pub(crate) use options::{ActionOptions, BootstrapOptions, SelectionOptions};
+pub(crate) use toggles::{ActionAddresses, GroupAddresses};
+pub(crate) use vars::VarsCommand;
 
 use std::path::PathBuf;
 
@@ -27,7 +38,7 @@ use clap::{Args, ColorChoice, Parser, Subcommand};
 /// A dotfiles manager built around plain files and explicit composition.
 #[derive(Debug, Parser)]
 #[command(name = "batfiles", version, about, long_about = None)]
-pub struct Cli {
+pub(crate) struct Cli {
     #[command(flatten)]
     pub global: GlobalOptions,
 
@@ -41,7 +52,7 @@ pub struct Cli {
 /// `version` resolve no roots at all.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Global Options")]
-pub struct GlobalOptions {
+pub(crate) struct GlobalOptions {
     /// Increase diagnostic detail; repeatable, such as `-vv`
     #[arg(short, long, global = true, action = clap::ArgAction::Count, conflicts_with = "quiet")]
     pub verbose: u8,
@@ -74,7 +85,7 @@ pub struct GlobalOptions {
 /// Each variant carries a named argument type, so a command implementation can
 /// take exactly the arguments it owns.
 #[derive(Debug, Subcommand)]
-pub enum Command {
+pub(crate) enum Command {
     /// Initialize the current directory with the leaf-repository layout
     Init(InitArgs),
 
@@ -108,13 +119,6 @@ pub enum Command {
     /// Inspect and manage variables
     #[command(subcommand)]
     Vars(VarsCommand),
-}
-
-#[derive(Debug, Args)]
-pub struct InitArgs {
-    /// Do not run `git init`
-    #[arg(long)]
-    pub no_git_init: bool,
 }
 
 /// Parsing helpers shared by the command modules' tests.
@@ -169,13 +173,5 @@ mod tests {
             error_kind(&["batfiles", "sync", "-v", "-q"]),
             ErrorKind::ArgumentConflict
         );
-    }
-
-    #[test]
-    fn init_takes_only_no_git_init() {
-        let Command::Init(args) = parse(&["batfiles", "init", "--no-git-init"]).command else {
-            panic!("expected init");
-        };
-        assert!(args.no_git_init);
     }
 }

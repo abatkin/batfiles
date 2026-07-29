@@ -9,7 +9,7 @@ use clap::Args;
 /// synchronization.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Action Execution Options")]
-pub struct ActionOptions {
+pub(crate) struct ActionOptions {
     /// Set a one-shot variable; repeatable, last value for a key wins
     #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_var)]
     pub vars: Vec<(String, String)>,
@@ -34,7 +34,7 @@ pub struct ActionOptions {
 /// Run-only selectors accepted by `sync` and `clone`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Selection Options")]
-pub struct SelectionOptions {
+pub(crate) struct SelectionOptions {
     /// Skip an action or addressable child for this run; repeatable
     #[arg(long = "skip-action", value_name = "ID")]
     pub skip_actions: Vec<String>,
@@ -47,7 +47,7 @@ pub struct SelectionOptions {
 /// Bootstrap-only enable/disable adoption, honored by `clone`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Bootstrap Options")]
-pub struct BootstrapOptions {
+pub(crate) struct BootstrapOptions {
     /// Remove an action address from persisted disabled state; repeatable
     #[arg(long = "enable-action", value_name = "ID")]
     pub enable_actions: Vec<String>,

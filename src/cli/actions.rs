@@ -9,7 +9,7 @@ use super::options::{ActionOptions, BootstrapOptions, SelectionOptions};
 /// `clone` intentionally accepts neither `--dry-run` nor `--refresh-remotes`: a
 /// fresh clone materializes its remotes during the follow-up sync.
 #[derive(Debug, Args)]
-pub struct CloneArgs {
+pub(crate) struct CloneArgs {
     /// Repository URL to clone into the selected batfiles directory
     pub url: String,
 
@@ -24,7 +24,7 @@ pub struct CloneArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct SyncArgs {
+pub(crate) struct SyncArgs {
     #[command(flatten)]
     pub action: ActionOptions,
 
@@ -41,7 +41,7 @@ pub struct SyncArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ApplyActionArgs {
+pub(crate) struct ApplyActionArgs {
     /// Action or manifest-entry address
     #[arg(long, value_name = "ID")]
     pub id: String,
@@ -55,7 +55,7 @@ pub struct ApplyActionArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ApplyGroupArgs {
+pub(crate) struct ApplyGroupArgs {
     /// Leaf or qualified included group address
     #[arg(long, value_name = "GROUP")]
     pub group: String,
