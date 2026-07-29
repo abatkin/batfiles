@@ -267,6 +267,17 @@ email = { command = ["git", "config", "user.email"], cache = "24h" }
 Arbitrary table-shaped variable values are not supported; every table value in
 `[vars]` must match this closed dynamic-variable record.
 
+#### Duration values
+
+`cache` and `command-timeout` accept a friendly duration: a number and a unit,
+optionally repeated, such as `30s`, `5m`, `1h`, `1d`, `1w`, or `1h 30m`. Units
+may also be spelled out (`90 minutes`), and a fractional quantity is allowed
+(`1.5h`).
+
+A day is exactly 24 hours and a week is exactly 7 days. Months and years have no
+fixed length, so they are not durations; freshness compares two instants rather
+than two calendar dates. A negative duration is invalid.
+
 ## Default-Disabled Bootstrap Entries
 
 The leaf repository may provide initial disabled action and group addresses.

@@ -250,6 +250,11 @@ dynamic command that needs an environment input must read it from the normal
 process environment; otherwise it should read files under the repository that
 declared it.
 
+Each command runs with its working directory set to the root of the repository
+that declared it — the leaf repository, or the materialization of the remote
+that declared the variable. A relative path in the command therefore resolves
+there rather than in whatever directory `batfiles` was invoked from.
+
 ## Bootstrap use of `PATH`
 
 A generated `install.sh` uses a `batfiles` binary found on `PATH`. The product
