@@ -24,14 +24,15 @@ pub(crate) struct Roots {
     pub cache_dir: PathBuf,
 }
 
-/// Detect the invoking user's OS home via etcetera.
+/// Detect the invoking user's OS home.
 ///
-/// This is the only place that reads the real environment for paths, and
-/// resolution consults it only as a last resort — when the home is unset and no
+/// This is the only place that reads the real environment for paths — the
+/// captured [`Environment`] snapshot covers every other variable — and
+/// resolution consults it only as a last resort, when the home is unset and no
 /// `$XDG_*` base already covers config or cache. Failure is fatal, matching the
 /// spec's "failure to determine a home … is fatal."
 pub(crate) fn detect_os_home() -> Result<PathBuf, ConfigError> {
-    etcetera::home_dir().map_err(|_| ConfigError::HomeUnavailable)
+    std::env::home_dir().ok_or(ConfigError::HomeUnavailable)
 }
 
 /// Resolve the four roots from the CLI options and the captured environment.

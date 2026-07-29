@@ -52,8 +52,13 @@ resolution.
 The destination home is selected in this order:
 
 ```text
---home-dir > BATFILES_HOME > current user's OS home directory (normally $HOME)
+--home-dir > BATFILES_HOME > current user's OS home directory
 ```
+
+The OS home directory is the one the platform reports for the invoking user: on
+Unix `$HOME` when it is set and non-empty, otherwise the current user's passwd
+entry; on Windows `%USERPROFILE%` when it is set and non-empty, otherwise the
+user's profile directory as reported by the OS.
 
 Failure to determine a home directory for a command that needs one is fatal.
 Batfiles does not silently use the current directory. The selected home also

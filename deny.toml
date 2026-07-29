@@ -1,8 +1,4 @@
 # cargo-deny configuration.
-#
-# The dependency tree is still small — clap and etcetera, plus assert_cmd and
-# tempfile for tests — so this stays minimal. Tighten [advisories], [licenses],
-# and [bans] as more dependencies land.
 
 [graph]
 all-features = true
