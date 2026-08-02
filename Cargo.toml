@@ -7,13 +7,24 @@ authors = ["Adam Batkin <adam@batkin.net>"]
 repository = "https://github.com/abatkin/batfiles-rust"
 rust-version = "1.94"
 
-# Only dependencies implemented code actually uses are declared here. Serde/TOML,
-# expression evaluation, timestamps, hashing, archives, and subprocess timeouts
-# arrive with the features that need them.
+# Only dependencies implemented code actually uses are declared here. Expression
+# evaluation, hashing, archives, and subprocess timeouts arrive with the features
+# that need them.
 [dependencies]
 # clap drives argument parsing and help/usage generation. Dual-licensed
 # MIT/Apache-2.0.
 clap = { version = "4.5", features = ["derive"] }
+
+# serde derives the on-disk records for `batfiles.toml` and the three local state
+# documents. Both dual-licensed MIT/Apache-2.0.
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
+# jiff parses and formats the RFC 3339 `captured-at` timestamp in the
+# dynamic-variable cache. Default features are off: that timestamp is an instant,
+# so neither the bundled time-zone database nor system time-zone lookup is
+# needed. Dual-licensed Unlicense/MIT.
+jiff = { version = "0.2", default-features = false, features = ["std", "serde"] }
 
 [dev-dependencies]
 # assert_cmd locates and runs the Cargo-built `batfiles` binary in the

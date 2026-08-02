@@ -9,6 +9,8 @@
 use std::path::PathBuf;
 
 use crate::config::{ConfigError, Environment, LocationInputs};
+use crate::repo::BatfilesConfig;
+use crate::state::{Disabled, DynamicVarCache, MachineVars};
 
 /// The four resolved root directories a command may need.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +24,37 @@ pub(crate) struct Roots {
     pub config_dir: PathBuf,
     /// The directory holding the disposable `dynamic-vars.toml` cache.
     pub cache_dir: PathBuf,
+}
+
+/// The documents each root contains.
+///
+/// Pairing a file with its root belongs here rather than with the type that
+/// parses it: which root a document lives under is location policy, the same
+/// policy the fields above resolve, and keeping the four together is what makes
+/// "the cache file is the one that follows `--cache-dir`" checkable in one
+/// place. The file names travel with their parsers.
+#[allow(dead_code, reason = "no command loads a document yet")]
+impl Roots {
+    /// The leaf repository's manifest. A remote's manifest is not here: it lives
+    /// in that remote's materialization rather than under a resolved root.
+    pub fn batfiles_config(&self) -> PathBuf {
+        self.batfiles_dir.join(BatfilesConfig::FILE_NAME)
+    }
+
+    /// Machine-local variable overrides.
+    pub fn machine_vars(&self) -> PathBuf {
+        self.config_dir.join(MachineVars::FILE_NAME)
+    }
+
+    /// Disabled actions and groups.
+    pub fn disabled(&self) -> PathBuf {
+        self.config_dir.join(Disabled::FILE_NAME)
+    }
+
+    /// The disposable dynamic-variable cache.
+    pub fn dynamic_vars(&self) -> PathBuf {
+        self.cache_dir.join(DynamicVarCache::FILE_NAME)
+    }
 }
 
 /// Detect the invoking user's OS home.
@@ -276,6 +309,49 @@ mod tests {
         assert_eq!(
             resolve_roots(&cli, &env, unavailable).unwrap_err(),
             ConfigError::HomeUnavailable
+        );
+    }
+
+    #[test]
+    fn each_document_sits_under_the_root_that_owns_it() {
+        let roots = resolve(LocationInputs::default(), &empty_env());
+        assert_eq!(
+            roots.batfiles_config(),
+            PathBuf::from("/os-home/dotfiles/batfiles.toml")
+        );
+        assert_eq!(
+            roots.machine_vars(),
+            PathBuf::from("/os-home/.config/batfiles/vars.toml")
+        );
+        assert_eq!(
+            roots.disabled(),
+            PathBuf::from("/os-home/.config/batfiles/disabled.toml")
+        );
+        // The cache document is the one that must not follow the config root.
+        assert_eq!(
+            roots.dynamic_vars(),
+            PathBuf::from("/os-home/.cache/batfiles/dynamic-vars.toml")
+        );
+    }
+
+    #[test]
+    fn the_documents_follow_their_relocated_roots() {
+        let cli = LocationInputs {
+            batfiles_dir: Some(PathBuf::from("/repo")),
+            config_dir: Some(PathBuf::from("/config")),
+            cache_dir: Some(PathBuf::from("/cache")),
+            home_dir: Some(PathBuf::from("/home")),
+        };
+        let roots = resolve(cli, &empty_env());
+        assert_eq!(
+            roots.batfiles_config(),
+            PathBuf::from("/repo/batfiles.toml")
+        );
+        assert_eq!(roots.machine_vars(), PathBuf::from("/config/vars.toml"));
+        assert_eq!(roots.disabled(), PathBuf::from("/config/disabled.toml"));
+        assert_eq!(
+            roots.dynamic_vars(),
+            PathBuf::from("/cache/dynamic-vars.toml")
         );
     }
 

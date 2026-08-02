@@ -4,6 +4,9 @@ mod app;
 mod cli;
 mod config;
 mod output;
+mod repo;
+mod state;
+mod tomlfile;
 mod var;
 
 use std::process::ExitCode;
