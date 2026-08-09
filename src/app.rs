@@ -1,8 +1,10 @@
 //! Wiring: parse arguments, resolve presentation, dispatch, and map the result
 //! to an exit status.
 //!
-//! The command implementations live in their own modules. The ones not written
-//! yet report that they are unimplemented rather than pretending to succeed.
+//! The command implementations live in their own modules, and each owns its own
+//! failures: this module maps whatever one returns onto the same exit status,
+//! without restating what went wrong. The commands not written yet report that
+//! they are unimplemented rather than pretending to succeed.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -13,6 +15,7 @@ use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::{Cli, Command, GlobalOptions, color, trace};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::init;
 use crate::output::{Reporter, Verbosity};
 use crate::toggle::{self, Direction, List};
 
@@ -124,6 +127,7 @@ fn dispatch(command: &Command, roots: Option<&Roots>, reporter: &Reporter) -> Re
             print!("{}", Cli::command().render_version());
             Ok(())
         }
+        Command::Init(args) => init::run(args, reporter).map_err(Error::Init),
         Command::DisableAction(args) => toggle(&args.ids, List::Actions, Direction::Disable),
         Command::EnableAction(args) => toggle(&args.ids, List::Actions, Direction::Enable),
         Command::DisableGroup(args) => toggle(&args.groups, List::Groups, Direction::Disable),
@@ -148,6 +152,7 @@ fn trace_roots(reporter: &Reporter, roots: &Roots) {
 #[derive(Debug)]
 enum Error {
     Unimplemented(&'static str),
+    Init(init::Error),
     Toggle(toggle::Error),
 }
 
@@ -159,6 +164,7 @@ impl fmt::Display for Error {
             }
             // A command's own diagnostic already says what failed, so this adds
             // nothing to it.
+            Self::Init(error) => error.fmt(f),
             Self::Toggle(error) => error.fmt(f),
         }
     }
@@ -168,6 +174,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unimplemented(_) => None,
+            Self::Init(error) => Some(error),
             Self::Toggle(error) => Some(error),
         }
     }
@@ -176,7 +183,6 @@ impl std::error::Error for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::InitArgs;
     use crate::cli::testing::parse;
     use std::path::PathBuf;
 
@@ -187,13 +193,9 @@ mod tests {
 
     #[test]
     fn a_command_without_an_implementation_says_so() {
-        let error = dispatch(
-            &Command::Init(InitArgs { no_git_init: false }),
-            None,
-            &silent(),
-        )
-        .unwrap_err();
-        assert_eq!(error.to_string(), "`init` is not implemented yet");
+        let command = parse(&["batfiles", "sync"]).command;
+        let error = dispatch(&command, None, &silent()).unwrap_err();
+        assert_eq!(error.to_string(), "`sync` is not implemented yet");
     }
 
     #[test]

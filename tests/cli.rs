@@ -1,6 +1,7 @@
 //! End-to-end checks of the built `batfiles` binary.
 
 use assert_cmd::Command;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -409,6 +410,379 @@ fn a_malformed_address_in_the_file_fails_the_command() {
             "`{command}` should name the offending entry:\n{stderr}"
         );
         assert_eq!(disabled_document(config.path()), original);
+    }
+}
+
+// `init`. Every case runs in a temporary working directory, with the home
+// pointed at a *different* temporary directory so the home-directory check is
+// deterministic and never sees the developer's own home.
+
+/// One `init` scenario: the directory being initialized, and the unrelated
+/// directory that stands in for the invoking user's home.
+struct Init {
+    dir: TempDir,
+    home: TempDir,
+}
+
+impl Init {
+    fn new() -> Self {
+        Self {
+            dir: tempfile::tempdir().expect("temp dir"),
+            home: tempfile::tempdir().expect("temp dir"),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+
+    /// `init` in the working directory, with the home isolated.
+    fn command(&self) -> Command {
+        let mut command = with_home(batfiles(), self.home.path());
+        command.current_dir(self.dir.path()).arg("init");
+        command
+    }
+
+    /// The common case: no Git, so most of the suite neither shells out nor
+    /// depends on `git` being installed.
+    fn no_git(&self) -> Command {
+        let mut command = self.command();
+        command.arg("--no-git-init");
+        command
+    }
+
+    fn join(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
+    }
+
+    fn read(&self, name: &str) -> String {
+        fs::read_to_string(self.join(name)).unwrap_or_else(|_| panic!("{name} should be readable"))
+    }
+}
+
+/// Point the invoking user's OS home at `path`.
+///
+/// Both variables, because the platform home input differs: `$HOME` on Unix and
+/// `%USERPROFILE%` on Windows. Setting the pair keeps the home-directory check
+/// deterministic wherever the suite runs, rather than only where `$HOME` happens
+/// to be the one that counts.
+fn with_home(mut command: Command, path: &Path) -> Command {
+    command.env("HOME", path).env("USERPROFILE", path);
+    command
+}
+
+/// Leave the invocation with no home variable at all, on either platform.
+fn without_home(mut command: Command) -> Command {
+    command.env_remove("HOME").env_remove("USERPROFILE");
+    command
+}
+
+/// The sorted names directly under `dir`, so a test can assert that a refused
+/// run created nothing.
+fn entries(dir: &Path) -> Vec<OsString> {
+    let mut names: Vec<OsString> = fs::read_dir(dir)
+        .expect("read dir")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn init_lays_out_the_conventional_skeleton() {
+    let init = Init::new();
+    let assertion = init.no_git().assert().success();
+
+    for name in ["batfiles.toml", "install.sh", ".gitignore"] {
+        assert!(init.join(name).is_file(), "{name} should be a file");
+    }
+    for name in ["bin", "files", "local-files"] {
+        assert!(init.join(name).is_dir(), "{name}/ should be a directory");
+    }
+
+    // `remotes/` is generated materialization data, so it appears only once
+    // something materializes a remote — and is excluded from history instead.
+    assert!(!init.join("remotes").exists());
+    assert!(init.read(".gitignore").contains("remotes/"));
+    // `--no-git-init` means exactly that.
+    assert!(!init.join(".git").exists());
+
+    // The starter manifest is a valid document that installs nothing.
+    toml::from_str::<toml::Table>(&init.read("batfiles.toml"))
+        .expect("the starter manifest should be valid TOML");
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("initialized batfiles repository in"),
+        "unexpected stderr:\n{stderr}"
+    );
+    let created = "created batfiles.toml, install.sh, .gitignore, bin/, files/, local-files/";
+    assert!(stderr.contains(created), "unexpected stderr:\n{stderr}");
+    assert!(
+        stderr.contains("add files under files/ or local-files/"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn init_creates_an_executable_bootstrap_script() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let init = Init::new();
+    init.no_git().assert().success();
+
+    let mode = fs::metadata(init.join("install.sh"))
+        .expect("metadata")
+        .permissions()
+        .mode();
+    assert!(mode & 0o111 != 0, "unexpected mode: {mode:o}");
+}
+
+#[test]
+fn existing_paths_of_the_right_kind_survive_untouched() {
+    let init = Init::new();
+    fs::create_dir(init.join("files")).expect("fixture");
+    fs::write(init.join("files/zshrc"), "mine\n").expect("fixture");
+    fs::write(init.join("install.sh"), "#!/bin/sh\necho mine\n").expect("fixture");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(init.join("install.sh"), fs::Permissions::from_mode(0o644))
+            .expect("fixture");
+    }
+
+    let assertion = init.no_git().assert().success();
+
+    assert_eq!(init.read("files/zshrc"), "mine\n");
+    assert_eq!(init.read("install.sh"), "#!/bin/sh\necho mine\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = fs::metadata(init.join("install.sh"))
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o644, "the existing mode should be preserved");
+    }
+
+    // Only what `init` actually created is reported.
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("created batfiles.toml, .gitignore, bin/, local-files/"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_gitignore_that_does_not_cover_remotes_warns_without_being_rewritten() {
+    let init = Init::new();
+    let original = "*.swp\ntarget\n";
+    fs::write(init.join(".gitignore"), original).expect("fixture");
+
+    // Under `--quiet`, so the warning is the only thing that can appear. It
+    // names the file relative to the repository root, where a `.gitignore`
+    // always lives.
+    let assertion = init.no_git().arg("--quiet").assert().success();
+
+    assert_eq!(
+        stderr_of(&assertion),
+        "warning: .gitignore does not ignore the tool-owned `remotes/` tree; \
+         consider adding `/remotes/` to it\n"
+    );
+    assert_eq!(init.read(".gitignore"), original);
+}
+
+#[test]
+fn an_existing_manifest_refuses_the_command_and_creates_nothing() {
+    // Any node by that name counts, a directory included: its presence, not its
+    // kind, is what `init` refuses.
+    for fixture in ["file", "directory"] {
+        let init = Init::new();
+        let manifest = init.join("batfiles.toml");
+        if fixture == "file" {
+            fs::write(&manifest, "# mine\n").expect("fixture");
+        } else {
+            fs::create_dir(&manifest).expect("fixture");
+        }
+
+        let assertion = init.no_git().assert().failure().code(1);
+
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains("batfiles.toml") && stderr.contains("already"),
+            "unexpected stderr for a {fixture}:\n{stderr}"
+        );
+        assert_eq!(entries(init.path()), ["batfiles.toml"]);
+        if fixture == "file" {
+            assert_eq!(init.read("batfiles.toml"), "# mine\n");
+        }
+    }
+}
+
+#[test]
+fn a_skeleton_path_of_the_wrong_kind_refuses_the_command_and_creates_nothing() {
+    let init = Init::new();
+    fs::write(init.join("files"), "not a directory\n").expect("fixture");
+
+    let assertion = init.no_git().assert().failure().code(1);
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("files") && stderr.contains("directory"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert_eq!(entries(init.path()), ["files"]);
+}
+
+#[test]
+fn the_home_directory_itself_is_refused() {
+    let init = Init::new();
+    let assertion = with_home(init.no_git(), init.path())
+        .assert()
+        .failure()
+        .code(1);
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("home directory"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(entries(init.path()).is_empty());
+}
+
+#[test]
+fn a_home_that_cannot_be_found_does_not_stop_init() {
+    // `init` needs a home only to refuse one particular directory, so not having
+    // one is not fatal the way it is for a command that resolves roots.
+    let init = Init::new();
+    without_home(init.no_git()).assert().success();
+
+    let other = Init::new();
+    with_home(other.no_git(), &other.home.path().join("absent"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn quiet_suppresses_the_informational_lines_but_never_an_error() {
+    let init = Init::new();
+    init.no_git().arg("--quiet").assert().success().stderr("");
+    assert!(init.join("batfiles.toml").is_file());
+
+    // The same run again: now it refuses, and the refusal still speaks.
+    let assertion = init.no_git().arg("--quiet").assert().failure().code(1);
+    assert!(
+        stderr_of(&assertion).contains("batfiles.toml"),
+        "an error must survive --quiet"
+    );
+}
+
+// The Git behavior. These shell out, so they are the only `init` cases that
+// depend on `git` being installed.
+
+#[test]
+fn init_creates_a_git_repository() {
+    let init = Init::new();
+    let assertion = init.command().assert().success();
+
+    assert!(init.join(".git").exists());
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("initialized a Git repository"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn init_inside_an_existing_repository_skips_git_init() {
+    let init = Init::new();
+    std::process::Command::new("git")
+        .arg("init")
+        .current_dir(init.path())
+        .output()
+        .expect("git should be available");
+
+    let nested = init.join("dotfiles");
+    fs::create_dir(&nested).expect("fixture");
+    let mut command = with_home(batfiles(), init.home.path());
+    let assertion = command.current_dir(&nested).arg("init").assert().success();
+
+    assert!(
+        !nested.join(".git").exists(),
+        "a repository already covers this directory"
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("already covers"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+/// The two Git failures need a `git` that fails in a chosen way, which a shim
+/// first on `PATH` provides. Emptying `PATH` alone cannot tell them apart:
+/// detection runs first and would fail for the same reason `git init` does.
+#[cfg(unix)]
+mod git_failures {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    /// A directory holding a `git` that answers `rev-parse` with `false` and
+    /// fails `init`.
+    fn shim() -> TempDir {
+        let bin = tempfile::tempdir().expect("temp dir");
+        let script = "#!/bin/sh\n\
+             case \"$1\" in\n\
+             rev-parse) echo false ;;\n\
+             *) echo 'fatal: the shim refuses' >&2; exit 1 ;;\n\
+             esac\n";
+        let path = bin.path().join("git");
+        fs::write(&path, script).expect("fixture");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("fixture");
+        bin
+    }
+
+    #[test]
+    fn a_failing_git_init_fails_the_command() {
+        let bin = shim();
+        let init = Init::new();
+        let assertion = init
+            .command()
+            .env("PATH", bin.path())
+            .assert()
+            .failure()
+            .code(1);
+
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains("the shim refuses"),
+            "git's own diagnostic should reach the user:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("--no-git-init"),
+            "unexpected stderr:\n{stderr}"
+        );
+        // The skeleton created before Git ran stays; creation does not unwind.
+        assert!(init.join("batfiles.toml").is_file());
+    }
+
+    #[test]
+    fn a_git_that_cannot_be_run_fails_the_command() {
+        let empty = tempfile::tempdir().expect("temp dir");
+        let init = Init::new();
+        let assertion = init
+            .command()
+            .env("PATH", empty.path())
+            .assert()
+            .failure()
+            .code(1);
+
+        let stderr = stderr_of(&assertion);
+        assert!(stderr.contains("`git`"), "unexpected stderr:\n{stderr}");
+        assert!(
+            stderr.contains("--no-git-init"),
+            "unexpected stderr:\n{stderr}"
+        );
     }
 }
 

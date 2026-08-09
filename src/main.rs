@@ -3,6 +3,7 @@
 mod app;
 mod cli;
 mod config;
+mod init;
 mod item;
 mod output;
 mod repo;
