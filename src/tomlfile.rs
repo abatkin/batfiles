@@ -9,7 +9,6 @@
 //! Everything here is about files and syntax. Which document lives where, what
 //! its records mean, and when it is rewritten belong to the modules that own
 //! those documents.
-#![allow(dead_code, reason = "no command loads or stores a document yet")]
 
 use std::ffi::OsStr;
 use std::fmt;

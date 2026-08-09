@@ -6,10 +6,6 @@
 //!
 //! The rules are implemented here; the commands that resolve an address against
 //! a repository are not written yet.
-#![allow(
-    dead_code,
-    reason = "no command builds or resolves an item address yet"
-)]
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -158,6 +154,7 @@ impl ItemAddress {
     }
 
     /// The address's segments, in written order.
+    #[allow(dead_code, reason = "no command resolves an address yet")]
     pub fn segments(&self) -> &[ItemId] {
         &self.segments
     }

@@ -7,6 +7,7 @@ mod item;
 mod output;
 mod repo;
 mod state;
+mod toggle;
 mod tomlfile;
 mod var;
 

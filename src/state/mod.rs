@@ -11,15 +11,22 @@
 //! A missing file means an empty document, which is why every type is `Default`.
 //! A file that exists but does not parse is fatal and is left untouched, so
 //! nothing here recovers from a malformed document.
-#![allow(dead_code, reason = "no command reads or writes local state yet")]
 
+// `disabled.toml` is the one document a command reads and writes so far, so it
+// is the one module held to the usual dead-code rule.
 mod disabled;
+#[allow(
+    dead_code,
+    reason = "no command reads or writes the dynamic-variable cache yet"
+)]
 mod dynamic_vars;
+#[allow(dead_code, reason = "no command reads or writes `vars.toml` yet")]
 mod vars;
 
-#[allow(unused_imports, reason = "no command reads or writes local state yet")]
-pub(crate) use {
-    disabled::Disabled,
-    dynamic_vars::{CachedVar, DynamicVarCache},
-    vars::MachineVars,
-};
+pub(crate) use {disabled::Disabled, dynamic_vars::DynamicVarCache, vars::MachineVars};
+
+#[allow(
+    unused_imports,
+    reason = "no command reads the dynamic-variable cache's entries yet"
+)]
+pub(crate) use dynamic_vars::CachedVar;

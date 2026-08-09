@@ -1,8 +1,8 @@
 //! Wiring: parse arguments, resolve presentation, dispatch, and map the result
 //! to an exit status.
 //!
-//! The command implementations themselves are not written yet; each one reports
-//! that it is unimplemented rather than pretending to succeed.
+//! The command implementations live in their own modules. The ones not written
+//! yet report that they are unimplemented rather than pretending to succeed.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -14,6 +14,7 @@ use clap::{ColorChoice, CommandFactory, FromArgMatches};
 use crate::cli::{Cli, Command, GlobalOptions, color, trace};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::output::{Reporter, Verbosity};
+use crate::toggle::{self, Direction, List};
 
 /// Exit status for a command that ran but failed. Usage errors exit with 2,
 /// which clap chooses for the errors it renders.
@@ -57,17 +58,22 @@ pub(crate) fn run() -> ExitCode {
 
     // Resolve the roots only for the commands that need them; `init` and
     // `version` resolve nothing.
-    if needs_roots(&cli.command) {
+    let roots = if needs_roots(&cli.command) {
         match resolve_roots(&locations(&cli.global), &env, detect_os_home) {
-            Ok(roots) => trace_roots(&reporter, &roots),
+            Ok(roots) => {
+                trace_roots(&reporter, &roots);
+                Some(roots)
+            }
             Err(error) => {
                 reporter.error(&error.to_string());
                 return ExitCode::from(EXIT_FAILURE);
             }
         }
-    }
+    } else {
+        None
+    };
 
-    match dispatch(&cli.command) {
+    match dispatch(&cli.command, roots.as_ref(), &reporter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             reporter.error(&error.to_string());
@@ -102,13 +108,26 @@ fn exit_code(clap_code: i32) -> ExitCode {
     ExitCode::from(u8::try_from(clap_code).unwrap_or(EXIT_FAILURE))
 }
 
-fn dispatch(command: &Command) -> Result<(), Error> {
+fn dispatch(command: &Command, roots: Option<&Roots>, reporter: &Reporter) -> Result<(), Error> {
+    // The four persistent enable/disable commands are one implementation
+    // differing only in which list they edit and which way they move an address.
+    // `needs_roots` decides who is handed roots, so a command reading them here
+    // is one it already answered `true` for.
+    let toggle = |addresses: &[String], list, direction| {
+        let roots = roots.expect("a command that needs its roots is handed them");
+        toggle::run(addresses, list, direction, roots, reporter).map_err(Error::Toggle)
+    };
+
     match command {
         // Rendered through clap so `version` and `--version` cannot drift.
         Command::Version => {
             print!("{}", Cli::command().render_version());
             Ok(())
         }
+        Command::DisableAction(args) => toggle(&args.ids, List::Actions, Direction::Disable),
+        Command::EnableAction(args) => toggle(&args.ids, List::Actions, Direction::Enable),
+        Command::DisableGroup(args) => toggle(&args.groups, List::Groups, Direction::Disable),
+        Command::EnableGroup(args) => toggle(&args.groups, List::Groups, Direction::Enable),
         other => Err(Error::Unimplemented(trace::name(other))),
     }
 }
@@ -129,6 +148,7 @@ fn trace_roots(reporter: &Reporter, roots: &Roots) {
 #[derive(Debug)]
 enum Error {
     Unimplemented(&'static str),
+    Toggle(toggle::Error),
 }
 
 impl fmt::Display for Error {
@@ -137,11 +157,21 @@ impl fmt::Display for Error {
             Self::Unimplemented(command) => {
                 write!(f, "`{command}` is not implemented yet")
             }
+            // A command's own diagnostic already says what failed, so this adds
+            // nothing to it.
+            Self::Toggle(error) => error.fmt(f),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unimplemented(_) => None,
+            Self::Toggle(error) => Some(error),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -150,16 +180,41 @@ mod tests {
     use crate::cli::testing::parse;
     use std::path::PathBuf;
 
-    #[test]
-    fn version_is_the_only_implemented_command() {
-        assert!(dispatch(&Command::Version).is_ok());
-        assert!(dispatch(&Command::Init(InitArgs { no_git_init: false })).is_err());
+    /// A reporter that prints nothing, so the dispatch tests stay silent.
+    fn silent() -> Reporter {
+        Reporter::new(false, Verbosity::Quiet)
     }
 
     #[test]
-    fn the_unimplemented_message_names_the_command() {
-        let error = dispatch(&Command::Init(InitArgs { no_git_init: false })).unwrap_err();
+    fn a_command_without_an_implementation_says_so() {
+        let error = dispatch(
+            &Command::Init(InitArgs { no_git_init: false }),
+            None,
+            &silent(),
+        )
+        .unwrap_err();
         assert_eq!(error.to_string(), "`init` is not implemented yet");
+    }
+
+    #[test]
+    fn version_needs_no_roots() {
+        assert!(dispatch(&Command::Version, None, &silent()).is_ok());
+    }
+
+    #[test]
+    fn a_toggle_reports_its_own_failure() {
+        // The dispatch layer adds no wrapper of its own around a command's
+        // diagnostic; the address the user wrote is what they need to see.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let roots = Roots {
+            home: dir.path().to_path_buf(),
+            batfiles_dir: dir.path().join("dotfiles"),
+            config_dir: dir.path().to_path_buf(),
+            cache_dir: dir.path().to_path_buf(),
+        };
+        let command = parse(&["batfiles", "disable-action", "a..b"]).command;
+        let error = dispatch(&command, Some(&roots), &silent()).unwrap_err();
+        assert!(error.to_string().contains("`a..b`"), "{error}");
     }
 
     #[test]

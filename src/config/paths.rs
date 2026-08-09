@@ -33,7 +33,10 @@ pub(crate) struct Roots {
 /// policy the fields above resolve, and keeping the four together is what makes
 /// "the cache file is the one that follows `--cache-dir`" checkable in one
 /// place. The file names travel with their parsers.
-#[allow(dead_code, reason = "no command loads a document yet")]
+#[allow(
+    dead_code,
+    reason = "only `disabled.toml` has a command that loads it yet"
+)]
 impl Roots {
     /// The leaf repository's manifest. A remote's manifest is not here: it lives
     /// in that remote's materialization rather than under a resolved root.
