@@ -12,15 +12,14 @@
 //! A file that exists but does not parse is fatal and is left untouched, so
 //! nothing here recovers from a malformed document.
 
-// `disabled.toml` is the one document a command reads and writes so far, so it
-// is the one module held to the usual dead-code rule.
+// `disabled.toml` and `vars.toml` are the documents commands read and write so
+// far, so they are the modules held to the usual dead-code rule.
 mod disabled;
 #[allow(
     dead_code,
     reason = "no command reads or writes the dynamic-variable cache yet"
 )]
 mod dynamic_vars;
-#[allow(dead_code, reason = "no command reads or writes `vars.toml` yet")]
 mod vars;
 
 pub(crate) use {disabled::Disabled, dynamic_vars::DynamicVarCache, vars::MachineVars};

@@ -11,6 +11,7 @@ mod state;
 mod toggle;
 mod tomlfile;
 mod var;
+mod vars;
 
 use std::process::ExitCode;
 

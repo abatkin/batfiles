@@ -49,6 +49,24 @@ directory and does not use any selected roots.
 | `--config-dir <path>`           | Select the directory containing `vars.toml` and `disabled.toml`. Defaults to the XDG config location.             |
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
 
+## Output Streams
+
+Every command follows one rule for where its output goes:
+
+- **Standard output** carries requested data: the value a command was asked
+  for, and nothing else. It is never suppressed by `--quiet`, because `--quiet`
+  suppresses what a command *did*, not what it was *asked for*. Data lines
+  carry no label and no color, so `$(batfiles vars get editor)` yields the
+  value alone.
+- **Standard error** carries everything else: errors, warnings, progress, the
+  lines describing what a command did, and any interactive prompt. `--quiet`
+  suppresses the informational lines while leaving warnings and errors; `-v`
+  adds detail.
+
+Most commands produce no requested data at all and therefore write nothing to
+standard output. `version` and `vars get` are the current exceptions, and
+`vars list` joins them.
+
 ## Shared Action Execution Options
 
 These controls are accepted by every command that executes actions. `clone`
@@ -172,7 +190,14 @@ the same action semantics as `sync`.
 batfiles vars set <key> <value>
 ```
 
-Set one persisted machine-local variable. The value is stored as a string.
+Set one persisted machine-local variable. The value is stored verbatim as a
+string, the empty string included; `vars get`'s absent-key failure is what keeps
+an empty value distinguishable from no value.
+
+The confirmation line names the key and never the value. A value may be a token
+or a path that identifies a machine, and an informational line would put it in
+terminal scrollback and in a calling script's logs. `vars get` is the way to
+read a value back.
 
 ### `vars get`
 
@@ -180,8 +205,14 @@ Set one persisted machine-local variable. The value is stored as a string.
 batfiles vars get <key>
 ```
 
-Print the stored machine-local string for one variable. It does not resolve
-repository defaults, dynamic values, facts, or environment values.
+Print the stored machine-local string for one variable on standard output. It
+does not resolve repository defaults, dynamic values, facts, or environment
+values.
+
+A key with no machine-local value is a failure: nothing is written to standard
+output, and the diagnostic naming the key goes to standard error. Printing an
+empty line and exiting successfully would be indistinguishable from a key stored
+as the empty string.
 
 ### `vars list`
 

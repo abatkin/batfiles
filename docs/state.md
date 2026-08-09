@@ -46,10 +46,15 @@ Machine-local values contribute the persisted layer of the authoritative
 [runtime variable precedence](environment.md#runtime-variable-precedence).
 
 - `vars set` validates the key before filesystem access. Setting a key to its
-  existing value succeeds without rewriting the file.
+  existing value succeeds without rewriting the file. Any string is a value,
+  the empty string included.
 - `vars get` reads only the persisted string. It does not resolve repository
   defaults, environment inputs, dynamic cache entries, or one-shot values.
-- `vars unset` is idempotent. An absent key does not cause a rewrite.
+- `vars get` fails when the key has no persisted value, rather than reporting an
+  empty value, which would be indistinguishable from a key stored as the empty
+  string.
+- `vars unset` is idempotent. An absent key does not cause a rewrite, and does
+  not create a `vars.toml` that was not there before.
 - `vars list --machine-only` reads only this file and bypasses repository and
   cache I/O.
 - Normal `vars list` combines this file with leaf `[vars]` and the captured

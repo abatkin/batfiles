@@ -413,6 +413,279 @@ fn a_malformed_address_in_the_file_fails_the_command() {
     }
 }
 
+// The machine-local `vars` commands. Like the toggles, the config directory is
+// the only root they read or write under.
+
+fn vars_path(config: &Path) -> PathBuf {
+    config.join("vars.toml")
+}
+
+fn vars_document(config: &Path) -> String {
+    fs::read_to_string(vars_path(config)).expect("vars.toml should exist")
+}
+
+/// Put a `vars.toml` in place verbatim, including shapes batfiles would never
+/// write itself.
+fn write_vars(config: &Path, document: &str) {
+    fs::write(vars_path(config), document).expect("fixture");
+}
+
+fn stdout_of(assertion: &assert_cmd::assert::Assert) -> String {
+    String::from_utf8_lossy(&assertion.get_output().stdout).into_owned()
+}
+
+#[test]
+fn setting_a_variable_creates_the_document() {
+    let config = config_dir();
+    in_config(config.path())
+        .args(["vars", "set", "editor", "nvim"])
+        .assert()
+        .success()
+        .stderr("set `editor`\n");
+
+    assert_eq!(vars_document(config.path()), "editor = \"nvim\"\n");
+}
+
+#[test]
+fn each_vars_outcome_line_says_whether_the_state_moved() {
+    let config = config_dir();
+    let line = |args: [&str; 4]| {
+        let assertion = in_config(config.path()).args(args).assert().success();
+        stderr_of(&assertion)
+    };
+
+    assert_eq!(line(["vars", "set", "editor", "nvim"]), "set `editor`\n");
+    assert_eq!(
+        line(["vars", "set", "editor", "emacs"]),
+        "changed `editor` (it had a different value)\n"
+    );
+    assert_eq!(
+        line(["vars", "set", "editor", "emacs"]),
+        "`editor` was already set to that value\n"
+    );
+
+    let assertion = in_config(config.path())
+        .args(["vars", "unset", "editor"])
+        .assert()
+        .success();
+    assert_eq!(stderr_of(&assertion), "unset `editor`\n");
+
+    let assertion = in_config(config.path())
+        .args(["vars", "unset", "editor"])
+        .assert()
+        .success();
+    assert_eq!(stderr_of(&assertion), "`editor` was not set\n");
+}
+
+#[test]
+fn setting_a_variable_never_echoes_its_value() {
+    // A value may be a token or a machine-identifying path, so it stays out of
+    // scrollback and out of a wrapper script's logs. `vars get` is the way to
+    // read one back.
+    let config = config_dir();
+    for value in ["s3cr3t", "s3cr3t", "other"] {
+        let assertion = in_config(config.path())
+            .args(["vars", "set", "editor", value])
+            .assert()
+            .success();
+        assert_eq!(stdout_of(&assertion), "");
+        assert!(
+            !stderr_of(&assertion).contains(value),
+            "the value should not be reported:\n{}",
+            stderr_of(&assertion)
+        );
+    }
+}
+
+#[test]
+fn a_repeated_set_does_not_rewrite_the_document() {
+    // Unsorted and quoted the other way on purpose: any save at all would
+    // canonicalize it, so byte-identical content is the proof nothing was
+    // written.
+    let config = config_dir();
+    let original = "profile = 'work'\neditor = 'nvim'\n";
+    write_vars(config.path(), original);
+
+    in_config(config.path())
+        .args(["vars", "set", "editor", "nvim"])
+        .assert()
+        .success();
+
+    assert_eq!(vars_document(config.path()), original);
+}
+
+#[test]
+fn getting_a_variable_prints_the_value_on_standard_output_alone() {
+    let config = config_dir();
+    in_config(config.path())
+        .args(["vars", "set", "editor", "nvim"])
+        .assert()
+        .success();
+
+    in_config(config.path())
+        .args(["vars", "get", "editor"])
+        .assert()
+        .success()
+        .stdout("nvim\n")
+        .stderr("");
+}
+
+#[test]
+fn quiet_never_suppresses_requested_data() {
+    // `--quiet` suppresses what a command did, not what it was asked for.
+    let config = config_dir();
+    in_config(config.path())
+        .args(["--quiet", "vars", "set", "editor", "nvim"])
+        .assert()
+        .success()
+        .stderr("");
+
+    in_config(config.path())
+        .args(["--quiet", "vars", "get", "editor"])
+        .assert()
+        .success()
+        .stdout("nvim\n")
+        .stderr("");
+}
+
+#[test]
+fn getting_an_absent_variable_fails_without_printing_anything() {
+    // The alternative — an empty line and a zero status — is indistinguishable
+    // from a key stored as the empty string, which `vars set` permits.
+    let config = config_dir();
+    in_config(config.path())
+        .args(["vars", "set", "empty", ""])
+        .assert()
+        .success();
+
+    in_config(config.path())
+        .args(["vars", "get", "empty"])
+        .assert()
+        .success()
+        .stdout("\n");
+
+    let assertion = in_config(config.path())
+        .args(["vars", "get", "editor"])
+        .assert()
+        .failure()
+        .code(1);
+
+    assert_eq!(stdout_of(&assertion), "");
+    assert!(
+        stderr_of(&assertion).contains("`editor`"),
+        "the error should name the key:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn getting_a_variable_reads_no_other_file() {
+    // Neither the leaf repository nor the dynamic cache is consulted, so roots
+    // pointing at paths that do not exist change nothing.
+    let config = config_dir();
+    let absent = config.path().join("absent");
+    in_config(config.path())
+        .args(["vars", "set", "editor", "nvim"])
+        .assert()
+        .success();
+
+    in_config(config.path())
+        .arg("--batfiles-dir")
+        .arg(&absent)
+        .arg("--cache-dir")
+        .arg(&absent)
+        .args(["vars", "get", "editor"])
+        .assert()
+        .success()
+        .stdout("nvim\n");
+    assert!(!absent.exists(), "nothing else should have been touched");
+}
+
+#[test]
+fn unsetting_the_last_variable_keeps_an_empty_document() {
+    let config = config_dir();
+    in_config(config.path())
+        .args(["vars", "set", "editor", "nvim"])
+        .assert()
+        .success();
+    in_config(config.path())
+        .args(["vars", "unset", "editor"])
+        .assert()
+        .success();
+
+    assert_eq!(vars_document(config.path()), "");
+}
+
+#[test]
+fn unsetting_an_absent_variable_against_a_missing_file_creates_nothing() {
+    let config = config_dir();
+    let absent = config.path().join("nested");
+
+    in_config(&absent)
+        .args(["vars", "unset", "editor"])
+        .assert()
+        .success();
+
+    assert!(
+        !absent.exists(),
+        "the config directory should not be created"
+    );
+}
+
+#[test]
+fn an_invalid_key_fails_before_anything_is_written() {
+    let config = config_dir();
+    let original = "profile = 'work'\n";
+    write_vars(config.path(), original);
+
+    for args in [
+        vec!["vars", "set", "1up", "x"],
+        vec!["vars", "get", "1up"],
+        vec!["vars", "unset", "1up"],
+    ] {
+        let assertion = in_config(config.path())
+            .args(&args)
+            .assert()
+            .failure()
+            .code(1);
+
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains("`1up`") && stderr.contains("must start with"),
+            "unexpected stderr for {args:?}:\n{stderr}"
+        );
+        assert_eq!(vars_document(config.path()), original);
+    }
+}
+
+#[test]
+fn a_malformed_vars_file_fails_the_command() {
+    // Setting a key is deliberately not a repair path for a file that does not
+    // parse.
+    let config = config_dir();
+    let original = "has-dash = 'x'\n";
+    write_vars(config.path(), original);
+
+    for args in [
+        vec!["vars", "set", "editor", "nvim"],
+        vec!["vars", "get", "editor"],
+        vec!["vars", "unset", "editor"],
+    ] {
+        let assertion = in_config(config.path())
+            .args(&args)
+            .assert()
+            .failure()
+            .code(1);
+
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains("vars.toml") && stderr.contains("a variable name must"),
+            "unexpected stderr for {args:?}:\n{stderr}"
+        );
+        assert_eq!(vars_document(config.path()), original);
+    }
+}
+
 // `init`. Every case runs in a temporary working directory, with the home
 // pointed at a *different* temporary directory so the home-directory check is
 // deterministic and never sees the developer's own home.

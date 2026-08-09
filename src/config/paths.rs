@@ -35,7 +35,7 @@ pub(crate) struct Roots {
 /// place. The file names travel with their parsers.
 #[allow(
     dead_code,
-    reason = "only `disabled.toml` has a command that loads it yet"
+    reason = "no command loads `batfiles.toml` or the dynamic-variable cache yet"
 )]
 impl Roots {
     /// The leaf repository's manifest. A remote's manifest is not here: it lives

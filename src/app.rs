@@ -13,11 +13,12 @@ use std::process::ExitCode;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, GlobalOptions, color, trace};
+use crate::cli::{Cli, Command, GlobalOptions, VarsCommand, color, trace};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::init;
 use crate::output::{Reporter, Verbosity};
 use crate::toggle::{self, Direction, List};
+use crate::vars;
 
 /// Exit status for a command that ran but failed. Usage errors exit with 2,
 /// which clap chooses for the errors it renders.
@@ -112,13 +113,15 @@ fn exit_code(clap_code: i32) -> ExitCode {
 }
 
 fn dispatch(command: &Command, roots: Option<&Roots>, reporter: &Reporter) -> Result<(), Error> {
-    // The four persistent enable/disable commands are one implementation
-    // differing only in which list they edit and which way they move an address.
     // `needs_roots` decides who is handed roots, so a command reading them here
     // is one it already answered `true` for.
+    const HANDED: &str = "a command that needs its roots is handed them";
+
+    // The four persistent enable/disable commands are one implementation
+    // differing only in which list they edit and which way they move an address.
     let toggle = |addresses: &[String], list, direction| {
-        let roots = roots.expect("a command that needs its roots is handed them");
-        toggle::run(addresses, list, direction, roots, reporter).map_err(Error::Toggle)
+        toggle::run(addresses, list, direction, roots.expect(HANDED), reporter)
+            .map_err(Error::Toggle)
     };
 
     match command {
@@ -132,6 +135,18 @@ fn dispatch(command: &Command, roots: Option<&Roots>, reporter: &Reporter) -> Re
         Command::EnableAction(args) => toggle(&args.ids, List::Actions, Direction::Enable),
         Command::DisableGroup(args) => toggle(&args.groups, List::Groups, Direction::Disable),
         Command::EnableGroup(args) => toggle(&args.groups, List::Groups, Direction::Enable),
+        // `vars list` and `vars refresh` need everything these three do not —
+        // precedence, the leaf repository, the dynamic cache — so they fall
+        // through to the catch-all below.
+        Command::Vars(VarsCommand::Set { key, value }) => {
+            vars::set(key, value, roots.expect(HANDED), reporter).map_err(Error::Vars)
+        }
+        Command::Vars(VarsCommand::Get { key }) => {
+            vars::get(key, roots.expect(HANDED), reporter).map_err(Error::Vars)
+        }
+        Command::Vars(VarsCommand::Unset { key }) => {
+            vars::unset(key, roots.expect(HANDED), reporter).map_err(Error::Vars)
+        }
         other => Err(Error::Unimplemented(trace::name(other))),
     }
 }
@@ -154,6 +169,7 @@ enum Error {
     Unimplemented(&'static str),
     Init(init::Error),
     Toggle(toggle::Error),
+    Vars(vars::Error),
 }
 
 impl fmt::Display for Error {
@@ -166,6 +182,7 @@ impl fmt::Display for Error {
             // nothing to it.
             Self::Init(error) => error.fmt(f),
             Self::Toggle(error) => error.fmt(f),
+            Self::Vars(error) => error.fmt(f),
         }
     }
 }
@@ -176,6 +193,7 @@ impl std::error::Error for Error {
             Self::Unimplemented(_) => None,
             Self::Init(error) => Some(error),
             Self::Toggle(error) => Some(error),
+            Self::Vars(error) => Some(error),
         }
     }
 }

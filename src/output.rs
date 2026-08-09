@@ -75,6 +75,16 @@ impl Reporter {
         }
     }
 
+    /// Data the user asked for. Printed to standard output and never gated by
+    /// verbosity: `--quiet` suppresses what a command *did*, not what it was
+    /// *asked for*.
+    ///
+    /// No label and no color — the output is a value, not a diagnostic — and a
+    /// trailing newline, so `$(batfiles vars get editor)` behaves.
+    pub fn data(&self, message: &str) {
+        println!("{message}");
+    }
+
     /// Extra detail, printed only at `-v` repeated at least `level` times.
     pub fn detail(&self, level: u8, message: &str) {
         if self.verbosity.shows_detail(level) {

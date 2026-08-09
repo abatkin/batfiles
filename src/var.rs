@@ -1,8 +1,4 @@
 //! User-variable names.
-//!
-//! The rule is implemented here; the commands that validate names against it are
-//! not written yet.
-#![allow(dead_code, reason = "no command validates variable names yet")]
 
 use std::fmt;
 
@@ -93,14 +89,6 @@ impl fmt::Display for VarName {
 impl AsRef<str> for VarName {
     fn as_ref(&self) -> &str {
         &self.0
-    }
-}
-
-impl TryFrom<&str> for VarName {
-    type Error = VarNameError;
-
-    fn try_from(name: &str) -> Result<Self, Self::Error> {
-        Self::new(name)
     }
 }
 
