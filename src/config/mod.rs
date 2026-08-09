@@ -1,8 +1,8 @@
 //! Environment capture and location-root resolution.
 //!
-//! Per `docs/environment.md`, this module turns the captured process
-//! environment and the parsed command-line options into the concrete values
-//! commands work with, and owns the precedence rules that combine them.
+//! This module turns the captured process environment and the parsed
+//! command-line options into the concrete values commands work with, and owns
+//! the precedence rules that combine them.
 
 mod env;
 mod paths;
@@ -35,8 +35,7 @@ pub(crate) enum ConfigError {
         reason = "the variable merge that rejects names is not wired yet"
     )]
     InvalidVarName(String),
-    /// No home directory could be determined for a command that needs one
-    /// (`docs/environment.md#location-selection`).
+    /// No home directory could be determined for a command that needs one.
     HomeUnavailable,
 }
 

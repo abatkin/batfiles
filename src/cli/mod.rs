@@ -1,11 +1,11 @@
-//! The command-line surface described by `docs/cmdline.md`.
+//! The command-line surface.
 //!
 //! This module tree owns everything that is specific to the command line: the
 //! argument definitions, the `--color` option's resolution, and the rendering
 //! of a parsed invocation for verbose output. Environment inputs other than
-//! color are deliberately not read here — the environment specification places
-//! the merge of command-line arguments, environment variables, configuration
-//! files, and defaults in `crate::config`.
+//! color are deliberately not read here: the merge of command-line arguments,
+//! environment variables, configuration files, and defaults belongs to
+//! `crate::config`.
 //!
 //! The argument definitions live in the submodules below and stay free of
 //! formatting: `color` and `trace` name them, never the reverse.
@@ -30,9 +30,9 @@ pub(crate) use vars::VarsCommand;
 use std::path::PathBuf;
 
 // `--color` reuses clap's own `ColorChoice`: it already spells the three modes
-// the specification names, and it is the type clap wants back when told how to
-// render its help and errors, so an equivalent local enum would only add a
-// mapping that can drift.
+// batfiles offers, and it is the type clap wants back when told how to render
+// its help and errors, so an equivalent local enum would only add a mapping that
+// can drift.
 use clap::{Args, ColorChoice, Parser, Subcommand};
 
 /// A dotfiles manager built around plain files and explicit composition.

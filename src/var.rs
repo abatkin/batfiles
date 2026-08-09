@@ -1,7 +1,7 @@
 //! User-variable names.
 //!
-//! The rules are settled (`docs/repoformat.md#names-and-ids`); the commands that
-//! validate names against them are not implemented yet.
+//! The rule is implemented here; the commands that validate names against it are
+//! not written yet.
 #![allow(dead_code, reason = "no command validates variable names yet")]
 
 use std::fmt;
@@ -11,10 +11,15 @@ use serde::{Deserialize, Serialize, Serializer};
 /// A validated user-variable name.
 ///
 /// Names match `[A-Za-z_][A-Za-z0-9_]*` and cannot be one of the reserved
-/// identifiers `facts`, `env`, `true`, or `false`, per the repository format's
-/// shared name rules (`docs/repoformat.md#names-and-ids`). Holding a `VarName`
-/// is proof the name has already been checked, so names are validated once
-/// where they enter and the rest of the code never re-checks.
+/// identifiers `facts`, `env`, `true`, or `false`, which the expression language
+/// owns. Holding a `VarName` is proof the name has already been checked, so
+/// names are validated once where they enter and the rest of the code never
+/// re-checks.
+///
+/// This is **not** the ID rule that [`ItemId`](crate::item::ItemId) enforces,
+/// and the two are deliberately different: `_hidden` is a valid variable name
+/// but not a valid ID, while `9front`, `oh-my-zsh`, and `env` are valid IDs but
+/// not valid variable names. Neither validator can stand in for the other.
 ///
 /// Deserializing goes through the same check, which is what makes it the key
 /// type of the `[vars]` and `vars.toml` maps: a name that reaches the rest of

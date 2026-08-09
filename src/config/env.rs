@@ -1,10 +1,10 @@
 //! The process environment, captured once and decoded to UTF-8.
 //!
-//! Per `docs/environment.md`, batfiles reads the environment a single time when
-//! the CLI starts. This module owns that captured snapshot and the typed
-//! accessors that turn it into the specific inputs the rest of the program
-//! merges. Everything here is plain data, so it is testable without the real
-//! process environment via [`Environment::from_pairs`].
+//! Batfiles reads the environment a single time, when the CLI starts. This
+//! module owns that captured snapshot and the typed accessors that turn it into
+//! the specific inputs the rest of the program merges. Everything here is plain
+//! data, so it is testable without the real process environment via
+//! [`Environment::from_pairs`].
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ impl Environment {
     /// accepted behavior for the vanishingly rare non-UTF-8 environment.
     ///
     /// On Windows every key is ASCII-uppercased — the sole case-normalization
-    /// point (`docs/environment.md`) — so batfiles' fixed-uppercase lookups and
+    /// point — so batfiles' fixed-uppercase lookups and
     /// the `env.*` namespace are deterministic on a case-insensitive
     /// environment. Environment names are ASCII in practice, and ASCII folding
     /// avoids locale surprises. Values are never folded.
@@ -81,10 +81,9 @@ impl Environment {
     }
 }
 
-/// Accessors for the inputs whose merges are specified in `docs/environment.md`
-/// but not implemented yet. The decoding rules they encode are already settled
-/// and covered by the tests below, so they stay here rather than being rewritten
-/// alongside each feature that starts consuming them.
+/// Accessors for the inputs whose merges are not implemented yet. The decoding
+/// rules they encode are covered by the tests below, so they stay here rather
+/// than being rewritten alongside each feature that starts consuming them.
 #[allow(dead_code, reason = "the merges that read these are not wired yet")]
 impl Environment {
     /// The keys that name one-shot user variables (`BATFILES_VAR_<NAME>`).

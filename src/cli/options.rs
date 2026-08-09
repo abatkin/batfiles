@@ -1,5 +1,4 @@
-//! The option groups that `docs/cmdline.md` defines once and shares between
-//! several commands.
+//! The option groups shared between several commands.
 
 use clap::Args;
 

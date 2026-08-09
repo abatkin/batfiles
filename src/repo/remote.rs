@@ -1,12 +1,12 @@
 //! `[remotes]`: the sources a repository may materialize.
 //!
-//! Declaring a remote only names and fetches a source
-//! (`docs/repoformat.md#remotes`). Actions decide whether and where its content
-//! is installed, and only a Git remote can be spliced in with `include-remote`.
+//! Declaring a remote only names and fetches a source. Actions decide whether
+//! and where its content is installed, and only a Git remote can be spliced in
+//! with `include-remote`.
 
 use serde::{Deserialize, Serialize};
 
-use crate::repo::value::{Condition, StringList};
+use crate::repo::value::{Condition, GlobFilter};
 
 /// One entry of `[remotes]`, tagged by `type`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,8 +54,8 @@ pub(crate) struct ArchiveRemote {
     pub sha256: Option<String>,
     /// An archive path prefix to strip, or `"*"` to detect a single root.
     pub archive_root: Option<String>,
-    pub include: Option<StringList>,
-    pub exclude: Option<StringList>,
+    pub include: Option<GlobFilter>,
+    pub exclude: Option<GlobFilter>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
 }
@@ -121,8 +121,8 @@ mod tests {
         else {
             unreachable!()
         };
-        assert_eq!(archive.include, Some(StringList::from_iter(["bin/*"])));
-        assert_eq!(archive.exclude, Some(StringList::from_iter(["*.md"])));
+        assert_eq!(archive.include, Some(GlobFilter::from_iter(["bin/*"])));
+        assert_eq!(archive.exclude, Some(GlobFilter::from_iter(["*.md"])));
     }
 
     #[test]

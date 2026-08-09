@@ -94,6 +94,19 @@ only. Each dot-separated address segment must match the repository format's
 the available [address forms](cmdline.md#address-forms). A syntactically valid
 address is persisted as given.
 
+Syntax here means only that the address is a nonempty dot-separated list of
+valid IDs; the segment count is not constrained. The address forms are the
+shapes the current repository model can resolve, and these commands resolve
+nothing, so an address with more segments than any listed form is accepted and
+recorded.
+
+Address syntax is also validated when the file is read. A `disabled.toml`
+containing a malformed address does not load, like any other malformed document
+under this specification. Pre-registering an address that matches nothing is
+supported and expected; an address that can never match anything, because it is
+not an address at all, is a mistake and is reported rather than carried
+silently or silently dropped by a later write.
+
 These commands do not load the leaf repository at all, so they perform no
 semantic validation and emit no unknown-name warning. An unreadable or invalid
 leaf `batfiles.toml` therefore cannot fail an enable or disable. This is

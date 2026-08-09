@@ -1,10 +1,9 @@
 //! Reading and writing the TOML documents batfiles owns.
 //!
 //! Four documents share this path: the leaf and remote `batfiles.toml`, and the
-//! three local files in `docs/state.md`. Reading is plain parse-and-validate;
-//! writing follows the state specification's [whole-document
-//! rewrite](../docs/state.md#writing) — serialize in memory, write a temporary
-//! file beside the destination, then rename over it, so a reader sees either the
+//! three machine-local state files. Reading is plain parse-and-validate; writing
+//! is a whole-document rewrite — serialize in memory, write a temporary file
+//! beside the destination, then rename over it, so a reader sees either the
 //! complete old document or the complete new one.
 //!
 //! Everything here is about files and syntax. Which document lives where, what
@@ -104,7 +103,7 @@ pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
 /// Read and parse one document, treating a missing file as an empty one.
 ///
 /// Only a missing file falls back. An unreadable or malformed document is still
-/// fatal and leaves the file untouched, per `docs/state.md#reading-and-validation`.
+/// fatal and leaves the file untouched.
 pub(crate) fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Error> {
     match read(path) {
         Err(error) if error.is_not_found() => Ok(T::default()),
@@ -116,8 +115,8 @@ pub(crate) fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> Res
 ///
 /// The rename is the commit point. If anything before it fails the temporary
 /// file is removed and the destination keeps its previous contents. Missing
-/// parent directories are created. There is no fsync: `docs/state.md#writing`
-/// buys atomicity, not crash durability.
+/// parent directories are created. There is no fsync: the rename buys
+/// atomicity, not crash durability.
 pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), Error> {
     let text = toml::to_string(value).map_err(|source| Error::Serialize {
         path: path.to_path_buf(),
@@ -166,7 +165,7 @@ fn publish(temp: &Path, dest: &Path, bytes: &[u8]) -> io::Result<()> {
 ///
 /// Splitting this out is what keeps the ordering true: the only handle a caller
 /// can write through is one this function has already protected. A brand new
-/// file keeps what the umask gave it, which is what the spec asks for.
+/// file keeps what the umask gave it, like any other file batfiles creates.
 fn create_guarded(temp: &Path, dest: &Path) -> io::Result<fs::File> {
     let file = fs::File::create(temp)?;
     if let Ok(metadata) = fs::metadata(dest) {

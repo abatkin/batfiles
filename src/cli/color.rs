@@ -1,4 +1,4 @@
-//! Color selection, as specified by `docs/environment.md#color`.
+//! Color selection.
 //!
 //! Color is presentation-only, so unlike the other environment inputs it is
 //! resolved here rather than in `crate::config` and never passed into domain
@@ -27,8 +27,7 @@ pub(crate) struct ColorResolution {
 
 impl ColorResolution {
     /// Whether batfiles' own diagnostics should be colored. `auto` follows
-    /// stdout, per the specification; the caller supplies the answer so this
-    /// stays testable.
+    /// stdout; the caller supplies the answer so this stays testable.
     ///
     /// The mode itself is handed to clap untouched, leaving clap's terminal
     /// detection in charge of `auto` for the output clap renders.

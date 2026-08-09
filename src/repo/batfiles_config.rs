@@ -11,6 +11,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::item::ItemId;
 use crate::repo::action::Action;
 use crate::repo::default_disabled::DefaultDisabled;
 use crate::repo::remote::Remote;
@@ -27,9 +28,9 @@ use crate::var::VarName;
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct BatfilesConfig {
     /// Named sources this repository may materialize. The map key is the
-    /// remote's ID.
+    /// remote's ID, so it is validated as one while the document is read.
     #[serde(default)]
-    pub remotes: BTreeMap<String, Remote>,
+    pub remotes: BTreeMap<ItemId, Remote>,
     /// Repository variable declarations.
     #[serde(default)]
     pub vars: BTreeMap<VarName, VarDecl>,
@@ -70,6 +71,10 @@ impl BatfilesConfig {
 mod tests {
     use super::*;
     use crate::repo::remote::GitRemote;
+
+    fn remote_id(id: &str) -> ItemId {
+        ItemId::new(id).expect("valid id")
+    }
 
     /// A manifest exercising every top-level section at once.
     const EXAMPLE: &str = r#"
@@ -144,18 +149,28 @@ dest = "~/.zshrc"
     }
 
     #[test]
-    fn a_remote_key_is_data_rather_than_a_schema_field() {
-        // Anything can name a remote; only its value has to match a known shape.
-        let config = BatfilesConfig::parse("[remotes.'my remote']\ntype = 'file'\nurl = 'u'\n")
-            .expect("map keys are user data");
-        assert!(config.remotes.contains_key("my remote"));
+    fn a_remote_key_is_user_data_that_still_obeys_the_id_rule() {
+        // A remote's map key *is* its ID. Being user data rather than a schema
+        // field exempts it from `deny_unknown_fields`, not from the name rule.
+        let error = BatfilesConfig::parse("[remotes.'my remote']\ntype = 'file'\nurl = 'u'\n")
+            .expect_err("a remote ID cannot contain a space");
+        assert!(error.to_string().contains("`my remote`"), "{error}");
+
+        let config = BatfilesConfig::parse("[remotes.oh-my-zsh]\ntype = 'file'\nurl = 'u'\n")
+            .expect("a valid ID is still just user data");
+        assert!(config.remotes.contains_key(&remote_id("oh-my-zsh")));
+        assert!(
+            toml::to_string(&config)
+                .expect("serialize")
+                .contains("[remotes.oh-my-zsh]")
+        );
     }
 
     #[test]
     fn the_sections_reach_the_records_that_own_them() {
         let config = BatfilesConfig::parse(EXAMPLE).expect("parse");
         assert!(matches!(
-            config.remotes["core"],
+            config.remotes[&remote_id("core")],
             Remote::Git(GitRemote { .. })
         ));
         assert_eq!(

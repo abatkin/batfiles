@@ -1,10 +1,10 @@
 //! `[[actions]]`: the ordered, heterogeneous list of things a repository does.
 //!
-//! Each action is one closed record selected by its `type` tag
-//! (`docs/repoformat.md#actions`). Every variant repeats the four common fields
-//! — `id`, `when`, `unless`, `group` — instead of sharing a flattened record,
-//! because `#[serde(flatten)]` silently disables `deny_unknown_fields`, and a
-//! closed record is exactly what the format promises.
+//! Each action is one closed record selected by its `type` tag. Every variant
+//! repeats the four common fields — `id`, `when`, `unless`, `group` — instead of
+//! sharing a flattened record, because `#[serde(flatten)]` silently disables
+//! `deny_unknown_fields`, and a closed record is exactly what the format
+//! promises.
 //!
 //! Records here mirror the file. Constraints that span fields — a `symlink`
 //! being in single *or* directory mode, `include-remote`'s allowed combinations
@@ -14,7 +14,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::repo::value::{Condition, RepoPath, StringList};
+use crate::item::ItemId;
+use crate::repo::value::{Condition, GlobFilter, ItemIdList, RepoPath};
 use crate::var::VarName;
 
 /// One entry of `[[actions]]`.
@@ -38,10 +39,10 @@ pub(crate) enum Action {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct SymlinkAction {
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     /// Single mode: the source file, symlink, or directory.
     pub source: Option<RepoPath>,
     /// Single mode: the exact destination path.
@@ -51,9 +52,9 @@ pub(crate) struct SymlinkAction {
     /// Directory mode: where those children are linked.
     pub dest_dir: Option<String>,
     /// Directory mode: direct child names to include.
-    pub include: Option<StringList>,
+    pub include: Option<GlobFilter>,
     /// Directory mode: direct child names to exclude.
-    pub exclude: Option<StringList>,
+    pub exclude: Option<GlobFilter>,
     /// Directory mode: prefix the first destination segment with `.`.
     #[serde(default)]
     pub dot_prefix: bool,
@@ -63,18 +64,18 @@ pub(crate) struct SymlinkAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyAction {
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     pub source: RepoPath,
     /// The exact destination for a file-like source, or the destination root
     /// for a directory source.
     pub dest: String,
     /// Recursive selection, for a directory source.
-    pub include: Option<StringList>,
+    pub include: Option<GlobFilter>,
     /// Recursive exclusion, for a directory source.
-    pub exclude: Option<StringList>,
+    pub exclude: Option<GlobFilter>,
     #[serde(default)]
     pub dot_prefix: bool,
 }
@@ -83,27 +84,26 @@ pub(crate) struct CopyAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CreateDirAction {
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     pub dest: String,
 }
 
 /// `git-clone-list`: clone every entry of a line-oriented manifest below one
 /// directory.
 ///
-/// The manifest itself is not TOML and is not read while planning
-/// (`docs/repoformat.md#deferred-manifest-expansion`); this record only says
-/// where it is.
+/// The manifest itself is not TOML and is not read while planning; this record
+/// only says where it is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneListAction {
     /// Required only when individual manifest entries need qualified addresses.
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     /// The manifest file.
     pub source: RepoPath,
     /// The parent directory for the derived clone destinations.
@@ -114,10 +114,10 @@ pub(crate) struct GitCloneListAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneAction {
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     /// A literal Git URL — not a [`RepoPath`].
     pub source: String,
     pub dest: String,
@@ -129,10 +129,10 @@ pub(crate) struct GitCloneAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchUrlAction {
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     /// An `https://`, `http://`, or `file://` URL.
     pub source: String,
     /// The file destination, or the destination directory when extracting.
@@ -143,8 +143,8 @@ pub(crate) struct FetchUrlAction {
     pub sha256: Option<String>,
     /// An archive prefix to strip, or `"*"` to detect a single root.
     pub archive_root: Option<String>,
-    pub include: Option<StringList>,
-    pub exclude: Option<StringList>,
+    pub include: Option<GlobFilter>,
+    pub exclude: Option<GlobFilter>,
 }
 
 /// `include-remote`: splice a Git remote's actions in at this position.
@@ -153,19 +153,19 @@ pub(crate) struct FetchUrlAction {
 pub(crate) struct IncludeRemoteAction {
     /// The prefix that makes included actions, groups, and manifest entries
     /// addressable as `<id>.<name>`. It need not match `remote`.
-    pub id: Option<String>,
+    pub id: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    pub group: Option<String>,
+    pub group: Option<ItemId>,
     /// The declared Git remote to include.
-    pub remote: String,
+    pub remote: ItemId,
     /// Each selection field is absent, one ID, or a list of IDs. Absent is not
     /// the same as empty — with none of the four present, every action in the
     /// remote is selected — so each stays an `Option`.
-    pub install_actions: Option<StringList>,
-    pub install_groups: Option<StringList>,
-    pub exclude_actions: Option<StringList>,
-    pub exclude_groups: Option<StringList>,
+    pub install_actions: Option<ItemIdList>,
+    pub install_groups: Option<ItemIdList>,
+    pub exclude_actions: Option<ItemIdList>,
+    pub exclude_groups: Option<ItemIdList>,
     /// Per-inclusion variable overrides.
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
@@ -175,6 +175,10 @@ pub(crate) struct IncludeRemoteAction {
 mod tests {
     use super::*;
     use crate::repo::value::RemotePath;
+
+    fn id(id: &str) -> ItemId {
+        ItemId::new(id).expect("valid id")
+    }
 
     fn parse(document: &str) -> Result<Vec<Action>, toml::de::Error> {
         #[derive(Deserialize)]
@@ -363,8 +367,8 @@ dest = "~/.config"
         ) else {
             unreachable!()
         };
-        assert_eq!(create.id.as_deref(), Some("config-dir"));
-        assert_eq!(create.group.as_deref(), Some("shell"));
+        assert_eq!(create.id, Some(id("config-dir")));
+        assert_eq!(create.group, Some(id("shell")));
         assert_eq!(create.when.as_deref(), Some("work && facts.os == 'darwin'"));
         assert_eq!(create.unless, None);
     }
@@ -412,15 +416,15 @@ vars = { profile = "personal" }
         ) else {
             unreachable!()
         };
-        assert_eq!(include.remote, "core");
+        assert_eq!(include.remote, id("core"));
         assert_eq!(
             include.install_groups,
-            Some(StringList::from_iter(["editor"]))
+            Some(ItemIdList::from_iter([id("editor")]))
         );
         // A bare string is the one-item list.
         assert_eq!(
             include.exclude_actions,
-            Some(StringList::from_iter(["p10k"]))
+            Some(ItemIdList::from_iter([id("p10k")]))
         );
         assert_eq!(include.install_actions, None);
         assert_eq!(
@@ -436,13 +440,35 @@ vars = { profile = "personal" }
         ) else {
             unreachable!()
         };
-        assert_eq!(empty.install_actions, Some(StringList::default()));
+        assert_eq!(empty.install_actions, Some(ItemIdList::default()));
+    }
+
+    #[test]
+    fn a_selection_list_holds_ids_rather_than_addresses() {
+        // The selection fields name unqualified IDs inside the remote, so a
+        // dotted address is a mistake rather than a deeper selection.
+        let error = parse(
+            "[[actions]]\ntype = 'include-remote'\nremote = 'core'\ninstall-actions = ['core.p10k']\n",
+        )
+        .expect_err("dots are not part of an ID");
+        assert!(error.to_string().contains("`core.p10k`"), "{error}");
+    }
+
+    #[test]
+    fn a_common_id_or_group_must_be_a_valid_id() {
+        for field in ["id", "group"] {
+            let error = parse(&format!(
+                "[[actions]]\ntype = 'create-dir'\ndest = 'x'\n{field} = '_hidden'\n"
+            ))
+            .expect_err("an ID cannot start with an underscore");
+            assert!(error.to_string().contains("`_hidden`"), "{error}");
+        }
     }
 
     #[test]
     fn a_remote_source_reaches_the_action_in_either_spelling() {
         let expected = RepoPath::Remote(RemotePath {
-            remote: "core".to_owned(),
+            remote: id("core"),
             path: "files".to_owned(),
         });
 

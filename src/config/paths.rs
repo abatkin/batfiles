@@ -1,4 +1,4 @@
-//! Location-root resolution, per `docs/environment.md#location-selection`.
+//! Location-root resolution.
 //!
 //! Each root follows `option > BATFILES_* env > default`. The home and leaf
 //! repository track the *selected* home; the config and cache directories hold

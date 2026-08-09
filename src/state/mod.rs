@@ -1,9 +1,9 @@
 //! The local files batfiles keeps outside the leaf repository.
 //!
-//! There are three (`docs/state.md`), one per file here: `vars.toml` and
-//! `disabled.toml` are machine-local user configuration, and `dynamic-vars.toml`
-//! is disposable cache data. Each is a whole document that batfiles rewrites
-//! atomically, so each type loads and stores itself through the shared path in
+//! There are three, one per file here: `vars.toml` and `disabled.toml` are
+//! machine-local user configuration, and `dynamic-vars.toml` is disposable
+//! cache data. Each is a whole document that batfiles rewrites atomically, so
+//! each type loads and stores itself through the shared path in
 //! [`crate::tomlfile`]. A type knows its own file *name*; the directory it sits
 //! in is a resolved root, so callers pass the path
 //! ([`Roots`](crate::config::Roots) pairs the two).

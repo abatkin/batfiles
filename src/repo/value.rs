@@ -1,24 +1,27 @@
 //! The value shapes `batfiles.toml` reuses across records.
 //!
-//! Two of them are unions of a convenient short form and an explicit long form
-//! (`docs/repoformat.md#shared-value-types`). Serde's `untagged` derive would
-//! read them, but it reports every mistake inside either form as "data did not
-//! match any variant", so both deserialize through a visitor instead: the short
-//! form is decided by the TOML type, and the long form's own error — an unknown
-//! field, a missing field, a non-string list item — survives with its location.
+//! Two of them are unions of a convenient short form and an explicit long form.
+//! Serde's `untagged` derive would read them, but it reports every mistake
+//! inside either form as "data did not match any variant", so both deserialize
+//! through a visitor instead: the short form is decided by the TOML type, and
+//! the long form's own error — an unknown field, a missing field, a non-string
+//! list item — survives with its location.
 
 use std::fmt;
+use std::marker::PhantomData;
 
-use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
+use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer, StrDeserializer};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::item::{ItemId, ItemIdError};
 
 /// A condition expression, held verbatim.
 ///
 /// Conditions are written in [Simple
 /// Expressions](https://github.com/abatkin/expressions-rs) and are parsed by
-/// that language, not here (`docs/repoformat.md#condition`). The alias exists so
-/// every `when`/`unless` field says what its string is for.
+/// that language, not here. The alias exists so every `when`/`unless` field says
+/// what its string is for.
 ///
 /// Every record carrying a `when` also accepts `unless` as its negated alias,
 /// and the two are mutually exclusive. Nothing in this module enforces that:
@@ -29,7 +32,7 @@ pub(crate) type Condition = String;
 /// A friendly duration such as `30s`, `1h 30m`, or `90 minutes`, held verbatim.
 ///
 /// The grammar and the rejection of negative values live with the code that
-/// interprets one (`docs/repoformat.md#duration-values`).
+/// interprets one.
 pub(crate) type DurationString = String;
 
 /// A path read from a repository: `RepoPath = string | { remote, path }`.
@@ -63,7 +66,7 @@ const REMOTE_SIGIL: char = '@';
 #[serde(deny_unknown_fields)]
 pub(crate) struct RemotePath {
     /// The remote's ID: its key in the leaf repository's `[remotes]` map.
-    pub remote: String,
+    pub remote: ItemId,
     /// The path within that remote's materialization.
     pub path: String,
 }
@@ -74,21 +77,29 @@ impl RemotePath {
     /// Both halves are required, so `"@core"` and `"@/files"` are malformed
     /// rather than a remote with no path or a path with no remote. Whether the
     /// remote exists, and whether this repository may refer to one at all, are
-    /// questions for the resolver; this is only the shorthand's grammar.
+    /// questions for the resolver; this is only the shorthand's grammar and the
+    /// remote segment's ID syntax.
     fn from_shorthand(value: &str) -> Result<Self, ShorthandError> {
-        let body = value.strip_prefix(REMOTE_SIGIL).ok_or(ShorthandError)?;
+        let body = value
+            .strip_prefix(REMOTE_SIGIL)
+            .ok_or(ShorthandError::Shape)?;
         match body.split_once('/') {
             Some((remote, path)) if !remote.is_empty() && !path.is_empty() => Ok(Self {
-                remote: remote.to_owned(),
+                remote: ItemId::new(remote).map_err(ShorthandError::Remote)?,
                 path: path.to_owned(),
             }),
-            _ => Err(ShorthandError),
+            _ => Err(ShorthandError::Shape),
         }
     }
 }
 
-/// A string that began with `@` but was not `@<remote>/<path>`.
-struct ShorthandError;
+/// Why a `@`-prefixed string was not a remote path.
+enum ShorthandError {
+    /// It was not `@<remote>/<path>` at all.
+    Shape,
+    /// It had both halves, but the remote is not a valid ID.
+    Remote(ItemIdError),
+}
 
 impl<'de> Deserialize<'de> for RepoPath {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -105,10 +116,11 @@ impl<'de> Deserialize<'de> for RepoPath {
                 if value.starts_with(REMOTE_SIGIL) {
                     return RemotePath::from_shorthand(value)
                         .map(RepoPath::Remote)
-                        .map_err(|ShorthandError| {
-                            E::custom(format!(
+                        .map_err(|error| match error {
+                            ShorthandError::Shape => E::custom(format!(
                                 "`{value}` starts with `@`, so it must be `@<remote>/<path>`"
-                            ))
+                            )),
+                            ShorthandError::Remote(error) => E::custom(error),
                         });
                 }
                 Ok(RepoPath::Relative(value.to_owned()))
@@ -123,57 +135,79 @@ impl<'de> Deserialize<'de> for RepoPath {
     }
 }
 
-/// One string or a list of them, normalized to a list.
+/// One value or a list of them, normalized to a list.
 ///
-/// Both `GlobFilter` and the `include-*`/`exclude-*` ID lists are written this
-/// way, and a bare string means a one-item list
-/// (`docs/repoformat.md#glob-filter`). The distinction between the two spellings
-/// carries no meaning, so it is not preserved; the difference between an absent
-/// field and an empty list does carry meaning, so callers hold an
-/// `Option<StringList>`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// Two field shapes are written this way — `GlobFilter` and the `include-*` /
+/// `exclude-*` ID lists — and in both a bare string means a one-item list. The
+/// one-or-many spelling is the only thing they share, so it lives here once and
+/// the element type says which shape a field is.
+///
+/// The distinction between the two spellings carries no meaning, so it is not
+/// preserved; the difference between an absent field and an empty list does
+/// carry meaning, so callers hold an `Option<..>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub(crate) struct StringList {
-    pub items: Vec<String>,
+pub(crate) struct OneOrMany<T> {
+    pub items: Vec<T>,
 }
 
-impl StringList {
-    pub fn as_slice(&self) -> &[String] {
+/// One glob or a list of them: the `include`/`exclude` filters on symlink, copy,
+/// fetch-url, and archive remotes. Globs are matched where they are used, not
+/// validated here.
+pub(crate) type GlobFilter = OneOrMany<String>;
+
+/// One ID or a list of them: the `include-remote` selection fields. Each element
+/// is validated as an [`ItemId`], in either spelling.
+pub(crate) type ItemIdList = OneOrMany<ItemId>;
+
+impl<T> OneOrMany<T> {
+    pub fn as_slice(&self) -> &[T] {
         &self.items
     }
 }
 
-impl<T: Into<String>> FromIterator<T> for StringList {
-    fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
+/// An absent list and an empty one differ, so this is the empty *list* rather
+/// than a default element; it is written by hand because `T` need not be
+/// `Default`.
+impl<T> Default for OneOrMany<T> {
+    fn default() -> Self {
+        Self { items: Vec::new() }
+    }
+}
+
+impl<T, U: Into<T>> FromIterator<U> for OneOrMany<T> {
+    fn from_iter<I: IntoIterator<Item = U>>(items: I) -> Self {
         Self {
             items: items.into_iter().map(Into::into).collect(),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for StringList {
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneOrMany<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct StringListVisitor;
+        struct OneOrManyVisitor<T>(PhantomData<T>);
 
-        impl<'de> Visitor<'de> for StringListVisitor {
-            type Value = StringList;
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for OneOrManyVisitor<T> {
+            type Value = OneOrMany<T>;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("a string or a list of strings")
             }
 
-            fn visit_str<E: de::Error>(self, value: &str) -> Result<StringList, E> {
-                Ok(StringList {
-                    items: vec![value.to_owned()],
-                })
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                // The scalar goes through `T`'s own deserializer rather than
+                // being wrapped directly, so an element type that validates —
+                // `ItemId` — rejects a bad value in this spelling too.
+                let item = T::deserialize(StrDeserializer::<E>::new(value))?;
+                Ok(OneOrMany { items: vec![item] })
             }
 
-            fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<StringList, A::Error> {
-                Vec::deserialize(SeqAccessDeserializer::new(seq)).map(|items| StringList { items })
+            fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+                Vec::deserialize(SeqAccessDeserializer::new(seq)).map(|items| OneOrMany { items })
             }
         }
 
-        deserializer.deserialize_any(StringListVisitor)
+        deserializer.deserialize_any(OneOrManyVisitor(PhantomData))
     }
 }
 
@@ -192,9 +226,13 @@ mod tests {
         toml::from_str::<Wrapper<T>>(line).map(|wrapper| wrapper.value)
     }
 
+    fn id(id: &str) -> ItemId {
+        ItemId::new(id).expect("valid id")
+    }
+
     fn remote(remote: &str, path: &str) -> RepoPath {
         RepoPath::Remote(RemotePath {
-            remote: remote.to_owned(),
+            remote: id(remote),
             path: path.to_owned(),
         })
     }
@@ -247,6 +285,19 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_segment_must_be_a_valid_id_in_either_spelling() {
+        // The remote names a key in the `[remotes]` map, so it obeys the ID rule
+        // wherever it is written — and the shorthand's own errors survive.
+        let error = parse::<RepoPath>("value = '@my remote/files'").expect_err("invalid remote");
+        assert!(error.to_string().contains("`my remote`"), "{error}");
+        assert!(error.to_string().contains("not a valid ID"), "{error}");
+
+        let error = parse::<RepoPath>("value = { remote = 'my remote', path = 'files' }")
+            .expect_err("invalid remote");
+        assert!(error.to_string().contains("`my remote`"), "{error}");
+    }
+
+    #[test]
     fn a_structured_repo_path_reports_its_own_mistakes() {
         let error = parse::<RepoPath>("value = { remote = 'core' }").expect_err("missing path");
         assert!(
@@ -274,24 +325,24 @@ mod tests {
     }
 
     #[test]
-    fn a_string_list_accepts_one_string_or_many() {
+    fn a_glob_filter_accepts_one_string_or_many() {
         assert_eq!(
-            parse::<StringList>("value = '*.toml'").expect("one"),
-            StringList::from_iter(["*.toml"])
+            parse::<GlobFilter>("value = '*.toml'").expect("one"),
+            GlobFilter::from_iter(["*.toml"])
         );
         assert_eq!(
-            parse::<StringList>("value = ['private/*', '*.bak']").expect("many"),
-            StringList::from_iter(["private/*", "*.bak"])
+            parse::<GlobFilter>("value = ['private/*', '*.bak']").expect("many"),
+            GlobFilter::from_iter(["private/*", "*.bak"])
         );
         assert_eq!(
-            parse::<StringList>("value = []").expect("empty"),
-            StringList::default()
+            parse::<GlobFilter>("value = []").expect("empty"),
+            GlobFilter::default()
         );
     }
 
     #[test]
-    fn a_string_list_rejects_a_non_string_item_at_its_position() {
-        let error = parse::<StringList>("value = ['ok', 2]").expect_err("integers are not globs");
+    fn a_one_or_many_list_rejects_a_non_string_item_at_its_position() {
+        let error = parse::<GlobFilter>("value = ['ok', 2]").expect_err("integers are not globs");
         assert!(
             error.to_string().contains("invalid type: integer"),
             "{error}"
@@ -300,13 +351,47 @@ mod tests {
     }
 
     #[test]
-    fn both_spellings_of_a_string_list_serialize_as_a_list() {
-        let one = Wrapper {
-            value: StringList::from_iter(["*.toml"]),
+    fn an_id_list_takes_the_same_shapes_as_a_glob_filter() {
+        assert_eq!(
+            parse::<ItemIdList>("value = 'p10k'").expect("one"),
+            ItemIdList::from_iter([id("p10k")])
+        );
+        assert_eq!(
+            parse::<ItemIdList>("value = ['p10k', 'oh-my-zsh']").expect("many"),
+            ItemIdList::from_iter([id("p10k"), id("oh-my-zsh")])
+        );
+        assert_eq!(
+            parse::<ItemIdList>("value = []").expect("empty"),
+            ItemIdList::default()
+        );
+    }
+
+    #[test]
+    fn an_id_list_validates_its_elements_in_either_spelling() {
+        // The scalar spelling is a one-item list, so it cannot be the loophole
+        // that lets an invalid ID through.
+        for document in ["value = 'core.zshrc'", "value = ['ok', 'core.zshrc']"] {
+            let error = parse::<ItemIdList>(document).expect_err("dots are not part of an ID");
+            assert!(error.to_string().contains("`core.zshrc`"), "{error}");
+        }
+    }
+
+    #[test]
+    fn both_spellings_of_a_one_or_many_list_serialize_as_a_list() {
+        let globs = Wrapper {
+            value: GlobFilter::from_iter(["*.toml"]),
         };
         assert_eq!(
-            toml::to_string(&one).expect("serialize"),
+            toml::to_string(&globs).expect("serialize"),
             "value = [\"*.toml\"]\n"
+        );
+
+        let ids = Wrapper {
+            value: ItemIdList::from_iter([id("p10k")]),
+        };
+        assert_eq!(
+            toml::to_string(&ids).expect("serialize"),
+            "value = [\"p10k\"]\n"
         );
     }
 
@@ -321,10 +406,7 @@ mod tests {
         );
 
         let remote = Wrapper {
-            value: RepoPath::Remote(RemotePath {
-                remote: "core".to_owned(),
-                path: "files/zshrc".to_owned(),
-            }),
+            value: remote("core", "files/zshrc"),
         };
         assert_eq!(
             toml::to_string(&remote).expect("serialize"),

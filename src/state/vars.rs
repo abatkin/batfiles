@@ -1,10 +1,9 @@
 //! `vars.toml`: deliberate, non-regenerable variable overrides for one machine.
 //!
-//! The whole document is a map from user-variable name to string value
-//! (`docs/state.md#varstoml-machine-local-variables`). Top-level keys are data
-//! rather than schema fields, so the map accepts any key that is a valid
-//! variable name — which is what [`VarName`] as the key type enforces, at the
-//! point the file is read.
+//! The whole document is a map from user-variable name to string value.
+//! Top-level keys are data rather than schema fields, so the map accepts any key
+//! that is a valid variable name — which is what [`VarName`] as the key type
+//! enforces, at the point the file is read.
 
 use std::collections::BTreeMap;
 use std::path::Path;

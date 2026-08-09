@@ -2,8 +2,7 @@
 //!
 //! Disposable cache data, kept in the cache directory and named differently from
 //! `vars.toml` so regenerable captures are never mistaken for the machine-local
-//! configuration a user wrote
-//! (`docs/state.md#dynamic-varstoml-dynamic-variable-cache`).
+//! configuration a user wrote.
 //!
 //! The top-level key is a *declaration* identity, not a variable name: leaf
 //! declarations use their bare name and remote ones use
@@ -18,6 +17,7 @@ use std::path::Path;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::item::ItemId;
 use crate::tomlfile;
 use crate::var::VarName;
 
@@ -67,10 +67,10 @@ impl DynamicVarCache {
 
     /// The cache key of a remote's declaration.
     ///
-    /// `remote_id` is the remote's key in the leaf's `[remotes]` map. The
-    /// `remote:` prefix is what keeps leaf and remote declarations in separate
-    /// namespaces even when they share a variable name.
-    pub fn remote_key(remote_id: &str, name: &VarName) -> String {
+    /// `remote_id` is the remote's key in the leaf's `[remotes]` map, hence an
+    /// [`ItemId`]. The `remote:` prefix is what keeps leaf and remote
+    /// declarations in separate namespaces even when they share a variable name.
+    pub fn remote_key(remote_id: &ItemId, name: &VarName) -> String {
         format!("remote:{remote_id}.{name}")
     }
 }
@@ -91,6 +91,10 @@ captured-at = "2026-06-19T12:00:00Z"
 
     fn parse(document: &str) -> Result<DynamicVarCache, toml::de::Error> {
         toml::from_str(document)
+    }
+
+    fn remote_id(id: &str) -> ItemId {
+        ItemId::new(id).expect("valid id")
     }
 
     fn timestamp(text: &str) -> Timestamp {
@@ -158,7 +162,7 @@ captured-at = "2026-06-19T12:00:00Z"
         let name = VarName::new("has_op").expect("valid name");
         assert_eq!(DynamicVarCache::leaf_key(&name), "has_op");
         assert_eq!(
-            DynamicVarCache::remote_key("core", &name),
+            DynamicVarCache::remote_key(&remote_id("core"), &name),
             "remote:core.has_op"
         );
     }
@@ -177,7 +181,7 @@ captured-at = "2026-06-19T12:00:00Z"
         let name = VarName::new("has_op").expect("valid name");
         let cache = DynamicVarCache {
             entries: BTreeMap::from([(
-                DynamicVarCache::remote_key("core", &name),
+                DynamicVarCache::remote_key(&remote_id("core"), &name),
                 CachedVar {
                     value: "true".to_owned(),
                     captured_at: timestamp("2026-06-19T12:00:00Z"),

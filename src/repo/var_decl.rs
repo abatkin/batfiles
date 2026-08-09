@@ -1,7 +1,6 @@
 //! The `[vars]` map: static values and dynamic declarations.
 //!
-//! Every variable batfiles exposes is a string
-//! (`docs/repoformat.md#string-valued-variables`), so a static value is a TOML
+//! Every variable batfiles exposes is a string, so a static value is a TOML
 //! string and nothing else. A table is therefore unambiguous: it is a
 //! dynamic-variable declaration, and it must match that closed record.
 
@@ -51,8 +50,7 @@ impl<'de> Deserialize<'de> for VarDecl {
     }
 }
 
-/// A dynamic variable: a command, and how to capture and cache its result
-/// (`docs/repoformat.md#dynamic-variable-record`).
+/// A dynamic variable: a command, and how to capture and cache its result.
 ///
 /// `cache` and `command-timeout` stay optional rather than deserializing to
 /// their documented `1d` and `5s` defaults, so a declaration that omits them

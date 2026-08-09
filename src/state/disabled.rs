@@ -1,10 +1,16 @@
 //! `disabled.toml`: the actions and groups switched off on this machine.
 //!
-//! A closed record with two address lists
-//! (`docs/state.md#disabledtoml-disabled-actions-and-groups`). Addresses are
-//! held as plain strings: enable and disable validate an address for *syntax*
-//! only and never load the repository, precisely so an address can be recorded
-//! before the action, group, inclusion, or manifest entry it names exists.
+//! A closed record with two address lists. The file validates address *syntax*
+//! as it loads and never resolves an address against a repository, precisely so
+//! an address can be recorded before the action, group, inclusion, or manifest
+//! entry it names exists: a pre-registered entry matches nothing today and may
+//! match after a branch change or a Git update.
+//!
+//! A malformed address is a different thing, and it fails the load like any
+//! other malformed TOML here. It can never become live, so tolerating it would
+//! carry a permanently dead entry silently, and dropping it on the next save
+//! would make an unrelated `disable-action` destructive. Fixing one means
+//! editing the file, which is already how this document may be maintained.
 //!
 //! Both lists are sets. The file promises no duplicates and a stable order, and
 //! a mutation that changes nothing must not rewrite the document merely to sort
@@ -16,6 +22,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::item::ItemAddress;
 use crate::tomlfile;
 
 /// The parsed `disabled.toml`.
@@ -24,10 +31,10 @@ use crate::tomlfile;
 pub(crate) struct Disabled {
     /// Action, remote, included-action, and manifest-entry addresses.
     #[serde(default)]
-    pub actions: BTreeSet<String>,
+    pub actions: BTreeSet<ItemAddress>,
     /// Group addresses.
     #[serde(default)]
-    pub groups: BTreeSet<String>,
+    pub groups: BTreeSet<ItemAddress>,
 }
 
 impl Disabled {
@@ -58,8 +65,12 @@ mod tests {
         toml::from_str(document)
     }
 
-    fn set(items: [&str; 2]) -> BTreeSet<String> {
-        items.into_iter().map(str::to_owned).collect()
+    fn address(address: &str) -> ItemAddress {
+        ItemAddress::new(address).expect("valid address")
+    }
+
+    fn set(items: [&str; 2]) -> BTreeSet<ItemAddress> {
+        items.into_iter().map(address).collect()
     }
 
     #[test]
@@ -90,10 +101,10 @@ mod tests {
 
     #[test]
     fn a_qualified_address_is_stored_as_written() {
-        // Nothing here splits or resolves an address; that is the point of the
-        // file surviving a repository it cannot read.
+        // The address is split into segments but never resolved; that is the
+        // point of the file surviving a repository it cannot read.
         let disabled = parse("actions = ['core.zsh-plugins.p10k']\n").expect("parse");
-        assert!(disabled.actions.contains("core.zsh-plugins.p10k"));
+        assert!(disabled.actions.contains(&address("core.zsh-plugins.p10k")));
     }
 
     #[test]
@@ -101,16 +112,28 @@ mod tests {
         let disabled = parse("actions = ['b', 'a', 'b']\n").expect("parse");
         assert_eq!(
             disabled.actions.iter().collect::<Vec<_>>(),
-            ["a", "b"].iter().collect::<Vec<_>>()
+            [address("a"), address("b")].iter().collect::<Vec<_>>()
         );
     }
 
     #[test]
     fn a_mutation_reports_whether_it_changed_anything() {
         let mut disabled = parse("actions = ['p10k']\n").expect("parse");
-        assert!(!disabled.actions.insert("p10k".to_owned()));
-        assert!(disabled.actions.insert("core.zshrc".to_owned()));
-        assert!(!disabled.groups.remove("absent"));
+        assert!(!disabled.actions.insert(address("p10k")));
+        assert!(disabled.actions.insert(address("core.zshrc")));
+        assert!(!disabled.groups.remove(&address("absent")));
+    }
+
+    #[test]
+    fn a_malformed_address_fails_the_document() {
+        // The rest of `state` treats an unparseable file as fatal, and a
+        // malformed address can never become live, so it is not junk worth
+        // preserving.
+        let error = parse("actions = ['core..p10k']\n").expect_err("empty segment");
+        assert!(error.to_string().contains("`core..p10k`"), "{error}");
+
+        let error = parse("groups = ['my group']\n").expect_err("spaces are not IDs");
+        assert!(error.to_string().contains("`my group`"), "{error}");
     }
 
     /// A path in a fresh directory, named the way the config directory would
@@ -130,6 +153,22 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path(&dir)).expect("read"),
             "actions = [\"core.zshrc\", \"p10k\"]\ngroups = []\n"
+        );
+    }
+
+    #[test]
+    fn addresses_keep_their_textual_order() {
+        // The order is visible in the written document, so it stays the one the
+        // plain-string representation produced: `-` sorts before `.`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        parse("actions = ['a.b', 'a-c']\n")
+            .expect("parse")
+            .save(&path(&dir))
+            .expect("save");
+
+        assert_eq!(
+            std::fs::read_to_string(path(&dir)).expect("read"),
+            "actions = [\"a-c\", \"a.b\"]\ngroups = []\n"
         );
     }
 

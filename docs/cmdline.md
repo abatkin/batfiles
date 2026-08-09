@@ -289,6 +289,15 @@ Every placeholder between dots must match the repository format's [shared ID
 syntax](repoformat.md#names-and-ids). Dots are address separators and are not
 part of an individual ID.
 
+Address *syntax* is just that rule: an address is a nonempty dot-separated list
+of valid IDs, with no upper bound on the number of segments. The table above
+lists the shapes the current repository model can *resolve*, which is a separate
+question. A syntactically valid address with more segments than any of those
+forms — `a.b.c.d.e` — is well formed and simply names nothing, so a command that
+resolves it reports that it was not found rather than that it was malformed.
+Commands that record an address without resolving it, such as the persistent
+enable and disable commands, accept any syntactically valid address.
+
 An unqualified action or group always refers to the leaf repository; batfiles
 does not search included remotes for a matching unqualified name. In a qualified
 address, `<remote>` is the `id` of the leaf's `include-remote` action. It is the
