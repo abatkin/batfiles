@@ -262,10 +262,15 @@ email = { command = ["git", "config", "user.email"], cache = "24h" }
 | `command`         | string or non-empty `list<string>` |   yes    | —          | Shell command string or direct argument vector.                                 |
 | `capture`         | `"stdout" \| "status"`             |    no    | `"stdout"` | Produce a string from trimmed stdout or `"true"`/`"false"` from command status. |
 | `cache`           | duration string                    |    no    | `"1d"`     | Cache lifetime, using a friendly duration such as `"1h"`.                       |
-| `command-timeout` | duration string                    |    no    | `"5s"`     | Maximum command runtime.                                                        |
+| `command-timeout` | duration string                    |    no    | `"5s"`     | Maximum command runtime; must be greater than zero.                             |
 
 Arbitrary table-shaped variable values are not supported; every table value in
 `[vars]` must match this closed dynamic-variable record.
+
+A captured value holds at most 1 MiB. A `capture = "stdout"` command that writes
+more than that fails rather than having its output truncated, in the same way
+that output which is not valid UTF-8 fails rather than being reinterpreted. See
+[how dynamic commands are run](environment.md#how-dynamic-commands-are-run).
 
 #### Duration values
 
@@ -281,7 +286,11 @@ are not accepted.
 A day is exactly 24 hours and a week is exactly 7 days. Months and years have no
 fixed length, so they are not durations; freshness compares two instants rather
 than two calendar dates. A negative duration — written `-1h` or `1h ago` — is
-invalid. Zero is valid: as a `cache` it means the value is never fresh.
+invalid.
+
+Zero is valid as a `cache`, where it means the value is never fresh. It is not
+valid as a `command-timeout`: a zero timeout asks for a command that is
+guaranteed to fail, so `command-timeout` must be greater than zero.
 
 ## Default-Disabled Bootstrap Entries
 

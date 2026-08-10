@@ -3,6 +3,7 @@
 mod app;
 mod cli;
 mod config;
+mod dynamic;
 mod init;
 mod item;
 mod output;

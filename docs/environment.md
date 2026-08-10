@@ -248,7 +248,7 @@ Rules for `env` values:
 - `batfiles vars list` includes captured host values in the `env.*` namespace
   when it resolves the effective variable set.
 
-## Environment inherited by dynamic commands
+## How dynamic commands are run
 
 Dynamic variable commands inherit the `batfiles` process environment. Batfiles
 does not export its resolved user-variable scope as environment variables. A
@@ -260,6 +260,41 @@ Each command runs with its working directory set to the root of the repository
 that declared it — the leaf repository, or the materialization of the remote
 that declared the variable. A relative path in the command therefore resolves
 there rather than in whatever directory `batfiles` was invoked from.
+
+A `command` written as a string runs under `sh -c` on Unix and `cmd /C` on
+Windows. It is never run under the user's login shell: a login shell runs that
+user's startup files, so the same manifest would capture different values on two
+machines whose owner happens to prefer a different interactive shell. A `command`
+written as a list is executed directly, with no shell at all.
+
+The child's three standard streams are connected as follows:
+
+- **Standard input** is connected to nothing. A dynamic command that reads it
+  sees end of input immediately rather than blocking on a terminal that may have
+  nobody watching it.
+- **Standard output** is captured for `capture = "stdout"` and discarded for
+  `capture = "status"`. It is never inherited, so a dynamic command cannot write
+  into the data channel described in [Output Streams](cmdline.md#output-streams).
+  Only what the command had written when it exited becomes the value: a process
+  it leaves running in the background neither extends the value nor delays the
+  capture.
+- **Standard error** is inherited, so the command's own diagnostics reach the
+  user verbatim. `--quiet` disconnects it instead; batfiles still reports a
+  failed capture with a warning of its own, but the command's explanation of the
+  failure is lost until the same command is run again without the flag.
+
+The `command-timeout` field bounds the whole run and defaults to `5s`. It must be
+greater than zero. When it expires, batfiles kills the command and the run is a
+**failure** for both capture modes: a command that was cut off never answered the
+question, so `capture = "status"` reports a failure rather than the string
+`"false"`. Only the command batfiles started is killed; a command string that
+backgrounds a further process of its own leaves that process running.
+
+A captured value is bounded as well as timed: a `capture = "stdout"` command that
+writes more than **1 MiB** is stopped and its refresh fails. The output is not
+truncated to fit, because a value cut in half is worse than no value at all, and
+the limit applies while the command runs so that a command writing without end
+cannot fill the temporary directory before its timeout expires.
 
 ## Bootstrap use of `PATH`
 

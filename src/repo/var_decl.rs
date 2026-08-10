@@ -63,7 +63,30 @@ pub(crate) struct DynamicVar {
     #[serde(default)]
     pub capture: Capture,
     pub cache: Option<FriendlyDuration>,
+    #[serde(default, deserialize_with = "positive_duration")]
     pub command_timeout: Option<FriendlyDuration>,
+}
+
+/// Accept a `command-timeout`, rejecting zero.
+///
+/// `command-timeout = "0s"` asks for a command that is guaranteed to fail, which
+/// is a mistake to report with a file and a line rather than a semantic to
+/// implement. The asymmetry with `cache = "0s"` — which is coherent, meaning
+/// "never fresh", and stays valid — belongs to the two fields rather than to
+/// [`FriendlyDuration`], so the type keeps accepting zero and the check lives
+/// here. What the runner gets in exchange is a duration it knows is strictly
+/// positive.
+fn positive_duration<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<FriendlyDuration>, D::Error> {
+    let timeout = Option::<FriendlyDuration>::deserialize(deserializer)?;
+    if timeout.is_some_and(|value| value.as_signed().is_zero()) {
+        return Err(de::Error::custom(
+            "`command-timeout` must be greater than zero: a zero timeout would kill every \
+             command before it could produce a value",
+        ));
+    }
+    Ok(timeout)
 }
 
 /// What a dynamic variable's value is taken from.
@@ -102,9 +125,18 @@ impl<'de> Deserialize<'de> for CommandSpec {
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<CommandSpec, A::Error> {
-                // The list is required to be non-empty, which the resolver
-                // checks; an empty list parses here.
-                Vec::deserialize(SeqAccessDeserializer::new(seq)).map(CommandSpec::Args)
+                let args: Vec<String> = Vec::deserialize(SeqAccessDeserializer::new(seq))?;
+                // Rejected here rather than by whatever runs the command, so the
+                // diagnostic carries a file and a line. `docs/repoformat.md`
+                // already documents the field as a non-empty list, so this
+                // enforces the format rather than narrowing it.
+                if args.is_empty() {
+                    return Err(de::Error::custom(
+                        "an empty `command` list has nothing to run: write the program and its \
+                         arguments, such as `[\"git\", \"config\", \"user.email\"]`",
+                    ));
+                }
+                Ok(CommandSpec::Args(args))
             }
         }
 
@@ -223,6 +255,44 @@ command-timeout = "5s"
             error.to_string().contains("a variable name must"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn an_empty_command_list_is_rejected_with_the_rule() {
+        let error = parse("[email]\ncommand = []\n").expect_err("nothing to run");
+        let message = error.to_string();
+        assert!(message.contains("has nothing to run"), "{message}");
+        assert!(
+            message.contains("write the program and its arguments"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_zero_command_timeout_is_rejected_and_a_tiny_one_is_not() {
+        // Deliberately not symmetric with `cache = "0s"`, which stays valid: a
+        // zero cache means "never fresh", a zero timeout means "never runs".
+        let error = parse("[email]\ncommand = 'true'\ncommand-timeout = '0s'\n")
+            .expect_err("a zero timeout is not a coherent request");
+        let message = error.to_string();
+        assert!(message.contains("must be greater than zero"), "{message}");
+        assert!(
+            parse("[email]\ncommand = 'true'\ncommand-timeout = '1ms'\n").is_ok(),
+            "a very short timeout is still a timeout"
+        );
+        assert!(
+            parse("[email]\ncommand = 'true'\ncache = '0s'\n").is_ok(),
+            "`cache = \"0s\"` means never fresh, which is a coherent thing to ask for"
+        );
+    }
+
+    #[test]
+    fn a_rejected_field_fails_the_document_that_contains_it() {
+        // The point of checking at deserialize time: the diagnostic carries a
+        // position, the way `an_invalid_duration_fails_the_document_that_contains_it`
+        // does in `duration.rs`.
+        let error = parse("email = { command = [] }\n").expect_err("nothing to run");
+        assert!(error.to_string().contains("line 1"), "{error}");
     }
 
     #[test]

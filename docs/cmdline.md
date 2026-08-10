@@ -63,6 +63,12 @@ Every command follows one rule for where its output goes:
   suppresses the informational lines while leaving warnings and errors; `-v`
   adds detail.
 
+A subprocess batfiles runs — a dynamic variable's command — inherits standard
+error rather than writing through batfiles, and `--quiet` disconnects it instead
+of leaving the noisiest output on an otherwise quiet channel. See [how dynamic
+commands are run](environment.md#how-dynamic-commands-are-run) for the rest of
+that contract.
+
 Most commands produce no requested data at all and therefore write nothing to
 standard output. `version` and `vars get` are the current exceptions, and
 `vars list` joins them.

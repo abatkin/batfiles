@@ -8,8 +8,7 @@ repository = "https://github.com/abatkin/batfiles-rust"
 rust-version = "1.94"
 
 # Only dependencies implemented code actually uses are declared here. Expression
-# evaluation, hashing, archives, and subprocess timeouts arrive with the features
-# that need them.
+# evaluation, hashing, and archives arrive with the features that need them.
 [dependencies]
 # clap drives argument parsing and help/usage generation. Dual-licensed
 # MIT/Apache-2.0.
@@ -27,9 +26,13 @@ toml = "1"
 # database nor system time-zone lookup is needed. Dual-licensed Unlicense/MIT.
 jiff = { version = "0.2", default-features = false, features = ["std", "serde"] }
 
-[dev-dependencies]
-# assert_cmd locates and runs the Cargo-built `batfiles` binary in the
-# end-to-end CLI tests; tempfile gives each test a self-cleaning isolated root.
-# Both dual-licensed MIT/Apache-2.0.
-assert_cmd = "2"
+# tempfile gives stdout captures a secure, self-cleaning file with independent
+# reader and writer handles. A file cannot fill like a pipe while batfiles waits
+# for the command, and a background descendant retaining stdout cannot postpone
+# end-of-file. Dual-licensed MIT/Apache-2.0.
 tempfile = "3"
+
+[dev-dependencies]
+# assert_cmd locates and runs the Cargo-built `batfiles` binary in the end-to-end
+# CLI tests. Dual-licensed MIT/Apache-2.0.
+assert_cmd = "2"

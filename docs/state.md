@@ -204,6 +204,10 @@ non-zero produces the string `"false"`. If the command cannot be started, the
 runtime result is a transient `"false"`, a warning is emitted, and no new cache
 entry is written.
 
+A command killed at its `command-timeout` is a refresh failure under both capture
+modes, so the transient `"false"` above covers only a command that could not be
+started. See [how dynamic commands are run](environment.md#how-dynamic-commands-are-run).
+
 Plan-building and execution commands evaluate every reachable, allowed dynamic
 declaration eagerly, including declarations shadowed by higher-precedence
 values. Successful captures are cached even though the higher-precedence value
