@@ -10,7 +10,7 @@ use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::repo::value::DurationString;
+use crate::repo::duration::FriendlyDuration;
 
 /// One entry in `[vars]`.
 ///
@@ -62,8 +62,8 @@ pub(crate) struct DynamicVar {
     pub command: CommandSpec,
     #[serde(default)]
     pub capture: Capture,
-    pub cache: Option<DurationString>,
-    pub command_timeout: Option<DurationString>,
+    pub cache: Option<FriendlyDuration>,
+    pub command_timeout: Option<FriendlyDuration>,
 }
 
 /// What a dynamic variable's value is taken from.
@@ -129,6 +129,10 @@ mod tests {
             .expect("declared")
     }
 
+    fn duration(text: &str) -> FriendlyDuration {
+        FriendlyDuration::new(text).expect("valid duration")
+    }
+
     #[test]
     fn a_string_is_a_static_value_and_a_table_is_a_declaration() {
         let vars = parse(
@@ -154,7 +158,7 @@ command-timeout = "5s"
                     "user.email".to_owned()
                 ]),
                 capture: Capture::Stdout,
-                cache: Some("24h".to_owned()),
+                cache: Some(duration("24h")),
                 command_timeout: None,
             })
         );
@@ -164,7 +168,7 @@ command-timeout = "5s"
                 command: CommandSpec::Shell("command -v op >/dev/null".to_owned()),
                 capture: Capture::Status,
                 cache: None,
-                command_timeout: Some("5s".to_owned()),
+                command_timeout: Some(duration("5s")),
             })
         );
     }

@@ -271,12 +271,17 @@ Arbitrary table-shaped variable values are not supported; every table value in
 
 `cache` and `command-timeout` accept a friendly duration: a number and a unit,
 optionally repeated, such as `30s`, `5m`, `1h`, `1d`, `1w`, or `1h 30m`. Units
-may also be spelled out (`90 minutes`), and a fractional quantity is allowed
-(`1.5h`).
+may be abbreviated or spelled out (`2 hrs`, `90 minutes`), separated by
+whitespace or commas, and sub-second units are accepted (`500ms`). A clock-style
+`HH:MM:SS` form is also accepted (`01:30:00`). A fractional quantity is allowed
+on the last unit written and only for hours or smaller: `1.5h` and `1m 30.5s`
+are durations, `1.5d` and `1.5h 30m` are not. ISO 8601 durations such as `PT1H`
+are not accepted.
 
 A day is exactly 24 hours and a week is exactly 7 days. Months and years have no
 fixed length, so they are not durations; freshness compares two instants rather
-than two calendar dates. A negative duration is invalid.
+than two calendar dates. A negative duration — written `-1h` or `1h ago` — is
+invalid. Zero is valid: as a `cache` it means the value is never fresh.
 
 ## Default-Disabled Bootstrap Entries
 

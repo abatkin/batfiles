@@ -21,9 +21,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "1"
 
 # jiff parses and formats the RFC 3339 `captured-at` timestamp in the
-# dynamic-variable cache. Default features are off: that timestamp is an instant,
-# so neither the bundled time-zone database nor system time-zone lookup is
-# needed. Dual-licensed Unlicense/MIT.
+# dynamic-variable cache, and its "friendly" format defines the `cache` and
+# `command-timeout` duration grammar. Default features are off: a timestamp is an
+# instant and a duration is relative to nothing, so neither the bundled time-zone
+# database nor system time-zone lookup is needed. Dual-licensed Unlicense/MIT.
 jiff = { version = "0.2", default-features = false, features = ["std", "serde"] }
 
 [dev-dependencies]

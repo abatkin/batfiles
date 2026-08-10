@@ -11,6 +11,7 @@
 mod action;
 mod batfiles_config;
 mod default_disabled;
+mod duration;
 mod remote;
 mod value;
 mod var_decl;
@@ -26,7 +27,8 @@ pub(crate) use {
     },
     batfiles_config::BatfilesConfig,
     default_disabled::{DefaultDisabled, DefaultDisabledAction, DefaultDisabledGroup},
+    duration::FriendlyDuration,
     remote::{ArchiveRemote, FileRemote, GitRemote, Remote},
-    value::{Condition, DurationString, GlobFilter, ItemIdList, RemotePath, RepoPath},
+    value::{Condition, GlobFilter, ItemIdList, RemotePath, RepoPath},
     var_decl::{Capture, CommandSpec, DynamicVar, VarDecl},
 };

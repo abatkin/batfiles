@@ -29,12 +29,6 @@ use crate::item::{ItemId, ItemIdError};
 /// validation that reads them.
 pub(crate) type Condition = String;
 
-/// A friendly duration such as `30s`, `1h 30m`, or `90 minutes`, held verbatim.
-///
-/// The grammar and the rejection of negative values live with the code that
-/// interprets one.
-pub(crate) type DurationString = String;
-
 /// A path read from a repository: `RepoPath = string | { remote, path }`.
 ///
 /// Three spellings, two meanings. `"@core/files/zshrc"` is defined as shorthand
