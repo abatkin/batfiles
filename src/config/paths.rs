@@ -26,6 +26,9 @@ pub(crate) struct Roots {
     pub cache_dir: PathBuf,
 }
 
+/// The materialization tree's name within the leaf repository.
+const REMOTES_DIR_NAME: &str = "remotes";
+
 /// The documents each root contains.
 ///
 /// Pairing a file with its root belongs here rather than with the type that
@@ -33,15 +36,22 @@ pub(crate) struct Roots {
 /// policy the fields above resolve, and keeping the four together is what makes
 /// "the cache file is the one that follows `--cache-dir`" checkable in one
 /// place. The file names travel with their parsers.
-#[allow(
-    dead_code,
-    reason = "no command loads `batfiles.toml` or the dynamic-variable cache yet"
-)]
+#[allow(dead_code, reason = "no command reads the dynamic-variable cache yet")]
 impl Roots {
     /// The leaf repository's manifest. A remote's manifest is not here: it lives
     /// in that remote's materialization rather than under a resolved root.
     pub fn batfiles_config(&self) -> PathBuf {
         self.batfiles_dir.join(BatfilesConfig::FILE_NAME)
+    }
+
+    /// The tool-owned materialization tree, `<batfiles-dir>/remotes`.
+    ///
+    /// The one entry here that is a directory rather than a document: which root
+    /// a remote materializes under is the same location policy the documents
+    /// follow, so it is stated with them. A remote's own root is this joined
+    /// with its declared `[remotes]` key.
+    pub fn remotes_dir(&self) -> PathBuf {
+        self.batfiles_dir.join(REMOTES_DIR_NAME)
     }
 
     /// Machine-local variable overrides.
@@ -335,6 +345,11 @@ mod tests {
             roots.dynamic_vars(),
             PathBuf::from("/os-home/.cache/batfiles/dynamic-vars.toml")
         );
+        // The one directory among them, and it belongs to the leaf repository.
+        assert_eq!(
+            roots.remotes_dir(),
+            PathBuf::from("/os-home/dotfiles/remotes")
+        );
     }
 
     #[test]
@@ -356,6 +371,7 @@ mod tests {
             roots.dynamic_vars(),
             PathBuf::from("/cache/dynamic-vars.toml")
         );
+        assert_eq!(roots.remotes_dir(), PathBuf::from("/repo/remotes"));
     }
 
     #[test]

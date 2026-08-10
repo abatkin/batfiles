@@ -29,6 +29,12 @@ Git remote may also have a `batfiles.toml`; it is optional and is read only when
 a leaf `include-remote` action selects it. The `remotes/` directory is generated
 materialization data and should normally be ignored by Git.
 
+Each remote materializes at `remotes/<remote-id>/` inside the leaf repository,
+keyed by its `[remotes]` map key rather than by the ID of any inclusion that
+selects it. An included Git remote's optional manifest is therefore
+`remotes/<remote-id>/batfiles.toml`, and two inclusions of one remote share the
+single materialization at that path.
+
 ## Top-Level `batfiles.toml` Schema
 
 All top-level sections are optional:
@@ -540,6 +546,10 @@ vars = { profile = "personal" }
 | `exclude-actions` | `ID` or `list<ID>`          |    no    | Deny-list of unqualified remote action IDs.   |
 | `exclude-groups`  | `ID` or `list<ID>`          |    no    | Deny-list of unqualified remote group names.  |
 | `vars`            | `map<string, string>`       |    no    | Per-inclusion variable overrides.             |
+
+The `remote` field must name a Git remote the same repository declares:
+naming an undeclared remote, or a declared `file` or `archive` remote, is
+invalid configuration.
 
 The common `id` is optional, but it is what makes included actions, groups, and
 manifest entries externally addressable. It becomes the `<remote>` prefix in a

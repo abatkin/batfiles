@@ -17,6 +17,21 @@ pub(crate) enum Remote {
     Archive(ArchiveRemote),
 }
 
+impl Remote {
+    /// The `type` tag this remote was written with.
+    ///
+    /// A diagnostic about the wrong kind of remote has to say which kind was
+    /// declared, and a `&'static str` is the whole of what it needs, so the
+    /// error carries this rather than a copy of the record.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Git(_) => "git",
+            Self::File(_) => "file",
+            Self::Archive(_) => "archive",
+        }
+    }
+}
+
 /// A Git repository, which an `include-remote` action may also include.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -96,6 +111,16 @@ mod tests {
             parse_one("[r]\ntype = 'archive'\nurl = 'u'\narchive-root = '*'\n"),
             Remote::Archive(_)
         ));
+    }
+
+    #[test]
+    fn every_variant_names_its_tag() {
+        assert_eq!(parse_one("[r]\ntype = 'git'\nurl = 'u'\n").kind(), "git");
+        assert_eq!(parse_one("[r]\ntype = 'file'\nurl = 'u'\n").kind(), "file");
+        assert_eq!(
+            parse_one("[r]\ntype = 'archive'\nurl = 'u'\n").kind(),
+            "archive"
+        );
     }
 
     #[test]

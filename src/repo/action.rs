@@ -31,6 +31,26 @@ pub(crate) enum Action {
     IncludeRemote(IncludeRemoteAction),
 }
 
+impl Action {
+    /// The action's `id`, if it was written with one.
+    ///
+    /// Every variant repeats the common fields, so reaching one of them takes an
+    /// exhaustive match. This is the only field with a caller that does not
+    /// already know the variant: action IDs share one namespace across a
+    /// repository, so uniqueness is checked over the list as a whole.
+    pub fn id(&self) -> Option<&ItemId> {
+        match self {
+            Self::Symlink(action) => action.id.as_ref(),
+            Self::Copy(action) => action.id.as_ref(),
+            Self::CreateDir(action) => action.id.as_ref(),
+            Self::GitCloneList(action) => action.id.as_ref(),
+            Self::GitClone(action) => action.id.as_ref(),
+            Self::FetchUrl(action) => action.id.as_ref(),
+            Self::IncludeRemote(action) => action.id.as_ref(),
+        }
+    }
+}
+
 /// `symlink`: one symlink, or a shallow set of them.
 ///
 /// The two modes share one record: single mode uses `source`/`dest`, directory
@@ -371,6 +391,31 @@ dest = "~/.config"
         assert_eq!(create.group, Some(id("shell")));
         assert_eq!(create.when.as_deref(), Some("work && facts.os == 'darwin'"));
         assert_eq!(create.unless, None);
+    }
+
+    #[test]
+    fn the_shared_id_is_reachable_without_knowing_the_variant() {
+        let actions = parse(
+            r#"
+[[actions]]
+type = "create-dir"
+id = "config-dir"
+dest = "~/.config"
+
+[[actions]]
+type = "include-remote"
+remote = "core"
+
+[[actions]]
+type = "symlink"
+id = "zshrc"
+source = "shell/zshrc"
+dest = "~/.zshrc"
+"#,
+        )
+        .expect("parse");
+        let ids: Vec<_> = actions.iter().map(Action::id).collect();
+        assert_eq!(ids, [Some(&id("config-dir")), None, Some(&id("zshrc"))]);
     }
 
     #[test]

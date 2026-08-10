@@ -7,6 +7,7 @@
 //! repository it is reading — applies them.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -62,18 +63,82 @@ impl BatfilesConfig {
     }
 
     /// Parse a manifest already in memory.
+    ///
+    /// Every manifest batfiles reads comes off disk through [`load`](Self::load),
+    /// so this is the seam the schema tests use, and the one an in-memory caller
+    /// would reach for if one appeared.
+    #[allow(dead_code, reason = "the schema tests are the only caller so far")]
     pub fn parse(document: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(document)
     }
+
+    /// Check the cross-record rules that hold for every repository.
+    ///
+    /// So far that is one rule: action IDs share a single namespace within a
+    /// repository (`docs/repoformat.md`), so a repeated ID makes addressing and
+    /// diagnostics ambiguous and is rejected before anything interprets the
+    /// actions. The rules that depend on whether this is a leaf or a remote, or
+    /// on what is on disk, stay with the code that knows those things.
+    ///
+    /// Nothing here touches the filesystem, so the error names positions rather
+    /// than a file; the caller that read the manifest supplies its path.
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        let mut seen: BTreeMap<&ItemId, usize> = BTreeMap::new();
+        for (position, action) in self.actions.iter().enumerate() {
+            let Some(id) = action.id() else { continue };
+            if let Some(&first_position) = seen.get(id) {
+                return Err(ValidationError::DuplicateActionId {
+                    id: id.clone(),
+                    first_position,
+                    duplicate_position: position,
+                });
+            }
+            seen.insert(id, position);
+        }
+        Ok(())
+    }
 }
+
+/// A manifest that parsed but broke a rule spanning its records.
+///
+/// Positions are zero-based indices into `actions`, matching how the loader
+/// indexes them, and are rendered one-based.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ValidationError {
+    /// Two actions were written with the same `id`.
+    DuplicateActionId {
+        id: ItemId,
+        first_position: usize,
+        duplicate_position: usize,
+    },
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateActionId {
+                id,
+                first_position,
+                duplicate_position,
+            } => write!(
+                f,
+                "action ID `{id}` is used by actions #{} and #{}; action IDs must be unique",
+                first_position + 1,
+                duplicate_position + 1
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::repo::remote::GitRemote;
 
-    fn remote_id(id: &str) -> ItemId {
-        ItemId::new(id).expect("valid id")
+    fn id(value: &str) -> ItemId {
+        ItemId::new(value).expect("valid id")
     }
 
     /// A manifest exercising every top-level section at once.
@@ -158,7 +223,7 @@ dest = "~/.zshrc"
 
         let config = BatfilesConfig::parse("[remotes.oh-my-zsh]\ntype = 'file'\nurl = 'u'\n")
             .expect("a valid ID is still just user data");
-        assert!(config.remotes.contains_key(&remote_id("oh-my-zsh")));
+        assert!(config.remotes.contains_key(&id("oh-my-zsh")));
         assert!(
             toml::to_string(&config)
                 .expect("serialize")
@@ -170,7 +235,7 @@ dest = "~/.zshrc"
     fn the_sections_reach_the_records_that_own_them() {
         let config = BatfilesConfig::parse(EXAMPLE).expect("parse");
         assert!(matches!(
-            config.remotes[&remote_id("core")],
+            config.remotes[&id("core")],
             Remote::Git(GitRemote { .. })
         ));
         assert_eq!(
@@ -195,6 +260,71 @@ dest = "~/.zshrc"
         assert_eq!(
             BatfilesConfig::load(&path).expect("load"),
             BatfilesConfig::parse(EXAMPLE).expect("parse")
+        );
+    }
+
+    #[test]
+    fn the_example_manifest_is_valid() {
+        BatfilesConfig::parse(EXAMPLE)
+            .expect("parse")
+            .validate()
+            .expect("the example breaks no cross-record rule");
+    }
+
+    #[test]
+    fn action_ids_share_one_namespace_across_the_variants() {
+        // The duplicate spans two different action types, which is what makes
+        // this the repository-wide namespace rather than a per-variant check.
+        let config = BatfilesConfig::parse(
+            r#"
+[[actions]]
+type = "create-dir"
+dest = "~/.config"
+
+[[actions]]
+type = "include-remote"
+id = "core"
+remote = "core"
+
+[[actions]]
+type = "symlink"
+id = "core"
+source = "shell/zshrc"
+dest = "~/.zshrc"
+"#,
+        )
+        .expect("a duplicate ID is still syntactically valid");
+
+        assert_eq!(
+            config.validate().expect_err("duplicate"),
+            ValidationError::DuplicateActionId {
+                id: id("core"),
+                first_position: 1,
+                duplicate_position: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn an_id_less_action_never_collides_with_another() {
+        let config = BatfilesConfig::parse(
+            "[[actions]]\ntype = 'create-dir'\ndest = 'a'\n\n\
+             [[actions]]\ntype = 'create-dir'\ndest = 'b'\n",
+        )
+        .expect("parse");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn a_duplicate_action_id_renders_one_based_positions() {
+        assert_eq!(
+            ValidationError::DuplicateActionId {
+                id: id("core"),
+                first_position: 1,
+                duplicate_position: 4,
+            }
+            .to_string(),
+            "action ID `core` is used by actions #2 and #5; action IDs must be unique"
         );
     }
 

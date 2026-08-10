@@ -155,6 +155,10 @@ pub(crate) type GlobFilter = OneOrMany<String>;
 pub(crate) type ItemIdList = OneOrMany<ItemId>;
 
 impl<T> OneOrMany<T> {
+    #[allow(
+        dead_code,
+        reason = "the selection and glob filters are read when actions are planned"
+    )]
     pub fn as_slice(&self) -> &[T] {
         &self.items
     }
