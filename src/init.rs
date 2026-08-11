@@ -22,16 +22,13 @@ use std::os::unix::fs::PermissionsExt as _;
 use crate::cli::InitArgs;
 use crate::config::{ConfigError, detect_os_home};
 use crate::output::Reporter;
-use crate::repo::BatfilesConfig;
+use crate::repo::{BatfilesConfig, Remote};
 
 /// The bootstrap entry point of a leaf repository.
 const INSTALL_SCRIPT: &str = "install.sh";
 
 /// Git's exclusion list, which is where the tool-owned `remotes/` tree belongs.
 const GITIGNORE: &str = ".gitignore";
-
-/// The generated tree `init` does not create and `.gitignore` does exclude.
-const REMOTES: &str = "remotes/";
 
 /// Initialize the current directory.
 pub(crate) fn run(args: &InitArgs, reporter: &Reporter) -> Result<(), Error> {
@@ -299,14 +296,22 @@ fn warn_unignored_remotes(dir: &Path, missing: &[Entry], reporter: &Reporter) {
         // The bare name, unlike the initialized directory reported above: a
         // `.gitignore` is understood relative to the repository root.
         reporter.warn(&format!(
-            "{GITIGNORE} does not ignore the tool-owned `{REMOTES}` tree; consider adding `/{REMOTES}` to it"
+            "{GITIGNORE} does not ignore the tool-owned `{tree}/` tree; consider adding `/{tree}/` to it",
+            tree = Remote::TREE_NAME
         ));
     }
 }
 
 /// Whether an exclusion list appears to cover the generated `remotes/` tree.
+///
+/// A deliberately loose substring match on the bare name, so `/remotes`,
+/// `remotes/`, and `dotfiles/remotes/**` all count. This only decides whether to
+/// emit a warning, and a false negative — nagging someone who already excluded
+/// the tree — is the worse of the two errors.
 fn ignores_remotes(document: &str) -> bool {
-    document.lines().any(|line| line.contains(REMOTES))
+    document
+        .lines()
+        .any(|line| line.contains(Remote::TREE_NAME))
 }
 
 /// Initialize a Git repository unless one already covers `dir`, answering
@@ -479,6 +484,11 @@ exit 1
 
 /// `remotes/` is materialization output, regenerated from the manifest, so it
 /// does not belong in history.
+///
+/// [`Remote::TREE_NAME`] owns the name, but `SKELETON` is a `const` and
+/// `concat!` will not take a const path, so the tree is spelled out here. A unit
+/// test pins the two together, which is what keeps this from being the drift the
+/// single owner exists to prevent.
 const GITIGNORE_CONTENT: &str = "/remotes/\n";
 
 #[cfg(test)]
@@ -634,10 +644,26 @@ mod tests {
         assert!(ignores_remotes("/remotes/\n"));
         assert!(ignores_remotes("*.swp\nremotes/\n"));
         assert!(ignores_remotes("dotfiles/remotes/**\n"));
+        // Both slashless spellings are real rules that cover the tree: a
+        // gitignore pattern containing no slash matches an entry of that name at
+        // any depth, directories included. Matching on `remotes/` used to nag
+        // the user who had written either of these.
+        assert!(ignores_remotes("/remotes\n"));
+        assert!(ignores_remotes("remotes\n"));
+
         assert!(!ignores_remotes(""));
         assert!(!ignores_remotes("*.swp\ntarget\n"));
-        // Close, and still not a rule that names the tree.
-        assert!(!ignores_remotes("remotes\n"));
+    }
+
+    #[test]
+    fn the_starter_exclusion_list_still_names_the_tree_it_excludes() {
+        // `SKELETON` is a `const`, so the starter `.gitignore` spells the tree
+        // out instead of deriving it from `Remote::TREE_NAME`. This is what
+        // makes that duplication safe: renaming the tree without editing the
+        // literal fails here rather than silently shipping a `.gitignore` that
+        // excludes a directory nothing writes to.
+        assert_eq!(GITIGNORE_CONTENT, format!("/{}/\n", Remote::TREE_NAME));
+        assert!(ignores_remotes(GITIGNORE_CONTENT));
     }
 
     #[test]

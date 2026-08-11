@@ -18,6 +18,19 @@ pub(crate) enum Remote {
 }
 
 impl Remote {
+    /// The tool-owned tree that materialized remotes live in, directly under
+    /// the leaf repository root.
+    ///
+    /// The name travels with the type it describes, the way a document's name
+    /// travels with its parser ([`BatfilesConfig::FILE_NAME`]). Which *root* the
+    /// tree sits under is location policy and belongs to
+    /// [`Roots::remotes_dir`](crate::config::Roots::remotes_dir); `init` reads
+    /// this to exclude the tree from Git. It is spelled once so those two can
+    /// never disagree — if they did, `init` would exclude one directory while
+    /// the loader read another, and materializations would quietly land in
+    /// history.
+    pub const TREE_NAME: &'static str = "remotes";
+
     /// The `type` tag this remote was written with.
     ///
     /// A diagnostic about the wrong kind of remote has to say which kind was

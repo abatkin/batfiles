@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use crate::config::{ConfigError, Environment, LocationInputs};
-use crate::repo::BatfilesConfig;
+use crate::repo::{BatfilesConfig, Remote};
 use crate::state::{Disabled, DynamicVarCache, MachineVars};
 
 /// The four resolved root directories a command may need.
@@ -25,9 +25,6 @@ pub(crate) struct Roots {
     /// The directory holding the disposable `dynamic-vars.toml` cache.
     pub cache_dir: PathBuf,
 }
-
-/// The materialization tree's name within the leaf repository.
-const REMOTES_DIR_NAME: &str = "remotes";
 
 /// The documents each root contains.
 ///
@@ -46,12 +43,13 @@ impl Roots {
 
     /// The tool-owned materialization tree, `<batfiles-dir>/remotes`.
     ///
-    /// The one entry here that is a directory rather than a document: which root
-    /// a remote materializes under is the same location policy the documents
-    /// follow, so it is stated with them. A remote's own root is this joined
-    /// with its declared `[remotes]` key.
+    /// The one entry here that is a directory rather than a document, and it
+    /// belongs here for the same reason they do: which root a remote
+    /// materializes under is location policy. The *name* travels with
+    /// [`Remote`], like every file name travels with its parser. A remote's own
+    /// root is this joined with its declared `[remotes]` key.
     pub fn remotes_dir(&self) -> PathBuf {
-        self.batfiles_dir.join(REMOTES_DIR_NAME)
+        self.batfiles_dir.join(Remote::TREE_NAME)
     }
 
     /// Machine-local variable overrides.
