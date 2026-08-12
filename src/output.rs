@@ -53,6 +53,17 @@ impl Reporter {
         self.verbosity = verbosity;
     }
 
+    /// The resolved verbosity, for a subsystem that decides something from it
+    /// directly rather than by printing — the dynamic-command runner and its
+    /// child's stderr, so far.
+    ///
+    /// The alternative is threading a `Verbosity` alongside the reporter from
+    /// `app` down to every such caller, where the two can drift apart at one
+    /// call site and nowhere else.
+    pub fn verbosity(&self) -> Verbosity {
+        self.verbosity
+    }
+
     /// A failure. Always printed, including under `--quiet`.
     pub fn error(&self, message: &str) {
         eprintln!("{}", self.line(Label::Error, message));

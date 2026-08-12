@@ -51,11 +51,18 @@ impl DynamicVarCache {
 
     /// Load the cache, treating a missing file as an empty one. Deleting the
     /// file is safe, so this is the common case rather than an error.
+    ///
+    /// Paired with [`Roots::dynamic_vars`](crate::config::Roots::dynamic_vars)
+    /// and dead for the same reason: the cache resolver takes a document rather
+    /// than a path, so the file is the *command's* to load and rewrite and no
+    /// command dispatches to the resolver yet.
+    #[allow(dead_code, reason = "no command owns the cache file yet")]
     pub fn load(path: &Path) -> Result<Self, tomlfile::Error> {
         tomlfile::read_or_default(path)
     }
 
     /// Rewrite the cache.
+    #[allow(dead_code, reason = "no command owns the cache file yet")]
     pub fn save(&self, path: &Path) -> Result<(), tomlfile::Error> {
         tomlfile::write(path, self)
     }

@@ -202,7 +202,10 @@ stale one—and warns; without a cached value, the variable is missing.
 For `capture = "status"`, exit status zero produces the string `"true"` and
 non-zero produces the string `"false"`. If the command cannot be started, the
 runtime result is a transient `"false"`, a warning is emitted, and no new cache
-entry is written.
+entry is written. The transient `"false"` takes effect even when a cached value
+is available, and the existing entry is left untouched: the retain-a-cached-value
+rule above applies to a refresh failure, and a command that could not be started
+is not one.
 
 A command killed at its `command-timeout` is a refresh failure under both capture
 modes, so the transient `"false"` above covers only a command that could not be

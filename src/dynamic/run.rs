@@ -16,7 +16,6 @@
 //! A signal-based timeout helper installs a process-wide `SIGCHLD` handler, and
 //! a pipe both fills at its capacity while batfiles is waiting on the command
 //! and stays open for as long as any descendant holds the writer.
-#![allow(dead_code, reason = "no command evaluates a dynamic variable yet")]
 
 use std::fmt;
 use std::io::{self, Read as _};
@@ -113,7 +112,10 @@ pub(crate) fn capture(decl: &DynamicVar, cwd: &Path, verbosity: Verbosity) -> Ou
         // cached. A stdout capture has no such value to fall back on.
         Err(error) => {
             return match decl.capture {
-                Capture::Status => Outcome::Transient(FALSE.to_owned()),
+                Capture::Status => Outcome::Assumed {
+                    value: FALSE.to_owned(),
+                    reason: RunError::NotStarted(error),
+                },
                 Capture::Stdout => Outcome::Failed(RunError::NotStarted(error)),
             };
         }
@@ -172,10 +174,16 @@ const FALSE: &str = "false";
 pub(crate) enum Outcome {
     /// A value to use and to cache.
     Captured(String),
-    /// A value for this run only, never cached: `docs/state.md`'s transient
-    /// `"false"` for a status capture whose command could not be started.
-    /// Caching it would record that a `$PATH` was wrong once.
-    Transient(String),
+    /// A value the runner assumed rather than captured, for this run only and
+    /// never cached: `docs/state.md`'s `"false"` for a status capture whose
+    /// command could not be started. Caching it would record that a `$PATH` was
+    /// wrong once.
+    ///
+    /// `reason` is the spawn failure the other capture mode reports as
+    /// [`RunError::NotStarted`]. It is carried rather than dropped because the
+    /// warning the caller owes says why the command could not be started, and a
+    /// status capture has no second chance to find out.
+    Assumed { value: String, reason: RunError },
     /// No value. The caller retains a cached one if there is one, and warns.
     Failed(RunError),
 }
@@ -598,8 +606,8 @@ mod tests {
         }
 
         #[test]
-        fn a_missing_program_is_transient_only_for_a_status_capture() {
-            // The asymmetry `Transient` exists for: `docs/state.md`'s "cannot be
+        fn a_missing_program_is_assumed_false_only_for_a_status_capture() {
+            // The asymmetry `Assumed` exists for: `docs/state.md`'s "cannot be
             // started ⇒ `false`" is a status-capture rule alone, and the value
             // it produces is never cached.
             let missing = ["batfiles-no-such-program-exists"];
@@ -610,10 +618,17 @@ mod tests {
             );
 
             let outcome = run(&args(missing, Capture::Status)).0;
-            let Outcome::Transient(value) = outcome else {
-                panic!("expected a transient value, got {outcome:?}");
+            let Outcome::Assumed { value, reason } = outcome else {
+                panic!("expected an assumed value, got {outcome:?}");
             };
             assert_eq!(value, "false");
+            // The carried reason is the whole point of the variant's shape: the
+            // caller's warning has to say *why* it could not be started, and
+            // both capture modes now have the same diagnosis available.
+            assert!(
+                matches!(reason, RunError::NotStarted(_)),
+                "expected a spawn failure, got {reason:?}"
+            );
         }
 
         #[test]
