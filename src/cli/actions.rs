@@ -72,6 +72,7 @@ pub(crate) struct ApplyGroupArgs {
 mod tests {
     use crate::cli::Command;
     use crate::cli::testing::{error_kind, parse};
+    use crate::var::VarName;
     use clap::error::ErrorKind;
 
     #[test]
@@ -153,11 +154,12 @@ mod tests {
         let Command::Sync(args) = cli.command else {
             panic!("expected sync");
         };
+        let profile = VarName::new("profile").expect("valid name");
         assert_eq!(
             args.action.vars,
             vec![
-                ("profile".to_owned(), "work".to_owned()),
-                ("profile".to_owned(), "home".to_owned())
+                (profile.clone(), "work".to_owned()),
+                (profile, "home".to_owned())
             ]
         );
     }
@@ -166,6 +168,21 @@ mod tests {
     fn a_var_without_an_equals_sign_is_rejected() {
         assert_eq!(
             error_kind(&["batfiles", "sync", "--var", "profile"]),
+            ErrorKind::ValueValidation
+        );
+    }
+
+    #[test]
+    fn a_var_with_an_invalid_key_is_rejected_before_anything_is_loaded() {
+        // A usage error, so it lands before roots are resolved and before any
+        // file is opened — which is what makes `docs/cmdline.md`'s promise
+        // about `--var` true.
+        assert_eq!(
+            error_kind(&["batfiles", "sync", "--var", "1up=x"]),
+            ErrorKind::ValueValidation
+        );
+        assert_eq!(
+            error_kind(&["batfiles", "sync", "--var", "env=x"]),
             ErrorKind::ValueValidation
         );
     }

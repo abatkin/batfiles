@@ -20,7 +20,6 @@ mod default_disabled;
 mod duration;
 #[allow(dead_code, reason = "no command dispatches to the loader yet")]
 pub(crate) mod load;
-#[allow(dead_code, reason = "no command consumes the loaded model yet")]
 mod model;
 mod remote;
 mod value;

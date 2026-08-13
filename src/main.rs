@@ -8,6 +8,7 @@ mod init;
 mod item;
 mod output;
 mod repo;
+mod scope;
 mod state;
 mod toggle;
 mod tomlfile;

@@ -115,8 +115,13 @@ one-shot variable:
 - An empty value is significant: `BATFILES_VAR_PROFILE=` defines `PROFILE` as
   the empty string.
 - Names must follow the repository format's shared [user-variable name
-  rules](repoformat.md#names-and-ids). An invalid name is a configuration error
-  when loaded.
+  rules](repoformat.md#names-and-ids). An invalid suffix — including a reserved
+  identifier, so `BATFILES_VAR_env` on a case-sensitive system — is reported as
+  a warning naming the whole environment variable, and that one variable is
+  ignored; the command continues. This is deliberately not the rule for an
+  invalid [`--var` key](cmdline.md#shared-action-execution-options), which fails
+  the command: an environment variable is ambient and may predate any interest
+  in batfiles, while a `--var` was typed for this run.
 - The override lasts only for the current invocation and is not written to
   `vars.toml`.
 
@@ -165,6 +170,18 @@ remote [vars]
 All values follow the repository format's shared [string-valued variable
 model](repoformat.md#string-valued-variables). Any coercion during condition
 evaluation is performed by the expression language rather than by batfiles.
+
+Declarations, not values, participate in precedence, which decides two cases the
+lists above do not:
+
+- A dynamic declaration a remote is not allowed to run contributes no variable
+  at all, so a lower layer's value stands. This is what
+  [`allow-dynamic-vars = false`](state.md#freshness-and-refresh-behavior) leaves
+  behind: the command never runs, and the variable is not merely valueless but
+  absent from that layer.
+- A dynamic declaration that does run and produces no value still overrides the
+  layers beneath it. The variable has no value rather than the lower layer's:
+  the higher declaration won, and it produced nothing.
 
 ### Run-only skips
 

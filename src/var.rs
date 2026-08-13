@@ -1,5 +1,6 @@
 //! User-variable names.
 
+use std::borrow::Borrow;
 use std::fmt;
 
 use serde::{Deserialize, Serialize, Serializer};
@@ -92,6 +93,19 @@ impl AsRef<str> for VarName {
     }
 }
 
+/// Lets a map keyed by `VarName` be looked up with the `&str` an expression
+/// identifier is, without allocating a `VarName` per lookup — which condition
+/// evaluation would otherwise do once per identifier per condition.
+///
+/// The derived `Ord` compares the inner `String`, so it agrees with `str`'s,
+/// which is the consistency `Borrow` requires and which a test asserts rather
+/// than leaving to a reader.
+impl Borrow<str> for VarName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 impl TryFrom<String> for VarName {
     type Error = VarNameError;
 
@@ -173,6 +187,32 @@ mod tests {
                 .starts_with("a variable name must start with")
         );
         assert!(VarNameError::Reserved.to_string().contains("`facts`"));
+    }
+
+    #[test]
+    fn a_borrowed_name_orders_the_way_the_owned_one_does() {
+        // The consistency `Borrow` requires: a map keyed by `VarName` and
+        // searched by `&str` finds what the owned key would.
+        let names = ["Editor", "_hidden", "editor", "editor2", "profile"];
+        let map: BTreeMap<VarName, usize> = names
+            .iter()
+            .enumerate()
+            .map(|(index, text)| (VarName::new(text).expect("valid"), index))
+            .collect();
+
+        for (index, text) in names.iter().enumerate() {
+            assert_eq!(
+                map.get(*text),
+                Some(&index),
+                "{text} was not found by `str`"
+            );
+        }
+        assert_eq!(map.get("missing"), None);
+        assert_eq!(
+            map.keys().map(VarName::as_ref).collect::<Vec<_>>(),
+            names,
+            "the derived `Ord` does not agree with `str`'s"
+        );
     }
 
     #[test]

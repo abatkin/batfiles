@@ -24,17 +24,9 @@ pub(crate) struct LocationInputs {
 
 /// Configuration diagnostics.
 ///
-/// Deliberately small: one enum with a handful of variants, grown sparingly
-/// rather than a variant per micro-failure.
+/// Deliberately small because much of the validation is done elsewhere
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConfigError {
-    /// A `BATFILES_VAR_<NAME>` suffix or a `--var` key was not a valid
-    /// user-variable name ([`crate::var::VarName`]). Carries the rejected name.
-    #[allow(
-        dead_code,
-        reason = "the variable merge that rejects names is not wired yet"
-    )]
-    InvalidVarName(String),
     /// No home directory could be determined for a command that needs one.
     HomeUnavailable,
 }
@@ -42,9 +34,6 @@ pub(crate) enum ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidVarName(name) => {
-                write!(f, "`{name}` is not a valid variable name")
-            }
             Self::HomeUnavailable => {
                 write!(f, "could not determine a home directory")
             }
@@ -53,16 +42,3 @@ impl fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn config_errors_render_the_offending_name() {
-        assert_eq!(
-            ConfigError::InvalidVarName("1up".to_owned()).to_string(),
-            "`1up` is not a valid variable name"
-        );
-    }
-}

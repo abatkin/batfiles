@@ -90,6 +90,10 @@ accepts them because it forwards them to its follow-up synchronization.
 batfiles backs up conflicting unmanaged destinations and proceeds. Interactive
 overwrite is an explicit waiver of the backup for that conflict only.
 
+A `--var` key must be a valid [user-variable
+name](repoformat.md#names-and-ids). An invalid one fails the command as a usage
+error, before the location roots are resolved and before any file is read.
+
 `sync`, `clone`, `apply-action`, and `apply-group` all use the same
 variable resolution when evaluating conditions and interpolating action fields.
 One-shot `--var` values participate at their normal highest precedence. Dynamic

@@ -81,13 +81,15 @@ impl Environment {
     }
 }
 
-/// Accessors for the inputs whose merges are not implemented yet. The decoding
-/// rules they encode are covered by the tests below, so they stay here rather
-/// than being rewritten alongside each feature that starts consuming them.
-#[allow(dead_code, reason = "the merges that read these are not wired yet")]
+/// Accessors for the inputs the rest of the program merges. The decoding rules
+/// they encode are covered by the tests below, so they stay here rather than
+/// being rewritten alongside each feature that starts consuming them.
 impl Environment {
     /// The keys that name one-shot user variables (`BATFILES_VAR_<NAME>`).
-    const VAR_PREFIX: &'static str = "BATFILES_VAR_";
+    ///
+    /// Public because a diagnostic about a rejected suffix has to name the
+    /// whole environment variable, which is what the user goes and deletes.
+    pub const VAR_PREFIX: &'static str = "BATFILES_VAR_";
 
     /// The one-shot user-variable candidates: every `BATFILES_VAR_<NAME>` key
     /// with a non-empty suffix, yielding `(name, value)`.
@@ -106,6 +108,7 @@ impl Environment {
     /// A comma-separated list variable: split on commas, trim each item, and
     /// drop the empties. Shared by the run-only skip lists and the four
     /// bootstrap lists.
+    #[allow(dead_code, reason = "the run-only and bootstrap lists are `sync`'s")]
     pub fn list(&self, key: &str) -> Vec<String> {
         self.get(key)
             .into_iter()
@@ -118,6 +121,10 @@ impl Environment {
 
     /// The whole captured map, exposed to condition evaluation as the read-only
     /// `env.*` namespace. It does not participate in user-variable precedence.
+    #[allow(
+        dead_code,
+        reason = "the `env.*` resolver arrives with condition evaluation"
+    )]
     pub fn entries(&self) -> &BTreeMap<String, String> {
         &self.entries
     }

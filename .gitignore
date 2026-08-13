@@ -17,3 +17,6 @@ target/
 .idea/
 *.iml
 .ai/
+/todo/
+/nimbalyst-local/
+/.mcp.json
