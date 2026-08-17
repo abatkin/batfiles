@@ -70,6 +70,11 @@ repository values, per-inclusion overrides, persisted and one-shot overrides,
 dynamic-command results, facts, and host environment values. Batfiles does not
 infer types from their contents.
 
+There is one exception, and it is enumerated rather than heuristic: a
+[condition](#condition) is where a string has to become a decision, so a value
+used in a boolean context is read through the fixed
+[truthiness table](#truthiness). Nothing else re-types a value.
+
 A static repository value is therefore a TOML string:
 
 ```text
@@ -89,26 +94,104 @@ Condition = string
 The string contains an expression, for example:
 
 ```toml
-when = "work && facts.os == 'darwin'"
+when = "work && facts.os == 'macos'"
 ```
 
 Expressions use the
 [Simple Expressions](https://github.com/abatkin/expressions-rs) language.
 Batfiles makes user variables available as bare string-valued identifiers and
-provides reserved, string-valued `facts` and `env` resolvers. The resolvers
-accept member syntax for identifier-compatible keys, such as `facts.os` and
-`env.HOME`, and index syntax for any key, such as
-`env["XDG_CURRENT_DESKTOP"]`. A missing fact or environment key resolves to the
-empty string instead of producing an evaluation error.
+provides reserved, string-valued `facts`, `env`, and `vars` resolvers. The
+resolvers accept member syntax for identifier-compatible keys, such as
+`facts.os` and `env.HOME`, and index syntax for any key, such as
+`env["XDG_CURRENT_DESKTOP"]`. A key missing from any of the three resolves to
+the empty string instead of producing an evaluation error.
+
+The string is parsed when the manifest is read, not when the condition is
+evaluated. A malformed condition is therefore a load error that names the file,
+the line the condition is written on, and the position within the condition —
+the same treatment every other malformed value in the file receives. Every
+condition in a manifest is parsed, including ones no evaluation will ever
+reach.
 
 Condition inputs follow the shared [string-valued variable
-model](#string-valued-variables); any coercion while evaluating an expression
-is defined by Simple Expressions itself.
+model](#string-valued-variables).
 
 For concision, schema tables below list only `when`. Every TOML record or
 manifest entry that accepts `when` also accepts `unless` as its negated alias.
-The two fields are mutually exclusive. This convention applies even though
-`unless` is not repeated in each closed-record table.
+The two fields are mutually exclusive; writing both on one record is a
+validation error. This convention applies even though `unless` is not repeated
+in each closed-record table.
+
+#### Identifiers
+
+A bare identifier is a user variable, and has three cases:
+
+| The name is | Resolves to |
+| --- | --- |
+| declared, with a value | that string |
+| declared, but its dynamic command produced no value | the empty string |
+| not declared in any layer | an evaluation error |
+
+"Declared" spans every layer that can contribute a variable: a repository's
+`[vars]`, a remote's `[vars]`, an inclusion's `vars`, `vars.toml`,
+`BATFILES_VAR_*`, and `--var`. The error fires only when nothing anywhere names
+the variable.
+
+This is deliberately asymmetric with `facts` and `env`, whose missing keys are
+the empty string. A namespace is extensible, so a key batfiles does not define
+yet is forward compatibility; a variable name is not extensible, so a name
+nothing declares is a typo. Left silent, a misspelt `unless` would read as false
+on every machine forever, and a false `unless` *installs* what it was written to
+suppress.
+
+#### The `vars` namespace
+
+`vars` reads the same bindings as a bare identifier, but totally: a missing key
+and a valueless variable are both the empty string.
+
+```toml
+when = "work"                     # an error if nothing declares `work`
+when = "vars.work"                # false if nothing declares it
+when = "vars.work || vars.school" # and it composes
+```
+
+Use it for a variable that is legitimately optional — one set with `vars set` on
+some machines only, one passed as `--var` on some runs only, or one a
+third-party remote's action reads and cannot require the leaf to define. For a
+variable that is always meant to exist, the bare identifier is the spelling that
+catches a typo.
+
+Member syntax always works here, because every user variable name is
+identifier-compatible by construction. Indexing (`vars["work"]`) is accepted for
+symmetry with `env`, where it is sometimes required, but is never necessary.
+
+#### Truthiness
+
+Wherever a boolean is wanted — the condition's own result, and every `&&`, `||`,
+and `!` operand alike — a value is read as true or false by this table:
+
+| Value | Reads as |
+| --- | --- |
+| a real boolean | itself |
+| a number | `false` at zero, `true` otherwise |
+| `"true"`, `"1"`, `"yes"`, `"on"` | `true` |
+| `"false"`, `"0"`, `"no"`, `"off"`, `""` | `false` |
+| anything else | an evaluation error naming the value |
+
+The table is closed on both sides. A value outside it is an error rather than
+silently true, because `profile = "personal"` written as `when = "profile"` is a
+bare identifier where a comparison was meant; reading it as true would make the
+gate permanently open with nothing on screen to say so.
+
+Comparison and `+` are unaffected: those keep Simple Expressions' own rules, so
+`==` behaves exactly as the language defines it. The table above governs boolean
+contexts only.
+
+This is the one place batfiles infers anything from a string's contents, and it
+is the stated exception to [string-valued
+variables](#string-valued-variables)' rule that it does not. A condition is
+where a string has to become a decision; the table is that conversion, and it is
+enumerated rather than heuristic for exactly that reason.
 
 ### Repository path
 
@@ -161,7 +244,11 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ```
 
 - User variable names match `[A-Za-z_][A-Za-z0-9_]*` and cannot be `facts`,
-  `env`, `true`, or `false`.
+  `env`, `vars`, `true`, or `false`. Reserving all five is what makes a
+  [condition](#condition)'s namespace lookup unambiguous without a precedence
+  rule: no user variable can shadow a namespace. The consequence to know about
+  is in `vars.toml`, whose keys are user variable names — a key literally named
+  `vars` there makes the whole file fail to load, not just that one entry.
 - IDs and group names match `[A-Za-z0-9][A-Za-z0-9_-]*`. This rule applies to
   action IDs, `include-remote` IDs, manifest-entry IDs, remote IDs, and group
   names. In particular, an ID cannot contain whitespace, `.`, or `,`; dots are
@@ -313,7 +400,7 @@ when = "work"
 
 [[default-disabled.groups]]
 group = "gui"
-unless = "facts.os == 'darwin'"
+unless = "facts.os == 'macos'"
 ```
 
 ### Action entry

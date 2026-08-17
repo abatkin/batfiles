@@ -12,22 +12,200 @@ use std::marker::PhantomData;
 
 use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer, StrDeserializer};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use simple_expressions::parser::parse_expression;
+use simple_expressions::types::error::Error as ExpressionError;
+use simple_expressions::types::expression::Expr;
 
 use crate::item::{ItemId, ItemIdError};
 
-/// A condition expression, held verbatim.
+/// A condition expression: the text as written, and the tree it parses to.
 ///
 /// Conditions are written in [Simple
-/// Expressions](https://github.com/abatkin/expressions-rs) and are parsed by
-/// that language, not here. The alias exists so every `when`/`unless` field says
-/// what its string is for.
+/// Expressions](https://github.com/abatkin/expressions-rs). The language owns
+/// the grammar, but the *parse* happens here, while the manifest is being read,
+/// so `when = "work &&"` is a TOML error with a line number rather than a
+/// surprise at evaluation time. What the identifiers in a parsed condition
+/// *mean*, and what counts as true, belong to
+/// [`crate::condition`](crate::condition).
+///
+/// **Both halves are kept, and only the text is presented.** [`Debug`],
+/// [`PartialEq`], and [`Serialize`] all read [`source`](Self::source); the tree
+/// is reachable only through [`expr`](Self::expr), which is evaluation's. Text
+/// equality is *correct* rather than a limitation to fix later: `"a && b"` and
+/// `"a&&b"` are different manifests, and batfiles never rewrites a manifest, so
+/// a condition's identity is what was written.
+///
+/// The divergence from [`FriendlyDuration`](super::FriendlyDuration) and
+/// [`RepoPath`], which both drop their source text, is deliberate. Those have a
+/// canonical form and no display obligation, so `1d` and `24h` are one value. A
+/// condition has neither: there is no canonical spelling, and `vars refresh
+/// --interactive` has to show a user the exact text they wrote before it runs
+/// anything. Reconstructing the text from the tree — [`ItemAddress`]'s trick —
+/// does not transfer, because whitespace, parentheses, and quote style are not
+/// recoverable from an AST.
 ///
 /// Every record carrying a `when` also accepts `unless` as its negated alias,
 /// and the two are mutually exclusive. Nothing in this module enforces that:
-/// both fields deserialize independently, and rejecting the pair belongs to the
-/// validation that reads them.
-pub(crate) type Condition = String;
+/// both fields deserialize independently, and rejecting the pair belongs to
+/// [`BatfilesConfig::validate`](super::BatfilesConfig::validate).
+///
+/// [`ItemAddress`]: crate::item::ItemAddress
+#[derive(Clone, Deserialize)]
+#[serde(try_from = "String")]
+pub(crate) struct Condition {
+    source: String,
+    expr: Expr,
+}
+
+impl Condition {
+    /// Parse `source` as a condition, or report why it is not one.
+    ///
+    /// The ergonomic constructor every other validated type in the crate has.
+    /// Every condition batfiles actually reads arrives through [`TryFrom`]
+    /// instead, since they all come out of a manifest.
+    #[allow(dead_code, reason = "the tests are the only caller so far")]
+    pub fn new(source: &str) -> Result<Self, ConditionError> {
+        Self::try_from(source.to_owned())
+    }
+
+    /// The condition exactly as written, whitespace and quote style included.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// The parsed tree, for the module that evaluates it.
+    pub fn expr(&self) -> &Expr {
+        &self.expr
+    }
+}
+
+/// Why a candidate condition was rejected.
+///
+/// Carries the candidate and, when the parser reported one, the position within
+/// it. The parser's own `rendered` caret diagram is deliberately *not* used: this
+/// message is rendered inside TOML's caret diagram, so a second one would repeat
+/// the source text and point two carets at different things. One line inside an
+/// error that already carries the file, line, and column is the right shape —
+/// the same judgment [`DurationError`](super::FriendlyDuration) made when it
+/// declined to re-emit jiff's message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConditionError {
+    candidate: String,
+    /// Absent when the parser failed without a position, which only its internal
+    /// error does.
+    position: Option<Position>,
+    message: String,
+}
+
+/// Where within the condition the parser stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Position {
+    /// 1-based, and 1 for every condition written as an ordinary TOML string.
+    line: usize,
+    /// 1-based, in characters.
+    column: usize,
+}
+
+impl ConditionError {
+    fn new(candidate: &str, error: &ExpressionError) -> Self {
+        // `Error` is `#[non_exhaustive]`, so the wildcard is required; everything
+        // but a parse failure loses only the position, not the message.
+        let (position, message) = match error {
+            ExpressionError::ParseError {
+                line,
+                column,
+                message,
+                ..
+            } => (
+                Some(Position {
+                    line: *line,
+                    column: *column,
+                }),
+                message.clone(),
+            ),
+            other => (None, other.to_string()),
+        };
+        Self {
+            candidate: candidate.to_owned(),
+            position,
+            message,
+        }
+    }
+}
+
+/// Render `text` so it cannot break the one-line shape of a diagnostic.
+///
+/// A TOML multi-line string is a legal place to write a condition, so a
+/// candidate can contain real newlines. Interpolating one verbatim would put
+/// extra source lines *inside* TOML's own caret report — the exact thing
+/// declining to use the parser's `rendered` block was meant to avoid. Only the
+/// characters that break a line are escaped, and the backslash with them so the
+/// escape is unambiguous; quotes are left alone, because a condition is full of
+/// them and `\'work\'` reads worse than `'work'`.
+fn one_line(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+impl fmt::Display for ConditionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "`{}` is not a valid condition: {}",
+            one_line(&self.candidate),
+            self.message
+        )?;
+        match self.position {
+            // A TOML multi-line string can hold a newline, so the line is worth
+            // naming when there is more than one; otherwise it is always 1 and
+            // saying so would be noise beside TOML's own line number.
+            Some(Position { line, column }) if line > 1 => {
+                write!(f, " at line {line}, character {column}")
+            }
+            Some(Position { column, .. }) => write!(f, " at character {column}"),
+            None => Ok(()),
+        }
+    }
+}
+
+impl std::error::Error for ConditionError {}
+
+impl TryFrom<String> for Condition {
+    type Error = ConditionError;
+
+    fn try_from(source: String) -> Result<Self, Self::Error> {
+        let expr =
+            parse_expression(&source).map_err(|error| ConditionError::new(&source, &error))?;
+        Ok(Self { source, expr })
+    }
+}
+
+/// The source text, so an `assert_eq!` failure over a record holding one is
+/// readable. A derived implementation would print the whole tree, and every
+/// record carrying an `Option<Condition>` derives [`Debug`].
+impl fmt::Debug for Condition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Condition").field(&self.source).finish()
+    }
+}
+
+/// Over the source text. Also forced: [`Expr`] holds an `f64` and is therefore
+/// not [`Eq`], while every record holding an `Option<Condition>` derives it.
+impl PartialEq for Condition {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
+impl Eq for Condition {}
+
+impl Serialize for Condition {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.source)
+    }
+}
 
 /// A path read from a repository: `RepoPath = string | { remote, path }`.
 ///
@@ -233,6 +411,132 @@ mod tests {
             remote: id(remote),
             path: path.to_owned(),
         })
+    }
+
+    #[test]
+    fn a_condition_keeps_the_text_it_was_written_as() {
+        let condition = parse::<Condition>("value = \"work && facts.os == 'macos'\"")
+            .expect("a valid condition");
+        assert_eq!(condition.source(), "work && facts.os == 'macos'");
+
+        // Whitespace is part of the text, and two spellings of one expression
+        // are two manifests: batfiles never rewrites one, so its identity is
+        // what was written.
+        let spaced = parse::<Condition>("value = 'a && b'").expect("spaced");
+        let tight = parse::<Condition>("value = 'a&&b'").expect("tight");
+        assert_eq!(spaced.source(), "a && b");
+        assert_eq!(tight.source(), "a&&b");
+        assert_ne!(spaced, tight);
+        assert_eq!(
+            spaced,
+            parse::<Condition>("value = 'a && b'").expect("again")
+        );
+    }
+
+    #[test]
+    fn a_malformed_condition_is_rejected_where_it_is_written() {
+        // The whole point of the newtype: `when = "work &&"` is a load error
+        // with a line number rather than a surprise at evaluation time.
+        let error = parse::<Condition>("value = 'work &&'")
+            .expect_err("a trailing operator is not an expression")
+            .to_string();
+
+        assert!(
+            error.contains("`work &&` is not a valid condition"),
+            "{error}"
+        );
+        assert!(error.contains("expected unary"), "{error}");
+        // The position within the condition, which is what the crate's
+        // structured parse error buys over a bare message.
+        assert!(error.contains("character 8"), "{error}");
+        // And TOML's own location, pointing at the value in the file.
+        assert!(error.contains("line 1"), "{error}");
+    }
+
+    #[test]
+    fn a_rejected_condition_is_one_line_even_when_the_condition_is_not() {
+        // Decision 2's "do not use `rendered`", pinned as a property rather
+        // than as an intention: the crate's caret diagram would sit inside
+        // TOML's caret diagram, pointing two carets at different things.
+        let error = Condition::new("work &&")
+            .expect_err("malformed")
+            .to_string();
+        assert!(!error.contains('\n'), "{error}");
+
+        // A TOML multi-line string is a legal place to write a condition, so
+        // the candidate itself can carry newlines into the message. It is the
+        // same defect by a different route, so it gets the same guarantee.
+        let error = Condition::new("a &&\nb &&")
+            .expect_err("malformed")
+            .to_string();
+        assert!(!error.contains('\n'), "{error}");
+        assert!(error.contains("`a &&\\nb &&`"), "{error}");
+    }
+
+    #[test]
+    fn a_multi_line_condition_names_its_line_as_well_as_its_character() {
+        // A TOML multi-line string can hold a newline, which is the only way
+        // `line` is ever anything but 1.
+        let error = Condition::new("a &&\nb &&")
+            .expect_err("malformed")
+            .to_string();
+        assert!(error.contains("line 2, character 5"), "{error}");
+    }
+
+    #[test]
+    fn a_condition_serializes_back_to_its_source_text() {
+        let condition = parse::<Condition>("value = 'a && b'").expect("parse");
+        let document = toml::to_string(&Wrapper { value: condition }).expect("serialize");
+
+        assert_eq!(document, "value = \"a && b\"\n");
+        assert_eq!(
+            parse::<Condition>(&document).expect("reparse").source(),
+            "a && b"
+        );
+    }
+
+    #[test]
+    fn a_condition_debugs_as_its_text_rather_than_as_a_tree() {
+        // Every record carrying an `Option<Condition>` derives `Debug`, so a
+        // derived tree here would make every `assert_eq!` failure across
+        // `src/repo/` unreadable.
+        let condition = parse::<Condition>("value = 'a && b'").expect("parse");
+        assert_eq!(format!("{condition:?}"), "Condition(\"a && b\")");
+    }
+
+    #[test]
+    fn an_identifier_may_begin_with_a_boolean_keyword() {
+        // `docs/repoformat.md` makes a user variable name
+        // `[A-Za-z_][A-Za-z0-9_]*` minus five reserved words, so `trueish` and
+        // `false_value` are legal names — and they have to parse as *names*.
+        //
+        // They did not before `simple-expressions` 0.4.1: the grammar spelled
+        // the literals with no word boundary, and PEG ordered choice tries
+        // `boolean` before `ident`, so `trueish` matched `true` and then choked
+        // on the trailing `ish`. This is the regression test for the boundary.
+        for name in [
+            "trueish",
+            "false_value",
+            "falsey",
+            "true_",
+            "_true",
+            "x_true",
+        ] {
+            Condition::new(name).unwrap_or_else(|error| panic!("`{name}`: {error}"));
+        }
+
+        // The other half of the same fix, and the direction it could overshoot:
+        // a boundary that swallowed the keywords would make `true` an
+        // identifier, which is a reserved name nothing can declare — so every
+        // `when = "true"` in the wild would start failing as undeclared.
+        assert!(
+            Condition::new("true").expect("a literal").expr()
+                == &Expr::Literal(simple_expressions::types::primitive::Primitive::Bool(true))
+        );
+        assert!(
+            Condition::new("false").expect("a literal").expr()
+                == &Expr::Literal(simple_expressions::types::primitive::Primitive::Bool(false))
+        );
     }
 
     #[test]

@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize, Serializer};
 /// A validated user-variable name.
 ///
 /// Names match `[A-Za-z_][A-Za-z0-9_]*` and cannot be one of the reserved
-/// identifiers `facts`, `env`, `true`, or `false`, which the expression language
-/// owns. Holding a `VarName` is proof the name has already been checked, so
-/// names are validated once where they enter and the rest of the code never
-/// re-checks.
+/// identifiers `facts`, `env`, `vars`, `true`, or `false`, which the expression
+/// language and its batfiles bindings own. Holding a `VarName` is proof the name
+/// has already been checked, so names are validated once where they enter and
+/// the rest of the code never re-checks.
 ///
 /// This is **not** the ID rule that [`ItemId`](crate::item::ItemId) enforces,
 /// and the two are deliberately different: `_hidden` is a valid variable name
@@ -32,13 +32,18 @@ pub(crate) struct VarName(String);
 pub(crate) enum VarNameError {
     /// Empty, or a character outside `[A-Za-z_][A-Za-z0-9_]*`.
     Invalid,
-    /// A reserved identifier (`facts`, `env`, `true`, `false`).
+    /// A reserved identifier (`facts`, `env`, `vars`, `true`, `false`).
     Reserved,
 }
 
-/// Identifiers the expression language owns, so they cannot name a user
-/// variable.
-const RESERVED: [&str; 4] = ["facts", "env", "true", "false"];
+/// Identifiers the expression language and its batfiles bindings own, so they
+/// cannot name a user variable.
+///
+/// Reserving all five is what makes condition evaluation's namespace dispatch
+/// unambiguous *by construction*: no user variable can shadow `facts`, `env`, or
+/// `vars`, so the resolver needs no precedence rule. Trimming this list back
+/// would make it shadowable — see [`crate::condition`].
+const RESERVED: [&str; 5] = ["facts", "env", "vars", "true", "false"];
 
 impl VarName {
     /// Validate `name` and wrap it, or report why it was rejected.
@@ -73,7 +78,8 @@ impl fmt::Display for VarNameError {
                  followed by letters, digits, or underscores",
             ),
             Self::Reserved => f.write_str(
-                "`facts`, `env`, `true`, and `false` are reserved by the expression language",
+                "`facts`, `env`, `vars`, `true`, and `false` are reserved by the expression \
+                 language",
             ),
         }
     }
@@ -149,7 +155,10 @@ mod tests {
 
     #[test]
     fn the_expression_keywords_are_reserved() {
-        for reserved in ["facts", "env", "true", "false"] {
+        // Listed literally rather than read from `RESERVED`, so trimming the
+        // constant fails here — which is what keeps `crate::condition`'s
+        // namespace dispatch unshadowable.
+        for reserved in ["facts", "env", "vars", "true", "false"] {
             assert_eq!(
                 VarName::new(reserved),
                 Err(VarNameError::Reserved),

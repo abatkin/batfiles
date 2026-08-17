@@ -121,10 +121,6 @@ impl Environment {
 
     /// The whole captured map, exposed to condition evaluation as the read-only
     /// `env.*` namespace. It does not participate in user-variable precedence.
-    #[allow(
-        dead_code,
-        reason = "the `env.*` resolver arrives with condition evaluation"
-    )]
     pub fn entries(&self) -> &BTreeMap<String, String> {
         &self.entries
     }

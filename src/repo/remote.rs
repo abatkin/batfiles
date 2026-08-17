@@ -43,6 +43,19 @@ impl Remote {
             Self::Archive(_) => "archive",
         }
     }
+
+    /// The remote's `when` and `unless`, in that order.
+    ///
+    /// Beside [`kind`](Self::kind) and for the same reason: every variant
+    /// repeats the pair, and validation and the reachability pipeline both read
+    /// it without caring which kind of remote they have.
+    pub fn conditions(&self) -> (Option<&Condition>, Option<&Condition>) {
+        match self {
+            Self::Git(remote) => (remote.when.as_ref(), remote.unless.as_ref()),
+            Self::File(remote) => (remote.when.as_ref(), remote.unless.as_ref()),
+            Self::Archive(remote) => (remote.when.as_ref(), remote.unless.as_ref()),
+        }
+    }
 }
 
 /// A Git repository, which an `include-remote` action may also include.
@@ -149,7 +162,7 @@ mod tests {
         let Remote::File(file) = parse_one("[r]\ntype = 'file'\nurl = 'u'\nwhen = 'work'\n") else {
             unreachable!()
         };
-        assert_eq!(file.when.as_deref(), Some("work"));
+        assert_eq!(file.when.as_ref().map(Condition::source), Some("work"));
     }
 
     #[test]

@@ -238,6 +238,59 @@ its value must be non-empty. It acts as `never` only when neither `--color` nor
 `BATFILES_COLOR` supplies a higher-precedence choice. Color inputs affect only
 presentation.
 
+## Host facts in conditions
+
+The `facts` namespace exposes what batfiles knows about the machine it is
+running on. It is string-valued and read-only, like `env`, and it does not
+participate in user-variable precedence.
+
+```toml
+when = "facts.os == 'macos'"
+unless = "facts.family == 'windows'"
+```
+
+The namespace contains exactly these keys:
+
+| Key | Value |
+| --- | --- |
+| `facts.os` | The operating system: `linux`, `macos`, `windows`, and so on. |
+| `facts.arch` | The target architecture: `x86_64`, `aarch64`, and so on. |
+| `facts.family` | The operating-system family: `unix` or `windows`. |
+| `facts.hostname` | The host's configured name. |
+
+Rules for `facts` values:
+
+- A key batfiles does not define resolves to the empty string rather than
+  failing, matching `env` and the rule in
+  [the condition section](repoformat.md#condition). This is what makes the set
+  safely extensible — and equally what makes a typo quiet, since `facts.arhc ==
+  'arm64'` is simply false. The set above is enumerated so that there is
+  something to check a spelling against.
+- The set is extensible. A later batfiles may define additional keys; adding one
+  is a non-breaking change, because a manifest cannot have been relying on it
+  resolving to the empty string in any way that mattered.
+- Every key name is identifier-compatible, so member access always works.
+  Indexing (`facts["os"]`) is accepted for symmetry with `env` but is never
+  required.
+
+**macOS is `macos`, not `darwin`.** This is the value most likely to be guessed
+wrong: `uname -s` prints `Darwin`, and the Rust target triple is
+`aarch64-apple-darwin`, but `facts.os` is `macos` on every Apple platform. A
+condition written as `facts.os == 'darwin'` is not an error — it is simply never
+true, so the record it gates is silently skipped on exactly the machines it was
+written for. The same shape of mistake applies to any misspelling; see the
+missing-key rule above.
+
+**`facts.hostname` is the host's configured name verbatim, and is not truncated
+at the first dot.** On a machine configured with a fully qualified name it is
+`silver.example.net`; on one configured with a short name it is `silver`. The
+cost is real: `facts.hostname == 'silver'` works on the second machine and
+silently fails on the first, because a mismatch is a false condition rather than
+an error. It is stated rather than fixed because truncating would discard the
+domain, which is what distinguishes work from home on some fleets, and would
+lose it just as silently. Write the name your machines actually report, or
+compare against the qualified form.
+
 ## Host environment in conditions
 
 The `env` namespace exposes arbitrary host environment variables to `when`

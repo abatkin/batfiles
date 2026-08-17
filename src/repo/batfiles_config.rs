@@ -16,6 +16,7 @@ use crate::item::ItemId;
 use crate::repo::action::Action;
 use crate::repo::default_disabled::DefaultDisabled;
 use crate::repo::remote::Remote;
+use crate::repo::value::Condition;
 use crate::repo::var_decl::VarDecl;
 use crate::tomlfile;
 use crate::var::VarName;
@@ -74,11 +75,18 @@ impl BatfilesConfig {
 
     /// Check the cross-record rules that hold for every repository.
     ///
-    /// So far that is one rule: action IDs share a single namespace within a
-    /// repository (`docs/repoformat.md`), so a repeated ID makes addressing and
-    /// diagnostics ambiguous and is rejected before anything interprets the
-    /// actions. The rules that depend on whether this is a leaf or a remote, or
-    /// on what is on disk, stay with the code that knows those things.
+    /// Two rules so far. Action IDs share a single namespace within a repository
+    /// (`docs/repoformat.md`), so a repeated ID makes addressing and diagnostics
+    /// ambiguous and is rejected before anything interprets the actions. And
+    /// `when` excludes `unless` on every record that accepts the pair, which is
+    /// a rule about two fields of one record rather than about either field, so
+    /// it cannot be a deserialize-time check. The rules that depend on whether
+    /// this is a leaf or a remote, or on what is on disk, stay with the code
+    /// that knows those things.
+    ///
+    /// **One problem at a time.** The first offense returns, so a manifest with
+    /// both a duplicate ID and a doubled condition reports the duplicate. That
+    /// is existing behavior rather than a choice being remade here.
     ///
     /// Nothing here touches the filesystem, so the error names positions rather
     /// than a file; the caller that read the manifest supplies its path.
@@ -95,7 +103,41 @@ impl BatfilesConfig {
             }
             seen.insert(id, position);
         }
+
+        // Every record in the manifest that accepts the pair, so a record kind
+        // added later without a line here is a gap a test is meant to catch.
+        for (position, action) in self.actions.iter().enumerate() {
+            check_exclusive(action.conditions(), || ConditionSite::Action(position))?;
+        }
+        for (id, remote) in &self.remotes {
+            check_exclusive(remote.conditions(), || ConditionSite::Remote(id.clone()))?;
+        }
+        for (position, entry) in self.default_disabled.actions.iter().enumerate() {
+            check_exclusive((entry.when.as_ref(), entry.unless.as_ref()), || {
+                ConditionSite::DefaultDisabledAction(position)
+            })?;
+        }
+        for (position, entry) in self.default_disabled.groups.iter().enumerate() {
+            check_exclusive((entry.when.as_ref(), entry.unless.as_ref()), || {
+                ConditionSite::DefaultDisabledGroup(position)
+            })?;
+        }
+
         Ok(())
+    }
+}
+
+/// Reject one record that wrote both `when` and `unless`.
+///
+/// The site is built lazily because it can own an [`ItemId`], and the
+/// overwhelmingly common case is that nothing is wrong.
+fn check_exclusive(
+    conditions: (Option<&Condition>, Option<&Condition>),
+    site: impl FnOnce() -> ConditionSite,
+) -> Result<(), ValidationError> {
+    match conditions {
+        (Some(_), Some(_)) => Err(ValidationError::BothWhenAndUnless { site: site() }),
+        _ => Ok(()),
     }
 }
 
@@ -111,6 +153,36 @@ pub(crate) enum ValidationError {
         first_position: usize,
         duplicate_position: usize,
     },
+    /// One record wrote `when` and `unless` together
+    /// (`docs/repoformat.md`), which are aliases of one gate rather than two.
+    BothWhenAndUnless { site: ConditionSite },
+}
+
+/// Which record broke a rule about conditions.
+///
+/// Positional for the records the format identifies by order, and by ID for a
+/// remote, whose map key *is* its ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ConditionSite {
+    Action(usize),
+    Remote(ItemId),
+    DefaultDisabledAction(usize),
+    DefaultDisabledGroup(usize),
+}
+
+impl fmt::Display for ConditionSite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Action(position) => write!(f, "action #{}", position + 1),
+            Self::Remote(id) => write!(f, "remote `{id}`"),
+            Self::DefaultDisabledAction(position) => {
+                write!(f, "default-disabled action #{}", position + 1)
+            }
+            Self::DefaultDisabledGroup(position) => {
+                write!(f, "default-disabled group #{}", position + 1)
+            }
+        }
+    }
 }
 
 impl fmt::Display for ValidationError {
@@ -126,6 +198,9 @@ impl fmt::Display for ValidationError {
                 first_position + 1,
                 duplicate_position + 1
             ),
+            Self::BothWhenAndUnless { site } => {
+                write!(f, "{site} may contain `when` or `unless` but not both")
+            }
         }
     }
 }
@@ -172,7 +247,7 @@ when = "work"
 
 [[default-disabled.groups]]
 group = "gui"
-unless = "facts.os == 'darwin'"
+unless = "facts.os == 'macos'"
 
 [[actions]]
 type = "include-remote"
@@ -239,8 +314,11 @@ dest = "~/.zshrc"
             Remote::Git(GitRemote { .. })
         ));
         assert_eq!(
-            config.default_disabled.groups[0].unless.as_deref(),
-            Some("facts.os == 'darwin'")
+            config.default_disabled.groups[0]
+                .unless
+                .as_ref()
+                .map(Condition::source),
+            Some("facts.os == 'macos'")
         );
     }
 
@@ -325,6 +403,90 @@ dest = "~/.zshrc"
             }
             .to_string(),
             "action ID `core` is used by actions #2 and #5; action IDs must be unique"
+        );
+    }
+
+    #[test]
+    fn when_excludes_unless_on_every_record_that_accepts_the_pair() {
+        // Four record kinds, so the walk is proven to reach all four rather
+        // than only the one that was written first.
+        let cases = [
+            (
+                "[[actions]]\ntype = 'create-dir'\ndest = 'x'\nwhen = 'a'\nunless = 'b'\n",
+                ConditionSite::Action(0),
+            ),
+            (
+                "[remotes.core]\ntype = 'git'\nurl = 'u'\nwhen = 'a'\nunless = 'b'\n",
+                ConditionSite::Remote(id("core")),
+            ),
+            (
+                "[[default-disabled.actions]]\nid = 'p10k'\nwhen = 'a'\nunless = 'b'\n",
+                ConditionSite::DefaultDisabledAction(0),
+            ),
+            (
+                "[[default-disabled.groups]]\ngroup = 'gui'\nwhen = 'a'\nunless = 'b'\n",
+                ConditionSite::DefaultDisabledGroup(0),
+            ),
+        ];
+
+        for (document, site) in cases {
+            let config = BatfilesConfig::parse(document)
+                .expect("the pair is a rule about two fields, so it still parses");
+            assert_eq!(
+                config.validate().expect_err("both were written"),
+                ValidationError::BothWhenAndUnless { site },
+                "{document}"
+            );
+        }
+    }
+
+    #[test]
+    fn either_condition_alone_is_fine_everywhere() {
+        for field in ["when", "unless"] {
+            let document = format!(
+                "[remotes.core]\ntype = 'git'\nurl = 'u'\n{field} = 'work'\n\n\
+                 [[actions]]\ntype = 'create-dir'\ndest = 'x'\n{field} = 'work'\n\n\
+                 [[default-disabled.actions]]\nid = 'p10k'\n{field} = 'work'\n\n\
+                 [[default-disabled.groups]]\ngroup = 'gui'\n{field} = 'work'\n"
+            );
+            BatfilesConfig::parse(&document)
+                .expect("parse")
+                .validate()
+                .unwrap_or_else(|error| panic!("{field}: {error}"));
+        }
+    }
+
+    #[test]
+    fn a_doubled_condition_names_the_record_it_is_on() {
+        // Positional records render one-based, as the duplicate-ID rule does; a
+        // remote renders by ID, because its map key is its ID.
+        assert_eq!(
+            ValidationError::BothWhenAndUnless {
+                site: ConditionSite::Action(3),
+            }
+            .to_string(),
+            "action #4 may contain `when` or `unless` but not both"
+        );
+        assert!(
+            ValidationError::BothWhenAndUnless {
+                site: ConditionSite::Remote(id("core")),
+            }
+            .to_string()
+            .starts_with("remote `core` may contain")
+        );
+        assert!(
+            ValidationError::BothWhenAndUnless {
+                site: ConditionSite::DefaultDisabledAction(0),
+            }
+            .to_string()
+            .starts_with("default-disabled action #1 may contain")
+        );
+        assert!(
+            ValidationError::BothWhenAndUnless {
+                site: ConditionSite::DefaultDisabledGroup(1),
+            }
+            .to_string()
+            .starts_with("default-disabled group #2 may contain")
         );
     }
 

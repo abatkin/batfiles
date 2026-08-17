@@ -73,7 +73,7 @@ when = "work"
 
 [[groups]]
 group = "gui"
-unless = "facts.os == 'darwin'"
+unless = "facts.os == 'macos'"
 "#,
         )
         .expect("parse");
@@ -81,11 +81,14 @@ unless = "facts.os == 'darwin'"
         assert_eq!(disabled.actions.len(), 2);
         assert_eq!(disabled.actions[0].id, address("p10k"));
         assert_eq!(disabled.actions[0].when, None);
-        assert_eq!(disabled.actions[1].when.as_deref(), Some("work"));
+        assert_eq!(
+            disabled.actions[1].when.as_ref().map(Condition::source),
+            Some("work")
+        );
         assert_eq!(disabled.groups[0].group, address("gui"));
         assert_eq!(
-            disabled.groups[0].unless.as_deref(),
-            Some("facts.os == 'darwin'")
+            disabled.groups[0].unless.as_ref().map(Condition::source),
+            Some("facts.os == 'macos'")
         );
     }
 

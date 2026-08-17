@@ -34,10 +34,18 @@ pub(crate) enum Action {
 impl Action {
     /// The action's `id`, if it was written with one.
     ///
-    /// Every variant repeats the common fields, so reaching one of them takes an
-    /// exhaustive match. This is the only field with a caller that does not
-    /// already know the variant: action IDs share one namespace across a
-    /// repository, so uniqueness is checked over the list as a whole.
+    /// Action IDs share one namespace across a repository, so uniqueness is
+    /// checked over the list as a whole — by a caller that does not know, and
+    /// should not have to ask, which variant it is holding.
+    ///
+    /// Every variant repeats the common fields (see the module doc for why), so
+    /// reaching one takes an exhaustive match. There are two such accessors now,
+    /// this and [`conditions`](Self::conditions). **If a third appears — `group`
+    /// is the likely one, when action planning lands — collapse them into a
+    /// single `fn common(&self) -> Common<'_>` returning a borrowed view of all
+    /// four fields**, so there is one exhaustive match rather than one per
+    /// field. A trait is the wrong tool for it: producing a `&dyn` from the enum
+    /// needs the same match, and then wants an impl per variant on top.
     pub fn id(&self) -> Option<&ItemId> {
         match self {
             Self::Symlink(action) => action.id.as_ref(),
@@ -47,6 +55,24 @@ impl Action {
             Self::GitClone(action) => action.id.as_ref(),
             Self::FetchUrl(action) => action.id.as_ref(),
             Self::IncludeRemote(action) => action.id.as_ref(),
+        }
+    }
+
+    /// The action's `when` and `unless`, in that order.
+    ///
+    /// Beside [`id`](Self::id) and for the same reason, including the note there
+    /// about when to collapse the two matches into one. Validation rejects the
+    /// pair being written together, and the reachability pipeline evaluates
+    /// whichever one is present.
+    pub fn conditions(&self) -> (Option<&Condition>, Option<&Condition>) {
+        match self {
+            Self::Symlink(action) => (action.when.as_ref(), action.unless.as_ref()),
+            Self::Copy(action) => (action.when.as_ref(), action.unless.as_ref()),
+            Self::CreateDir(action) => (action.when.as_ref(), action.unless.as_ref()),
+            Self::GitCloneList(action) => (action.when.as_ref(), action.unless.as_ref()),
+            Self::GitClone(action) => (action.when.as_ref(), action.unless.as_ref()),
+            Self::FetchUrl(action) => (action.when.as_ref(), action.unless.as_ref()),
+            Self::IncludeRemote(action) => (action.when.as_ref(), action.unless.as_ref()),
         }
     }
 }
@@ -381,7 +407,7 @@ dot-prefix = true
 type = "create-dir"
 id = "config-dir"
 group = "shell"
-when = "work && facts.os == 'darwin'"
+when = "work && facts.os == 'macos'"
 dest = "~/.config"
 "#,
         ) else {
@@ -389,7 +415,10 @@ dest = "~/.config"
         };
         assert_eq!(create.id, Some(id("config-dir")));
         assert_eq!(create.group, Some(id("shell")));
-        assert_eq!(create.when.as_deref(), Some("work && facts.os == 'darwin'"));
+        assert_eq!(
+            create.when.as_ref().map(Condition::source),
+            Some("work && facts.os == 'macos'")
+        );
         assert_eq!(create.unless, None);
     }
 
@@ -425,7 +454,7 @@ dest = "~/.zshrc"
         else {
             unreachable!()
         };
-        assert_eq!(create.unless.as_deref(), Some("work"));
+        assert_eq!(create.unless.as_ref().map(Condition::source), Some("work"));
 
         // Both at once is invalid, but that is a rule about the pair rather than
         // about either field, so it parses here.

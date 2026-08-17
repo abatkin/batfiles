@@ -7,8 +7,8 @@ authors = ["Adam Batkin <adam@batkin.net>"]
 repository = "https://github.com/abatkin/batfiles-rust"
 rust-version = "1.94"
 
-# Only dependencies implemented code actually uses are declared here. Expression
-# evaluation, hashing, and archives arrive with the features that need them.
+# Only dependencies implemented code actually uses are declared here. Hashing and
+# archives arrive with the features that need them.
 [dependencies]
 # clap drives argument parsing and help/usage generation. Dual-licensed
 # MIT/Apache-2.0.
@@ -25,6 +25,23 @@ toml = "1"
 # instant and a duration is relative to nothing, so neither the bundled time-zone
 # database nor system time-zone lookup is needed. Dual-licensed Unlicense/MIT.
 jiff = { version = "0.2", default-features = false, features = ["std", "serde"] }
+
+# simple-expressions is the Simple Expressions language `docs/repoformat.md` pins
+# `when`/`unless` to. 0.4.1 is a floor rather than a preference, for three
+# reasons. 0.4 added `Coercions`, which is what lets batfiles define its own
+# truthiness uniformly — for a condition's result and for every `&&`, `||`, and
+# `!` operand alike — instead of bolting a `bool()` builtin onto the language.
+# 0.4.1 then made identifiers that merely begin with a boolean keyword parse as
+# identifiers (`trueish` is a legal variable name here), and made integer
+# arithmetic checked, so a manifest — including a third-party remote's — reports
+# an overflow instead of aborting the process. Dual-licensed MIT/Apache-2.0.
+simple-expressions = "0.4.1"
+
+# gethostname supplies `facts.hostname`, which has no equivalent in std: `uname`'s
+# nodename on Unix, `GetComputerNameExW` on Windows. It is infallible by
+# signature and adds one line to `Cargo.lock`, since `rustix` is already in the
+# tree by way of `tempfile`. Dual-licensed MIT/Apache-2.0.
+gethostname = "1"
 
 # tempfile gives stdout captures a secure, self-cleaning file with independent
 # reader and writer handles. A file cannot fill like a pipe while batfiles waits

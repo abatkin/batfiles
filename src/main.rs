@@ -2,6 +2,7 @@
 
 mod app;
 mod cli;
+mod condition;
 mod config;
 mod dynamic;
 mod init;
