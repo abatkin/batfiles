@@ -21,6 +21,22 @@ pub(crate) struct ColorResolution {
     pub warning: Option<String>,
 }
 
+impl ColorResolution {
+    /// Whether batfiles' own diagnostics should be colored. `auto` follows
+    /// standard error, which is where every line batfiles colors is written;
+    /// the caller supplies the answer so this stays testable.
+    ///
+    /// The mode itself is handed to clap untouched, leaving clap's terminal
+    /// detection in charge of `auto` for the output clap renders.
+    pub(crate) fn enabled(&self, stderr_is_terminal: bool) -> bool {
+        match self.mode {
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+            ColorChoice::Auto => stderr_is_terminal,
+        }
+    }
+}
+
 /// Resolve `--color > BATFILES_COLOR > non-empty NO_COLOR > auto`.
 ///
 /// The two environment values are passed in already decoded. "Set but empty"

@@ -6,6 +6,17 @@ fn batfiles() -> Command {
     let mut command = Command::cargo_bin("batfiles").expect("the batfiles binary should be built");
     // The tests must not inherit the developer's own color environment.
     command.env_remove("BATFILES_COLOR").env_remove("NO_COLOR");
+    // Every root is selected, so no test depends on the machine the suite runs
+    // on. None of these directories exists, which is safe because no command
+    // reads or writes one yet. A test that wants a default back removes the
+    // variable that covers it.
+    command
+        .env("BATFILES_HOME", "/selected-home")
+        .env("BATFILES_DIR", "/selected-repo")
+        .env("BATFILES_CONFIG_DIR", "/selected-config")
+        .env("BATFILES_CACHE_DIR", "/selected-cache")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_CACHE_HOME");
     command
 }
 
@@ -160,4 +171,149 @@ fn color_never_applies_to_a_clap_usage_error() {
         !stderr.contains('\x1b'),
         "expected no escape sequences:\n{stderr}"
     );
+}
+
+// Location resolution. Nothing reads or writes a resolved root yet, so `-v` is
+// how a root is observed from outside the binary.
+
+#[test]
+fn verbose_reports_every_resolved_root() {
+    let assertion = batfiles().args(["sync", "-v"]).assert().failure().code(2);
+    let stderr = stderr_of(&assertion);
+    for expected in [
+        "repository: /selected-repo",
+        "home:       /selected-home",
+        "config:     /selected-config",
+        "cache:      /selected-cache",
+    ] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn the_roots_are_reported_only_when_asked_for() {
+    let assertion = batfiles().arg("sync").assert().failure().code(2);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        !stderr.contains("/selected-repo"),
+        "unexpected detail:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_location_option_outranks_its_variable() {
+    let assertion = batfiles()
+        .args(["sync", "-v", "--batfiles-dir", "/from-the-option"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("repository: /from-the-option"),
+        "the option did not win:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("home:       /selected-home"),
+        "an unselected root changed:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_leaf_repository_defaults_under_the_selected_home() {
+    let assertion = batfiles()
+        .env_remove("BATFILES_DIR")
+        .args(["sync", "-v"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("repository: /selected-home/dotfiles"),
+        "unexpected default:\n{stderr}"
+    );
+}
+
+#[test]
+fn config_and_cache_do_not_follow_the_selected_home() {
+    // Batfiles' own state belongs to the invoking user, not to whichever home
+    // is being installed into, so `--home-dir` must not move it.
+    let assertion = batfiles()
+        .env_remove("BATFILES_CONFIG_DIR")
+        .env_remove("BATFILES_CACHE_DIR")
+        .env("XDG_CONFIG_HOME", "/xdg-config")
+        .env("XDG_CACHE_HOME", "/xdg-cache")
+        .args(["sync", "-v", "--home-dir", "/elsewhere"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    for expected in [
+        "home:       /elsewhere",
+        "config:     /xdg-config/batfiles",
+        "cache:      /xdg-cache/batfiles",
+    ] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn version_resolves_no_roots() {
+    batfiles()
+        .args(["version", "-v"])
+        .assert()
+        .success()
+        .stderr("");
+}
+
+#[test]
+fn init_resolves_no_roots() {
+    let assertion = batfiles().args(["init", "-v"]).assert().failure().code(2);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        !stderr.contains("repository:"),
+        "`init` resolved roots:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`init` is not implemented yet"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+// Batfiles' own diagnostics, as opposed to the ones clap renders.
+
+#[test]
+fn an_error_is_labeled() {
+    let assertion = batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    assert_eq!(stderr, "error: `sync` is not implemented yet\n");
+}
+
+#[test]
+fn color_always_colors_the_label_of_an_error_batfiles_raised() {
+    let assertion = batfiles()
+        .args(["--color", "always", "sync"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("\x1b[1;31merror:\x1b[0m `sync` is not implemented yet"),
+        "expected a colored label:\n{stderr:?}"
+    );
+}
+
+#[test]
+fn an_invalid_batfiles_color_is_not_reported_when_the_option_settled_it() {
+    // Precedence stops at the first input that answers, so a value the
+    // resolution never consulted is never validated either.
+    batfiles()
+        .env("BATFILES_COLOR", "sometimes")
+        .args(["--color", "never", "version"])
+        .assert()
+        .success()
+        .stderr("");
 }

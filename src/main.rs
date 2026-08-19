@@ -2,6 +2,9 @@
 
 mod app;
 mod cli;
+mod config;
+mod error;
+mod output;
 
 use std::process::ExitCode;
 

@@ -28,12 +28,15 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   one exiting 2. Promote the command overview, global options, output streams,
   and exit statuses from `future/cmdline.md`. Color resolution is built here
   too, so `future/environment.md`'s color section is promoted alongside them.
-- **0.3** Port the `Reporter` and the four-root resolution so diagnostics and
+- **0.3** ✅ Port the `Reporter` and the four-root resolution so diagnostics and
   paths work from the first commit. Promote location selection and its
   precedence from `future/environment.md`. Two pieces of 0.2 are waiting here
   for their first caller: `ColorResolution::enabled`, which resolves `auto`
   against the terminal for batfiles' own diagnostics, and `Environment`, which
-  replaces `app`'s direct reads of `BATFILES_COLOR` and `NO_COLOR`.
+  replaces `app`'s direct reads of `BATFILES_COLOR` and `NO_COLOR`. Every
+  command but `version` and `init` now resolves its roots before reporting that
+  it is unimplemented, and `-v` prints the four it resolved, which is what makes
+  resolution observable from `tests/cli.rs` before anything reads a root.
 - **0.4** Port the read half of `tomlfile.rs`; leave the atomic-write half out
   until 3.3 needs it. Promote the atomic whole-document rewrite rule from
   `future/state.md`, which is cross-cutting and belongs with the reader.
@@ -41,11 +44,21 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   with an `id`, a `type`, a `source`, and a `dest`.
 - **0.6** Parse it as an internally-tagged enum with one variant, rejecting
   unknown fields. Promote the layout, the top-level schema, names and IDs, and
-  the `symlink` variant from `future/repoformat.md`.
+  the `symlink` variant from `future/repoformat.md`. This is also the first
+  caller of a `Roots` accessor: at the tag `Roots` carries one method per
+  document, and 0.3 left all five behind because nothing parsed a document yet.
+  Bring back `batfiles_config()` and the reasoning with it — which root a
+  document lives under is location policy, so the accessors stay together next
+  to the resolution, while each file name travels with its parser.
+  `disabled()` follows at 3.3, `machine_vars()` at 5.2, `remotes_dir()` at 6.2,
+  and `dynamic_vars()` at 9.1.
 - **0.7** Execute a single symlink action against the resolved home directory,
   creating the link or repairing one that points somewhere else. Add `symlink`
   to `goals.md`'s implemented-actions line, and keep that line current at every
-  action thereafter.
+  action thereafter. Saying what it linked makes this the first caller of
+  `Reporter::info`, which 0.3 left at the tag along with `Verbosity::shows_info`;
+  take both, and note that this is also the first moment `--quiet` has anything
+  to suppress.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
   with the path named and nothing written (`guidance.md`, rule 13).
@@ -58,11 +71,12 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   never reported dead and no annotation exists for the grep to find. Linting the
   default targets as well is what makes rule 1 actually mechanical.
 - **0.11** Add the unimplemented-option check every command calls at entry, and
-  populate it from the options ported at 0.2 (`guidance.md`, rule 12). After
-  0.2, `--color` is the only live option, so the list starts as everything else.
-  The four location options are the awkward case: they are global, but `version`
-  legitimately ignores them because it resolves no roots, so whether an option
-  is unimplemented depends on the command and not on the option alone.
+  populate it from the options ported at 0.2 (`guidance.md`, rule 12). The four
+  location options went live at 0.3 and are off the list, so what remains is the
+  shared action-execution, selection, and bootstrap options. `--quiet` is the
+  one to think about: it is implemented, and until 0.7 gives it an informational
+  line to suppress it changes nothing, which is a different thing from an option
+  that is not built.
 - **0.12** Add a real leaf repository under `tests/fixtures/` and CLI tests that
   sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails.
@@ -136,6 +150,9 @@ fetching.
 
 - **5.1** Add static string values under `[vars]` in the leaf manifest.
 - **5.2** Port `vars.toml` and the `vars set` / `get` / `unset` commands.
+  `vars get` is the first command that answers a question rather than reporting
+  what it did, so it is the first caller of `Reporter::data`, left at the tag by
+  0.3: standard output, no label, no color, and never gated by `--quiet`.
 - **5.3** Add `BATFILES_VAR_*` and `--var`, warning on and dropping an invalid
   environment name. `--var` was ported at 0.2 as a bare `Vec<String>` under
   rule 12, so this step puts its value parser back: `parse_var` in

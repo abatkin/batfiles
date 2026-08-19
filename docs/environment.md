@@ -1,9 +1,95 @@
 # Environment variables
 
-The environment inputs batfiles reads today. The rest — the location variables,
-one-shot variable overrides, run-only skips, bootstrap adoption, and the host
-facts conditions use — are in [`future/environment.md`](future/environment.md),
-along with the table naming every variable in the intended set.
+The environment inputs batfiles reads today: the four location variables that
+select where it works, and the color selection. The rest — one-shot variable
+overrides, run-only skips, bootstrap adoption, and the host facts conditions use
+— are in [`future/environment.md`](future/environment.md), along with the table
+naming every variable in the intended set.
+
+The process environment is captured once when batfiles starts, so every lookup
+during a run sees the same values.
+
+Environment variable **names** follow the host operating system's case
+sensitivity. On Unix they are used verbatim. On Windows, whose environment is
+case-insensitive, batfiles uppercases every variable name at capture so that all
+lookups are deterministic. Values are never case-folded.
+
+## Location variables
+
+| Variable              | Equivalent option | Effect                                                                            |
+|-----------------------|-------------------|-----------------------------------------------------------------------------------|
+| `BATFILES_DIR`        | `--batfiles-dir`  | Selects the leaf repository.                                                      |
+| `BATFILES_HOME`       | `--home-dir`      | Selects the destination home directory.                                           |
+| `BATFILES_CONFIG_DIR` | `--config-dir`    | Selects the directory containing `vars.toml` and `disabled.toml`.                 |
+| `BATFILES_CACHE_DIR`  | `--cache-dir`     | Selects the directory containing the dynamic-variable cache, `dynamic-vars.toml`. |
+
+The four are global because their corresponding CLI options are global. A
+command still reads or acts on only the roots it needs, and a command that needs
+none of them — `version`, and `init`, which works on the current directory —
+skips location resolution entirely.
+
+None of the four is read yet: resolution answers where a command *would* work,
+and no command does any work. All four are resolved from the first commit
+anyway, because one set of rules covers all four roots and splitting it would
+mean writing those rules twice.
+
+## Location selection
+
+The destination home is selected in this order:
+
+```text
+--home-dir > BATFILES_HOME > current user's OS home directory
+```
+
+The OS home directory is the one the platform reports for the invoking user: on
+Unix `$HOME` when it is set and non-empty, otherwise the current user's passwd
+entry; on Windows `%USERPROFILE%` when it is set and non-empty, otherwise the
+user's profile directory as reported by the OS.
+
+Failure to determine a home directory for a command that needs one is fatal.
+Batfiles does not silently use the current directory.
+
+The leaf repository is selected in this order:
+
+```text
+--batfiles-dir > BATFILES_DIR > <selected-home>/dotfiles
+```
+
+The config directory is selected in this order:
+
+```text
+--config-dir
+> BATFILES_CONFIG_DIR
+> $XDG_CONFIG_HOME/batfiles
+> <os-home>/.config/batfiles when XDG_CONFIG_HOME is unset
+```
+
+The cache directory is selected independently in this order:
+
+```text
+--cache-dir
+> BATFILES_CACHE_DIR
+> $XDG_CACHE_HOME/batfiles
+> <os-home>/.cache/batfiles when XDG_CACHE_HOME is unset
+```
+
+The config and cache directories hold batfiles' own machine-local state rather
+than installed content, so their home-based fallbacks use the invoking user's OS
+home directory (`<os-home>`, the same home used when `--home-dir` is absent) and
+do **not** follow `--home-dir` or `BATFILES_HOME`. Only the leaf-repository
+default, `<selected-home>/dotfiles`, tracks the selected home. To root config or
+cache under an alternate install home, set `--config-dir`/`--cache-dir` or the
+corresponding `XDG_*`/`BATFILES_*` variable explicitly.
+
+An absent or empty location variable is treated as unset. Location values are
+not trimmed; whitespace is part of the path value.
+
+The OS home is consulted only when a root still needs it. Selecting every root
+explicitly — including by way of `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME` —
+therefore works even where no home directory can be determined at all.
+
+`batfiles <command> -v` prints the four resolved roots, which is the way to
+check what a given combination of options and variables selected.
 
 ## Color
 
@@ -18,16 +104,21 @@ Color selection follows this precedence:
 Any other unrecognized value produces a diagnostic and falls back instead of
 silently selecting a different color mode.
 
+Precedence stops at the first input that answers, and an input that is never
+consulted is never validated: an invalid `BATFILES_COLOR` is reported when it is
+reached, and passed over in silence when `--color` already settled the question.
+
 `NO_COLOR` follows the cross-tool convention: presence alone is insufficient;
 its value must be non-empty. It acts as `never` only when neither `--color` nor
 `BATFILES_COLOR` supplies a higher-precedence choice. Color inputs affect only
 presentation.
 
 `auto` is left unresolved by this precedence and answered by whatever is about
-to print: it enables color when standard output is a terminal. Today the only
-colored output is what clap renders — help, `--version`, and usage errors — and
-it applies its own terminal detection. Batfiles' own warnings and errors are
-uncolored until there is something that formats them.
+to print. Batfiles' own warnings and errors follow **standard error**, because
+that is the only stream it ever colors — requested data goes to standard output
+unlabeled and uncolored, so there is no second stream whose state could
+disagree. The help, `--version`, and usage-error output that clap renders is
+handed the mode untouched and applies clap's own terminal detection.
 
 Color is resolved before the arguments are parsed, because clap may need to
 render a usage error for arguments it could not parse, and that output should

@@ -1,16 +1,21 @@
-//! Wiring: resolve presentation, parse arguments, dispatch, and map the result
-//! to an exit status.
+//! Wiring: capture the environment, resolve presentation, parse arguments,
+//! resolve the roots a command works in, dispatch, and map the result to an
+//! exit status.
 //!
-//! Every command in the surface parses; only `version` runs. The rest report
-//! that they do not exist yet, which is the honest thing to do and the reason
-//! the whole surface can be committed before the tool works.
+//! Every command in the surface parses; only `version` runs. The rest resolve
+//! their roots and then report that they do not exist yet, which is the honest
+//! thing to do and the reason the whole surface can be committed before the
+//! tool works.
 
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, color};
+use crate::cli::{Cli, Command, GlobalOptions, color};
+use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::output::{Reporter, Verbosity};
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -22,17 +27,20 @@ const EXIT_UNIMPLEMENTED: u8 = 2;
 
 pub(crate) fn run() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
+    // Read once, so every later lookup sees the same environment.
+    let env = Environment::capture();
 
     // Presentation is settled first: clap may need to render `--help`,
     // `--version`, or a usage error before there is a parsed `Cli` to consult,
     // and that output should honor the requested color too.
     let color = color::resolve(
         color::preparse_choice(&args),
-        env("BATFILES_COLOR").as_deref(),
-        env("NO_COLOR").as_deref(),
+        env.get("BATFILES_COLOR"),
+        env.get("NO_COLOR"),
     );
+    let mut reporter = Reporter::new(color.enabled(std::io::stderr().is_terminal()));
     if let Some(warning) = &color.warning {
-        eprintln!("warning: {warning}");
+        reporter.warn(warning);
     }
 
     let (cli, name) = match parse(&args, color.mode) {
@@ -44,6 +52,7 @@ pub(crate) fn run() -> ExitCode {
             return ExitCode::from(exit_code(error.exit_code()));
         }
     };
+    reporter.set_verbosity(Verbosity::new(cli.global.quiet, cli.global.verbose));
 
     match cli.command {
         // Rendered through clap so `version` and `--version` cannot drift.
@@ -51,18 +60,50 @@ pub(crate) fn run() -> ExitCode {
             print!("{}", Cli::command().render_version());
             ExitCode::SUCCESS
         }
-        _ => {
-            eprintln!("error: `{name}` is not implemented yet");
-            ExitCode::from(EXIT_UNIMPLEMENTED)
-        }
+        // `init` works on the current directory, so it resolves no roots either.
+        Command::Init(_) => unimplemented(&reporter, &name),
+        _ => match resolve_roots(&locations(&cli.global), &env, detect_os_home) {
+            Ok(roots) => {
+                report_roots(&reporter, &roots);
+                unimplemented(&reporter, &name)
+            }
+            Err(error) => {
+                reporter.error(&error.to_string());
+                ExitCode::from(EXIT_FAILURE)
+            }
+        },
     }
 }
 
-/// One environment value, decoded the way batfiles decodes every other one: a
-/// name it cannot read as text is not an error here, it is simply a value that
-/// fails whatever rule applies to it.
-fn env(name: &str) -> Option<String> {
-    std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
+/// The four location options, separated from the rest of the global options so
+/// that root resolution takes only what it resolves.
+fn locations(global: &GlobalOptions) -> LocationInputs {
+    LocationInputs {
+        batfiles_dir: global.batfiles_dir.clone(),
+        home_dir: global.home_dir.clone(),
+        config_dir: global.config_dir.clone(),
+        cache_dir: global.cache_dir.clone(),
+    }
+}
+
+/// Report where a command decided to work. Four inputs with four fallbacks
+/// apiece are hard to reason about from the outside, so `-v` shows the answer
+/// rather than leaving it to be inferred.
+fn report_roots(reporter: &Reporter, roots: &Roots) {
+    for (label, path) in [
+        ("repository:", &roots.batfiles_dir),
+        ("home:", &roots.home),
+        ("config:", &roots.config_dir),
+        ("cache:", &roots.cache_dir),
+    ] {
+        reporter.detail(1, &format!("{label:<12}{}", path.display()));
+    }
+}
+
+/// A command that parsed but does not exist yet.
+fn unimplemented(reporter: &Reporter, name: &str) -> ExitCode {
+    reporter.error(&format!("`{name}` is not implemented yet"));
+    ExitCode::from(EXIT_UNIMPLEMENTED)
 }
 
 /// Parse without exiting the process, so the caller controls presentation, and

@@ -13,16 +13,16 @@ The general input order, from highest to lowest precedence, is:
 command-line arguments > environment variables > configuration files > built-in defaults
 ```
 
-The process environment is captured once when batfiles starts. Environment
-inputs are parsed and combined with command-line arguments, configuration
-files, and defaults as needed. Color is resolved separately because it affects
-only presentation.
+Environment inputs are parsed and combined with command-line arguments,
+configuration files, and defaults as needed. Color is resolved separately
+because it affects only presentation.
 
-Environment variable **names** follow the host operating system's case
-sensitivity. On Unix they are used verbatim. On Windows, whose environment is
-case-insensitive, batfiles uppercases every variable name at capture so that all
-lookups and the `env` namespace are deterministic. This applies to the whole
-name, including a `BATFILES_VAR_<name>` suffix. Values are never case-folded.
+Capturing the environment once at startup, and the name case-sensitivity rule
+that goes with it, are built and specified in
+[`docs/environment.md`](../environment.md). Two consequences of that rule apply
+to variables that do not exist yet: Windows uppercasing applies to the whole
+name, including a `BATFILES_VAR_<name>` suffix, and it is what keeps the `env`
+namespace deterministic there.
 
 ## Batfiles configuration variables
 
@@ -42,65 +42,18 @@ name, including a `BATFILES_VAR_<name>` suffix. Values are never case-folded.
 | `BATFILES_COLOR`           | `--color`                | Selects `auto`, `always`, or `never` color output.                                                  |
 | `NO_COLOR`                 | none                     | Disables color when present with a non-empty value and no higher-precedence color selection exists. |
 
-The four location variables are global because their corresponding CLI options
-are global. A command still reads or acts on only the roots it needs. Commands
-such as `init` and `version`, which need no resolved roots, skip location
-resolution.
-
 ### Location selection
 
-The destination home is selected in this order:
+Location selection is built. The four location variables, their precedence, and
+the OS-home rules are specified in
+[`docs/environment.md`](../environment.md#location-selection).
 
-```text
---home-dir > BATFILES_HOME > current user's OS home directory
-```
-
-The OS home directory is the one the platform reports for the invoking user: on
-Unix `$HOME` when it is set and non-empty, otherwise the current user's passwd
-entry; on Windows `%USERPROFILE%` when it is set and non-empty, otherwise the
-user's profile directory as reported by the OS.
-
-Failure to determine a home directory for a command that needs one is fatal.
-Batfiles does not silently use the current directory. The selected home also
-controls `~` expansion and anchors home-relative defaults. Detailed destination
-and path-safety rules are defined by the [safety model](safety.md#destination-paths).
-
-The leaf repository is selected in this order, including for the initial
-destination of `batfiles clone`:
-
-```text
---batfiles-dir > BATFILES_DIR > <selected-home>/dotfiles
-```
-
-The config directory is selected in this order:
-
-```text
---config-dir
-> BATFILES_CONFIG_DIR
-> $XDG_CONFIG_HOME/batfiles
-> <os-home>/.config/batfiles when XDG_CONFIG_HOME is unset
-```
-
-The cache directory is selected independently in this order:
-
-```text
---cache-dir
-> BATFILES_CACHE_DIR
-> $XDG_CACHE_HOME/batfiles
-> <os-home>/.cache/batfiles when XDG_CACHE_HOME is unset
-```
-
-The config and cache directories hold batfiles' own machine-local state rather
-than installed content, so their home-based fallbacks use the invoking user's OS
-home directory (`<os-home>`, the same home used when `--home-dir` is absent) and
-do **not** follow `--home-dir` or `BATFILES_HOME`. Only the leaf-repository
-default (`<selected-home>/dotfiles`), `~` expansion, and home-relative
-destinations track the selected home. To root config or cache under an alternate
-install home, set `--config-dir`/`--cache-dir` or the corresponding
-`XDG_*`/`BATFILES_*` variable explicitly.
-
-An absent or empty location variable is treated as unset. Location values are
-not trimmed; whitespace is part of the path value.
+Two parts of it are not built and stay here. The selected home is also intended
+to control `~` expansion and to anchor home-relative destinations, whose
+detailed path-safety rules are defined by the
+[safety model](safety.md#destination-paths); there are no destinations yet. And
+the leaf-repository selection is intended to supply the initial destination of
+`batfiles clone`, which does not exist yet.
 
 ### One-shot variables: `BATFILES_VAR_<NAME>`
 
