@@ -50,9 +50,17 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
 - **0.9** Promote `safety.md`'s destination resolution and symlink traversal
   rules into `docs/`, since 0.7 and 0.8 are the first code they govern.
 - **0.10** Add the `allow(dead_code)` check to `task ci`, so rule 1 is enforced
-  from the first commit rather than remembered.
+  from the first commit rather than remembered. Close the other half of the hole
+  while you are here: `task lint` runs `clippy --all-targets`, which compiles
+  with `cfg(test)`, so an item reachable only from a `#[cfg(test)]` block is
+  never reported dead and no annotation exists for the grep to find. Linting the
+  default targets as well is what makes rule 1 actually mechanical.
 - **0.11** Add the unimplemented-option check every command calls at entry, and
-  populate it from the options ported at 0.2 (`guidance.md`, rule 12).
+  populate it from the options ported at 0.2 (`guidance.md`, rule 12). After
+  0.2, `--color` is the only live option, so the list starts as everything else.
+  The four location options are the awkward case: they are global, but `version`
+  legitimately ignores them because it resolves no roots, so whether an option
+  is unimplemented depends on the command and not on the option alone.
 - **0.12** Add a real leaf repository under `tests/fixtures/` and CLI tests that
   sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails.
@@ -127,7 +135,14 @@ fetching.
 - **5.1** Add static string values under `[vars]` in the leaf manifest.
 - **5.2** Port `vars.toml` and the `vars set` / `get` / `unset` commands.
 - **5.3** Add `BATFILES_VAR_*` and `--var`, warning on and dropping an invalid
-  environment name.
+  environment name. `--var` was ported at 0.2 as a bare `Vec<String>` under
+  rule 12, so this step puts its value parser back: `parse_var` in
+  `src/cli/options.rs` at the tag splits at the first `=`, validates the key as
+  a `VarName`, and checks the shape first so `--var profile` reports the missing
+  `=` rather than a name-rule complaint. Take its five tests with it, and the
+  two in `cli/actions.rs` asserting that an invalid key is a usage error raised
+  before any root is resolved or any file opened — that ordering is what
+  `future/cmdline.md` promises about `--var`, and it is not testable until now.
 - **5.4** Merge those four sources in one function into one flat map, recording
   each value's origin for `vars list`.
 - **5.5** Port the truthiness table and the `facts` / `env` / `vars` namespace
