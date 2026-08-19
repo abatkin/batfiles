@@ -58,7 +58,14 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   action thereafter. Saying what it linked makes this the first caller of
   `Reporter::info`, which 0.3 left at the tag along with `Verbosity::shows_info`;
   take both, and note that this is also the first moment `--quiet` has anything
-  to suppress.
+  to suppress. Three claims in `docs/` stop being true at this step and need
+  re-reading together: `cmdline.md` says `--quiet` suppresses nothing and that a
+  missing home is the only failure reaching status 1, and `environment.md` says
+  no command reads a resolved root. So does the `tests/cli.rs` helper, which
+  points every test at `/selected-repo` and three siblings — absolute paths that
+  do not exist, and are safe only for as long as nothing opens one. Replace it
+  with temporary directories here rather than extending it; 0.12 builds the
+  fixture that lives in them.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
   with the path named and nothing written (`guidance.md`, rule 13).
@@ -76,7 +83,10 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   shared action-execution, selection, and bootstrap options. `--quiet` is the
   one to think about: it is implemented, and until 0.7 gives it an informational
   line to suppress it changes nothing, which is a different thing from an option
-  that is not built.
+  that is not built. Run the check before root resolution: an unsupported option
+  is a status-2 "nothing was attempted", and resolving first would let a
+  status-1 missing-home failure preempt it on the machines least able to explain
+  why.
 - **0.12** Add a real leaf repository under `tests/fixtures/` and CLI tests that
   sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails.
@@ -114,7 +124,12 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
 - **3.2** Add groups and group membership.
 - **3.3** Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and the
   four enable/disable commands.
-- **3.4** Add `--skip` for suppressing an action or group for one run.
+- **3.4** Add `--skip` for suppressing an action or group for one run. The
+  environment half belongs here too, or it is silently ignored:
+  `BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS` union with the options.
+  `Environment::list` at the tag is the comma-split, trim, drop-empties helper
+  they share with 8.3's four bootstrap lists; 0.3 left it there for want of a
+  caller.
 - **3.5** Add default-disabled bootstrap entries.
 - **3.6** Add `apply-action` and `apply-group` over the same filtered plan.
 - **3.7** Port `ItemAddress` and its parsing, which 3.6 is the first caller of.
@@ -154,18 +169,25 @@ fetching.
   what it did, so it is the first caller of `Reporter::data`, left at the tag by
   0.3: standard output, no label, no color, and never gated by `--quiet`.
 - **5.3** Add `BATFILES_VAR_*` and `--var`, warning on and dropping an invalid
-  environment name. `--var` was ported at 0.2 as a bare `Vec<String>` under
-  rule 12, so this step puts its value parser back: `parse_var` in
-  `src/cli/options.rs` at the tag splits at the first `=`, validates the key as
-  a `VarName`, and checks the shape first so `--var profile` reports the missing
-  `=` rather than a name-rule complaint. Take its five tests with it, and the
+  environment name. `Environment::one_shot_vars` and `VAR_PREFIX` are waiting at
+  the tag — 0.3 ported only `capture`, `get`, and `location` — and three of their
+  rules are the kind that get re-derived wrong: a bare `BATFILES_VAR_` is
+  ignored, an empty value is significant, and name validity is deliberately
+  deferred to the merge step so the diagnostic can name the whole environment
+  variable rather than the suffix. `--var` was ported at 0.2 as a bare
+  `Vec<String>` under rule 12, so this step puts its value parser back:
+  `parse_var` in `src/cli/options.rs` at the tag splits at the first `=`,
+  validates the key as a `VarName`, and checks the shape first so
+  `--var profile` reports the missing `=` rather than a name-rule complaint. Take its five tests with it, and the
   two in `cli/actions.rs` asserting that an invalid key is a usage error raised
   before any root is resolved or any file opened — that ordering is what
   `future/cmdline.md` promises about `--var`, and it is not testable until now.
 - **5.4** Merge those four sources in one function into one flat map, recording
   each value's origin for `vars list`.
 - **5.5** Port the truthiness table and the `facts` / `env` / `vars` namespace
-  binding.
+  binding. `Environment::entries` — the whole captured map, which is what the
+  read-only `env` namespace exposes — is the last piece of the environment 0.3
+  left at the tag.
 - **5.6** Gate leaf actions and groups on `when` and `unless`, rejecting a
   record that sets both.
 - **5.7** Make an unevaluable condition close the gate and warn, in both
