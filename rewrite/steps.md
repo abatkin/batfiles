@@ -18,8 +18,10 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
 
 `batfiles sync` turns one `[[actions]]` symlink record into a symlink on disk.
 
-- **0.1** ✅ Tag the old crate as named in `keep.md`, start a branch with `src/`
-  emptied, and make the initial `docs/` cut described in `docs.md`.
+- **0.1** ✅ Tag the old crate as named in `keep.md`, empty `src/`, and make the
+  initial `docs/` cut described in `docs.md`. Work on `main`: the tag is what
+  preserves the old crate, nothing merges back, and CI runs only on `main` and
+  pull requests. Branch per slice if you want one reviewed.
 - **0.2** Port `cli/` whole, with every command parsed and every unimplemented
   one exiting 2. Promote the command overview, global options, output streams,
   and exit statuses from `future/cmdline.md`.
