@@ -41,9 +41,11 @@ their own: why there is no `types/` module is in guidance.md, why `trace.rs` was
 cut is in keep.md, which tag holds the old crate is in keep.md. If one of them
 comes up again, the answer and its reasoning are next to the thing they affect.
 
-`rewrite/guidance.md` outranks `docs/architecture.md` and `CLAUDE.md` for the
-duration of the rewrite. When they disagree, follow guidance.md and fix the
-other one.
+`rewrite/guidance.md` is the sole owner of implementation shape for the
+duration of the rewrite: step 0.1 deleted `docs/architecture.md`, which said the
+same things less usefully, and guidance.md becomes the new `architecture.md` at
+slice 8. It outranks `CLAUDE.md` meanwhile; when they disagree, follow
+guidance.md and fix the other one.
 
 ## Retiring this directory
 

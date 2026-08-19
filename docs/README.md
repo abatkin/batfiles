@@ -18,14 +18,17 @@ something real contradicts it.
 - [Product goals](goals.md) defines the product model, guiding principles, and
   intended scope. It describes the whole product rather than the built subset,
   and says so where the two differ.
-- [Architecture](architecture.md) defines the implementation shape and the
-  standard for introducing modules and abstractions.
 
 ## What is not here yet
 
 `docs/future/` holds the repository format, the command-line surface, the
 environment inputs, the local state files, and the safety model. Each is
 promoted here in pieces, at the step that builds the piece.
+
+There is no `architecture.md` for the duration of the rewrite.
+[`rewrite/guidance.md`](../rewrite/guidance.md) owns implementation shape, and
+covers the same ground with the failure mode that caused the rewrite written
+into it. It becomes `architecture.md` at slice 8.
 
 Rules should be specified in their owning document and linked from the others.
 This keeps safety-sensitive behavior such as precedence, dry-run execution, and

@@ -37,20 +37,14 @@ would inherit them, which is the thing rule 9 exists to stop.
   nine action types with what exists plus a pointer to `docs/future/`, and move
   the `--refresh-content` and backup paragraph out until 9.4.
 
-- **`architecture.md`** (107) — **replace with `rewrite/guidance.md`.** They cover
-  the same ground and guidance.md is the version with the failure mode in it. Do
-  this when slice 8 lands and `rewrite/` is deleted; until then guidance outranks
-  it.
+- **`architecture.md`** (107) — **deleted at 0.1; recreated at slice 8 from
+  `rewrite/guidance.md`.** The two covered the same ground, and guidance.md is
+  the version with the failure mode in it, so keeping both meant maintaining a
+  weaker duplicate of the authoritative document for eight slices. It is gone
+  from the tree meanwhile; `guidance.md` owns implementation shape, and
+  `docs/README.md` says so.
 
-- **`AGENTS.md`**, and `CLAUDE.md` which symlinks to it — **rewrite at slice 8**,
-  in the same change that deletes `rewrite/`. It is the file agents auto-load, so
-  leaving it stale is worse than leaving any document in `docs/` stale. Four
-  edits: drop the "Status: rewrite in progress" block; replace "Where the
-  documentation lives" with the `docs/` versus `docs/future/` rule above; replace
-  "Source organization" with what was actually built rather than what was
-  planned; add `task test:docker` to the canonical commands if 8.4 added it.
-
-  Carry over from `guidance.md` only the rules that outlive the rewrite — no
+  When it comes back it is the one home for durable design rules — no
   `allow(dead_code)` and its CI check, error types only where a caller matches on
   them, rationale in commit messages, shell out to `git`, dry-run never
   simulates, tests never reach the network, dogfood before shipping, and the
@@ -58,6 +52,22 @@ would inherit them, which is the thing rule 9 exists to stop.
   "a later slice may reshape an earlier one", and the seams list are all spent by
   then, and carrying them forward would make the permanent guidance read like a
   plan again.
+
+- **`AGENTS.md`**, and `CLAUDE.md` which symlinks to it — **rewrite at slice 8**,
+  in the same change that deletes `rewrite/`. It is the file agents auto-load, so
+  leaving it stale is worse than leaving any document in `docs/` stale. Four
+  edits: drop the "Status: rewrite in progress" block; replace "Where the
+  documentation lives" with the `docs/` versus `docs/future/` rule above; cut
+  "Source organization" down to a pointer at the recreated `architecture.md`;
+  add `task test:docker` to the canonical commands if 8.4 added it.
+
+  That third edit is the one to get right, and it is a change from how the file
+  reads today. `AGENTS.md` currently states the source-organization rules *and*
+  links to `architecture.md` for "the durable design guidance", so the same rules
+  live in two files and drift independently. One of them has to be the pointer.
+  `architecture.md` is the one that holds the rules, because it can hold them at
+  full length; `AGENTS.md` stays short, which is what makes it worth
+  auto-loading.
 
 - **`repoformat.md`** (740) — **split.** The real specification and the most
   valuable document in the set. Keep in `docs/` only the sections whose fields

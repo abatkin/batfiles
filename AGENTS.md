@@ -55,8 +55,9 @@ Keep the implementation proportional to the tool:
 - Add modules when implemented behavior needs them; do not create speculative
   placeholder layers.
 
-See [docs/architecture.md](docs/architecture.md) for the durable design
-guidance.
+See [rewrite/guidance.md](rewrite/guidance.md) for the durable design guidance.
+It replaces the deleted `docs/architecture.md`, and supersedes this section
+wherever the two disagree.
 
 ## Canonical commands
 
