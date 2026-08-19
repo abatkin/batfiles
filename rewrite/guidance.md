@@ -121,6 +121,10 @@ Every slice, without exception:
 - Every cross-document link and step reference still resolves.
 - The unimplemented-option list (rule 12) shrank if the slice made an option
   live.
+- Anything a slice leaves for a later step is written on that step: what to
+  pick up, and where it is. The commit message carries the reasoning; the step
+  carries the instruction, because the step is what someone reads at the time.
+  If no step would finish it, add one.
 
 ## Test environments
 

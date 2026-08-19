@@ -10,7 +10,9 @@ dotfiles.** Slice 4 exists because the personal repository needs `fetch-url` and
 `git-clone-list` and nothing else exotic, so those come before variables,
 conditions, and remotes even though they are individually harder.
 
-A step marked **✅** is done. Nothing else is.
+A step marked **✅** is done. Nothing else is. A step may also have grown since
+it was written: when a slice leaves work for a later step, it records that on
+the step, so the instruction is waiting when you get there.
 
 Note that check the `rewrite/README.md` for guidance after Slice 8 is completed, as much of the "rewrite" infrastructure will need to be replaced at that point.
 
