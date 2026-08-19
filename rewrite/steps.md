@@ -12,6 +12,8 @@ conditions, and remotes even though they are individually harder.
 
 A step marked **✅** is done. Nothing else is.
 
+Note that check the `rewrite/README.md` for guidance after Slice 8 is completed, as much of the "rewrite" infrastructure will need to be replaced at that point.
+
 ## Slice 0 — Walking skeleton
 
 `batfiles sync` turns one `[[actions]]` symlink record into a symlink on disk.
