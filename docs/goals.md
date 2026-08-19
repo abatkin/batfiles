@@ -122,8 +122,9 @@ safety guarantees.
 
 - Require no interaction by default; prompting occurs only when explicitly
   requested.
-- Use clear exit statuses, send warnings and errors to standard error, and
-  keep requested data and dry-run output suitable for scripts.
+- Use clear [exit statuses](cmdline.md#exit-statuses), send warnings and errors
+  to [standard error](cmdline.md#output-streams), and keep requested data and
+  dry-run output suitable for scripts.
 - Keep input precedence explicit and predictable; the environment specification
   defines the authoritative [precedence rules](future/environment.md#general-precedence).
 - Select the leaf repository, destination home, config directory, and cache

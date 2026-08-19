@@ -22,12 +22,16 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   initial `docs/` cut described in `docs.md`. Work on `main`: the tag is what
   preserves the old crate, nothing merges back, and CI runs only on `main` and
   pull requests. Branch per slice if you want one reviewed.
-- **0.2** Port `cli/` whole, with every command parsed and every unimplemented
+- **0.2** ✅ Port `cli/` whole, with every command parsed and every unimplemented
   one exiting 2. Promote the command overview, global options, output streams,
-  and exit statuses from `future/cmdline.md`.
+  and exit statuses from `future/cmdline.md`. Color resolution is built here
+  too, so `future/environment.md`'s color section is promoted alongside them.
 - **0.3** Port the `Reporter` and the four-root resolution so diagnostics and
   paths work from the first commit. Promote location selection and its
-  precedence from `future/environment.md`.
+  precedence from `future/environment.md`. Two pieces of 0.2 are waiting here
+  for their first caller: `ColorResolution::enabled`, which resolves `auto`
+  against the terminal for batfiles' own diagnostics, and `Environment`, which
+  replaces `app`'s direct reads of `BATFILES_COLOR` and `NO_COLOR`.
 - **0.4** Port the read half of `tomlfile.rs`; leave the atomic-write half out
   until 3.3 needs it. Promote the atomic whole-document rewrite rule from
   `future/state.md`, which is cross-cutting and belongs with the reader.

@@ -18,12 +18,16 @@ something real contradicts it.
 - [Product goals](goals.md) defines the product model, guiding principles, and
   intended scope. It describes the whole product rather than the built subset,
   and says so where the two differ.
+- [Command-line surface](cmdline.md) defines the commands, the global options,
+  where output goes, and what an exit status means.
+- [Environment variables](environment.md) defines the environment inputs
+  batfiles reads.
 
 ## What is not here yet
 
-`docs/future/` holds the repository format, the command-line surface, the
-environment inputs, the local state files, and the safety model. Each is
-promoted here in pieces, at the step that builds the piece.
+`docs/future/` holds the repository format, the local state files, the safety
+model, and the unbuilt parts of the command-line surface and the environment
+inputs. Each is promoted here in pieces, at the step that builds the piece.
 
 There is no `architecture.md` for the duration of the rewrite.
 [`rewrite/guidance.md`](../rewrite/guidance.md) owns implementation shape, and

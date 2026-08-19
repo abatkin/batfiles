@@ -1,77 +1,23 @@
 # Batfiles Command-Line Surface
 
-This document is a compact inventory of the intended command-line interface.
-Global and shared options are defined once rather than repeated under every
-command.
+A compact inventory of the command-line interface that is not built yet. Global
+and shared options are defined once rather than repeated under every command.
 
-## Command Overview
-
-```text
-batfiles [global-options] <command> [command-options]
-
-Commands:
-  init
-  version
-
-  clone
-  sync
-
-  disable-action
-  enable-action
-  disable-group
-  enable-group
-
-  apply-action
-  apply-group
-
-  vars set
-  vars get
-  vars list
-  vars unset
-  vars refresh
-```
-
-Global options may appear before or after the command name.
-
-## Global Options
-
-These options are accepted by every command, although a command only uses the
-locations relevant to its work. `init`, for example, operates on the current
-directory and does not use any selected roots.
-
-| Option                          | Purpose                                                                                                           |
-|---------------------------------|-------------------------------------------------------------------------------------------------------------------|
-| `-v`, `--verbose`               | Increase diagnostic detail. May be repeated, such as `-vv`.                                                       |
-| `-q`, `--quiet`                 | Suppress informational output and leave errors or explicitly requested data. Mutually exclusive with `--verbose`. |
-| `--color <auto\|always\|never>` | Control colored output. Defaults to `auto`.                                                                       |
-| `--batfiles-dir <path>`         | Select the leaf repository. Defaults to `<selected-home>/dotfiles`.                                               |
-| `--home-dir <path>`             | Select the destination home directory. Defaults to the current user's home directory.                             |
-| `--config-dir <path>`           | Select the directory containing `vars.toml` and `disabled.toml`. Defaults to the XDG config location.             |
-| `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
+The command overview, the global options, the output streams, and the exit
+statuses are built, and are specified in
+[`docs/cmdline.md`](../cmdline.md). Everything below is intended behavior and
+binds nothing.
 
 ## Output Streams
 
-Every command follows one rule for where its output goes:
-
-- **Standard output** carries requested data: the value a command was asked
-  for, and nothing else. It is never suppressed by `--quiet`, because `--quiet`
-  suppresses what a command *did*, not what it was *asked for*. Data lines
-  carry no label and no color, so `$(batfiles vars get editor)` yields the
-  value alone.
-- **Standard error** carries everything else: errors, warnings, progress, the
-  lines describing what a command did, and any interactive prompt. `--quiet`
-  suppresses the informational lines while leaving warnings and errors; `-v`
-  adds detail.
+The stream rule itself is in [`docs/cmdline.md`](../cmdline.md#output-streams).
+One case is specific to a command that does not exist yet:
 
 A subprocess batfiles runs — a dynamic variable's command — inherits standard
 error rather than writing through batfiles, and `--quiet` disconnects it instead
 of leaving the noisiest output on an otherwise quiet channel. See [how dynamic
 commands are run](environment.md#how-dynamic-commands-are-run) for the rest of
 that contract.
-
-Most commands produce no requested data at all and therefore write nothing to
-standard output. `version` and `vars get` are the current exceptions, and
-`vars list` joins them.
 
 ## Shared Action Execution Options
 
@@ -95,7 +41,9 @@ name](repoformat.md#names-and-ids). An invalid one fails the command as a usage
 error, before the location roots are resolved and before any file is read.
 
 `sync`, `clone`, `apply-action`, and `apply-group` all use the same
-variable resolution when evaluating conditions and interpolating action fields.
+variable resolution when evaluating conditions, which is the only thing
+variables feed — see [string-valued
+variables](repoformat.md#string-valued-variables).
 One-shot `--var` values participate at their normal highest precedence. Dynamic
 variables use fresh cached values and automatically resolve stale or missing
 values; `--refresh-vars` instead forces allowed dynamic variables to be
@@ -341,16 +289,6 @@ unwind a partial layout. Use `--no-git-init` to initialize without Git.
 
 Everything `init` prints is a diagnostic on standard error. It produces no
 requested data, so `--quiet` leaves only warnings and errors.
-
-### `version`
-
-```text
-batfiles version
-```
-
-Print the batfiles version to standard output and exit successfully. This
-command does not resolve the selected repository, home, config, or cache
-directories.
 
 ## Address Forms
 

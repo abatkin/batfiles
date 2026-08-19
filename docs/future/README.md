@@ -22,10 +22,12 @@ promoted becomes binding; whatever is left behind stays advisory.
 
 - [Repository format](repoformat.md) — `batfiles.toml`, manifest schemas,
   shared names, IDs, and value types.
-- [Command-line surface](cmdline.md) — commands, options, dry-run behavior, and
-  address forms.
+- [Command-line surface](cmdline.md) — the per-command specifications, the
+  shared action and selection options, dry-run behavior, and address forms. The
+  parts that are built live in [`docs/cmdline.md`](../cmdline.md).
 - [Environment variables](environment.md) — environment inputs, location
-  selection, runtime variable precedence, and bootstrap precedence.
+  selection, runtime variable precedence, and bootstrap precedence. The parts
+  that are built live in [`docs/environment.md`](../environment.md).
 - [Local state and cache files](state.md) — the schemas and lifecycle of
   machine-local configuration and cache files.
 - [Safety model](safety.md) — trust boundaries, destination resolution,

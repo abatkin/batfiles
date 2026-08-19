@@ -221,22 +221,8 @@ and disable decisions update `disabled.toml`.
 
 ### Color
 
-Color selection follows this precedence:
-
-```text
---color > BATFILES_COLOR > non-empty NO_COLOR > auto
-```
-
-`BATFILES_COLOR` accepts `auto`, `always`, or `never`. `auto` enables color when
-stdout is a terminal. An absent or empty `BATFILES_COLOR` is treated as unset,
-as it is for the location variables, and the next input in precedence decides.
-Any other unrecognized value produces a diagnostic and falls back instead of
-silently selecting a different color mode.
-
-`NO_COLOR` follows the cross-tool convention: presence alone is insufficient;
-its value must be non-empty. It acts as `never` only when neither `--color` nor
-`BATFILES_COLOR` supplies a higher-precedence choice. Color inputs affect only
-presentation.
+Color selection is built. It is specified in
+[`docs/environment.md`](../environment.md#color).
 
 ## Host facts in conditions
 

@@ -144,6 +144,10 @@ when it is promoted; the list stays here so a reviewer can check they survived.
 
 ## Size check
 
-Done right, `docs/` at slice 0 is under 300 lines and `docs/future/` holds the
-rest. If `docs/` is still over a thousand lines, something unimplemented is still
-in there.
+Done right, the 0.1 cut leaves `docs/` under 300 lines and `docs/future/`
+holding the rest. If `docs/` is still over a thousand lines, something
+unimplemented is still in there.
+
+That number measures the cut, not a ceiling. `docs/` grows again from 0.2
+onward, one promoted section per step, and the thing to check thereafter is not
+its size but whether every line in it describes something the binary does.
