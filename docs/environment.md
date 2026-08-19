@@ -308,8 +308,8 @@ Rules for `env` values:
   uppercase form (`env.PATH`); a lowercase reference resolves to the empty string.
 - A set variable resolves to its string value and is never re-typed as a boolean
   or number.
-- An unset variable resolves to the empty string. Resolver lookups never fail or
-  make a condition `unknown` merely because a key is absent.
+- An unset variable resolves to the empty string. Resolver lookups never fail
+  merely because a key is absent.
 - Environment variables with identifier-compatible names may use member access,
   such as `env.HOME`. Indexing is also available for those names and is required
   for other keys, such as `env["XDG_CONFIG_HOME"]`.

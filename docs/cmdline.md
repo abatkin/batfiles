@@ -257,9 +257,9 @@ success.
 batfiles vars refresh [<key>...]
 ```
 
-Refresh selected dynamic variables declared by the leaf repository. With no
-keys, refresh all of the leaf repository's dynamic variables. This command does
-not refresh variables declared by remotes.
+Refresh selected dynamic variables. With no keys, refresh the leaf repository's
+dynamic variables together with those of every remote that is in the effective
+inclusion set, is allowed to run commands, and is materialized.
 
 ### `clone`
 

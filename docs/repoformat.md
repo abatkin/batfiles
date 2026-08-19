@@ -113,6 +113,19 @@ the same treatment every other malformed value in the file receives. Every
 condition in a manifest is parsed, including ones no evaluation will ever
 reach.
 
+Evaluation happens later, and can still fail: on an identifier no layer
+declares, on a result outside the truthiness table, or on arithmetic that
+overflows. A condition that cannot be evaluated **closes its gate** — the record
+is excluded — and a warning names the record and the condition. The command does
+not fail; one bad identifier in one third-party remote must not cost the whole
+run, and nothing is silently ignored, because the warning says what happened.
+
+Closing is the direction for `when` and `unless` alike. That is worth stating,
+because the `unless` case looks like it should invert and does not: a false
+`unless` *opens* a gate, so treating an unevaluable condition as false would make
+a misspelt `unless = "no_gui_"` install the very thing it was written to
+suppress. Excluding the record is the safe answer in both spellings.
+
 Condition inputs follow the shared [string-valued variable
 model](#string-valued-variables).
 

@@ -8,6 +8,7 @@ mod dynamic;
 mod init;
 mod item;
 mod output;
+mod reach;
 mod repo;
 mod scope;
 mod state;

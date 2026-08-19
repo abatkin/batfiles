@@ -237,7 +237,12 @@ pub(crate) enum CachePolicy {
 }
 
 /// What one call resolved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// [`Default`] is the empty resolution, which is what a caller with no
+/// declarations in a layer has: no outcomes, and nothing written. It exists so
+/// skipping a layer entirely — without loading the cache — is one expression
+/// rather than a call with an empty slice.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Resolution {
     /// In the order the declarations arrived. The caller built the set, so any
     /// ordering here would be the printer's opinion arriving early.

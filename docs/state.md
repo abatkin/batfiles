@@ -61,8 +61,16 @@ Machine-local values contribute the persisted layer of the authoritative
   process environment. `BATFILES_VAR_*` values participate at their normal
   precedence, and host environment values are available through the read-only
   `env.*` namespace. Remote variables and `--var` are not included.
-- `vars refresh` does not read this file because dynamic command arguments are
-  not interpolated and the command evaluates no conditions.
+- `vars refresh` reads this file, but only as an input to
+  [reachability](#reachability). It evaluates the `[remotes]` and
+  `include-remote` gates to decide which remotes are in play; those gates read
+  the leaf scope, and machine-local values are one of that scope's layers.
+  Reachability has one implementation for every command, so a `vars refresh`
+  that skipped this file could refresh a different set of remotes than the
+  `sync` it is meant to prepare for. The file has no other role here: dynamic
+  command arguments are not interpolated, and — unlike `vars list` — a
+  machine-local value does not suppress the refresh of the declaration it
+  shadows.
 
 Deleting `vars.toml` removes machine-local overrides. It does not remove or
 otherwise alter installed home-directory content.
@@ -211,6 +219,45 @@ A command killed at its `command-timeout` is a refresh failure under both captur
 modes, so the transient `"false"` above covers only a command that could not be
 started. See [how dynamic commands are run](environment.md#how-dynamic-commands-are-run).
 
+### Reachability
+
+A dynamic declaration is *reachable* when the repository declaring it is in
+play. For the leaf that is unconditional; for a remote it is a conditional
+question, and this is the definition the rest of this section rests on.
+
+- Every declaration in the leaf repository's `[vars]` is reachable.
+- A remote's declarations are reachable when an `include-remote` action selects
+  it and **both** gates pass: the action's own `when`/`unless`, and the
+  `when`/`unless` on the leaf's `[remotes]` entry for that remote. Either gate
+  closing excludes that inclusion, and a remote no surviving inclusion selects
+  is not in play at all.
+- Both of those records are *leaf* records, so both evaluate against the **leaf
+  scope**, which needs nothing but the leaf repository on disk. Only actions
+  *inside* an included remote evaluate against that inclusion's scope, and only
+  that scope needs the remote materialized. The layering is what keeps
+  reachability acyclic: nothing in the leaf scope depends on any remote, and a
+  remote-declared variable only ever affects scopes inside its own inclusion.
+- An inclusion's own `vars` overrides do not participate in evaluating that
+  inclusion's `when`. They are inputs to the scope it creates, not to the
+  decision to create it.
+- **Declarations resolve before the conditions that read them.** Within a scope
+  layer: that layer's dynamic declarations are evaluated, its scope is built,
+  and only then are the conditions reading it evaluated. So the leaf's
+  declarations run first, the leaf scope decides which remotes are included, and
+  only the surviving remotes' declarations run after that.
+- A remote excluded by a condition executes none of its dynamic commands and
+  writes no cache entries, even with `allow-dynamic-vars = true`.
+- **`disabled.toml` never participates.** It decides which actions are planned,
+  and never what is reachable, fetched, or resolved. Disabling an
+  `include-remote` therefore does not stop that remote being materialized, nor
+  its variables from being resolved.
+
+What a condition that *cannot be evaluated* does — it closes its gate, and warns
+— is specified with the [condition
+grammar](repoformat.md#condition).
+
+### Evaluation and refresh scope
+
 Plan-building and execution commands evaluate every reachable, allowed dynamic
 declaration eagerly, including declarations shadowed by higher-precedence
 values. Successful captures are cached even though the higher-precedence value
@@ -220,8 +267,11 @@ shadowed by a machine-local value. A remote with
 `allow-dynamic-vars = false` never executes or caches that remote's dynamic
 declarations.
 
-`vars refresh` targets only leaf dynamic variables. If the leaf declares none,
-the command does not load, create, or rewrite the cache file or its directory.
+`vars refresh` targets the leaf's dynamic variables together with those of every
+remote that is in the effective inclusion set, is allowed to run commands, and
+is materialized. If neither the leaf nor any such remote declares a dynamic
+variable, the command does not load, create, or rewrite the cache file or its
+directory.
 
 `--dry-run` does not change dynamic-variable cache policy and may therefore
 update this file. The command-line specification defines the shared [dry-run
@@ -237,8 +287,18 @@ All three files use the same state-file write path.
 
 ### Reading and validation
 
-- TOML parsing and schema validation happen before applying input precedence or
-  running dynamic commands.
+- A manifest is fully parsed and schema-validated before anything in it is used
+  — before its values enter input precedence, and before any dynamic command it
+  declares is run. The leaf's `batfiles.toml` is therefore parsed and validated
+  first, ahead of everything else a command does.
+- A remote's manifest is read at the point that remote is known to be in play,
+  which is *after* the leaf's dynamic declarations have resolved. The
+  [reachability](#reachability) layering makes that ordering unavoidable: the
+  leaf scope is what decides which remotes are included, and building it means
+  resolving the leaf's declarations. A malformed manifest in an effective remote
+  is still fatal and is still rejected before anything in that remote runs, but
+  it is reported after the leaf's own commands have already executed. A remote
+  no surviving inclusion selects is never read at all.
 - An existing malformed file is a fatal configuration-load error. Batfiles
   reports it and leaves the file untouched rather than replacing it.
 - Closed records reject unknown fields. Map containers such as `vars.toml` and

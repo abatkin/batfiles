@@ -16,6 +16,12 @@
 //! it possible to build — so nothing here could evaluate them without a cycle.
 //! `disabled.toml` never participates at all: it decides which actions get
 //! planned, not what is reachable.
+//!
+//! The walk is therefore in **two halves**, with that filter sitting between
+//! them: [`structure`] does everything that can be done without touching
+//! `remotes/`, and [`Structure::read`] reads the manifests of whichever remotes
+//! survived. [`leaf`] is the all-effective composition of the two, for a caller
+//! that wants the whole thing.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Roots;
 use crate::item::ItemId;
+use crate::reach::Effective;
 use crate::repo::action::Action;
 use crate::repo::batfiles_config::{BatfilesConfig, ValidationError};
 use crate::repo::model::{IncludedRemote, Inclusion, Leaf, RemoteState, Repository};
@@ -33,10 +40,32 @@ use crate::tomlfile;
 
 /// Load the leaf repository and every remote an `include-remote` selects.
 ///
+/// The all-effective composition of the two halves: no condition is evaluated,
+/// so every declared remote an inclusion selects is read. A caller that gates
+/// inclusions runs the halves itself with an [`Effective`] of its own between
+/// them.
+///
 /// `roots` supplies the selected leaf repository, its manifest, and its
 /// materialization tree, so a caller cannot pair one leaf with another leaf's
 /// materializations. Nothing is fetched, materialized, or created.
+#[allow(
+    dead_code,
+    reason = "the reachability pipeline runs the two halves itself; this is the \
+              convenience for a caller that gates nothing, and its tests"
+)]
 pub(crate) fn leaf(roots: &Roots) -> Result<Leaf, LoadError> {
+    let structure = structure(roots)?;
+    let effective = Effective::all(&structure);
+    structure.read(&effective)
+}
+
+/// The leaf manifest, its inclusion list, and where each selected remote would
+/// materialize — everything that can be known without touching `remotes/`.
+///
+/// This is the input to condition evaluation: the leaf scope is built from
+/// [`Structure::repo`] alone, and the gates that decide which remotes are in
+/// play are evaluated against it.
+pub(crate) fn structure(roots: &Roots) -> Result<Structure, LoadError> {
     let root = roots.batfiles_dir.clone();
     let config = match manifest(&roots.batfiles_config()) {
         // The leaf is the one repository whose manifest is required, so its
@@ -48,7 +77,7 @@ pub(crate) fn leaf(roots: &Roots) -> Result<Leaf, LoadError> {
     };
 
     let remotes_dir = roots.remotes_dir();
-    let mut included: BTreeMap<ItemId, IncludedRemote> = BTreeMap::new();
+    let mut included: BTreeMap<ItemId, StructuralRemote> = BTreeMap::new();
     let mut inclusions = Vec::new();
     // How many id-less inclusions of each remote have been labeled so far. An
     // inclusion with an `id` is labeled by it and does not consume a number, so
@@ -79,12 +108,15 @@ pub(crate) fn leaf(roots: &Roots) -> Result<Leaf, LoadError> {
             });
         };
 
-        // Read once per declared remote: two inclusions of one remote share a
+        // One entry per declared remote: two inclusions of one remote share a
         // single entry, and therefore a single capture.
-        if !included.contains_key(&include.remote) {
-            let remote = remote(&remotes_dir, &include.remote, git.allow_dynamic_vars)?;
-            included.insert(include.remote.clone(), remote);
-        }
+        included
+            .entry(include.remote.clone())
+            .or_insert_with(|| StructuralRemote {
+                id: include.remote.clone(),
+                allow_dynamic_vars: git.allow_dynamic_vars,
+                root: remotes_dir.join(include.remote.as_ref()),
+            });
 
         let label = match &include.id {
             Some(id) => id.to_string(),
@@ -107,23 +139,84 @@ pub(crate) fn leaf(roots: &Roots) -> Result<Leaf, LoadError> {
         });
     }
 
-    Ok(Leaf {
+    Ok(Structure {
         repo: Repository { root, config },
         included,
         inclusions,
     })
 }
 
+/// The first half of the walk: the leaf, and what its inclusions select.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Structure {
+    /// The leaf root and its validated manifest.
+    pub repo: Repository,
+    /// One entry per *declared* remote at least one `include-remote` selects,
+    /// keyed by the remote's `[remotes]` map key.
+    pub included: BTreeMap<ItemId, StructuralRemote>,
+    /// One entry per `include-remote` action, in action order.
+    pub inclusions: Vec<Inclusion>,
+}
+
+/// A remote an `include-remote` selects, before anything under `remotes/` is
+/// touched.
+///
+/// No config and no [`RemoteState`]: nothing has been read yet, which is the
+/// whole point of the split. The three fields are what the phase between the
+/// halves needs — the id to gate and to key a capture by, the flag it will
+/// filter declarations with, and the root `sync` will materialize into.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StructuralRemote {
+    pub id: ItemId,
+    /// From the leaf's `[remotes]` entry, not from the inclusion.
+    pub allow_dynamic_vars: bool,
+    /// `<remotes_dir>/<id>`, meaningful even when nothing is there.
+    pub root: PathBuf,
+}
+
+impl Structure {
+    /// The second half: read the manifests of the surviving remotes only.
+    ///
+    /// A remote or an inclusion the verdict excludes is not in the result at
+    /// all, so the [`Leaf`] *is* the effective model and no downstream code can
+    /// iterate an excluded inclusion by accident. A consequence worth knowing:
+    /// a malformed manifest inside an excluded remote is never read, and
+    /// therefore no longer fatal. That is correct — an excluded remote is not in
+    /// play, and `sync` would not have fetched it either.
+    ///
+    /// An inclusion is identified by its [`Inclusion::position`], which indexes
+    /// the action list both halves carry unchanged. There is deliberately no
+    /// second index domain: indices into [`Structure::inclusions`] would go
+    /// stale at exactly the moment this filter shortens the vector.
+    pub fn read(&self, effective: &Effective) -> Result<Leaf, LoadError> {
+        let mut included = BTreeMap::new();
+        for (id, structural) in &self.included {
+            if effective.included.contains(id) {
+                included.insert(id.clone(), remote(structural)?);
+            }
+        }
+
+        let inclusions = self
+            .inclusions
+            .iter()
+            .filter(|inclusion| effective.inclusions.contains(&inclusion.position))
+            .cloned()
+            .collect();
+
+        Ok(Leaf {
+            repo: self.repo.clone(),
+            included,
+            inclusions,
+        })
+    }
+}
+
 /// Inspect one declared remote's materialization root and read what is there.
 ///
 /// The root is meaningful even when nothing is at it: it is where `sync` will
 /// materialize.
-fn remote(
-    remotes_dir: &Path,
-    id: &ItemId,
-    allow_dynamic_vars: bool,
-) -> Result<IncludedRemote, LoadError> {
-    let root = remotes_dir.join(id.as_ref());
+fn remote(structural: &StructuralRemote) -> Result<IncludedRemote, LoadError> {
+    let root = structural.root.clone();
 
     let (config, state) = match fs::metadata(&root) {
         Ok(metadata) if metadata.is_dir() => {
@@ -150,8 +243,8 @@ fn remote(
     };
 
     Ok(IncludedRemote {
-        id: id.clone(),
-        allow_dynamic_vars,
+        id: structural.id.clone(),
+        allow_dynamic_vars: structural.allow_dynamic_vars,
         repo: Repository { root, config },
         state,
     })
@@ -344,6 +437,31 @@ mod tests {
     /// A leaf declaring one Git remote, plus whatever actions are appended.
     fn leaf_with(actions: &str) -> String {
         format!("[remotes.core]\ntype = 'git'\nurl = 'git@example.com:me/core.git'\n\n{actions}")
+    }
+
+    #[test]
+    fn the_two_halves_compose_into_the_whole_walk() {
+        // The regression net for the split: everything below tests `leaf`, and
+        // this is what keeps `leaf` the all-effective composition rather than a
+        // third walk that could drift from the two.
+        let fixture = Fixture::new(&leaf_with(
+            "[[actions]]\ntype = 'create-dir'\ndest = 'a'\n\n\
+             [[actions]]\ntype = 'include-remote'\nremote = 'core'\n\n\
+             [[actions]]\ntype = 'include-remote'\nid = 'again'\nremote = 'core'\n",
+        ));
+        fixture.materialize("core", Some("[vars]\ntheme = 'dark'\n"));
+
+        let structure = structure(&fixture.roots).expect("the fixture should walk");
+        let piecewise = structure
+            .read(&Effective::all(&structure))
+            .expect("the fixture should read");
+
+        assert_eq!(fixture.loaded(), piecewise);
+        // And the structural half really did stop short of the manifest.
+        assert_eq!(
+            structure.included[&id("core")].root,
+            piecewise.included[&id("core")].repo.root
+        );
     }
 
     #[test]
