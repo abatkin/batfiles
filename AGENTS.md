@@ -3,6 +3,22 @@
 Guidance for AI agents (and humans) working in this repository. `CLAUDE.md` is
 a symlink to this file.
 
+## Status: rewrite in progress
+
+The implementation is being rebuilt from scratch. **`rewrite/` is authoritative
+and outranks this file and `docs/` until it is retired at slice 8, at which point
+this file is rewritten to absorb the durable rules from it** — see
+`rewrite/docs.md` for which ones, and `rewrite/README.md` for what happens to the
+remaining slices 9 and 10. Read `rewrite/README.md` first.
+`rewrite/guidance.md` supersedes "Source organization" below, and
+`rewrite/docs.md` supersedes "Where the documentation lives".
+
+In particular, "treat `docs/` as primary implementation guidance" and "if a
+decision is settled, honor it" do **not** apply to specification describing
+behavior that has not been built. Honoring 2,400 lines of decisions made without
+implementation feedback is what caused the rewrite. `docs/` is being cut to what
+runs, with the remainder moved to `docs/future/`, which binds nothing.
+
 ## What batfiles is
 
 A Rust-based dotfiles manager. The project is one Cargo package and produces
