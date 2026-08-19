@@ -59,22 +59,19 @@ The stable bootstrap experience has three pieces:
 
 ### Cover the practical installation operations
 
-The declarative action model should support:
+The declarative action model covers installing repository files, seeding copies,
+creating directories, cloning Git repositories singly and from manifests,
+fetching files and archives, and including a reusable remote's actions. The
+[future repository format](future/repoformat.md#actions) enumerates the intended
+set.
 
-- creating live symlinks to repository files or directories;
-- copying files as one-time, missing-only seeds;
-- creating required directories;
-- cloning or conservatively updating one Git repository;
-- cloning or updating lists of Git repositories from manifests;
-- fetching a file or extracting an archive as a missing-only seed; and
-- including actions from a reusable Git remote.
+**Implemented so far: none.** That line is the answer to "what can `sync`
+actually do", and it gains an action each time one is built.
 
 Normal synchronization is convergence-oriented but intentionally asymmetric:
 symlinks can be repaired, while copied files, fetched content, created
 directories, and clones are preserved after creation. Explicit action or group
-application uses the same behavior as synchronization. `--refresh-content` is
-the opt-in path for forcing seed-style actions to run again. It backs up
-existing destination content before replacing it.
+application uses the same behavior as synchronization.
 
 ### Produce one predictable plan
 
@@ -93,7 +90,7 @@ existing destination content before replacing it.
 - Provide dry-run output that clearly says what would be created, updated,
   skipped, backed up, fetched, or cloned, and whether the plan is complete or
   partial. The command-line specification defines the shared
-  [dry-run behavior](cmdline.md#dry-run-behavior).
+  [dry-run behavior](future/cmdline.md#dry-run-behavior).
 
 ### Adapt declaratively to each machine
 
@@ -104,7 +101,7 @@ existing destination content before replacing it.
   choices, environment overrides, and one-shot command-line values with clear
   precedence.
 - Use the repository format's shared [string-valued variable
-  model](repoformat.md#string-valued-variables) consistently.
+  model](future/repoformat.md#string-valued-variables) consistently.
 - Support cached command-backed variables for facts that must be discovered
   locally, with explicit refresh controls and a way for the leaf repository to
   forbid executing a remote's dynamic variable commands.
@@ -115,7 +112,7 @@ existing destination content before replacing it.
 
 ### Define safety policy separately
 
-The [safety model](safety.md) separately defines the guiding rules for
+The [safety model](future/safety.md) separately defines the guiding rules for
 destination resolution, symlink traversal, archive handling, replacement and
 backup behavior, Git updates, and failure recovery. Keeping those rules in one
 place prevents individual action specifications from developing inconsistent
@@ -128,7 +125,7 @@ safety guarantees.
 - Use clear exit statuses, send warnings and errors to standard error, and
   keep requested data and dry-run output suitable for scripts.
 - Keep input precedence explicit and predictable; the environment specification
-  defines the authoritative [precedence rules](environment.md#general-precedence).
+  defines the authoritative [precedence rules](future/environment.md#general-precedence).
 - Select the leaf repository, destination home, config directory, and cache
   directory explicitly through options or environment variables, with
   conventional defaults.

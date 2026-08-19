@@ -369,7 +369,7 @@ cannot fill the temporary directory before its timeout expires.
 ## Bootstrap use of `PATH`
 
 A generated `install.sh` uses a `batfiles` binary found on `PATH`. The product
-goals describe the remaining [bootstrap model](goals.md#product-model).
+goals describe the remaining [bootstrap model](../goals.md#product-model).
 
 ## Deliberate exclusions
 

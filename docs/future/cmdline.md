@@ -112,14 +112,28 @@ These run-only selectors are accepted by `sync` and `clone` only:
 
 ## Dry-Run Behavior
 
-`--dry-run` prevents action execution and changes to remote materializations,
-but it evaluates actions in order against a shadow filesystem layered over the
-real starting state. Each hypothetical create, replacement, or other modeled
-mutation updates that shadow state, so later actions observe what earlier
-actions would have left behind. This preserves normal sequential action
-semantics without diagnosing overlaps as conflicts. When an effect cannot be
-modeled reliably, the affected output is marked partial rather than pretending
-to know the later state.
+Every action computes its effects against the real filesystem as the previous
+action left it, and then either applies them or, under `--dry-run`, does not.
+That is the whole mechanism. A dry run reports the effects of the first action
+exactly, and of each later action as though its predecessors had not run — which
+is accurate for the overwhelmingly common case of actions with distinct
+destinations, and wrong only where one action's output is another's input.
+
+**Batfiles does not simulate a filesystem to close that gap.** A shadow
+filesystem layered over the real starting state would have to model creation,
+replacement, permissions, symlink traversal, and archive extraction, and every
+divergence between the model and the real implementation is a dry run that lies.
+An action that cannot know its effects reports *unknown, with a reason* instead,
+and the plan is marked **partial** rather than pretending to know the later
+state. A complete plan is one in which no action reported unknown.
+
+**A dry run may write to the tool-owned `remotes/` tree, but never to the
+selected home.** Materializing a Git remote is what makes an included remote's
+actions knowable at all; refusing to would make every `include-remote` plan
+partial, which is the same as having no dry run for the composed repositories
+that dry run exists to inspect. `remotes/` is generated data batfiles owns and
+would refresh on the next sync anyway. `$HOME` is the user's, and nothing under
+it is touched.
 
 Dry run still performs normal dynamic-variable resolution. Allowed dynamic
 commands may run, and successful results are written to `dynamic-vars.toml`;

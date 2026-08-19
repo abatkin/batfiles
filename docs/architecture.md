@@ -1,5 +1,11 @@
 # Architecture
 
+> **Superseded for the duration of the rewrite.**
+> [`rewrite/guidance.md`](../rewrite/guidance.md) covers the same ground and is
+> the version with the failure mode in it. Where the two disagree, follow
+> guidance.md. This file is replaced by it at slice 8; until then parts of it
+> describe a source tree that no longer exists — `trace`, below, is cut.
+
 Batfiles is one Cargo package that produces one `batfiles` executable. Its
 implementation should remain proportionate to a small command-line tool while
 keeping its rules understandable and testable.

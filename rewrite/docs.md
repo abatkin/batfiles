@@ -24,6 +24,14 @@ that actually run, which is what makes it a safe instruction.
 
 ## Disposition
 
+Each entry below describes where a document ends up **once slice 0 is finished**,
+not what 0.1 does in one move. The initial cut is blunt on purpose: everything
+that specifies unbuilt behavior goes to `docs/future/` wholesale, and the
+individual sections named below come back at the steps that build them —
+`cmdline.md`'s at 0.2, `environment.md`'s at 0.3, `state.md`'s at 0.4,
+`repoformat.md`'s at 0.6, `safety.md`'s at 0.9. Promoting them at 0.1 instead
+would inherit them, which is the thing rule 9 exists to stop.
+
 - **`goals.md`** (148) — **keep in `docs/`.** The product definition, and the one
   document written at the right altitude. Two edits: replace the enumeration of
   nine action types with what exists plus a pointer to `docs/future/`, and move
@@ -104,7 +112,10 @@ only thing that goes to the tag and does not come back is the old `src/`, and
 ## What to write down before deleting anything
 
 Four things the old implementation learned that are in no document. Put each in
-its owning doc as a few sentences, not as a design essay:
+its owning doc as a few sentences, not as a design essay. **All four are
+recorded as of 0.1** — 2 and 3 turned out to be in `repoformat.md` already, and
+1 and 4 were added there and to `cmdline.md`. They travel with their section
+when it is promoted; the list stays here so a reviewer can check they survived.
 
 1. **Variables exist only to feed conditions.** No interpolation anywhere in the
    format. `repoformat.md` implies this but never says it, and saying it plainly

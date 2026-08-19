@@ -65,6 +65,12 @@ The schema uses these reusable value shapes.
 
 ### String-valued variables
 
+**Variables exist only to feed conditions.** A variable is read by a `when` or
+an `unless` and nowhere else: no field of any action, remote, or manifest entry
+interpolates one, and the format has no interpolation syntax at all. Every rule
+below follows from that, and so does the tool's freedom to build actions long
+before it builds variables.
+
 Every variable value exposed by batfiles remains a string. This includes static
 repository values, per-inclusion overrides, persisted and one-shot overrides,
 dynamic-command results, facts, and host environment values. Batfiles does not

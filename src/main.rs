@@ -1,24 +1,8 @@
-//! The `batfiles` binary.
-
-mod app;
-mod cli;
-mod condition;
-mod config;
-mod dynamic;
-mod init;
-mod item;
-mod output;
-mod reach;
-mod repo;
-mod scope;
-mod state;
-mod toggle;
-mod tomlfile;
-mod var;
-mod vars;
-
 use std::process::ExitCode;
 
+/// Placeholder until step 0.2 ports `cli/`. The crate builds so that `task ci`
+/// is green from the first commit of the rewrite; it does nothing else.
 fn main() -> ExitCode {
-    app::run()
+    eprintln!("batfiles: not implemented yet — see rewrite/steps.md");
+    ExitCode::from(2)
 }

@@ -10,24 +10,32 @@ dotfiles.** Slice 4 exists because the personal repository needs `fetch-url` and
 `git-clone-list` and nothing else exotic, so those come before variables,
 conditions, and remotes even though they are individually harder.
 
+A step marked **✅** is done. Nothing else is.
+
 ## Slice 0 — Walking skeleton
 
 `batfiles sync` turns one `[[actions]]` symlink record into a symlink on disk.
 
-- **0.1** Tag the old crate as named in `keep.md`, start a branch with `src/`
+- **0.1** ✅ Tag the old crate as named in `keep.md`, start a branch with `src/`
   emptied, and make the initial `docs/` cut described in `docs.md`.
 - **0.2** Port `cli/` whole, with every command parsed and every unimplemented
-  one exiting 2.
+  one exiting 2. Promote the command overview, global options, output streams,
+  and exit statuses from `future/cmdline.md`.
 - **0.3** Port the `Reporter` and the four-root resolution so diagnostics and
-  paths work from the first commit.
+  paths work from the first commit. Promote location selection and its
+  precedence from `future/environment.md`.
 - **0.4** Port the read half of `tomlfile.rs`; leave the atomic-write half out
-  until 3.3 needs it.
+  until 3.3 needs it. Promote the atomic whole-document rewrite rule from
+  `future/state.md`, which is cross-cutting and belongs with the reader.
 - **0.5** Define the smallest useful `batfiles.toml`: a list of actions, each
   with an `id`, a `type`, a `source`, and a `dest`.
 - **0.6** Parse it as an internally-tagged enum with one variant, rejecting
-  unknown fields.
+  unknown fields. Promote the layout, the top-level schema, names and IDs, and
+  the `symlink` variant from `future/repoformat.md`.
 - **0.7** Execute a single symlink action against the resolved home directory,
-  creating the link or repairing one that points somewhere else.
+  creating the link or repairing one that points somewhere else. Add `symlink`
+  to `goals.md`'s implemented-actions line, and keep that line current at every
+  action thereafter.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
   with the path named and nothing written (`guidance.md`, rule 13).
