@@ -128,6 +128,12 @@ Not hard limits. If you are far over one, stop and ask why.
 - A module doc comment: about 5 lines.
 - A slice: reviewable in one sitting.
 
+## How a slice lands
+
+Work on `main`; CI runs on `main` and on pull requests. Branch per slice if you
+want one reviewed. Nothing merges back from the tag that holds the old crate —
+see `keep.md`.
+
 ## Definition of done for a slice
 
 Every slice, without exception:
@@ -139,10 +145,42 @@ Every slice, without exception:
 - Every cross-document link and step reference still resolves.
 - The unimplemented-option list (rule 12) shrank if the slice made an option
   live.
-- Anything a slice leaves for a later step is written on that step: what to
-  pick up, and where it is. The commit message carries the reasoning; the step
-  carries the instruction, because the step is what someone reads at the time.
-  If no step would finish it, add one.
+- Anything the slice leaves for later has been routed, and the step it was
+  discovered on carries none of it. See "Carrying work forward".
+
+## Carrying work forward
+
+The one job a plan document has is getting a decision to the step that needs it.
+`steps.md` is a list of instructions to the future, not a record of the past, and
+it stays one line per step because of one rule:
+
+**A step marked ✅ collapses to its one line.** Everything written under it while
+it was in progress gets routed first, by asking who reads this, and when:
+
+| Reader | Destination |
+| --- | --- |
+| One specific later step | That step's bullet, written as an instruction |
+| Every later step | A rule in this document |
+| Someone using the behavior | `docs/` — see rule 9 and `docs.md` |
+| Someone doing archaeology on this change | The commit message |
+
+The last row is the default. If you cannot name a reader who is not doing
+archaeology, it is history, and git already has it. The step carries the
+instruction rather than a separate ledger, because the step is what someone reads
+at the moment they need it.
+
+Two consequences:
+
+- **A note that names no step becomes a step.** A caveat ending "nothing enforces
+  this, expect it to rot" is a work item wearing a caveat's clothes.
+
+- **Prefer a mechanical carrier to a sentence.** `#[expect(dead_code, reason =
+  "read at 3.2")]` cannot rot, because the compiler deletes the note for you when
+  the reader lands (rule 1). The same shape covers an ordering not yet pinned
+  (`#[ignore = "3.1"]`), an option that is parsed but dead (rule 12's list,
+  shrinking to empty), and anything else greppable (`// CARRY(0.9): …`, which
+  0.10 teaches `task ci` to reject once 0.9 is marked ✅). Write prose only for
+  what none of these can hold.
 
 ## Test environments
 
