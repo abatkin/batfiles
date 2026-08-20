@@ -22,6 +22,19 @@ pub(crate) enum Error {
     /// A document that parsed, but breaks a rule spanning more than one record
     /// — which is the kind serde cannot check on its own.
     Invalid { path: PathBuf, message: String },
+    /// A path an action wrote that batfiles will not use as written.
+    Path {
+        field: &'static str,
+        value: String,
+        message: &'static str,
+    },
+    /// An action naming a source the repository does not contain.
+    SourceMissing { path: PathBuf },
+    /// A destination holding something batfiles did not create and cannot
+    /// safely replace (`guidance.md`, rule 13).
+    Occupied { path: PathBuf },
+    /// A path that could not be created, replaced, or inspected.
+    Write { path: PathBuf, source: io::Error },
 }
 
 impl fmt::Display for Error {
@@ -38,6 +51,22 @@ impl fmt::Display for Error {
             }
             Self::Invalid { path, message } => {
                 write!(f, "invalid configuration in {}: {message}", path.display())
+            }
+            Self::Path {
+                field,
+                value,
+                message,
+            } => write!(f, "{field} `{value}` {message}"),
+            Self::SourceMissing { path } => {
+                write!(f, "no such file in the repository: {}", path.display())
+            }
+            Self::Occupied { path } => write!(
+                f,
+                "{} already exists and is not a link batfiles created",
+                path.display()
+            ),
+            Self::Write { path, source } => {
+                write!(f, "could not write {}: {source}", path.display())
             }
         }
     }

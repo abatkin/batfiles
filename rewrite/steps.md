@@ -77,27 +77,56 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   adds the two-mode rule when it lands. `Action::id()` is the first of the
   accessors that match over every variant — at the third, collapse them into one
   `fn common(&self)` as the note there says.
-- **0.7** Execute a single symlink action against the resolved home directory,
-  creating the link or repairing one that points somewhere else. Add `symlink`
-  to `goals.md`'s implemented-actions line, and keep that line current at every
-  action thereafter. Saying what it linked makes this the first caller of
-  `Reporter::info`, which 0.3 left at the tag along with `Verbosity::shows_info`;
-  take both, and note that this is also the first moment `--quiet` has anything
-  to suppress — which is the one claim in `docs/` that stops being true here:
-  `cmdline.md` says `--quiet` suppresses nothing. 0.4 took the other two, and
-  replaced the fake test helper with a temporary tree; `Roots::repository` in
-  `tests/cli.rs` creates a repository holding an empty manifest, and 0.12 builds
-  the fixture that fills one in. `source` and `dest` have parsed since 0.6 and
-  carry `expect(dead_code)`; reading them here turns both into unfulfilled
-  expectations, which fail CI until they are deleted. Two claims in
-  `docs/repoformat.md` stop being true at the same moment — that the `symlink`
-  record is read but nothing creates the link, and that nothing interprets
-  `dest` — and they are the paragraph 0.9's promotion replaces.
+- **0.7** ✅ Execute a single symlink action against the resolved home directory,
+  creating the link or repairing one that points somewhere else. `sync` runs and
+  exits 0; `src/sync.rs` holds the one action-execution loop, and the source and
+  destination resolvers next to it, until `action/` earns its directory at 1.2.
+  `Reporter::info` and `Verbosity::shows_info` came from the tag, so `--quiet`
+  finally suppresses something.
+
+  Three things it decided that the step did not say, each of which moved work
+  across a step boundary:
+
+  - **A destination is only repaired when the link already there points into
+    the repository.** Rule 13 is a standing rule rather than a step, and
+    repairing an arbitrary link would suspend it for as long as 0.8 took. So
+    0.8 is no longer "add the refusal" — the refusal is here, as a single
+    `already exists` naming the path. What 0.8 owes is the diagnostic that says
+    *which* of a file, a directory, or a link elsewhere it found, which is worth
+    doing deliberately rather than as a side effect.
+  - **The rule-12 check for `sync`'s nine dead options landed here rather than
+    at 0.11**, because 0.7 is the step that makes `sync --dry-run` write to
+    `$HOME`. It lives beside `unimplemented` in `app.rs` and is a flat list;
+    0.11 lifts it out for the commands that are still stubs.
+  - **A source must exist and must resolve inside its repository.** The
+    containment half is `safety.md`'s repository-source rule, checked lexically,
+    and it is one place, which is the seam 6.3 extends rather than replaces.
+
+  What it left: the repair is a remove followed by a create, not a temporary
+  sibling and an atomic rename — see 0.9. `tests/cli.rs` grew `repo_file` and
+  `one_symlink`; 0.12 still builds the fixture repository. The tests that used
+  `sync` as their unimplemented-command specimen now use `clone`, through the
+  `a_stub` helper, which each later slice re-points as commands land.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
-  with the path named and nothing written (`guidance.md`, rule 13).
+  with the path named and nothing written (`guidance.md`, rule 13). 0.7 already
+  refuses all three; what is missing is the diagnostic saying which one it
+  found, and the row of `docs/repoformat.md`'s destination table that currently
+  reads "anything else" saying so too.
 - **0.9** Promote `safety.md`'s destination resolution and symlink traversal
-  rules into `docs/`, since 0.7 and 0.8 are the first code they govern.
+  rules into `docs/`, since 0.7 and 0.8 are the first code they govern. Three
+  sections carry a pointer paragraph naming what already runs — destination
+  paths, repository source paths, and the first three steps of replacement and
+  backups — and the rules themselves are in `docs/repoformat.md` under
+  `symlink`, written for one action type. Promoting means lifting them to
+  general statements now that they are about to govern `create-dir` and `copy`
+  as well, and leaving the `symlink` section pointing at them.
+
+  One thing to promote honestly or fix first: "single-file writes should use a
+  temporary sibling and atomic rename where practical" is **not** what 0.7 does.
+  Repairing a link removes it and creates the replacement, so there is a window
+  in which the destination does not exist. Either make the repair atomic or
+  promote the sentence with the exception stated.
 - **0.10** Add the `allow(dead_code)` check to `task ci`, so rule 1 is enforced
   from the first commit rather than remembered. It has two halves: no
   `allow(dead_code)` under `src/` at all, and every `expect(dead_code)` carrying
@@ -110,17 +139,23 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   default targets as well is what makes rule 1 actually mechanical.
 - **0.11** Add the unimplemented-option check every command calls at entry, and
   populate it from the options ported at 0.2 (`guidance.md`, rule 12). The four
-  location options went live at 0.3 and are off the list, so what remains is the
-  shared action-execution, selection, and bootstrap options. `--quiet` is the
-  one to think about: it is implemented, and until 0.7 gives it an informational
-  line to suppress it changes nothing, which is a different thing from an option
-  that is not built. Run the check before root resolution: an unsupported option
-  is a status-2 "nothing was attempted", and resolving first would let a
-  status-1 missing-home failure preempt it on the machines least able to explain
-  why.
+  location options went live at 0.3 and are off the list, and `--quiet` went
+  live at 0.7, so what remains is the shared action-execution, selection, and
+  bootstrap options. `sync`'s nine are already done — 0.7 could not wait,
+  because it is the step that gave `--dry-run` a filesystem to silently write
+  to — so this step generalizes `app::unsupported` to the commands that are
+  still stubs and moves it out of `app.rs`. Keep 0.7's ordering: the check runs
+  before root resolution, because an unsupported option is a status-2 "nothing
+  was attempted", and resolving first would let a status-1 missing-home failure
+  preempt it on the machines least able to explain why. Note that a stub command
+  reports its own unimplemented status anyway, so for those the check only
+  changes *which* message they get — it earns its place as each command lands.
 - **0.12** Add a real leaf repository under `tests/fixtures/` and CLI tests that
   sync it, assert the symlink, assert an occupied destination fails without
-  writing, and assert an unimplemented option fails.
+  writing, and assert an unimplemented option fails. All three assertions exist
+  as of 0.7, against manifests written inline into a temporary tree; what is
+  missing is a repository shaped like a real one, which is a different test —
+  several actions over a directory tree that someone might actually keep.
 - **0.13** Rewrite the project `README.md` to describe what the binary does
   today, and keep it honest at every slice thereafter.
 
@@ -130,7 +165,10 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
 - **1.2** Add `copy` with its missing-only seed semantics, preserved once
   created.
 - **1.3** Extract only what all three variants genuinely share, and not before
-  all three exist.
+  all three exist. The candidates are already visible in `src/sync.rs`:
+  destination resolution, source resolution, and creating a missing parent are
+  each written for `symlink` alone. This is also where `action/` earns its
+  directory and `sync.rs` stops holding both the loop and one action's work.
 - **1.4** Extend the fixture and add one CLI test per action type.
 
 ## Slice 2 — Dry-run
@@ -152,6 +190,10 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
 ## Slice 3 — Selection and ordering
 
 - **3.1** Make declaration order the execution order, explicitly and tested.
+  0.7's loop already runs the list in order and stops at the first failure; what
+  is owed here is the test that pins it, which needs two actions whose order is
+  observable — one creating what the next depends on — rather than two that
+  merely both happen.
 - **3.2** Add groups and group membership. The `group` field has parsed and been
   validated as an `ItemId` since 0.6; this is the step that reads it, so its
   `expect(dead_code)` goes — CI will insist — along with the line in

@@ -2,10 +2,10 @@
 //! resolve the roots a command works in, dispatch, and map the result to an
 //! exit status.
 //!
-//! Every command in the surface parses; only `version` runs. The rest resolve
-//! their roots — and `sync` reads the manifest it finds there — before
-//! reporting that they do not exist yet, which is the honest thing to do and
-//! the reason the whole surface can be committed before the tool works.
+//! Every command in the surface parses; `version` and `sync` run. The rest
+//! resolve their roots and then report that they do not exist yet, which is the
+//! honest thing to do and the reason the whole surface can be committed before
+//! the tool works.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -13,11 +13,12 @@ use std::process::ExitCode;
 
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, GlobalOptions, color};
+use crate::cli::{Cli, Command, GlobalOptions, SyncArgs, color};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::error::Error;
 use crate::output::{Reporter, Verbosity};
 use crate::repo::BatfilesConfig;
+use crate::sync;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -82,14 +83,17 @@ fn dispatch(
         }
         // `init` works on the current directory, so it resolves no roots either.
         Command::Init(_) => Ok(unimplemented(reporter, name)),
-        Command::Sync(_) => {
+        Command::Sync(args) => {
+            if let Some((option, step)) = unsupported(args) {
+                return Ok(not_yet(reporter, option, step));
+            }
             let roots = locate(cli, env, reporter)?;
-            // The manifest is read before a command does anything else, so a
-            // repository whose manifest is missing, malformed, or invalid fails
-            // with the file named rather than partway through. Nothing executes
-            // the actions yet, so reading them is the whole of the work.
-            BatfilesConfig::load(&roots.batfiles_config())?;
-            Ok(unimplemented(reporter, name))
+            // The manifest is read and checked whole before any of it is acted
+            // on, so a repository whose manifest is missing, malformed, or
+            // invalid fails with the file named rather than partway through.
+            let config = BatfilesConfig::load(&roots.batfiles_config())?;
+            sync::sync(&roots, &config, reporter)?;
+            Ok(ExitCode::SUCCESS)
         }
         _ => {
             locate(cli, env, reporter)?;
@@ -134,6 +138,44 @@ fn report_roots(reporter: &Reporter, roots: &Roots) {
 fn unimplemented(reporter: &Reporter, name: &str) -> ExitCode {
     reporter.error(&format!("`{name}` is not implemented yet"));
     ExitCode::from(EXIT_UNIMPLEMENTED)
+}
+
+/// An option that parsed but does nothing yet (`guidance.md`, rule 12).
+fn not_yet(reporter: &Reporter, option: &str, step: &str) -> ExitCode {
+    reporter.error(&format!(
+        "`{option}` is not implemented yet; it arrives at step {step}"
+    ));
+    ExitCode::from(EXIT_UNIMPLEMENTED)
+}
+
+/// The first option `sync` accepts and does not honor yet, if any.
+///
+/// Checked before the roots are resolved: an unsupported option means nothing
+/// was attempted, and resolving first would let a missing-home failure preempt
+/// it on the machines least able to explain why. 0.11 does the same for the
+/// commands that are still stubs, and each entry leaves as its step lands.
+fn unsupported(args: &SyncArgs) -> Option<(&'static str, &'static str)> {
+    let live = [
+        (args.dry_run, "--dry-run", "2.4"),
+        (
+            !args.selection.skip_actions.is_empty(),
+            "--skip-action",
+            "3.4",
+        ),
+        (
+            !args.selection.skip_groups.is_empty(),
+            "--skip-group",
+            "3.4",
+        ),
+        (!args.action.vars.is_empty(), "--var", "5.3"),
+        (args.refresh_remotes, "--refresh-remotes", "6.2"),
+        (args.action.refresh_vars, "--refresh-vars", "9.1"),
+        (args.action.refresh_content, "--refresh-content", "9.4"),
+        (args.action.no_overwrite, "--no-overwrite", "9.4"),
+        (args.action.interactive, "--interactive", "9.4"),
+    ];
+    live.into_iter()
+        .find_map(|(given, option, step)| given.then_some((option, step)))
 }
 
 /// Parse without exiting the process, so the caller controls presentation, and

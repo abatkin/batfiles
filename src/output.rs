@@ -22,6 +22,12 @@ impl Verbosity {
         }
     }
 
+    /// Whether ordinary status output should be printed. Only `--quiet`
+    /// suppresses it; `-v` adds detail rather than replacing this.
+    fn shows_info(self) -> bool {
+        !matches!(self, Self::Quiet)
+    }
+
     /// Whether detail at `level` (1 for `-v`, 2 for `-vv`, …) should be
     /// printed.
     fn shows_detail(self, level: u8) -> bool {
@@ -60,6 +66,18 @@ impl Reporter {
     /// A recoverable problem. Always printed, including under `--quiet`.
     pub fn warn(&self, message: &str) {
         eprintln!("{}", self.line(Label::Warning, message));
+    }
+
+    /// What a command did, printed at normal verbosity and suppressed by
+    /// `--quiet`.
+    ///
+    /// A diagnostic, not requested data: it says what happened rather than
+    /// answering a question, so it goes to standard error and through the
+    /// verbosity gate. Unlabeled, for the same reason `detail` is.
+    pub fn info(&self, message: &str) {
+        if self.verbosity.shows_info() {
+            eprintln!("{message}");
+        }
     }
 
     /// Extra detail, printed only at `-v` repeated at least `level` times.
@@ -113,6 +131,13 @@ mod tests {
         // is reached. The resolution is here anyway because a silent
         // reinterpretation of `--quiet` would be the worse failure.
         assert_eq!(Verbosity::new(true, 2), Verbosity::Quiet);
+    }
+
+    #[test]
+    fn only_quiet_suppresses_ordinary_status() {
+        assert!(!Verbosity::Quiet.shows_info());
+        assert!(Verbosity::Normal.shows_info());
+        assert!(Verbosity::Verbose(1).shows_info());
     }
 
     #[test]

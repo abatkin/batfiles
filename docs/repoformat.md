@@ -107,9 +107,35 @@ dest = "~/.zshrc"
 | `source` | string |   yes    | The source, relative to the repository root. |
 | `dest`   | string |   yes    | The destination path, as written.            |
 
-The record is read and validated; nothing creates the link yet, and nothing
-interprets `dest` — its leading `~`, and what happens where something already
-exists there, arrive with the code that writes.
+Both paths are resolved when the action runs, not when the manifest is read.
+
+- `source` names a path within the repository that declares it. An absolute
+  source is invalid, and so is a relative one that climbs out of the repository.
+  That check is lexical rather than a canonicalization of every component, so a
+  symlink deliberately stored inside the repository may point anywhere and is
+  followed like any other. The path must exist: a repository naming a file it
+  does not contain is a mistake batfiles can see, and the alternative is a link
+  to nothing.
+- `dest` beginning with `~` uses the selected home rather than an independently
+  discovered one. `~user` is not expanded and is an error. A relative `dest`
+  also resolves from the selected home, and an absolute one is used as written;
+  `.` and `..` are resolved textually. None of this makes the home a boundary —
+  a destination may deliberately point outside it.
+
+What happens at the destination depends on what is already there:
+
+| Already at the destination                    | Result                                                            |
+|-----------------------------------------------|-------------------------------------------------------------------|
+| nothing                                       | The link is created, along with any missing parent directories.   |
+| a symlink already pointing at the source      | Nothing, reported only at `-v`.                                   |
+| a symlink pointing elsewhere in the repository | It is repointed at the source.                                    |
+| anything else                                 | An error naming the path, with nothing written.                   |
+
+The destination is examined without following a final symlink, so a link is
+judged by where it points rather than by what it reaches. A symlink into the
+repository is one batfiles would have made and holds no content of its own, so
+repairing it loses nothing. A file, a directory, or a link somewhere unexpected
+is someone's data, and there is no backup policy yet with which to give it back.
 
 Directory mode, which links a directory's children through `source-dir`,
 `dest-dir`, and glob filters, is specified in

@@ -36,6 +36,10 @@ and update their cache, as described by the command-line specification's
 
 ## Destination paths
 
+As applied to `symlink`'s `dest`, these rules run and are specified in
+[`docs/repoformat.md`](../repoformat.md#symlink). Step 0.9 promotes the general
+statement here once there is more than one action type it governs.
+
 Most destinations are expected to be in the selected home directory, but that
 is a convention rather than a containment rule.
 
@@ -65,6 +69,10 @@ working directory when the selected home cannot be determined.
 
 ## Repository source paths
 
+The lexical containment rule runs for `symlink`'s `source` and is specified in
+[`docs/repoformat.md`](../repoformat.md#symlink). The `remotes/` tree and the
+per-remote materializations below are not built.
+
 Repository-backed sources have a narrower policy than destinations. A source
 path is resolved from its owning leaf repository or remote materialization,
 and the lexically resolved result must remain within the selected batfiles
@@ -81,6 +89,12 @@ path. A symlink deliberately stored inside the batfiles directory may point
 outside it and is followed according to ordinary operating-system behavior.
 
 ## Replacement and backups
+
+Steps 1 through 3 run for `symlink`, minus the remote materializations, and are
+specified in [`docs/repoformat.md`](../repoformat.md#symlink). Step 4 is not
+built: until the backup policy exists at 9.4, an unmanaged destination is an
+error rather than something to preserve and replace, and `--no-overwrite` and
+`--interactive` are refused rather than honored.
 
 Creating an absent path is normally safe. Replacing an existing filesystem
 node is destructive and follows a stricter rule:

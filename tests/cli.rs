@@ -58,6 +58,24 @@ impl Roots {
         self.path("repo").join("batfiles.toml")
     }
 
+    /// Replace the leaf manifest.
+    fn write_manifest(&self, contents: &str) {
+        fs::write(self.manifest(), contents).expect("a manifest");
+    }
+
+    /// Put a file in the leaf repository, and return where it landed.
+    fn repo_file(&self, relative: &str, contents: &str) -> PathBuf {
+        let path = self.path("repo").join(relative);
+        fs::create_dir_all(path.parent().expect("a parent")).expect("a source directory");
+        fs::write(&path, contents).expect("a source file");
+        path
+    }
+
+    /// A path inside the selected home, which need not exist.
+    fn home(&self, relative: &str) -> PathBuf {
+        self.path("home").join(relative)
+    }
+
     /// A command with all four roots selected inside this tree.
     fn batfiles(&self) -> Command {
         let mut command = batfiles();
@@ -74,6 +92,17 @@ impl Roots {
 
 fn display(path: &Path) -> String {
     path.display().to_string()
+}
+
+/// A manifest declaring one symlink and nothing else.
+fn one_symlink(source: &str, dest: &str) -> String {
+    format!("[[actions]]\ntype = \"symlink\"\nsource = \"{source}\"\ndest = \"{dest}\"\n")
+}
+
+/// Where a symlink points, without following it.
+fn link_target(path: &Path) -> PathBuf {
+    fs::read_link(path)
+        .unwrap_or_else(|error| panic!("{} is not a symlink: {error}", path.display()))
 }
 
 fn stderr_of(assertion: &assert_cmd::assert::Assert) -> String {
@@ -122,13 +151,19 @@ fn help_lists_every_documented_command() {
     }
 }
 
+/// A command that resolves its roots and then reports that it does not exist
+/// yet. `sync` used to be the specimen; it runs now.
+fn a_stub() -> [&'static str; 2] {
+    ["clone", "https://example.invalid/dotfiles.git"]
+}
+
 #[test]
 fn unimplemented_commands_fail_with_a_clear_message() {
     let roots = Roots::new();
-    let assertion = roots.batfiles().arg("sync").assert().failure().code(2);
+    let assertion = roots.batfiles().args(a_stub()).assert().failure().code(2);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("`sync` is not implemented yet"),
+        stderr.contains("`clone` is not implemented yet"),
         "unexpected stderr:\n{stderr}"
     );
 }
@@ -152,7 +187,12 @@ fn an_unimplemented_subcommand_is_named_in_full() {
 #[test]
 fn an_unimplemented_command_writes_nothing_to_standard_output() {
     let roots = Roots::new();
-    roots.batfiles().arg("sync").assert().failure().stdout("");
+    roots
+        .batfiles()
+        .args(a_stub())
+        .assert()
+        .failure()
+        .stdout("");
 }
 
 #[test]
@@ -233,18 +273,13 @@ fn color_never_applies_to_a_clap_usage_error() {
     );
 }
 
-// Location resolution. Only the repository root is read, so `-v` is still how
-// the other three are observed from outside the binary.
+// Location resolution. The repository and the home are read and written, so
+// `-v` is how the other two are observed from outside the binary.
 
 #[test]
 fn verbose_reports_every_resolved_root() {
     let roots = Roots::new();
-    let assertion = roots
-        .batfiles()
-        .args(["sync", "-v"])
-        .assert()
-        .failure()
-        .code(2);
+    let assertion = roots.batfiles().args(["sync", "-v"]).assert().success();
     let stderr = stderr_of(&assertion);
     for (label, root) in [
         ("repository: ", "repo"),
@@ -260,7 +295,7 @@ fn verbose_reports_every_resolved_root() {
 #[test]
 fn the_roots_are_reported_only_when_asked_for() {
     let roots = Roots::new();
-    let assertion = roots.batfiles().arg("sync").assert().failure().code(2);
+    let assertion = roots.batfiles().arg("sync").assert().success();
     let stderr = stderr_of(&assertion);
     assert!(
         !stderr.contains(&display(&roots.path("repo"))),
@@ -277,8 +312,7 @@ fn a_location_option_outranks_its_variable() {
         .args(["sync", "-v", "--batfiles-dir"])
         .arg(&chosen)
         .assert()
-        .failure()
-        .code(2);
+        .success();
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&format!("repository: {}", display(&chosen))),
@@ -299,8 +333,7 @@ fn the_leaf_repository_defaults_under_the_selected_home() {
         .env_remove("BATFILES_DIR")
         .args(["sync", "-v"])
         .assert()
-        .failure()
-        .code(2);
+        .success();
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&format!("repository: {}", display(&default))),
@@ -322,8 +355,7 @@ fn config_and_cache_do_not_follow_the_selected_home() {
         .env("XDG_CACHE_HOME", "/xdg-cache")
         .args(["sync", "-v", "--home-dir", "/elsewhere"])
         .assert()
-        .failure()
-        .code(2);
+        .success();
     let stderr = stderr_of(&assertion);
     for expected in [
         "home:       /elsewhere",
@@ -413,30 +445,20 @@ fn rejected(manifest: &str) -> String {
 }
 
 #[test]
-fn a_symlink_action_parses() {
+fn a_symlink_action_parses_with_every_field_it_accepts() {
     let roots = Roots::new();
-    fs::write(
-        roots.manifest(),
+    roots.repo_file("files/zshrc", "# zsh\n");
+    roots.write_manifest(
         "[[actions]]\n\
          type = \"symlink\"\n\
          id = \"zshrc\"\n\
          group = \"shell\"\n\
          source = \"files/zshrc\"\n\
          dest = \"~/.zshrc\"\n",
-    )
-    .expect("a manifest");
-
-    // Nothing links it yet, so getting as far as the stub is the whole claim.
-    let assertion = roots
-        .batfiles()
-        .args(["--color", "never", "sync"])
-        .assert()
-        .failure()
-        .code(2);
-    assert_eq!(
-        stderr_of(&assertion),
-        "error: `sync` is not implemented yet\n"
     );
+
+    roots.batfiles().arg("sync").assert().success();
+    assert!(roots.home(".zshrc").is_symlink());
 }
 
 #[test]
@@ -547,6 +569,234 @@ fn a_command_that_does_not_need_the_manifest_does_not_read_it() {
     );
 }
 
+// Executing symlink actions, which is the whole of what `sync` does so far.
+
+#[test]
+fn a_symlink_action_creates_the_link_and_says_so() {
+    let roots = Roots::new();
+    let source = roots.repo_file("shell/zshrc", "# zsh\n");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+    let assertion = roots
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        stderr_of(&assertion),
+        format!(
+            "linked {} -> {}\n",
+            display(&roots.home(".zshrc")),
+            display(&source)
+        )
+    );
+    assert_eq!(link_target(&roots.home(".zshrc")), source);
+}
+
+#[test]
+fn every_action_in_the_manifest_runs() {
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    roots.repo_file("shell/inputrc", "# readline\n");
+    roots.write_manifest(&format!(
+        "{}{}",
+        one_symlink("shell/zshrc", "~/.zshrc"),
+        one_symlink("shell/inputrc", "~/.inputrc")
+    ));
+
+    roots.batfiles().arg("sync").assert().success();
+    assert!(roots.home(".zshrc").is_symlink());
+    assert!(roots.home(".inputrc").is_symlink());
+}
+
+#[test]
+fn a_link_into_the_repository_is_repaired() {
+    // Repointing a link batfiles would have made loses nothing: the link holds
+    // no content of its own, and the file it pointed at is untouched.
+    let roots = Roots::new();
+    let stale = roots.repo_file("shell/zshrc.old", "# old\n");
+    let wanted = roots.repo_file("shell/zshrc", "# zsh\n");
+    std::os::unix::fs::symlink(&stale, roots.home(".zshrc")).expect("a stale link");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+    let assertion = roots
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        stderr_of(&assertion),
+        format!(
+            "relinked {} -> {} (was {})\n",
+            display(&roots.home(".zshrc")),
+            display(&wanted),
+            display(&stale)
+        )
+    );
+    assert_eq!(link_target(&roots.home(".zshrc")), wanted);
+    assert!(stale.exists(), "the old source was removed");
+}
+
+#[test]
+fn a_link_that_is_already_right_is_left_alone() {
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+    roots.batfiles().arg("sync").assert().success();
+
+    // A converged repository is the common case, so it says nothing at all —
+    // and `-v` is how you check that it looked.
+    roots.batfiles().arg("sync").assert().success().stderr("");
+    let assertion = roots.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+    let expected = format!("unchanged {}", display(&roots.home(".zshrc")));
+    assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+}
+
+#[test]
+fn quiet_suppresses_what_sync_did() {
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+    roots
+        .batfiles()
+        .args(["sync", "--quiet"])
+        .assert()
+        .success()
+        .stderr("");
+    assert!(roots.home(".zshrc").is_symlink());
+}
+
+#[test]
+fn a_missing_parent_of_a_destination_is_created() {
+    let roots = Roots::new();
+    let source = roots.repo_file("nvim/init.lua", "-- nvim\n");
+    roots.write_manifest(&one_symlink("nvim/init.lua", "~/.config/nvim/init.lua"));
+
+    roots.batfiles().arg("sync").assert().success();
+    assert_eq!(link_target(&roots.home(".config/nvim/init.lua")), source);
+}
+
+/// Run `sync` against a manifest expected to fail while executing, and return
+/// the diagnostic. Status 1: the command started work and stopped.
+fn refused(roots: &Roots, manifest: &str) -> String {
+    roots.write_manifest(manifest);
+    let assertion = roots.batfiles().arg("sync").assert().failure().code(1);
+    stderr_of(&assertion)
+}
+
+#[test]
+fn a_destination_holding_a_file_is_refused_and_the_file_is_left() {
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    fs::write(roots.home(".zshrc"), "mine\n").expect("an existing file");
+
+    let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
+    for expected in [display(&roots.home(".zshrc")), "already exists".to_owned()] {
+        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert_eq!(
+        fs::read_to_string(roots.home(".zshrc")).expect("the file"),
+        "mine\n"
+    );
+}
+
+#[test]
+fn a_destination_holding_a_link_out_of_the_repository_is_refused() {
+    // Someone else made this link, and where it points is not batfiles' to
+    // decide. 0.8 is where the diagnostic learns to say which of the two it is.
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    let elsewhere = roots.path("elsewhere");
+    std::os::unix::fs::symlink(&elsewhere, roots.home(".zshrc")).expect("an unmanaged link");
+
+    let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
+    assert!(
+        stderr.contains(&display(&roots.home(".zshrc"))),
+        "the destination was not named:\n{stderr}"
+    );
+    assert_eq!(link_target(&roots.home(".zshrc")), elsewhere);
+}
+
+#[test]
+fn a_source_outside_the_repository_is_refused() {
+    let roots = Roots::new();
+    for source in ["../secrets", "shell/../../secrets", "/etc/hosts"] {
+        let stderr = refused(&roots, &one_symlink(source, "~/.zshrc"));
+        assert!(
+            stderr.contains(source),
+            "`{source}` was not named:\n{stderr}"
+        );
+        assert!(
+            !roots.home(".zshrc").is_symlink(),
+            "`{source}` was linked anyway"
+        );
+    }
+}
+
+#[test]
+fn a_source_the_repository_does_not_have_is_refused() {
+    // A link to nothing is silent breakage, and the repository not containing
+    // what it names is a mistake batfiles can see.
+    let roots = Roots::new();
+    let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
+    assert!(
+        stderr.contains(&display(&roots.path("repo").join("shell/zshrc"))),
+        "the source was not named:\n{stderr}"
+    );
+    assert!(
+        !roots.home(".zshrc").is_symlink(),
+        "a dangling link was made"
+    );
+}
+
+#[test]
+fn an_option_sync_does_not_honor_yet_stops_it_before_it_writes() {
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+    // Status 2, not 1: nothing was attempted, so the invocation can be
+    // corrected and retried freely.
+    let assertion = roots
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    for expected in ["--dry-run", "2.4"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert!(
+        !roots.home(".zshrc").exists(),
+        "an unsupported option wrote anyway"
+    );
+}
+
+#[test]
+fn an_unsupported_option_is_reported_before_the_roots_are_resolved() {
+    // A machine with no determinable home would otherwise fail with
+    // `could not determine a home directory`, which explains nothing about the
+    // option that was actually the problem.
+    let assertion = batfiles()
+        .env_remove("HOME")
+        .env_remove("BATFILES_HOME")
+        .env_remove("BATFILES_DIR")
+        .env_remove("BATFILES_CONFIG_DIR")
+        .env_remove("BATFILES_CACHE_DIR")
+        .args(["sync", "--interactive"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("--interactive"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
 // Batfiles' own diagnostics, as opposed to the ones clap renders.
 
 #[test]
@@ -554,12 +804,13 @@ fn an_error_is_labeled() {
     let roots = Roots::new();
     let assertion = roots
         .batfiles()
-        .args(["--color", "never", "sync"])
+        .args(["--color", "never"])
+        .args(a_stub())
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
-    assert_eq!(stderr, "error: `sync` is not implemented yet\n");
+    assert_eq!(stderr, "error: `clone` is not implemented yet\n");
 }
 
 #[test]
@@ -567,13 +818,14 @@ fn color_always_colors_the_label_of_an_error_batfiles_raised() {
     let roots = Roots::new();
     let assertion = roots
         .batfiles()
-        .args(["--color", "always", "sync"])
+        .args(["--color", "always"])
+        .args(a_stub())
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("\x1b[1;31merror:\x1b[0m `sync` is not implemented yet"),
+        stderr.contains("\x1b[1;31merror:\x1b[0m `clone` is not implemented yet"),
         "expected a colored label:\n{stderr:?}"
     );
 }

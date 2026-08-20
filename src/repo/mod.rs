@@ -4,7 +4,7 @@
 //! expressed in serde, so they parse unchecked here and are rejected by
 //! [`BatfilesConfig::validate`].
 
-mod action;
+pub(crate) mod action;
 
 use std::collections::BTreeMap;
 use std::path::Path;

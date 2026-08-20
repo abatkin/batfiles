@@ -48,10 +48,8 @@ pub(crate) struct SymlinkAction {
     pub group: Option<ItemId>,
     /// The source, relative to the repository root. A plain string until 6.3
     /// makes it a path that may also name a remote.
-    #[expect(dead_code, reason = "0.7 links it")]
     pub source: String,
-    /// The exact destination path, as written. Nothing expands the leading `~`
-    /// until 0.7 resolves it against the selected home.
-    #[expect(dead_code, reason = "0.7 links it")]
+    /// The destination path as written, resolved against the selected home when
+    /// the action runs.
     pub dest: String,
 }

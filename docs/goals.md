@@ -65,7 +65,7 @@ fetching files and archives, and including a reusable remote's actions. The
 [future repository format](future/repoformat.md#actions) enumerates the intended
 set.
 
-**Implemented so far: none.** That line is the answer to "what can `sync`
+**Implemented so far: `symlink`.** That line is the answer to "what can `sync`
 actually do", and it gains an action each time one is built.
 
 Normal synchronization is convergence-oriented but intentionally asymmetric:

@@ -7,6 +7,7 @@ mod error;
 mod item;
 mod output;
 mod repo;
+mod sync;
 mod tomlfile;
 
 use std::process::ExitCode;
