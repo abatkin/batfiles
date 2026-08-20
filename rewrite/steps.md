@@ -103,11 +103,20 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
     and it is one place, which is the seam 6.3 extends rather than replaces.
 
   Only the unix symlink call is built. The binary compiles everywhere and a
-  `symlink` action fails on sight where batfiles cannot make one, which is
-  checked before anything is inspected or removed. `tests/cli.rs` does **not**
-  compile off unix — two tests create a symlink as a fixture — and gating them
-  for a platform with no CI runner would be work done ahead of a caller. If a
-  Windows runner ever arrives, that is the thing to fix first.
+  `symlink` action fails on sight where batfiles cannot make one, checked before
+  anything is inspected or removed. `tests/cli.rs` compiles everywhere too: the
+  execution tests are one `#[cfg(unix)] mod linking`, since several build their
+  fixtures with `symlink` and none of the rest has a meaningful non-unix form,
+  and a `#[cfg(not(unix))]` test covers the refusal. An action type that is not
+  platform-specific — `create-dir` at 1.1, `copy` at 1.2 — does not belong in
+  that module.
+
+  **Nothing enforces this.** CI is ubuntu-only, so the gating is checked by
+  whoever remembers to run `cargo clippy --all-targets --target
+  x86_64-pc-windows-msvc -- -D warnings`, which needs `rustup target add` first
+  and no linker. Adding it to `task ci` is one line and a target install on the
+  runner; until someone decides that is worth the time, expect the gates to rot,
+  and re-run that command after touching `tests/cli.rs`.
 
   Every path here is lexical, and review found the two places where that has to
   be done deliberately rather than by accident: the roots are anchored to
