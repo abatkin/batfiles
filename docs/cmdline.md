@@ -16,8 +16,13 @@ an invalid invocation is rejected as a usage error before anything else happens.
 
 **Only `version` does any work.** Every other command resolves the location
 roots it needs and then reports that it is not implemented yet, exiting 2 having
-read and written nothing. That message is the answer to "what can batfiles do",
-and it disappears one command at a time.
+written nothing. That message is the answer to "what can batfiles do", and it
+disappears one command at a time.
+
+`sync` goes one step further before it gets there: it reads and parses the leaf
+repository's `batfiles.toml`, so a repository that has none, or whose manifest
+is malformed, fails on the manifest instead. See
+[reading the manifest](repoformat.md#reading-the-manifest).
 
 ## Command Overview
 
@@ -69,8 +74,9 @@ one level prints the resolved roots, which is the only detail there is to add so
 far. `--quiet` does what it promises and currently suppresses nothing, because
 no command prints an informational line yet.
 
-The location options are resolved but not yet acted on: no command reads or
-writes anything under a resolved root. See
+Of the resolved roots, only the leaf repository is read, and only by `sync`,
+which opens the `batfiles.toml` it finds there. Nothing reads or writes anything
+under the other three, and nothing writes anywhere at all. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -130,8 +136,10 @@ written and the invocation can be corrected and retried freely.
 Status 2 is what clap already uses for the usage errors it renders, and an
 unimplemented command joins it rather than reporting a failure it never had.
 
-Exactly one failure reaches status 1 so far: a command that needs a home
-directory and cannot determine one. Nothing was written in that case either —
-there is nothing yet that writes — but it is a failure to do the work rather
-than a refusal to start it: the invocation was well-formed, and the machine
-could not answer a question the command asked of it.
+Two failures reach status 1 so far: a command that needs a home directory and
+cannot determine one, and a `sync` whose leaf `batfiles.toml` is missing or
+malformed. Nothing was written in either case — there is nothing yet that
+writes — but both are failures to do the work rather than refusals to start it.
+The invocation was well-formed, and something outside it did not hold up: no
+home the machine could name, or no manifest where the repository should have
+one.

@@ -3,9 +3,9 @@
 //! exit status.
 //!
 //! Every command in the surface parses; only `version` runs. The rest resolve
-//! their roots and then report that they do not exist yet, which is the honest
-//! thing to do and the reason the whole surface can be committed before the
-//! tool works.
+//! their roots — and `sync` reads the manifest it finds there — before
+//! reporting that they do not exist yet, which is the honest thing to do and
+//! the reason the whole surface can be committed before the tool works.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -15,7 +15,9 @@ use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::error::Error;
 use crate::output::{Reporter, Verbosity};
+use crate::tomlfile;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -54,25 +56,53 @@ pub(crate) fn run() -> ExitCode {
     };
     reporter.set_verbosity(Verbosity::new(cli.global.quiet, cli.global.verbose));
 
-    match cli.command {
+    match dispatch(&cli, &name, &env, &reporter) {
+        Ok(code) => code,
+        // Reported in one place, so every failure gets one label and one status
+        // no matter which command raised it.
+        Err(error) => {
+            reporter.error(&error.to_string());
+            ExitCode::from(EXIT_FAILURE)
+        }
+    }
+}
+
+/// Run the parsed command.
+fn dispatch(
+    cli: &Cli,
+    name: &str,
+    env: &Environment,
+    reporter: &Reporter,
+) -> Result<ExitCode, Error> {
+    match &cli.command {
         // Rendered through clap so `version` and `--version` cannot drift.
         Command::Version => {
             print!("{}", Cli::command().render_version());
-            ExitCode::SUCCESS
+            Ok(ExitCode::SUCCESS)
         }
         // `init` works on the current directory, so it resolves no roots either.
-        Command::Init(_) => unimplemented(&reporter, &name),
-        _ => match resolve_roots(&locations(&cli.global), &env, detect_os_home) {
-            Ok(roots) => {
-                report_roots(&reporter, &roots);
-                unimplemented(&reporter, &name)
-            }
-            Err(error) => {
-                reporter.error(&error.to_string());
-                ExitCode::from(EXIT_FAILURE)
-            }
-        },
+        Command::Init(_) => Ok(unimplemented(reporter, name)),
+        Command::Sync(_) => {
+            let roots = locate(cli, env, reporter)?;
+            // The manifest is parsed before a command does anything else, so a
+            // repository without one — or with a malformed one — fails with the
+            // file named rather than partway through. Nothing interprets the
+            // records yet, so parsing is the whole of the check.
+            tomlfile::read::<toml::Table>(&roots.batfiles_config())?;
+            Ok(unimplemented(reporter, name))
+        }
+        _ => {
+            locate(cli, env, reporter)?;
+            Ok(unimplemented(reporter, name))
+        }
     }
+}
+
+/// Resolve the roots a command works in, and report them at `-v`.
+fn locate(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
+    let roots = resolve_roots(&locations(&cli.global), env, detect_os_home)?;
+    report_roots(reporter, &roots);
+    Ok(roots)
 }
 
 /// The four location options, separated from the rest of the global options so

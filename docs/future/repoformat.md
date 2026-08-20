@@ -7,6 +7,11 @@ planning, precedence, state, and command execution policy.
 
 ## Repository Layout
 
+The part of this section that runs — a repository is a file tree with a
+`batfiles.toml` at its root, and only that file has intrinsic meaning — is
+specified in [`docs/repoformat.md`](../repoformat.md), along with how the
+manifest is read. The `remotes/` tree below is not built.
+
 A batfiles repository is an ordinary file tree with a `batfiles.toml` at its
 root.
 

@@ -22,11 +22,13 @@ something real contradicts it.
   where output goes, and what an exit status means.
 - [Environment variables](environment.md) defines the environment inputs
   batfiles reads.
+- [Repository format](repoformat.md) defines where the leaf manifest lives and
+  how it is read.
 
 ## What is not here yet
 
-`docs/future/` holds the repository format, the local state files, the safety
-model, and the unbuilt parts of the command-line surface and the environment
+`docs/future/` holds the local state files, the safety model, the manifest
+schema, and the unbuilt parts of the command-line surface and the environment
 inputs. Each is promoted here in pieces, at the step that builds the piece.
 
 There is no `architecture.md` for the duration of the rewrite.

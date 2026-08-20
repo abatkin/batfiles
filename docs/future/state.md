@@ -287,6 +287,13 @@ All three files use the same state-file write path.
 
 ### Reading and validation
 
+The rules that run — parse the whole document before using any of it, treat a
+malformed one as fatal and leave it untouched, and name the file and the
+position in the diagnostic — are built for the leaf manifest and specified in
+[`docs/repoformat.md`](../repoformat.md#reading-the-manifest). They apply to
+these three files too once anything reads them. What stays here is the ordering
+between documents, which needs remotes and dynamic variables to mean anything.
+
 - A manifest is fully parsed and schema-validated before anything in it is used
   — before its values enter input precedence, and before any dynamic command it
   declares is run. The leaf's `batfiles.toml` is therefore parsed and validated

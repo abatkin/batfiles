@@ -28,10 +28,10 @@ command still reads or acts on only the roots it needs, and a command that needs
 none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
-None of the four is read yet: resolution answers where a command *would* work,
-and no command does any work. All four are resolved from the first commit
-anyway, because one set of rules covers all four roots and splitting it would
-mean writing those rules twice.
+Only the leaf repository is read so far, by `sync`, which opens the
+`batfiles.toml` it finds there. The other three answer where a command *would*
+work. All four are resolved together anyway, because one set of rules covers
+all four roots and splitting it would mean writing those rules twice.
 
 ## Location selection
 

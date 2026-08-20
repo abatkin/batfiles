@@ -106,6 +106,19 @@ pub(crate) struct Roots {
     pub cache_dir: PathBuf,
 }
 
+/// The documents each root contains.
+///
+/// Pairing a file with the root it lives under is location policy — the same
+/// policy the fields above resolve — so it stays next to them rather than with
+/// the type that parses the file.
+impl Roots {
+    /// The leaf repository's manifest. A remote's manifest is not here: it lives
+    /// in that remote's materialization rather than under a resolved root.
+    pub fn batfiles_config(&self) -> PathBuf {
+        self.batfiles_dir.join("batfiles.toml")
+    }
+}
+
 /// Detect the invoking user's OS home.
 ///
 /// Resolution consults this only as a last resort, when the home is unset and
@@ -373,17 +386,17 @@ mod tests {
             ..LocationInputs::default()
         };
         let env = Environment::from_pairs([("XDG_CONFIG_HOME", "/xdg/config")]);
-        assert_eq!(
-            resolve_roots(&cli, &env, unavailable).unwrap_err(),
-            Error::HomeUnavailable
-        );
+        assert!(matches!(
+            resolve_roots(&cli, &env, unavailable),
+            Err(Error::HomeUnavailable)
+        ));
     }
 
     #[test]
     fn a_missing_home_requires_the_os_home() {
-        assert_eq!(
-            resolve_roots(&LocationInputs::default(), &empty_env(), unavailable).unwrap_err(),
-            Error::HomeUnavailable
-        );
+        assert!(matches!(
+            resolve_roots(&LocationInputs::default(), &empty_env(), unavailable),
+            Err(Error::HomeUnavailable)
+        ));
     }
 }

@@ -28,8 +28,8 @@ Each entry below describes where a document ends up **once slice 0 is finished**
 not what 0.1 does in one move. The initial cut is blunt on purpose: everything
 that specifies unbuilt behavior goes to `docs/future/` wholesale, and the
 individual sections named below come back at the steps that build them —
-`cmdline.md`'s at 0.2, `environment.md`'s at 0.3, `state.md`'s at 0.4,
-`repoformat.md`'s at 0.6, `safety.md`'s at 0.9. Promoting them at 0.1 instead
+`cmdline.md`'s at 0.2, `environment.md`'s at 0.3, `repoformat.md`'s at 0.4 and
+0.6, `state.md`'s at 3.3, `safety.md`'s at 0.9. Promoting them at 0.1 instead
 would inherit them, which is the thing rule 9 exists to stop.
 
 - **`goals.md`** (148) — **keep in `docs/`.** The product definition, and the one
@@ -73,7 +73,9 @@ would inherit them, which is the thing rule 9 exists to stop.
   valuable document in the set. Keep in `docs/` only the sections whose fields
   parse today: the layout, the top-level schema, names and IDs, and the action
   variants that exist. Move the rest verbatim to `docs/future/repoformat.md`. At
-  slice 0 that leaves a very short document, and it should.
+  slice 0 that leaves a very short document, and it should. The layout came back
+  at 0.4 with the reader, alongside the reading rules from `state.md`; the
+  schema follows at 0.6 with the parser.
 
 - **`cmdline.md`** (376) — **split.** Keep the command overview, global options,
   output streams, and exit statuses; true from slice 0. Move each per-command
@@ -89,9 +91,11 @@ would inherit them, which is the thing rule 9 exists to stop.
   `scope.rs`.
 
 - **`state.md`** (333) — **`docs/future/`, promoted per file.** `disabled.toml` at
-  3.3, `vars.toml` at 5.2, `dynamic-vars.toml` at 9.1. The atomic
-  whole-document rewrite rule is cross-cutting and can be promoted at 0.4 with
-  the writer.
+  3.3, `vars.toml` at 5.2, `dynamic-vars.toml` at 9.1. Its shared rules are
+  cross-cutting and split by which half of `tomlfile.rs` they describe: the
+  reading rules went with the reader at 0.4, into `docs/repoformat.md` because
+  the leaf manifest is the only document read there, and the atomic
+  whole-document rewrite rule goes with the writer at 3.3.
 
 - **`safety.md`** (310) — **split, and this one matters most.** Three separate
   promotions, earlier than the old plan assumed:

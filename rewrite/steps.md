@@ -37,35 +37,43 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   command but `version` and `init` now resolves its roots before reporting that
   it is unimplemented, and `-v` prints the four it resolved, which is what makes
   resolution observable from `tests/cli.rs` before anything reads a root.
-- **0.4** Port the read half of `tomlfile.rs`; leave the atomic-write half out
-  until 3.3 needs it. Promote the atomic whole-document rewrite rule from
-  `future/state.md`, which is cross-cutting and belongs with the reader.
+- **0.4** ✅ Port the read half of `tomlfile.rs`; leave the atomic-write half out
+  until 3.3 needs it. `sync` parses the leaf `batfiles.toml` before reporting
+  that it is unimplemented — that is what gives the reader a caller, and it
+  makes a missing or malformed manifest fail with the file named. The reading
+  rules were promoted into a new `docs/repoformat.md`; the atomic
+  whole-document rewrite rule was **not**, because nothing writes yet and
+  promoting it would have put unbuilt behavior in `docs/` — it waits at 3.3 with
+  the writer, along with `read_or_default` and `Error::is_not_found`, which are
+  still at the tag for want of a caller. `Roots::batfiles_config()` came back
+  here rather than at 0.6, this step being the first caller. The `tests/cli.rs`
+  helper is a temporary tree from here on: the repository is the first root
+  anything opens, so fixed absolute paths stopped being safe.
 - **0.5** Define the smallest useful `batfiles.toml`: a list of actions, each
   with an `id`, a `type`, a `source`, and a `dest`.
 - **0.6** Parse it as an internally-tagged enum with one variant, rejecting
-  unknown fields. Promote the layout, the top-level schema, names and IDs, and
-  the `symlink` variant from `future/repoformat.md`. This is also the first
-  caller of a `Roots` accessor: at the tag `Roots` carries one method per
-  document, and 0.3 left all five behind because nothing parsed a document yet.
-  Bring back `batfiles_config()` and the reasoning with it — which root a
-  document lives under is location policy, so the accessors stay together next
-  to the resolution, while each file name travels with its parser.
-  `disabled()` follows at 3.3, `machine_vars()` at 5.2, `remotes_dir()` at 6.2,
-  and `dynamic_vars()` at 9.1.
+  unknown fields. Promote the top-level schema, names and IDs, and the `symlink`
+  variant from `future/repoformat.md` into the `docs/repoformat.md` 0.4 started,
+  which already holds the layout and the reading rules. This is where the
+  manifest's file name finds its owner: `Roots::batfiles_config()` exists but
+  spells `batfiles.toml` inline, because 0.4 had no parser to hold the name.
+  Give the document type a `FILE_NAME` and point the accessor at it, which is
+  the split the tag used — which root a document lives under is location policy
+  and stays next to the resolution, while each file name travels with its
+  parser. The remaining four accessors are still at the tag: `disabled()`
+  follows at 3.3, `machine_vars()` at 5.2, `remotes_dir()` at 6.2, and
+  `dynamic_vars()` at 9.1.
 - **0.7** Execute a single symlink action against the resolved home directory,
   creating the link or repairing one that points somewhere else. Add `symlink`
   to `goals.md`'s implemented-actions line, and keep that line current at every
   action thereafter. Saying what it linked makes this the first caller of
   `Reporter::info`, which 0.3 left at the tag along with `Verbosity::shows_info`;
   take both, and note that this is also the first moment `--quiet` has anything
-  to suppress. Three claims in `docs/` stop being true at this step and need
-  re-reading together: `cmdline.md` says `--quiet` suppresses nothing and that a
-  missing home is the only failure reaching status 1, and `environment.md` says
-  no command reads a resolved root. So does the `tests/cli.rs` helper, which
-  points every test at `/selected-repo` and three siblings — absolute paths that
-  do not exist, and are safe only for as long as nothing opens one. Replace it
-  with temporary directories here rather than extending it; 0.12 builds the
-  fixture that lives in them.
+  to suppress — which is the one claim in `docs/` that stops being true here:
+  `cmdline.md` says `--quiet` suppresses nothing. 0.4 took the other two, and
+  replaced the fake test helper with a temporary tree; `Roots::repository` in
+  `tests/cli.rs` creates a repository holding an empty manifest, and 0.12 builds
+  the fixture that fills one in.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
   with the path named and nothing written (`guidance.md`, rule 13).
@@ -123,7 +131,13 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
 - **3.1** Make declaration order the execution order, explicitly and tested.
 - **3.2** Add groups and group membership.
 - **3.3** Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and the
-  four enable/disable commands.
+  four enable/disable commands. Three things 0.4 left are finished here.
+  `read_or_default` and `Error::is_not_found` are still at the tag: together
+  they are what lets a state file treat a missing document as empty where the
+  leaf manifest treats it as an error. The atomic whole-document rewrite rule in
+  `future/state.md` is still unpromoted, because 0.4 had no writer to promote it
+  against; it becomes `docs/state.md` here, linked from the reading rules in
+  `docs/repoformat.md`.
 - **3.4** Add `--skip` for suppressing an action or group for one run. The
   environment half belongs here too, or it is silently ignored:
   `BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS` union with the options.
