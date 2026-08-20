@@ -19,9 +19,10 @@ roots it needs and then reports that it is not implemented yet, exiting 2 having
 written nothing. That message is the answer to "what can batfiles do", and it
 disappears one command at a time.
 
-`sync` goes one step further before it gets there: it reads and parses the leaf
-repository's `batfiles.toml`, so a repository that has none, or whose manifest
-is malformed, fails on the manifest instead. See
+`sync` goes one step further before it gets there: it reads the leaf
+repository's `batfiles.toml` and checks it whole, so a repository that has none,
+or whose manifest is malformed or declares something batfiles cannot honor,
+fails on the manifest instead. See
 [reading the manifest](repoformat.md#reading-the-manifest).
 
 ## Command Overview
@@ -137,9 +138,9 @@ Status 2 is what clap already uses for the usage errors it renders, and an
 unimplemented command joins it rather than reporting a failure it never had.
 
 Two failures reach status 1 so far: a command that needs a home directory and
-cannot determine one, and a `sync` whose leaf `batfiles.toml` is missing or
-malformed. Nothing was written in either case — there is nothing yet that
-writes — but both are failures to do the work rather than refusals to start it.
-The invocation was well-formed, and something outside it did not hold up: no
-home the machine could name, or no manifest where the repository should have
-one.
+cannot determine one, and a `sync` whose leaf `batfiles.toml` is missing,
+malformed, or invalid. Nothing was written in either case — there is nothing yet
+that writes — but both are failures to do the work rather than refusals to start
+it. The invocation was well-formed, and something outside it did not hold up: no
+home the machine could name, or no usable manifest where the repository should
+have one.

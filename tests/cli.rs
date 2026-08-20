@@ -389,6 +389,144 @@ fn a_malformed_manifest_names_the_file_and_where_it_broke() {
     }
 }
 
+/// Run `sync` against a manifest expected to be rejected, and return the
+/// diagnostic.
+///
+/// Every rejection is the same shape: status 1, the file named, and the stub
+/// never reached — a manifest batfiles cannot make sense of stops the command
+/// before it claims to have done anything.
+fn rejected(manifest: &str) -> String {
+    let roots = Roots::new();
+    fs::write(roots.manifest(), manifest).expect("a manifest");
+
+    let assertion = roots.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&display(&roots.manifest())),
+        "the manifest was not named:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("is not implemented yet"),
+        "the stub ran anyway:\n{stderr}"
+    );
+    stderr
+}
+
+#[test]
+fn a_symlink_action_parses() {
+    let roots = Roots::new();
+    fs::write(
+        roots.manifest(),
+        "[[actions]]\n\
+         type = \"symlink\"\n\
+         id = \"zshrc\"\n\
+         group = \"shell\"\n\
+         source = \"files/zshrc\"\n\
+         dest = \"~/.zshrc\"\n",
+    )
+    .expect("a manifest");
+
+    // Nothing links it yet, so getting as far as the stub is the whole claim.
+    let assertion = roots
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .failure()
+        .code(2);
+    assert_eq!(
+        stderr_of(&assertion),
+        "error: `sync` is not implemented yet\n"
+    );
+}
+
+#[test]
+fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
+    // The document is closed, so a section batfiles will understand later is an
+    // error now rather than something that looks as though it took effect.
+    let stderr = rejected("[vars]\nwork = \"true\"\n");
+    assert!(
+        stderr.contains("vars"),
+        "the section was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_field_the_symlink_record_does_not_have_yet_is_rejected() {
+    // Directory mode is specified and not built. Ignoring it would link
+    // nothing while looking like it linked a directory's worth.
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink\"\n\
+         source-dir = \"files\"\n\
+         dest = \"~\"\n",
+    );
+    assert!(
+        stderr.contains("source-dir"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_action_type_that_has_not_landed_is_rejected() {
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"copy\"\n\
+         source = \"local-files\"\n\
+         dest = \"~\"\n",
+    );
+    assert!(stderr.contains("copy"), "the type was not named:\n{stderr}");
+}
+
+#[test]
+fn an_action_missing_a_required_field_is_rejected() {
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink\"\n\
+         source = \"files/zshrc\"\n",
+    );
+    assert!(
+        stderr.contains("dest"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_id_that_breaks_the_id_rule_is_rejected() {
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink\"\n\
+         id = \"core.zshrc\"\n\
+         source = \"files/zshrc\"\n\
+         dest = \"~/.zshrc\"\n",
+    );
+    for expected in ["core.zshrc", "not a valid ID"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn a_repeated_action_id_is_rejected_and_both_uses_located() {
+    // Serde cannot see across records, so this is the rule `validate` exists
+    // for; the diagnostic points at both actions because either one could be
+    // the mistake.
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink\"\n\
+         id = \"zshrc\"\n\
+         source = \"files/zshrc\"\n\
+         dest = \"~/.zshrc\"\n\
+         \n\
+         [[actions]]\n\
+         type = \"symlink\"\n\
+         id = \"zshrc\"\n\
+         source = \"files/zshrc.local\"\n\
+         dest = \"~/.zshrc.local\"\n",
+    );
+    for expected in ["zshrc", "action 2", "action 1"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
 #[test]
 fn a_command_that_does_not_need_the_manifest_does_not_read_it() {
     // Reading is the responsibility of the commands that use the manifest, so

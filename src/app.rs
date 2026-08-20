@@ -17,7 +17,7 @@ use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::error::Error;
 use crate::output::{Reporter, Verbosity};
-use crate::tomlfile;
+use crate::repo::BatfilesConfig;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -84,11 +84,11 @@ fn dispatch(
         Command::Init(_) => Ok(unimplemented(reporter, name)),
         Command::Sync(_) => {
             let roots = locate(cli, env, reporter)?;
-            // The manifest is parsed before a command does anything else, so a
-            // repository without one — or with a malformed one — fails with the
-            // file named rather than partway through. Nothing interprets the
-            // records yet, so parsing is the whole of the check.
-            tomlfile::read::<toml::Table>(&roots.batfiles_config())?;
+            // The manifest is read before a command does anything else, so a
+            // repository whose manifest is missing, malformed, or invalid fails
+            // with the file named rather than partway through. Nothing executes
+            // the actions yet, so reading them is the whole of the work.
+            BatfilesConfig::load(&roots.batfiles_config())?;
             Ok(unimplemented(reporter, name))
         }
         _ => {

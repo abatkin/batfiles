@@ -42,6 +42,12 @@ single materialization at that path.
 
 ## Top-Level `batfiles.toml` Schema
 
+The part of this section that runs — every section optional, no format-version
+field, and known records closed — is specified in
+[`docs/repoformat.md`](../repoformat.md), along with `[[actions]]`. The other
+three sections below parse in no repository yet: declaring one is an error until
+the code that reads it exists.
+
 All top-level sections are optional:
 
 ```toml
@@ -263,6 +269,10 @@ exclude = ["private/*", "*.bak"]
 
 ### Names and IDs
 
+The ID rule itself, and action-ID uniqueness, are specified in
+[`docs/repoformat.md`](../repoformat.md#names-and-ids). The variable-name rule
+below is not built, and neither are the remote and manifest-entry IDs.
+
 ```text
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ```
@@ -446,6 +456,12 @@ bootstrap policy belongs to the leaf repository.
 
 ## Actions
 
+The ordered list, the tagged-record shape, and the common `type`, `id`, and
+`group` fields are specified in
+[`docs/repoformat.md`](../repoformat.md#actions), along with `symlink`'s single
+mode. `when` and `unless` are not built, nor is any variant other than
+`symlink`.
+
 `[[actions]]` is an ordered heterogeneous array. Each action is a tagged record
 selected by its required `type` field.
 
@@ -459,6 +475,10 @@ All action variants share these fields:
 | `group` | `ID`               |    no    | Places the action in one group.                                            |
 
 ### `symlink`
+
+Single mode — `source` and `dest` — is specified in
+[`docs/repoformat.md`](../repoformat.md#symlink). Directory mode below is not
+built, and a manifest that writes its fields is rejected.
 
 Creates one symlink or a shallow set of symlinks. Exactly one of the two modes
 is valid.

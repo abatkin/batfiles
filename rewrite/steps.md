@@ -49,9 +49,13 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   here rather than at 0.6, this step being the first caller. The `tests/cli.rs`
   helper is a temporary tree from here on: the repository is the first root
   anything opens, so fixed absolute paths stopped being safe.
-- **0.5** Define the smallest useful `batfiles.toml`: a list of actions, each
-  with an `id`, a `type`, a `source`, and a `dest`.
-- **0.6** Parse it as an internally-tagged enum with one variant, rejecting
+- **0.5** ✅ Define the smallest useful `batfiles.toml`: a list of actions, each
+  with an `id`, a `type`, a `source`, and a `dest`. Landed with 0.6, which is
+  the parser that enforces the definition; there was no artifact separable from
+  it. The record also takes `group`, which costs nothing — it is an `ItemId`
+  like `id` — and rejecting it until 3.2 would be rejecting a spelling the
+  format already settled.
+- **0.6** ✅ Parse it as an internally-tagged enum with one variant, rejecting
   unknown fields. Promote the top-level schema, names and IDs, and the `symlink`
   variant from `future/repoformat.md` into the `docs/repoformat.md` 0.4 started,
   which already holds the layout and the reading rules. This is where the
@@ -63,6 +67,16 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   parser. The remaining four accessors are still at the tag: `disabled()`
   follows at 3.3, `machine_vars()` at 5.2, `remotes_dir()` at 6.2, and
   `dynamic_vars()` at 9.1.
+
+  Two things it left, both mechanically enforced rather than remembered:
+  `source` and `dest` carry `expect(dead_code)` until **0.7** reads them, and
+  `group` until **3.2** does, and each annotation fails CI at the step that
+  gives its field a reader (`guidance.md`, rule 1). `validate()` carries one
+  rule, duplicate action IDs, that being the only cross-field rule expressible
+  with these fields; **5.6** adds `when` excluding `unless`, and directory mode
+  adds the two-mode rule when it lands. `Action::id()` is the first of the
+  accessors that match over every variant — at the third, collapse them into one
+  `fn common(&self)` as the note there says.
 - **0.7** Execute a single symlink action against the resolved home directory,
   creating the link or repairing one that points somewhere else. Add `symlink`
   to `goals.md`'s implemented-actions line, and keep that line current at every
@@ -73,7 +87,12 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   `cmdline.md` says `--quiet` suppresses nothing. 0.4 took the other two, and
   replaced the fake test helper with a temporary tree; `Roots::repository` in
   `tests/cli.rs` creates a repository holding an empty manifest, and 0.12 builds
-  the fixture that fills one in.
+  the fixture that fills one in. `source` and `dest` have parsed since 0.6 and
+  carry `expect(dead_code)`; reading them here turns both into unfulfilled
+  expectations, which fail CI until they are deleted. Two claims in
+  `docs/repoformat.md` stop being true at the same moment — that the `symlink`
+  record is read but nothing creates the link, and that nothing interprets
+  `dest` — and they are the paragraph 0.9's promotion replaces.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
   with the path named and nothing written (`guidance.md`, rule 13).
@@ -133,7 +152,10 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
 ## Slice 3 — Selection and ordering
 
 - **3.1** Make declaration order the execution order, explicitly and tested.
-- **3.2** Add groups and group membership.
+- **3.2** Add groups and group membership. The `group` field has parsed and been
+  validated as an `ItemId` since 0.6; this is the step that reads it, so its
+  `expect(dead_code)` goes — CI will insist — along with the line in
+  `docs/repoformat.md` saying nothing selects by group yet.
 - **3.3** Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and the
   four enable/disable commands. Three things 0.4 left are finished here.
   `read_or_default` and `Error::is_not_found` are still at the tag: together
@@ -148,7 +170,9 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
   `Environment::list` at the tag is the comma-split, trim, drop-empties helper
   they share with 8.3's four bootstrap lists; 0.3 left it there for want of a
   caller.
-- **3.5** Add default-disabled bootstrap entries.
+- **3.5** Add default-disabled bootstrap entries. Like 5.1 and 6.1, adding the
+  section is also un-rejecting it: the closed document turns `[default-disabled]`
+  away today.
 - **3.6** Add `apply-action` and `apply-group` over the same filtered plan.
 - **3.7** Port `ItemAddress` and its parsing, which 3.6 is the first caller of.
 - **3.8** Start managing the parts of your personal dotfiles that need only
@@ -181,7 +205,11 @@ One flat scope only. See `guidance.md`, "Variables". Swap this with slice 4 if
 the personal repository turns out to need OS conditionals before it needs
 fetching.
 
-- **5.1** Add static string values under `[vars]` in the leaf manifest.
+- **5.1** Add static string values under `[vars]` in the leaf manifest. The
+  document has been a closed record since 0.6, so `[vars]` is rejected outright
+  until now: adding the section is also un-rejecting it, and
+  `docs/repoformat.md`'s top-level schema names `[vars]` among the sections that
+  fail. The same paragraph is edited at 3.5 and 6.1.
 - **5.2** Port `vars.toml` and the `vars set` / `get` / `unset` commands.
   `vars get` is the first command that answers a question rather than reporting
   what it did, so it is the first caller of `Reporter::data`, left at the tag by
@@ -216,7 +244,9 @@ fetching.
 
 No inclusion of remote actions yet.
 
-- **6.1** Add a `[remotes]` table with `type = "git"`.
+- **6.1** Add a `[remotes]` table with `type = "git"`. As at 5.1, this
+  un-rejects a section the closed document turns away, and edits the same
+  paragraph of `docs/repoformat.md`.
 - **6.2** Materialize a declared remote into `remotes/<id>/`, reusing 4.3's git
   helper and 4.5's conservative update rules.
 - **6.3** Add `@remote/path` as a parsed repository path resolved against

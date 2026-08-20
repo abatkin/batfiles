@@ -19,6 +19,9 @@ pub(crate) enum Error {
         path: PathBuf,
         source: toml::de::Error,
     },
+    /// A document that parsed, but breaks a rule spanning more than one record
+    /// — which is the kind serde cannot check on its own.
+    Invalid { path: PathBuf, message: String },
 }
 
 impl fmt::Display for Error {
@@ -32,6 +35,9 @@ impl fmt::Display for Error {
             // so it goes last and on its own line.
             Self::Parse { path, source } => {
                 write!(f, "invalid TOML in {}:\n{source}", path.display())
+            }
+            Self::Invalid { path, message } => {
+                write!(f, "invalid configuration in {}: {message}", path.display())
             }
         }
     }

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::error::Error;
+use crate::repo::BatfilesConfig;
 
 /// The captured process environment as a decoded `String` map.
 ///
@@ -115,7 +116,7 @@ impl Roots {
     /// The leaf repository's manifest. A remote's manifest is not here: it lives
     /// in that remote's materialization rather than under a resolved root.
     pub fn batfiles_config(&self) -> PathBuf {
-        self.batfiles_dir.join("batfiles.toml")
+        self.batfiles_dir.join(BatfilesConfig::FILE_NAME)
     }
 }
 
