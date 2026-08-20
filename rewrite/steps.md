@@ -49,39 +49,41 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   refuses all three; what is missing is the diagnostic saying which one it
   found, and the row of `docs/repoformat.md`'s destination table that currently
   reads "anything else" saying so too.
-- **0.9** Promote `safety.md`'s destination resolution and symlink traversal
-  rules into `docs/`, since 0.7 and 0.8 are the first code they govern. Three
+- **0.9** Make repairing a link atomic: build the replacement at a temporary
+  sibling and rename it over the destination. 0.7 removes and re-creates, so
+  there is a window in which the destination does not exist — which contradicts
+  `safety.md`'s "single-file writes should use a temporary sibling and atomic
+  rename where practical", and 0.10 cannot promote that sentence honestly until
+  this is true or the exception is stated.
+- **0.10** Promote `safety.md`'s destination resolution and symlink traversal
+  rules into `docs/`, since 0.7 through 0.9 are the first code they govern. Three
   sections carry a pointer paragraph naming what already runs — destination
   paths, repository source paths, and the first three steps of replacement and
   backups — and the rules themselves are in `docs/repoformat.md` under
   `symlink`, written for one action type. Promoting means lifting them to
   general statements now that they are about to govern `create-dir` and `copy`
   as well, and leaving the `symlink` section pointing at them.
-
-  One thing to promote honestly or fix first: "single-file writes should use a
-  temporary sibling and atomic rename where practical" is **not** what 0.7 does.
-  Repairing a link removes it and creates the replacement, so there is a window
-  in which the destination does not exist. Either make the repair atomic or
-  promote the sentence with the exception stated.
-- **0.10** Make the carry-forward markers mechanical in `task ci`, starting with
-  rule 1's. That has two halves: no `allow(dead_code)` under `src/` at all, and
-  every `expect(dead_code)` carrying a `reason`. The second is what keeps rule
-  1's record-field exception honest, 0.6 being the first step to use it — an
-  `expect` without a reason is an `allow` that gets past the grep. Close the
-  other half of the hole while you are here: `task lint` runs `clippy
-  --all-targets`, which compiles with `cfg(test)`, so an item reachable only from
-  a `#[cfg(test)]` block is never reported dead and no annotation exists for the
-  grep to find. Linting the default targets as well is what makes rule 1 actually
-  mechanical.
-
-  Two more markers belong to the same check. Add the cross-target build 0.7 left
-  on the honor system — `cargo clippy --all-targets --target
-  x86_64-pc-windows-msvc -- -D warnings`, one line plus a `rustup target add` on
-  the runner — because CI is ubuntu-only and nothing else catches a `#[cfg(unix)]`
-  gate that has rotted. And reject a stale `// CARRY(x.y)` whose step is already
-  marked ✅, which is what lets prose notes be replaced by greppable ones
-  (`guidance.md`, "Carrying work forward").
-- **0.11** Add the unimplemented-option check every command calls at entry, and
+- **0.11** Make rule 1 mechanical in `task ci`. Two halves: no
+  `allow(dead_code)` under `src/` at all, and every `expect(dead_code)` carrying
+  a `reason`. The second is what keeps rule 1's record-field exception honest,
+  0.6 being the first step to use it — an `expect` without a reason is an `allow`
+  that gets past the grep. Close the other half of the hole while you are here:
+  `task lint` runs `clippy --all-targets`, which compiles with `cfg(test)`, so an
+  item reachable only from a `#[cfg(test)]` block is never reported dead and no
+  annotation exists for the grep to find. Linting the default targets as well is
+  what makes the check actually cover `src/`.
+- **0.12** Add the cross-target build 0.7 left on the honor system — `cargo
+  clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings`, one line
+  in `task ci` plus a `rustup target add` on the runner, no linker needed.
+  CI is ubuntu-only, so nothing else catches a `#[cfg(unix)]` gate that has
+  rotted, and the gates only multiply from 1.1 on.
+- **0.13** Reject a stale `// CARRY(x.y)` marker whose step is already marked ✅,
+  so a carried-forward note has a greppable form that self-cleans the way rule
+  1's annotations do (`guidance.md`, "Carrying work forward"). This is the step
+  that makes prose the last resort rather than the only option, so it needs a
+  reader for `steps.md`'s ✅ marks and a fixture proving a live marker passes and
+  a spent one fails.
+- **0.14** Add the unimplemented-option check every command calls at entry, and
   populate it from the options ported at 0.2 (`guidance.md`, rule 12). The four
   location options went live at 0.3 and are off the list, and `--quiet` went
   live at 0.7, so what remains is the shared action-execution, selection, and
@@ -94,13 +96,13 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   preempt it on the machines least able to explain why. Note that a stub command
   reports its own unimplemented status anyway, so for those the check only
   changes *which* message they get — it earns its place as each command lands.
-- **0.12** Add a real leaf repository under `tests/fixtures/` and CLI tests that
+- **0.15** Add a real leaf repository under `tests/fixtures/` and CLI tests that
   sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails. All three assertions exist
   as of 0.7, against manifests written inline into a temporary tree; what is
   missing is a repository shaped like a real one, which is a different test —
   several actions over a directory tree that someone might actually keep.
-- **0.13** Rewrite the project `README.md` to describe what the binary does
+- **0.16** Rewrite the project `README.md` to describe what the binary does
   today, and keep it honest at every slice thereafter.
 
 ## Slice 1 — The rest of the local actions

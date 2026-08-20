@@ -29,7 +29,7 @@ not what 0.1 does in one move. The initial cut is blunt on purpose: everything
 that specifies unbuilt behavior goes to `docs/future/` wholesale, and the
 individual sections named below come back at the steps that build them —
 `cmdline.md`'s at 0.2, `environment.md`'s at 0.3, `repoformat.md`'s at 0.4 and
-0.6, `state.md`'s at 3.3, `safety.md`'s at 0.9. Promoting them at 0.1 instead
+0.6, `state.md`'s at 3.3, `safety.md`'s at 0.10. Promoting them at 0.1 instead
 would inherit them, which is the thing rule 9 exists to stop.
 
 - **`goals.md`** (148) — **keep in `docs/`.** The product definition, and the one
@@ -99,10 +99,10 @@ would inherit them, which is the thing rule 9 exists to stop.
 
 - **`safety.md`** (310) — **split, and this one matters most.** Three separate
   promotions, earlier than the old plan assumed:
-  - Destination resolution and symlink traversal at **0.9**. A tool that writes
+  - Destination resolution and symlink traversal at **0.10**. A tool that writes
     to `$HOME` needs those rules before it writes anything, so 0.7 landed them
     inside `docs/repoformat.md` under `symlink`, written for one action type;
-    0.9 lifts them to general statements before `create-dir` and `copy` arrive.
+    0.10 lifts them to general statements before `create-dir` and `copy` arrive.
   - Archive handling — absolute paths, `..` traversal, symlinks escaping the
     destination root — at **4.2**. This is no longer a late concern; slice 4 is
     the first code that unpacks untrusted content.
@@ -112,7 +112,7 @@ would inherit them, which is the thing rule 9 exists to stop.
 - **`docs/README.md`** (23) — the docs index. Rewrite last, once the split has
   settled.
 
-- **The project `README.md`** — **rewrite at 0.13, and keep honest every slice
+- **The project `README.md`** — **rewrite at 0.16, and keep honest every slice
   after.** It currently describes `install.sh` as the entry point and the tool as
   merging multiple sources, none of which will be true again until slices 10 and
   7 respectively. It is the first thing a human reads and the only document here

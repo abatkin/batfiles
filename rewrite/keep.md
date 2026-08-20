@@ -76,8 +76,9 @@ rewrite. Do not recreate any of it: `.github/workflows/ci.yml`,
 `.github/dependabot.yml`, `Taskfile.yml`, `rust-toolchain.toml`, `deny.toml`,
 `clippy.toml`, `rustfmt.toml`, `.gitignore`, `LICENSE`.
 
-Two additions land on top of it: the `allow(dead_code)` check at 0.10 and
-`task test:docker` at 8.4. CI runs `task ci`, so both are picked up without
+Four additions land on top of it: the `allow(dead_code)` check at 0.11, the
+cross-target build at 0.12, the `CARRY` marker check at 0.13, and
+`task test:docker` at 8.4. CI runs `task ci`, so all four are picked up without
 touching the workflow.
 
 ## Take, but cut hard

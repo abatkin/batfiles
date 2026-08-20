@@ -147,7 +147,7 @@ see `keep.md`.
 
 Every slice, without exception:
 
-- `task ci` passes, including the `allow(dead_code)` check added at 0.10.
+- `task ci` passes, including the `allow(dead_code)` check added at 0.11.
 - A `tests/cli.rs` test drives the new behavior through the binary.
 - Any `docs/future/` section the slice implemented has been promoted into
   `docs/`, re-read against what was actually built rather than pasted.
@@ -188,7 +188,7 @@ Two consequences:
   the reader lands (rule 1). The same shape covers an ordering not yet pinned
   (`#[ignore = "3.1"]`), an option that is parsed but dead (rule 12's list,
   shrinking to empty), and anything else greppable (`// CARRY(0.9): …`, which
-  0.10 teaches `task ci` to reject once 0.9 is marked ✅). Write prose only for
+  0.13 teaches `task ci` to reject once 0.9 is marked ✅). Write prose only for
   what none of these can hold.
 
 ## Test environments
@@ -208,7 +208,7 @@ network, is a suite that gets skipped.
 working `symlink` are a single `#[cfg(unix)] mod linking` in `tests/cli.rs`, with
 a `#[cfg(not(unix))]` test covering the refusal; an action type that is not
 platform-specific does not belong in that module. CI is ubuntu-only, so until
-0.10 adds it to `task ci` nothing catches a gate that rots — run `cargo clippy
+0.12 adds it to `task ci` nothing catches a gate that rots — run `cargo clippy
 --all-targets --target x86_64-pc-windows-msvc -- -D warnings` yourself after
 touching `tests/cli.rs`. It needs `rustup target add` first and no linker.
 

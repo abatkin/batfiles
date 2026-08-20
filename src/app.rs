@@ -152,7 +152,7 @@ fn not_yet(reporter: &Reporter, option: &str, step: &str) -> ExitCode {
 ///
 /// Checked before the roots are resolved: an unsupported option means nothing
 /// was attempted, and resolving first would let a missing-home failure preempt
-/// it on the machines least able to explain why. 0.11 does the same for the
+/// it on the machines least able to explain why. 0.14 does the same for the
 /// commands that are still stubs, and each entry leaves as its step lands.
 fn unsupported(args: &SyncArgs) -> Option<(&'static str, &'static str)> {
     let live = [
