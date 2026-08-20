@@ -99,8 +99,10 @@ would inherit them, which is the thing rule 9 exists to stop.
 
 - **`safety.md`** (310) — **split, and this one matters most.** Three separate
   promotions, earlier than the old plan assumed:
-  - Destination resolution and symlink traversal at **0.7**. A tool that writes
-    to `$HOME` needs those rules before it writes anything.
+  - Destination resolution and symlink traversal at **0.9**. A tool that writes
+    to `$HOME` needs those rules before it writes anything, so 0.7 landed them
+    inside `docs/repoformat.md` under `symlink`, written for one action type;
+    0.9 lifts them to general statements before `create-dir` and `copy` arrive.
   - Archive handling — absolute paths, `..` traversal, symlinks escaping the
     destination root — at **4.2**. This is no longer a late concern; slice 4 is
     the first code that unpacks untrusted content.

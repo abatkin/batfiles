@@ -47,7 +47,11 @@ Small, correct, already the right shape.
   to it as they run.
 - **`src/config/paths.rs`** (382) and **`src/config/env.rs`** (201) — step 0.3.
   Root resolution and the environment snapshot. Drop accessors for files that do
-  not exist yet — `dynamic_vars` is slice 9 — and add them back at their step.
+  not exist yet — `disabled()` returns at 3.3, `machine_vars()` at 5.2,
+  `remotes_dir()` at 6.2, `dynamic_vars()` at 9.1 — and add each back at its
+  step, spelled the way 0.6 split them: which root a document lives under is
+  location policy and stays here next to the resolution, while the file name
+  itself is a `FILE_NAME` on the document type, travelling with its parser.
 - **`Cargo.toml`** — step 0.1. Take the dependency list, not the essays. Forty
   lines of prose currently justify seven dependencies, which is the doc-comment
   failure in another file; one line saying what uses it is enough. Slice 0 needs

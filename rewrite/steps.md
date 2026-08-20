@@ -10,128 +10,39 @@ dotfiles.** Slice 4 exists because the personal repository needs `fetch-url` and
 `git-clone-list` and nothing else exotic, so those come before variables,
 conditions, and remotes even though they are individually harder.
 
-A step marked **✅** is done. Nothing else is. A step may also have grown since
-it was written: when a slice leaves work for a later step, it records that on
-the step, so the instruction is waiting when you get there.
+A step marked **✅** is done, and a done step is one line: whatever it discovered
+was routed to the step, rule, or document that needed it before the ✅ went on
+(`guidance.md`, "Carrying work forward"). An undone step may have grown since it
+was written, and that growth is the point — it is what an earlier slice learned,
+waiting where you will read it.
 
-Note that check the `rewrite/README.md` for guidance after Slice 8 is completed, as much of the "rewrite" infrastructure will need to be replaced at that point.
+Check `rewrite/README.md` for what happens once slice 8 is done: much of the
+"rewrite" scaffolding gets retired at that point.
 
 ## Slice 0 — Walking skeleton
 
 `batfiles sync` turns one `[[actions]]` symlink record into a symlink on disk.
 
 - **0.1** ✅ Tag the old crate as named in `keep.md`, empty `src/`, and make the
-  initial `docs/` cut described in `docs.md`. Work on `main`: the tag is what
-  preserves the old crate, nothing merges back, and CI runs only on `main` and
-  pull requests. Branch per slice if you want one reviewed.
+  initial `docs/` cut described in `docs.md`.
 - **0.2** ✅ Port `cli/` whole, with every command parsed and every unimplemented
-  one exiting 2. Promote the command overview, global options, output streams,
-  and exit statuses from `future/cmdline.md`. Color resolution is built here
-  too, so `future/environment.md`'s color section is promoted alongside them.
+  one exiting 2, promoting the command overview, global options, output streams,
+  exit statuses, and color resolution.
 - **0.3** ✅ Port the `Reporter` and the four-root resolution so diagnostics and
-  paths work from the first commit. Promote location selection and its
-  precedence from `future/environment.md`. Two pieces of 0.2 are waiting here
-  for their first caller: `ColorResolution::enabled`, which resolves `auto`
-  against the terminal for batfiles' own diagnostics, and `Environment`, which
-  replaces `app`'s direct reads of `BATFILES_COLOR` and `NO_COLOR`. Every
-  command but `version` and `init` now resolves its roots before reporting that
-  it is unimplemented, and `-v` prints the four it resolved, which is what makes
-  resolution observable from `tests/cli.rs` before anything reads a root.
-- **0.4** ✅ Port the read half of `tomlfile.rs`; leave the atomic-write half out
-  until 3.3 needs it. `sync` parses the leaf `batfiles.toml` before reporting
-  that it is unimplemented — that is what gives the reader a caller, and it
-  makes a missing or malformed manifest fail with the file named. The reading
-  rules were promoted into a new `docs/repoformat.md`; the atomic
-  whole-document rewrite rule was **not**, because nothing writes yet and
-  promoting it would have put unbuilt behavior in `docs/` — it waits at 3.3 with
-  the writer, along with `read_or_default` and `Error::is_not_found`, which are
-  still at the tag for want of a caller. `Roots::batfiles_config()` came back
-  here rather than at 0.6, this step being the first caller. The `tests/cli.rs`
-  helper is a temporary tree from here on: the repository is the first root
-  anything opens, so fixed absolute paths stopped being safe.
+  paths work from the first commit, promoting location selection and its
+  precedence.
+- **0.4** ✅ Port the read half of `tomlfile.rs`, promoting the reading rules into
+  a new `docs/repoformat.md`; `sync` parses the leaf `batfiles.toml` before
+  reporting that it is unimplemented.
 - **0.5** ✅ Define the smallest useful `batfiles.toml`: a list of actions, each
-  with an `id`, a `type`, a `source`, and a `dest`. Landed with 0.6, which is
-  the parser that enforces the definition; there was no artifact separable from
-  it. The record also takes `group`, which costs nothing — it is an `ItemId`
-  like `id` — and rejecting it until 3.2 would be rejecting a spelling the
-  format already settled.
+  with an `id`, a `type`, a `source`, a `dest`, and an optional `group`. Landed
+  with 0.6, there being no artifact separable from the parser that enforces it.
 - **0.6** ✅ Parse it as an internally-tagged enum with one variant, rejecting
-  unknown fields. Promote the top-level schema, names and IDs, and the `symlink`
-  variant from `future/repoformat.md` into the `docs/repoformat.md` 0.4 started,
-  which already holds the layout and the reading rules. This is where the
-  manifest's file name finds its owner: `Roots::batfiles_config()` exists but
-  spells `batfiles.toml` inline, because 0.4 had no parser to hold the name.
-  Give the document type a `FILE_NAME` and point the accessor at it, which is
-  the split the tag used — which root a document lives under is location policy
-  and stays next to the resolution, while each file name travels with its
-  parser. The remaining four accessors are still at the tag: `disabled()`
-  follows at 3.3, `machine_vars()` at 5.2, `remotes_dir()` at 6.2, and
-  `dynamic_vars()` at 9.1.
-
-  Two things it left, both mechanically enforced rather than remembered:
-  `source` and `dest` carry `expect(dead_code)` until **0.7** reads them, and
-  `group` until **3.2** does, and each annotation fails CI at the step that
-  gives its field a reader (`guidance.md`, rule 1). `validate()` carries one
-  rule, duplicate action IDs, that being the only cross-field rule expressible
-  with these fields; **5.6** adds `when` excluding `unless`, and directory mode
-  adds the two-mode rule when it lands. `Action::id()` is the first of the
-  accessors that match over every variant — at the third, collapse them into one
-  `fn common(&self)` as the note there says.
+  unknown fields, and promote the top-level schema, names and IDs, and the
+  `symlink` variant into `docs/repoformat.md`.
 - **0.7** ✅ Execute a single symlink action against the resolved home directory,
-  creating the link or repairing one that points somewhere else. `sync` runs and
-  exits 0; `src/sync.rs` holds the one action-execution loop, and the source and
-  destination resolvers next to it, until `action/` earns its directory at 1.2.
-  `Reporter::info` and `Verbosity::shows_info` came from the tag, so `--quiet`
-  finally suppresses something.
-
-  Three things it decided that the step did not say, each of which moved work
-  across a step boundary:
-
-  - **A destination is only repaired when the link already there points into
-    the repository.** Rule 13 is a standing rule rather than a step, and
-    repairing an arbitrary link would suspend it for as long as 0.8 took. So
-    0.8 is no longer "add the refusal" — the refusal is here, as a single
-    `already exists` naming the path. What 0.8 owes is the diagnostic that says
-    *which* of a file, a directory, or a link elsewhere it found, which is worth
-    doing deliberately rather than as a side effect.
-  - **The rule-12 check for `sync`'s nine dead options landed here rather than
-    at 0.11**, because 0.7 is the step that makes `sync --dry-run` write to
-    `$HOME`. It lives beside `unimplemented` in `app.rs` and is a flat list;
-    0.11 lifts it out for the commands that are still stubs.
-  - **A source must exist and must resolve inside its repository.** The
-    containment half is `safety.md`'s repository-source rule, checked lexically,
-    and it is one place, which is the seam 6.3 extends rather than replaces.
-
-  Only the unix symlink call is built. The binary compiles everywhere and a
-  `symlink` action fails on sight where batfiles cannot make one, checked before
-  anything is inspected or removed. `tests/cli.rs` compiles everywhere too: the
-  execution tests are one `#[cfg(unix)] mod linking`, since several build their
-  fixtures with `symlink` and none of the rest has a meaningful non-unix form,
-  and a `#[cfg(not(unix))]` test covers the refusal. An action type that is not
-  platform-specific — `create-dir` at 1.1, `copy` at 1.2 — does not belong in
-  that module.
-
-  **Nothing enforces this.** CI is ubuntu-only, so the gating is checked by
-  whoever remembers to run `cargo clippy --all-targets --target
-  x86_64-pc-windows-msvc -- -D warnings`, which needs `rustup target add` first
-  and no linker. Adding it to `task ci` is one line and a target install on the
-  runner; until someone decides that is worth the time, expect the gates to rot,
-  and re-run that command after touching `tests/cli.rs`.
-
-  Every path here is lexical, and review found the two places where that has to
-  be done deliberately rather than by accident: the roots are anchored to
-  absolute paths before a target is written into a link, and an existing link's
-  target is resolved from the link's own directory before it is compared or
-  judged. Both are needed for rule 13 to mean anything — a spelling that starts
-  with the repository can leave it, and one that does not can be inside it. Any
-  later action that stores a path, or classifies one already stored, needs the
-  same treatment.
-
-  What it left: the repair is a remove followed by a create, not a temporary
-  sibling and an atomic rename — see 0.9. `tests/cli.rs` grew `repo_file` and
-  `one_symlink`; 0.12 still builds the fixture repository. The tests that used
-  `sync` as their unimplemented-command specimen now use `clone`, through the
-  `a_stub` helper, which each later slice re-points as commands land.
+  creating the link, repairing one that points into the repository, and refusing
+  every destination occupied by anything else.
 - **0.8** Refuse any destination occupied by something that is not a repairable
   symlink — a regular file, a directory, a link outside the repository — failing
   with the path named and nothing written (`guidance.md`, rule 13). 0.7 already
@@ -152,16 +63,24 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   Repairing a link removes it and creates the replacement, so there is a window
   in which the destination does not exist. Either make the repair atomic or
   promote the sentence with the exception stated.
-- **0.10** Add the `allow(dead_code)` check to `task ci`, so rule 1 is enforced
-  from the first commit rather than remembered. It has two halves: no
-  `allow(dead_code)` under `src/` at all, and every `expect(dead_code)` carrying
-  a `reason`. The second is what keeps rule 1's record-field exception honest,
-  0.6 being the first step to use it — an `expect` without a reason is an
-  `allow` that gets past the grep. Close the other half of the hole
-  while you are here: `task lint` runs `clippy --all-targets`, which compiles
-  with `cfg(test)`, so an item reachable only from a `#[cfg(test)]` block is
-  never reported dead and no annotation exists for the grep to find. Linting the
-  default targets as well is what makes rule 1 actually mechanical.
+- **0.10** Make the carry-forward markers mechanical in `task ci`, starting with
+  rule 1's. That has two halves: no `allow(dead_code)` under `src/` at all, and
+  every `expect(dead_code)` carrying a `reason`. The second is what keeps rule
+  1's record-field exception honest, 0.6 being the first step to use it — an
+  `expect` without a reason is an `allow` that gets past the grep. Close the
+  other half of the hole while you are here: `task lint` runs `clippy
+  --all-targets`, which compiles with `cfg(test)`, so an item reachable only from
+  a `#[cfg(test)]` block is never reported dead and no annotation exists for the
+  grep to find. Linting the default targets as well is what makes rule 1 actually
+  mechanical.
+
+  Two more markers belong to the same check. Add the cross-target build 0.7 left
+  on the honor system — `cargo clippy --all-targets --target
+  x86_64-pc-windows-msvc -- -D warnings`, one line plus a `rustup target add` on
+  the runner — because CI is ubuntu-only and nothing else catches a `#[cfg(unix)]`
+  gate that has rotted. And reject a stale `// CARRY(x.y)` whose step is already
+  marked ✅, which is what lets prose notes be replaced by greppable ones
+  (`guidance.md`, "Carrying work forward").
 - **0.11** Add the unimplemented-option check every command calls at entry, and
   populate it from the options ported at 0.2 (`guidance.md`, rule 12). The four
   location options went live at 0.3 and are off the list, and `--quiet` went
@@ -193,7 +112,10 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   all three exist. The candidates are already visible in `src/sync.rs`:
   destination resolution, source resolution, and creating a missing parent are
   each written for `symlink` alone. This is also where `action/` earns its
-  directory and `sync.rs` stops holding both the loop and one action's work.
+  directory and `sync.rs` stops holding both the loop and one action's work. The
+  accessors that match over every variant are the same question in miniature:
+  0.6 wrote `Action::id()` as the first, 3.2 reads `group` as the second, and at
+  the third they collapse into one `fn common(&self)`.
 - **1.4** Extend the fixture and add one CLI test per action type.
 
 ## Slice 2 — Dry-run

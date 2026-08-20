@@ -119,6 +119,15 @@ repairable — relinking loses nothing. A regular file, a directory, or a symlin
 pointing somewhere unexpected is not; it is someone's data, and slice 0 has no
 way to give it back.
 
+**14. Judge a path by where it points, not by how it is spelled.** Anchor the
+roots to absolute paths before writing a target into a link, and resolve an
+existing link's target from the link's own directory before comparing or
+classifying it. Rule 13 means nothing otherwise: a spelling that starts with the
+repository can still leave it, and one that does not can still be inside it.
+Every action that stores a path, or classifies one already stored, needs the same
+treatment. The containment check is lexical and lives in exactly one place, which
+is the seam 6.3 extends rather than replaces.
+
 ## Budgets
 
 Not hard limits. If you are far over one, stop and ask why.
@@ -194,6 +203,14 @@ Use the cheapest environment that still exercises the real thing.
 
 **No test may reach the network.** A suite that fails on a plane, or on the work
 network, is a suite that gets skipped.
+
+**Platform gating is one place, not scattered.** The execution tests that need a
+working `symlink` are a single `#[cfg(unix)] mod linking` in `tests/cli.rs`, with
+a `#[cfg(not(unix))]` test covering the refusal; an action type that is not
+platform-specific does not belong in that module. CI is ubuntu-only, so until
+0.10 adds it to `task ci` nothing catches a gate that rots — run `cargo clippy
+--all-targets --target x86_64-pc-windows-msvc -- -D warnings` yourself after
+touching `tests/cli.rs`. It needs `rustup target add` first and no linker.
 
 Keep several differently-shaped fixture repositories — one leaf-only, one with
 remotes, one with deliberately overlapping destination paths — and run the suite
