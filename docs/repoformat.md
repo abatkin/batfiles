@@ -131,6 +131,11 @@ What happens at the destination depends on what is already there:
 | a symlink pointing elsewhere in the repository | It is repointed at the source.                                    |
 | anything else                                 | An error naming the path, with nothing written.                   |
 
+On a platform where batfiles cannot create a symlink, a `symlink` action is an
+error naming the action rather than a silent skip or a copy substituted for the
+link. The check happens before the destination is examined, so a repair cannot
+remove the existing link and then discover it has nothing to put back.
+
 The destination is examined without following a final symlink, so a link is
 judged by where it points rather than by what it reaches. A symlink into the
 repository is one batfiles would have made and holds no content of its own, so

@@ -102,6 +102,13 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
     containment half is `safety.md`'s repository-source rule, checked lexically,
     and it is one place, which is the seam 6.3 extends rather than replaces.
 
+  Only the unix symlink call is built. The binary compiles everywhere and a
+  `symlink` action fails on sight where batfiles cannot make one, which is
+  checked before anything is inspected or removed. `tests/cli.rs` does **not**
+  compile off unix — two tests create a symlink as a fixture — and gating them
+  for a platform with no CI runner would be work done ahead of a caller. If a
+  Windows runner ever arrives, that is the thing to fix first.
+
   What it left: the repair is a remove followed by a create, not a temporary
   sibling and an atomic rename — see 0.9. `tests/cli.rs` grew `repo_file` and
   `one_symlink`; 0.12 still builds the fixture repository. The tests that used

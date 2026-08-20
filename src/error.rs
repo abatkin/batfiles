@@ -35,6 +35,8 @@ pub(crate) enum Error {
     Occupied { path: PathBuf },
     /// A path that could not be created, replaced, or inspected.
     Write { path: PathBuf, source: io::Error },
+    /// An action this build of batfiles cannot carry out on this platform.
+    Unsupported { action: &'static str },
 }
 
 impl fmt::Display for Error {
@@ -67,6 +69,9 @@ impl fmt::Display for Error {
             ),
             Self::Write { path, source } => {
                 write!(f, "could not write {}: {source}", path.display())
+            }
+            Self::Unsupported { action } => {
+                write!(f, "`{action}` actions are not supported on this platform")
             }
         }
     }

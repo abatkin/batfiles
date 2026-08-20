@@ -7,8 +7,19 @@
 
 use std::fs;
 use std::io;
-use std::os::unix::fs::symlink;
 use std::path::{Component, Path, PathBuf};
+
+// Making a symlink is the one platform-specific call here. Windows needs
+// `symlink_file` against `symlink_dir` and a privilege check, with no CI runner
+// and no user to prove it against, so it is not built — `link` refuses the
+// action instead, and this stands in so the crate still compiles there.
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
+#[cfg(not(unix))]
+fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
 
 use crate::config::Roots;
 use crate::error::Error;
@@ -38,6 +49,13 @@ pub(crate) fn sync(
 /// repointing it loses nothing; anything else is someone's, and this refuses it
 /// (`guidance.md`, rule 13).
 fn link(action: &SymlinkAction, roots: &Roots, reporter: &Reporter) -> Result<(), Error> {
+    // Refused on sight, before anything is inspected or removed. Repairing a
+    // link deletes the old one first, so a platform check made at the moment of
+    // writing would fail with the destination already gone.
+    if !cfg!(unix) {
+        return Err(Error::Unsupported { action: "symlink" });
+    }
+
     let target = source(&roots.batfiles_dir, &action.source)?;
     let dest = destination(&roots.home, &action.dest)?;
 
