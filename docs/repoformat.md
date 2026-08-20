@@ -107,7 +107,11 @@ dest = "~/.zshrc"
 | `source` | string |   yes    | The source, relative to the repository root. |
 | `dest`   | string |   yes    | The destination path, as written.            |
 
-Both paths are resolved when the action runs, not when the manifest is read.
+Both paths are resolved when the action runs, not when the manifest is read, and
+both are anchored to absolute paths first. A selected root may be written
+relative to wherever batfiles is invoked, but a symlink stores the target it is
+handed and reads it back relative to the link's own directory, so a relative
+target would point somewhere other than where it was meant to.
 
 - `source` names a path within the repository that declares it. An absolute
   source is invalid, and so is a relative one that climbs out of the repository.
@@ -137,10 +141,17 @@ link. The check happens before the destination is examined, so a repair cannot
 remove the existing link and then discover it has nothing to put back.
 
 The destination is examined without following a final symlink, so a link is
-judged by where it points rather than by what it reaches. A symlink into the
-repository is one batfiles would have made and holds no content of its own, so
-repairing it loses nothing. A file, a directory, or a link somewhere unexpected
-is someone's data, and there is no backup policy yet with which to give it back.
+judged by where it points rather than by what it reaches. Where it points is
+also what the two rows above mean by "the source" and "elsewhere in the
+repository": a link's target is read as the operating system would read it, with
+a relative one resolved from the link's own directory. A link spelled
+`../dotfiles/zshrc` can be exactly the link the action asks for, and one spelled
+`<repository>/../elsewhere` leaves the repository despite beginning inside it.
+
+A symlink into the repository is one batfiles would have made and holds no
+content of its own, so repairing it loses nothing. A file, a directory, or a
+link somewhere unexpected is someone's data, and there is no backup policy yet
+with which to give it back.
 
 Directory mode, which links a directory's children through `source-dir`,
 `dest-dir`, and glob filters, is specified in

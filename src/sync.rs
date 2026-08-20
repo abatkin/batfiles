@@ -28,14 +28,22 @@ use crate::repo::BatfilesConfig;
 use crate::repo::action::{Action, SymlinkAction};
 
 /// Execute every action in declaration order, stopping at the first failure.
+///
+/// The two roots an action can reach are anchored once, here, because a symlink
+/// stores the target it is given: a relative one is read back relative to the
+/// link's own directory rather than to wherever batfiles happened to be run,
+/// so a relative `--batfiles-dir` would otherwise produce a link that points
+/// nowhere and a next run that calls it correct.
 pub(crate) fn sync(
     roots: &Roots,
     config: &BatfilesConfig,
     reporter: &Reporter,
 ) -> Result<(), Error> {
+    let repository = anchor(&roots.batfiles_dir)?;
+    let home = anchor(&roots.home)?;
     for action in &config.actions {
         match action {
-            Action::Symlink(action) => link(action, roots, reporter)?,
+            Action::Symlink(action) => link(action, &repository, &home, reporter)?,
         }
     }
     Ok(())
@@ -48,7 +56,12 @@ pub(crate) fn sync(
 /// repository is one batfiles would have made and holds no data of its own, so
 /// repointing it loses nothing; anything else is someone's, and this refuses it
 /// (`guidance.md`, rule 13).
-fn link(action: &SymlinkAction, roots: &Roots, reporter: &Reporter) -> Result<(), Error> {
+fn link(
+    action: &SymlinkAction,
+    repository: &Path,
+    home: &Path,
+    reporter: &Reporter,
+) -> Result<(), Error> {
     // Refused on sight, before anything is inspected or removed. Repairing a
     // link deletes the old one first, so a platform check made at the moment of
     // writing would fail with the destination already gone.
@@ -56,8 +69,8 @@ fn link(action: &SymlinkAction, roots: &Roots, reporter: &Reporter) -> Result<()
         return Err(Error::Unsupported { action: "symlink" });
     }
 
-    let target = source(&roots.batfiles_dir, &action.source)?;
-    let dest = destination(&roots.home, &action.dest)?;
+    let target = source(repository, &action.source)?;
+    let dest = destination(home, &action.dest)?;
 
     match fs::symlink_metadata(&dest) {
         Ok(existing) if existing.is_symlink() => {
@@ -65,9 +78,15 @@ fn link(action: &SymlinkAction, roots: &Roots, reporter: &Reporter) -> Result<()
                 path: dest.clone(),
                 source,
             })?;
-            if current == target {
+            // Where the link points, not how it was spelled. A target is read
+            // back exactly as it was written, and a relative one means "from
+            // the link's own directory" — so `../dotfiles/zshrc` may well point
+            // into the repository, and `repo/../elsewhere` may well point out
+            // of it. Judging the spelling gets both backwards.
+            let points_at = pointed_at(&dest, &current);
+            if points_at == target {
                 reporter.detail(1, &format!("unchanged {}", dest.display()));
-            } else if current.starts_with(&roots.batfiles_dir) {
+            } else if points_at.starts_with(repository) {
                 remove(&dest)?;
                 create(&target, &dest)?;
                 reporter.info(&format!(
@@ -100,12 +119,33 @@ fn link(action: &SymlinkAction, roots: &Roots, reporter: &Reporter) -> Result<()
     Ok(())
 }
 
+/// Where an existing symlink points, as the operating system would read it.
+///
+/// Lexical, like every other path decision here: intermediate components that
+/// are themselves symlinks are not resolved, because a parent link is something
+/// the user put there deliberately and following it is ordinary path
+/// resolution, not a fact batfiles needs to establish.
+fn pointed_at(link: &Path, target: &Path) -> PathBuf {
+    match link.parent() {
+        Some(parent) if target.is_relative() => normalize(&parent.join(target)),
+        _ => normalize(target),
+    }
+}
+
+/// Make a path absolute and lexically clean, so that what is compared, reported,
+/// and written into a link does not depend on the working directory.
+fn anchor(path: &Path) -> Result<PathBuf, Error> {
+    let absolute =
+        std::path::absolute(path).map_err(|source| Error::WorkingDirectory { source })?;
+    Ok(normalize(&absolute))
+}
+
 /// An action's `source`, resolved against the repository that declared it.
 ///
 /// A source names a path within its repository, so an absolute one and one that
-/// climbs out are both refused. The containment check is lexical: a symlink
-/// deliberately stored inside the repository may point anywhere, and is followed
-/// like any other.
+/// climbs out are both refused. `repository` is already anchored, so the result
+/// is too. The containment check is lexical: a symlink deliberately stored
+/// inside the repository may point anywhere, and is followed like any other.
 fn source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
     let invalid = |message| {
         Err(Error::Path {
@@ -243,6 +283,21 @@ mod tests {
                 "`{escaping}` was accepted"
             );
         }
+    }
+
+    #[test]
+    fn a_link_is_judged_by_where_it_points_not_how_it_is_spelled() {
+        let link = Path::new("/home/user/.zshrc");
+        // Relative to the link's own directory, which is what the OS does.
+        assert_eq!(
+            pointed_at(link, Path::new("../dotfiles/zshrc")),
+            PathBuf::from("/home/dotfiles/zshrc")
+        );
+        // Textually inside `/repo`, and nowhere near it once resolved.
+        assert_eq!(
+            pointed_at(link, Path::new("/repo/../outside")),
+            PathBuf::from("/outside")
+        );
     }
 
     #[test]

@@ -37,6 +37,9 @@ pub(crate) enum Error {
     Write { path: PathBuf, source: io::Error },
     /// An action this build of batfiles cannot carry out on this platform.
     Unsupported { action: &'static str },
+    /// The working directory a relative path had to be anchored against could
+    /// not be determined.
+    WorkingDirectory { source: io::Error },
 }
 
 impl fmt::Display for Error {
@@ -72,6 +75,9 @@ impl fmt::Display for Error {
             }
             Self::Unsupported { action } => {
                 write!(f, "`{action}` actions are not supported on this platform")
+            }
+            Self::WorkingDirectory { source } => {
+                write!(f, "could not determine the current directory: {source}")
             }
         }
     }

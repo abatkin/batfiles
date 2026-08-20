@@ -109,6 +109,15 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
   for a platform with no CI runner would be work done ahead of a caller. If a
   Windows runner ever arrives, that is the thing to fix first.
 
+  Every path here is lexical, and review found the two places where that has to
+  be done deliberately rather than by accident: the roots are anchored to
+  absolute paths before a target is written into a link, and an existing link's
+  target is resolved from the link's own directory before it is compared or
+  judged. Both are needed for rule 13 to mean anything — a spelling that starts
+  with the repository can leave it, and one that does not can be inside it. Any
+  later action that stores a path, or classifies one already stored, needs the
+  same treatment.
+
   What it left: the repair is a remove followed by a create, not a temporary
   sibling and an atomic rename — see 0.9. `tests/cli.rs` grew `repo_file` and
   `one_symlink`; 0.12 still builds the fixture repository. The tests that used

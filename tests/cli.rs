@@ -46,6 +46,11 @@ impl Roots {
         self.dir.path().join(relative)
     }
 
+    /// The tree the four roots sit in, for the cases that run from inside it.
+    fn root(&self) -> &Path {
+        self.dir.path()
+    }
+
     /// Create a repository directory holding an empty manifest, and return it.
     fn repository(&self, relative: &str) -> PathBuf {
         let repo = self.path(relative);
@@ -635,6 +640,66 @@ fn a_link_into_the_repository_is_repaired() {
     );
     assert_eq!(link_target(&roots.home(".zshrc")), wanted);
     assert!(stale.exists(), "the old source was removed");
+}
+
+#[test]
+fn a_relative_repository_still_yields_a_link_that_resolves() {
+    // A symlink stores the target it is handed, and a relative one is read back
+    // from the link's own directory — not from wherever batfiles was run. So a
+    // relative root has to be anchored before it is written into a link, or the
+    // command reports success and leaves something pointing nowhere.
+    let roots = Roots::new();
+    let source = roots.repo_file("shell/zshrc", "# zsh\n");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+    roots
+        .batfiles()
+        .current_dir(roots.root())
+        .args(["sync", "--batfiles-dir", "repo", "--home-dir", "home"])
+        .assert()
+        .success();
+    assert_eq!(link_target(&roots.home(".zshrc")), source);
+    assert_eq!(
+        fs::read_to_string(roots.home(".zshrc")).expect("the link resolves"),
+        "# zsh\n"
+    );
+}
+
+#[test]
+fn a_relative_link_into_the_repository_is_recognized() {
+    // Someone may well have written this link by hand, or with a tool that
+    // spells targets relatively. It points where the action asks, so there is
+    // nothing to do.
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    std::os::unix::fs::symlink("../repo/shell/zshrc", roots.home(".zshrc"))
+        .expect("a relative link");
+    roots.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+    roots.batfiles().arg("sync").assert().success().stderr("");
+    assert_eq!(
+        link_target(&roots.home(".zshrc")),
+        PathBuf::from("../repo/shell/zshrc"),
+        "the spelling was rewritten"
+    );
+}
+
+#[test]
+fn a_link_that_only_looks_like_it_points_into_the_repository_is_refused() {
+    // `<repo>/../outside` starts with the repository when compared as text and
+    // leaves it when resolved. Reading the spelling rather than the destination
+    // would delete a link batfiles never made.
+    let roots = Roots::new();
+    roots.repo_file("shell/zshrc", "# zsh\n");
+    let escaping = roots.path("repo").join("../outside");
+    std::os::unix::fs::symlink(&escaping, roots.home(".zshrc")).expect("an escaping link");
+
+    let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
+    assert!(
+        stderr.contains(&display(&roots.home(".zshrc"))),
+        "the destination was not named:\n{stderr}"
+    );
+    assert_eq!(link_target(&roots.home(".zshrc")), escaping);
 }
 
 #[test]
