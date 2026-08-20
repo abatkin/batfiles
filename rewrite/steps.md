@@ -80,7 +80,11 @@ Note that check the `rewrite/README.md` for guidance after Slice 8 is completed,
 - **0.9** Promote `safety.md`'s destination resolution and symlink traversal
   rules into `docs/`, since 0.7 and 0.8 are the first code they govern.
 - **0.10** Add the `allow(dead_code)` check to `task ci`, so rule 1 is enforced
-  from the first commit rather than remembered. Close the other half of the hole
+  from the first commit rather than remembered. It has two halves: no
+  `allow(dead_code)` under `src/` at all, and every `expect(dead_code)` carrying
+  a `reason`. The second is what keeps rule 1's record-field exception honest,
+  0.6 being the first step to use it — an `expect` without a reason is an
+  `allow` that gets past the grep. Close the other half of the hole
   while you are here: `task lint` runs `clippy --all-targets`, which compiles
   with `cfg(test)`, so an item reachable only from a `#[cfg(test)]` block is
   never reported dead and no annotation exists for the grep to find. Linting the

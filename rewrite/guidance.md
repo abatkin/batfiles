@@ -22,9 +22,27 @@ committed. The old crate carried eight of these annotations, each one the
 compiler correctly reporting the problem and being overruled. The stubbed CLI is
 not an exception and needs none — clap's derive reads every field.
 
+**A field of a serde record is the one exception, and it is spelled
+`#[expect(dead_code, reason = "…")]`.** A record mirrors a file whose shape the
+format already fixes, so a field nothing reads yet is not an abstraction built
+ahead of its caller; it is one line of a document that exists either way.
+`symlink`'s `dest` is written the same way at 0.6 whether or not 0.7 has been
+built. What rule 1 exists to stop is unreachable *code* — types, layers, and
+functions no command reaches and no external shape constrains. Leaving the field
+out instead is the worse outcome: a closed record without `dest` rejects the
+manifests the format calls valid, and opening the record stops it rejecting the
+mistyped ones.
+
+Use `expect`, never `allow`, and give each one a `reason` naming the step that
+reads the field. `expect` is self-cleaning: once the reader lands the annotation
+becomes an unfulfilled expectation, which is a warning, which under `-D
+warnings` fails CI until it is deleted. That makes these the one kind of
+carry-forward note that cannot rot, because the compiler is holding the list.
+
 Make it self-enforcing: have `task ci` fail if `allow(dead_code)` appears
-anywhere under `src/`. This is the one rule that can be checked mechanically,
-and the old crate is the proof that the honor-system version of it loses.
+anywhere under `src/`, or if any `expect(dead_code)` is missing its `reason`.
+This is the one rule that can be checked mechanically, and the old crate is the
+proof that the honor-system version of it loses.
 
 **2. Vertical slices, never horizontal layers.** Every slice ends with a
 `batfiles` binary that does something a user can run, and a test in
