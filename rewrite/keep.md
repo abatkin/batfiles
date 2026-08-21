@@ -78,8 +78,9 @@ rewrite. Do not recreate any of it: `.github/workflows/ci.yml`,
 
 Four additions land on top of it: the `allow(dead_code)` check at 0.11, the
 cross-target build at 0.12, the `CARRY` marker check at 0.13, and
-`task test:docker` at 8.4. CI runs `task ci`, so all four are picked up without
-touching the workflow.
+`task test:docker` at 8.4. CI runs `task ci`, so all four arrive through the
+Taskfile or the test suite; the one workflow edit any of them needed is 0.12's
+`rustup target add` for the cross-lint target, which is runner setup.
 
 ## Take, but cut hard
 

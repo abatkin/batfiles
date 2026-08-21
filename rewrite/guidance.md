@@ -242,10 +242,10 @@ network, is a suite that gets skipped.
 **Platform gating is one place, not scattered.** The execution tests that need a
 working `symlink` are a single `#[cfg(unix)] mod linking` in `tests/cli.rs`, with
 a `#[cfg(not(unix))]` test covering the refusal; an action type that is not
-platform-specific does not belong in that module. CI is ubuntu-only, so until
-0.12 adds it to `task ci` nothing catches a gate that rots — run `cargo clippy
---all-targets --target x86_64-pc-windows-msvc -- -D warnings` yourself after
-touching `tests/cli.rs`. It needs `rustup target add` first and no linker.
+platform-specific does not belong in that module. CI is ubuntu-only, so nothing
+there runs the Windows side; `task lint` checks it instead, running clippy
+against `x86_64-pc-windows-msvc` as well, and that is what catches a gate that
+has rotted. The target is pinned in `rust-toolchain.toml` and needs no linker.
 
 Keep several differently-shaped fixture repositories — one leaf-only, one with
 remotes, one with deliberately overlapping destination paths — and run the suite

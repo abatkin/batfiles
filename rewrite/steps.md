@@ -57,11 +57,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   half this step proposed — linting the default targets too — was dropped rather
   than built: `--all-targets` already includes them, so `cfg(test)`-only dead
   code is reported today.
-- **0.12** Add the cross-target build 0.7 left on the honor system — `cargo
-  clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings`, one line
-  in `task ci` plus a `rustup target add` on the runner, no linker needed.
-  CI is ubuntu-only, so nothing else catches a `#[cfg(unix)]` gate that has
-  rotted, and the gates only multiply from 1.1 on.
+- **0.12** ✅ Add the cross-target build 0.7 left on the honor system: `task
+  lint` checks `x86_64-pc-windows-msvc` too, so an ubuntu-only CI catches a
+  `#[cfg(unix)]` gate that has rotted.
 - **0.13** Reject a stale `// CARRY(x.y)` marker whose step is already marked ✅,
   so a carried-forward note has a greppable form that self-cleans the way rule
   1's annotations do (`guidance.md`, "Carrying work forward"). This is the step

@@ -10,8 +10,14 @@ tasks:
     cmd: cargo fmt --all -- --check
 
   lint:
-    desc: Run clippy with warnings denied
-    cmd: cargo clippy --all-targets -- -D warnings
+    desc: Run clippy with warnings denied, for the host and for Windows
+    cmds:
+      - cargo clippy --all-targets -- -D warnings
+      # CI is ubuntu-only, so a `#[cfg(unix)]` gate that has rotted is caught
+      # here or nowhere. Checking needs the target's std, not a linker;
+      # rust-toolchain.toml asks for it, so `rustup target add
+      # x86_64-pc-windows-msvc` is only needed by a toolchain predating that.
+      - cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 
   test:
     desc: Run the project test suite

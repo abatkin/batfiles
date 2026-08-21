@@ -3,3 +3,6 @@
 [toolchain]
 channel = "1.94.1"
 components = ["rustfmt", "clippy"]
+# `task lint` also checks this target, which is how an ubuntu-only CI catches a
+# rotted platform gate. Checking it needs its standard library, not a linker.
+targets = ["x86_64-pc-windows-msvc"]

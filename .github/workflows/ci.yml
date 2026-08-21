@@ -22,6 +22,13 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
 
+      # rust-toolchain.toml already lists this target, which covers a fresh
+      # install; this covers a runner image that has the pinned toolchain
+      # without it. `task lint` checks Windows so an ubuntu-only run still
+      # catches a rotted platform gate.
+      - name: Install the cross-lint target
+        run: rustup target add x86_64-pc-windows-msvc
+
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
