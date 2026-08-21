@@ -39,7 +39,7 @@ becomes an unfulfilled expectation, which is a warning, which under `-D
 warnings` fails CI until it is deleted. That makes these the one kind of
 carry-forward note that cannot rot, because the compiler is holding the list.
 
-Make it self-enforcing: have `task ci` fail if `allow(dead_code)` appears
+It is self-enforcing: `tests/hygiene.rs` fails if `allow(dead_code)` appears
 anywhere under `src/`, or if any `expect(dead_code)` is missing its `reason`.
 This is the one rule that can be checked mechanically, and the old crate is the
 proof that the honor-system version of it loses.
@@ -182,7 +182,7 @@ see `keep.md`.
 
 Every slice, without exception:
 
-- `task ci` passes, including the `allow(dead_code)` check added at 0.11.
+- `task ci` passes, including the source-hygiene checks in `tests/hygiene.rs`.
 - A `tests/cli.rs` test drives the new behavior through the binary.
 - Any `docs/future/` section the slice implemented has been promoted into
   `docs/`, re-read against what was actually built rather than pasted.
