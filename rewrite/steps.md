@@ -43,12 +43,10 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **0.7** ✅ Execute a single symlink action against the resolved home directory,
   creating the link, repairing one that points into the repository, and refusing
   every destination occupied by anything else.
-- **0.8** Refuse any destination occupied by something that is not a repairable
-  symlink — a regular file, a directory, a link outside the repository — failing
-  with the path named and nothing written (`guidance.md`, rule 13). 0.7 already
-  refuses all three; what is missing is the diagnostic saying which one it
-  found, and the row of `docs/repoformat.md`'s destination table that currently
-  reads "anything else" saying so too.
+- **0.8** ✅ Say what a refused destination already holds — a regular file, a
+  directory, a symlink outside the repository named as written and as it
+  resolves, or none of those — in the diagnostic and in
+  `docs/repoformat.md`'s destination table.
 - **0.9** Make repairing a link atomic: build the replacement at a temporary
   sibling and rename it over the destination. 0.7 removes and re-creates, so
   there is a window in which the destination does not exist — which contradicts
@@ -62,7 +60,12 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   backups — and the rules themselves are in `docs/repoformat.md` under
   `symlink`, written for one action type. Promoting means lifting them to
   general statements now that they are about to govern `create-dir` and `copy`
-  as well, and leaving the `symlink` section pointing at them.
+  as well, and leaving the `symlink` section pointing at them. The destination
+  table 0.8 split is where the two kinds separate: what the existing node *is* —
+  file, directory, foreign symlink, other — is general and lifts, while what to
+  do about it does not. An existing directory refuses a `symlink` and satisfies a
+  `create-dir`, so the same row reads differently per action type and the
+  outcome column stays behind.
 - **0.11** Make rule 1 mechanical in `task ci`. Two halves: no
   `allow(dead_code)` under `src/` at all, and every `expect(dead_code)` carrying
   a `reason`. The second is what keeps rule 1's record-field exception honest,
@@ -288,7 +291,11 @@ before.
 - **9.2** `vars refresh`, including selective refresh by key. Requires 9.1;
   there is nothing to refresh without it.
 - **9.3** File and archive remotes.
-- **9.4** `--refresh-content` and the backup policy it depends on.
+- **9.4** `--refresh-content` and the backup policy it depends on. It is also
+  what makes 0.8's refusals obsolete: the "move it aside and run sync again"
+  remedy and the error rows of `docs/repoformat.md`'s destination table are
+  written for a tool that cannot give anything back, and `future/safety.md`
+  parks `--no-overwrite` and `--interactive` here for the same reason.
 
 ## Slice 10 — Distribution
 

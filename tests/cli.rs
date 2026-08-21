@@ -772,7 +772,7 @@ mod linking {
         fs::write(roots.home(".zshrc"), "mine\n").expect("an existing file");
 
         let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
-        for expected in [display(&roots.home(".zshrc")), "already exists".to_owned()] {
+        for expected in [display(&roots.home(".zshrc")), "a regular file".to_owned()] {
             assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
         }
         assert_eq!(
@@ -782,20 +782,94 @@ mod linking {
     }
 
     #[test]
+    fn a_destination_holding_a_directory_is_refused_and_the_directory_is_left() {
+        let roots = Roots::new();
+        roots.repo_file("nvim/init.lua", "-- nvim\n");
+        fs::create_dir(roots.home(".config")).expect("an existing directory");
+        fs::write(roots.home(".config/theirs"), "mine\n").expect("a file inside it");
+
+        let stderr = refused(&roots, &one_symlink("nvim/init.lua", "~/.config"));
+        for expected in [display(&roots.home(".config")), "a directory".to_owned()] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert_eq!(
+            fs::read_to_string(roots.home(".config/theirs")).expect("the file"),
+            "mine\n"
+        );
+    }
+
+    /// A destination that is none of the three node types batfiles reasons
+    /// about.
+    ///
+    /// A fifo rather than a unix socket: binding one needs `socket(2)`, which a
+    /// restricted runner may refuse, and caps the path at the length of
+    /// `sun_path`, which a long `TMPDIR` exceeds on its own. `mkfifo` is an
+    /// ordinary filesystem call in a directory the suite already writes to.
+    fn mkfifo(path: &Path) {
+        let status = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .expect("mkfifo(1) is POSIX and this module is unix-only");
+        assert!(status.success(), "mkfifo {} failed", path.display());
+    }
+
+    #[test]
+    fn a_destination_that_is_neither_file_directory_nor_link_is_refused() {
+        // Whatever this is, batfiles has no way to give it back, which is the
+        // whole of rule 13's reasoning.
+        let roots = Roots::new();
+        roots.repo_file("shell/zshrc", "# zsh\n");
+        let fifo = roots.home(".zshrc");
+        mkfifo(&fifo);
+
+        let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
+        assert!(
+            stderr.contains("neither a regular file"),
+            "the node found there was not described:\n{stderr}"
+        );
+        assert!(fifo.exists(), "the fifo was removed");
+    }
+
+    #[test]
     fn a_destination_holding_a_link_out_of_the_repository_is_refused() {
         // Someone else made this link, and where it points is not batfiles' to
-        // decide. 0.8 is where the diagnostic learns to say which of the two it is.
+        // decide.
         let roots = Roots::new();
         roots.repo_file("shell/zshrc", "# zsh\n");
         let elsewhere = roots.path("elsewhere");
         std::os::unix::fs::symlink(&elsewhere, roots.home(".zshrc")).expect("an unmanaged link");
 
         let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
-        assert!(
-            stderr.contains(&display(&roots.home(".zshrc"))),
-            "the destination was not named:\n{stderr}"
+        // An absolute target resolves to itself, so it is named once and not
+        // reported as though two paths were involved.
+        let expected = format!(
+            "a symlink to {}, which is outside the repository",
+            display(&elsewhere)
         );
+        for expected in [display(&roots.home(".zshrc")), expected] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
         assert_eq!(link_target(&roots.home(".zshrc")), elsewhere);
+    }
+
+    #[test]
+    fn a_refused_link_is_named_as_written_and_as_it_resolves() {
+        // The spelling is what the user will see from `ls`; the resolved path is
+        // what the refusal was decided on. A relative target is where the two
+        // differ, and neither alone explains the other.
+        let roots = Roots::new();
+        roots.repo_file("shell/zshrc", "# zsh\n");
+        std::os::unix::fs::symlink("../elsewhere", roots.home(".zshrc"))
+            .expect("an unmanaged link");
+
+        let stderr = refused(&roots, &one_symlink("shell/zshrc", "~/.zshrc"));
+        for expected in ["../elsewhere".to_owned(), display(&roots.path("elsewhere"))] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert_eq!(
+            link_target(&roots.home(".zshrc")),
+            PathBuf::from("../elsewhere")
+        );
     }
 
     #[test]

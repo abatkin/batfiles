@@ -128,12 +128,15 @@ target would point somewhere other than where it was meant to.
 
 What happens at the destination depends on what is already there:
 
-| Already at the destination                    | Result                                                            |
-|-----------------------------------------------|-------------------------------------------------------------------|
-| nothing                                       | The link is created, along with any missing parent directories.   |
-| a symlink already pointing at the source      | Nothing, reported only at `-v`.                                   |
+| Already at the destination                     | Result                                                            |
+|------------------------------------------------|-------------------------------------------------------------------|
+| nothing                                        | The link is created, along with any missing parent directories.   |
+| a symlink already pointing at the source       | Nothing, reported only at `-v`.                                   |
 | a symlink pointing elsewhere in the repository | It is repointed at the source.                                    |
-| anything else                                 | An error naming the path, with nothing written.                   |
+| a symlink pointing outside the repository      | An error naming the path and what it found, with nothing written. |
+| a regular file                                 | An error naming the path and what it found, with nothing written. |
+| a directory                                    | An error naming the path and what it found, with nothing written. |
+| anything else                                  | An error naming the path and what it found, with nothing written. |
 
 On a platform where batfiles cannot create a symlink, a `symlink` action is an
 error naming the action rather than a silent skip or a copy substituted for the
@@ -142,16 +145,25 @@ remove the existing link and then discover it has nothing to put back.
 
 The destination is examined without following a final symlink, so a link is
 judged by where it points rather than by what it reaches. Where it points is
-also what the two rows above mean by "the source" and "elsewhere in the
-repository": a link's target is read as the operating system would read it, with
-a relative one resolved from the link's own directory. A link spelled
-`../dotfiles/zshrc` can be exactly the link the action asks for, and one spelled
-`<repository>/../elsewhere` leaves the repository despite beginning inside it.
+also what the symlink rows above mean by "the source", "elsewhere in the
+repository", and "outside the repository": a link's target is read as the
+operating system would read it, with a relative one resolved from the link's own
+directory. A link spelled `../dotfiles/zshrc` can be exactly the link the action
+asks for, and one spelled `<repository>/../elsewhere` leaves the repository
+despite beginning inside it.
 
 A symlink into the repository is one batfiles would have made and holds no
 content of its own, so repairing it loses nothing. A file, a directory, or a
 link somewhere unexpected is someone's data, and there is no backup policy yet
 with which to give it back.
+
+The four error rows are one refusal, but not one message: the diagnostic says
+which of them it found, because the path alone does not tell the user whether
+they are looking at a file to move, a directory to merge by hand, or a link some
+other tool installed. A link is named both as it is written and as it resolves,
+the two differing exactly when the target is relative, and the resolved form
+being the one the row above was decided on. There is no way to waive any of
+this yet; the remedy is to move the destination aside and run `sync` again.
 
 Directory mode, which links a directory's children through `source-dir`,
 `dest-dir`, and glob filters, is specified in

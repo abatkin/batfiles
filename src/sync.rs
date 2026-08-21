@@ -22,7 +22,7 @@ fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
 }
 
 use crate::config::Roots;
-use crate::error::Error;
+use crate::error::{Error, ExistingNode};
 use crate::output::Reporter;
 use crate::repo::BatfilesConfig;
 use crate::repo::action::{Action, SymlinkAction};
@@ -96,10 +96,21 @@ fn link(
                     current.display()
                 ));
             } else {
-                return Err(Error::Occupied { path: dest });
+                return Err(Error::DestinationExists {
+                    path: dest,
+                    found: ExistingNode::Link {
+                        written: current,
+                        points_at,
+                    },
+                });
             }
         }
-        Ok(_) => return Err(Error::Occupied { path: dest }),
+        Ok(existing) => {
+            return Err(Error::DestinationExists {
+                path: dest,
+                found: existing_node(&existing),
+            });
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|source| Error::Write {
@@ -117,6 +128,21 @@ fn link(
         Err(source) => return Err(Error::Read { path: dest, source }),
     }
     Ok(())
+}
+
+/// Name what is sitting at a destination, so the refusal can say which of rule
+/// 13's cases it hit rather than only that it hit one.
+///
+/// The symlink case is not here: it needs the link's target, which the caller
+/// has already read in order to decide the link is not repairable.
+fn existing_node(existing: &fs::Metadata) -> ExistingNode {
+    if existing.is_file() {
+        ExistingNode::File
+    } else if existing.is_dir() {
+        ExistingNode::Directory
+    } else {
+        ExistingNode::Other
+    }
 }
 
 /// Where an existing symlink points, as the operating system would read it.
