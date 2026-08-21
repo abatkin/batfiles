@@ -1,11 +1,20 @@
-//! Source-hygiene checks that keep `rewrite/guidance.md`'s dead-code rule
-//! mechanical rather than honor-system.
+//! Source-hygiene checks that keep two of `rewrite/guidance.md`'s rules
+//! mechanical rather than honor-system: rule 1's dead-code annotations, and the
+//! `CARRY` markers of "Carrying work forward".
 //!
-//! The scan is textual and line-oriented, so an attribute split across lines is
-//! not seen. That is not worth an attribute parser.
+//! Both scans are textual and line-oriented, so an attribute or a marker split
+//! across lines is not seen. Neither is worth a parser.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// The step list a `CARRY` marker is cleared by.
+const STEPS: &str = "rewrite/steps.md";
+
+/// This file, which the marker scan skips: its fixtures spell out the forms the
+/// check rejects, so scanning it would report its own examples.
+const CHECKER: &str = "tests/hygiene.rs";
 
 fn crate_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -71,6 +80,92 @@ fn reason_is_filled(packed: &str) -> bool {
         .is_some_and(|(_, rest)| !rest.starts_with('"'))
 }
 
+/// A `CARRY` note found in a source file.
+#[derive(Debug)]
+enum Mention {
+    /// A well-formed `// CARRY(1.3): note`.
+    Marker { line: usize, step: String },
+    /// A `CARRY` written some other way, so a typo cannot outlive its step
+    /// unnoticed.
+    Malformed { line: usize },
+}
+
+impl Mention {
+    fn line(&self) -> usize {
+        match self {
+            Self::Marker { line, .. } | Self::Malformed { line } => *line,
+        }
+    }
+}
+
+/// Every `CARRY` mention in `source`, well-formed or not.
+fn carry_mentions(source: &str) -> Vec<Mention> {
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_, text)| text.contains("CARRY"))
+        .map(|(index, text)| {
+            let line = index + 1;
+            match marker_step(text) {
+                Some(step) => Mention::Marker { line, step },
+                None => Mention::Malformed { line },
+            }
+        })
+        .collect()
+}
+
+/// The step a marker names, if the line is written `CARRY(<step>): <note>`.
+fn marker_step(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("CARRY(")?;
+    let (step, rest) = rest.split_once(')')?;
+    let note = rest.strip_prefix(':')?.trim();
+    (is_step(step) && !note.is_empty()).then(|| step.to_string())
+}
+
+/// Whether `candidate` is a step number: digits, a dot, digits.
+fn is_step(candidate: &str) -> bool {
+    match candidate.split_once('.') {
+        Some((slice, step)) => {
+            !slice.is_empty()
+                && !step.is_empty()
+                && slice
+                    .chars()
+                    .chain(step.chars())
+                    .all(|c| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+/// Every step [`STEPS`] defines, and whether it is marked ✅.
+fn step_status(steps: &str) -> BTreeMap<String, bool> {
+    steps
+        .lines()
+        .filter_map(|line| {
+            let (step, rest) = line.strip_prefix("- **")?.split_once("**")?;
+            is_step(step).then(|| (step.to_string(), rest.trim_start().starts_with('✅')))
+        })
+        .collect()
+}
+
+/// Why `mention` is not a live carry-forward note, if it is not one.
+fn spent_reason(mention: &Mention, steps: &BTreeMap<String, bool>) -> Option<String> {
+    match mention {
+        Mention::Malformed { .. } => Some(
+            "not a carry-forward marker: write `CARRY(<step>): <note>`, or nothing will ever \
+             clear it"
+                .to_string(),
+        ),
+        Mention::Marker { step, .. } => match steps.get(step) {
+            None => Some(format!("`CARRY({step})` names no step in {STEPS}")),
+            Some(true) => Some(format!(
+                "step {step} is done: route the note to whoever reads it next, or delete it"
+            )),
+            Some(false) => None,
+        },
+    }
+}
+
 #[test]
 fn src_dead_code_annotations_follow_rule_one() {
     let mut failures = Vec::new();
@@ -106,5 +201,95 @@ fn expect_dead_code_is_accepted_only_with_a_filled_reason() {
         r#"#[expect(dead_code, reason = "")]"#,
     ] {
         assert_eq!(dead_code_violations(source).len(), 1, "{source}");
+    }
+}
+
+#[test]
+fn carry_markers_name_a_step_that_is_still_open() {
+    let mut found = Vec::new();
+    for path in rust_sources("src").into_iter().chain(rust_sources("tests")) {
+        if path.ends_with(CHECKER) {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("a readable source file");
+        for mention in carry_mentions(&source) {
+            found.push((path.clone(), mention));
+        }
+    }
+
+    // With no markers there is nothing to clear, which is also what lets this
+    // check outlive `rewrite/` — see that directory's README.
+    if found.is_empty() {
+        return;
+    }
+
+    let steps = fs::read_to_string(crate_dir().join(STEPS))
+        .unwrap_or_else(|error| panic!("{STEPS} is what clears a CARRY marker: {error}"));
+    let steps = step_status(&steps);
+    let failures: Vec<String> = found
+        .iter()
+        .filter_map(|(path, mention)| {
+            let reason = spent_reason(mention, &steps)?;
+            Some(format!("{}:{}: {reason}", display(path), mention.line()))
+        })
+        .collect();
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
+/// Stands in for [`STEPS`]: one step done, one still open.
+fn fixture_steps() -> BTreeMap<String, bool> {
+    step_status(
+        "## Slice 0 — Walking skeleton\n\
+         \n\
+         - **0.13** ✅ Reject a stale marker whose step is done.\n\
+         - **1.3** Extract only what all three variants genuinely share.\n\
+         - a bullet that names no step\n",
+    )
+}
+
+#[test]
+fn a_marker_is_live_while_its_step_is_open() {
+    let mentions = carry_mentions("    // CARRY(1.3): written for `symlink` alone\n");
+    assert!(
+        matches!(&mentions[..], [Mention::Marker { line: 1, step }] if step == "1.3"),
+        "{mentions:?}"
+    );
+    assert_eq!(spent_reason(&mentions[0], &fixture_steps()), None);
+}
+
+#[test]
+fn a_marker_is_spent_once_its_step_is_done() {
+    let mentions = carry_mentions("// CARRY(0.13): the fixture marks this step done\n");
+    assert!(
+        spent_reason(&mentions[0], &fixture_steps()).is_some(),
+        "{mentions:?}"
+    );
+}
+
+#[test]
+fn a_marker_naming_no_step_is_rejected() {
+    // 0.10 absorbed 0.9, so no bullet defines it and nothing would ever clear
+    // a note pointing at it.
+    let mentions = carry_mentions("// CARRY(0.9): a step that no longer exists\n");
+    assert!(
+        spent_reason(&mentions[0], &fixture_steps()).is_some(),
+        "{mentions:?}"
+    );
+}
+
+#[test]
+fn a_carry_written_any_other_way_is_rejected() {
+    for line in [
+        "// CARRY 1.3: no parentheses",
+        "// CARRY(1.3) no colon",
+        "// CARRY(1.3):",
+        "// CARRY(slice one): not a step number",
+    ] {
+        let mentions = carry_mentions(line);
+        assert_eq!(mentions.len(), 1, "{line}");
+        assert!(
+            spent_reason(&mentions[0], &fixture_steps()).is_some(),
+            "{line}"
+        );
     }
 }

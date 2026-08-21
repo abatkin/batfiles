@@ -58,3 +58,8 @@ alive. Retire `rewrite/` at slice 8 in three moves:
 2. Steps 9.1 through 10.3 move to `docs/future/roadmap.md`, or to issues if you
    would rather track them there.
 3. The directory is deleted. It stays reachable at the tag.
+
+The `CARRY` marker check in `tests/hygiene.rs` reads `steps.md` for its ✅ marks,
+so move 3 either repoints it at wherever the remaining steps land or retires it
+along with the directory. It only opens the file when a marker exists, so a tree
+with none does not force the choice.

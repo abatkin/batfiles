@@ -222,9 +222,14 @@ Two consequences:
   "read at 3.2")]` cannot rot, because the compiler deletes the note for you when
   the reader lands (rule 1). The same shape covers an ordering not yet pinned
   (`#[ignore = "3.1"]`), an option that is parsed but dead (rule 12's list,
-  shrinking to empty), and anything else greppable (`// CARRY(1.3): …`, which
-  0.13 teaches `task ci` to reject once 1.3 is marked ✅). Write prose only for
-  what none of these can hold.
+  shrinking to empty), and anything else greppable (`// CARRY(1.3): …`). Write
+  prose only for what none of these can hold.
+
+  A marker is spelled `// CARRY(<step>): <note>` in a `.rs` file under `src/` or
+  `tests/`, and `tests/hygiene.rs` rejects three things: a marker whose step
+  `steps.md` marks ✅, a marker naming a step `steps.md` does not define, and a
+  `CARRY` written any other way. The last two matter because a marker nothing can
+  clear is prose again, wearing an annotation's clothes.
 
 ## Test environments
 

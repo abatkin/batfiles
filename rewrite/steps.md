@@ -60,12 +60,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **0.12** ✅ Add the cross-target build 0.7 left on the honor system: `task
   lint` checks `x86_64-pc-windows-msvc` too, so an ubuntu-only CI catches a
   `#[cfg(unix)]` gate that has rotted.
-- **0.13** Reject a stale `// CARRY(x.y)` marker whose step is already marked ✅,
-  so a carried-forward note has a greppable form that self-cleans the way rule
-  1's annotations do (`guidance.md`, "Carrying work forward"). This is the step
-  that makes prose the last resort rather than the only option, so it needs a
-  reader for `steps.md`'s ✅ marks and a fixture proving a live marker passes and
-  a spent one fails.
+- **0.13** ✅ Reject a stale `// CARRY(x.y)` marker whose step is already marked
+  ✅, so a carried-forward note self-cleans the way rule 1's annotations do
+  (`guidance.md`, "Carrying work forward").
 - **0.14** Add the unimplemented-option check every command calls at entry, and
   populate it from the options ported at 0.2 (`guidance.md`, rule 12). The four
   location options went live at 0.3 and are off the list, and `--quiet` went
