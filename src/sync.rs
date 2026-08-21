@@ -169,19 +169,16 @@ fn anchor(path: &Path) -> Result<PathBuf, Error> {
 /// is too. The containment check is lexical: a symlink deliberately stored
 /// inside the repository may point anywhere, and is followed like any other.
 fn source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
-    let invalid = |message| {
-        Err(Error::Path {
-            field: "source",
-            value: source.to_owned(),
-            message,
-        })
-    };
     if Path::new(source).is_absolute() {
-        return invalid("is absolute; a source names a path within the repository");
+        return Err(Error::SourceAbsolute {
+            value: source.to_owned(),
+        });
     }
     let resolved = normalize(&repository.join(source));
     if !resolved.starts_with(repository) {
-        return invalid("resolves outside the repository");
+        return Err(Error::SourceOutsideRepository {
+            value: source.to_owned(),
+        });
     }
 
     // Presence, not reachability: a source that is itself a dangling symlink is
@@ -209,10 +206,8 @@ fn destination(home: &Path, dest: &str) -> Result<PathBuf, Error> {
         Some("") => home.to_path_buf(),
         Some(rest) if rest.starts_with('/') => home.join(rest.trim_start_matches('/')),
         Some(_) => {
-            return Err(Error::Path {
-                field: "destination",
+            return Err(Error::DestinationOtherHome {
                 value: dest.to_owned(),
-                message: "names another user's home; `~` expands only to the selected home",
             });
         }
         // `join` returns an absolute `dest` unchanged, which is the rule for

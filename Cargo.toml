@@ -17,6 +17,10 @@ clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 
+# Generates `Display` and `Error` for the crate error, so a variant's message
+# sits next to the variant instead of in a match arm a screen away.
+thiserror = "2"
+
 [dev-dependencies]
 # Locates and runs the Cargo-built binary in the end-to-end CLI tests.
 assert_cmd = "2"

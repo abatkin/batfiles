@@ -64,12 +64,11 @@ impl Manifest {
             let Some(id) = action.id() else { continue };
             let position = index + 1;
             if let Some(first) = seen.insert(id, position) {
-                return Err(Error::Invalid {
+                return Err(Error::DuplicateActionId {
                     path: path.to_path_buf(),
-                    message: format!(
-                        "action {position} repeats the id `{id}`, \
-                         which action {first} already uses"
-                    ),
+                    id: id.clone(),
+                    first,
+                    second: position,
                 });
             }
         }

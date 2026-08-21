@@ -63,8 +63,43 @@ commit message, where they are free to become obsolete.
 **5. An error type exists only if some caller matches on it.** The old crate had
 17 error types, 24 hand-written `Display` impls, and 16 `error::Error` impls —
 and `app::dispatch` flattened all of them to `error.to_string()`. Default to one
-crate-level error enum. Reach for `thiserror` when boilerplate outgrows value;
-do not hand-write another `Display` chain.
+crate-level error enum, and let `thiserror` generate its `Display` so a
+variant's message sits next to the variant rather than in a match arm a screen
+away.
+
+**A variant carries facts; the `#[error]` attribute carries prose.** No variant
+holds a message formatted at the call site. That is the mechanism by which one
+variant becomes the place unrelated failures go: a field typed `String` accepts
+anything, so the fourth caller with nowhere to put its failure puts it there,
+and the enum stops describing what can go wrong. Slice 0 shipped two of these
+and both were replaced — `Invalid { path, message: String }` became
+`DuplicateActionId { path, id, first, second }`, and `Path { field, value,
+message }` became one variant per rule it was carrying. A hand-written `Display`
+is still right where rendering is conditional and no attribute can express it;
+`ExistingNode` is the one instance, and it is a field's `Display`, not a second
+chain over the error.
+
+**The enum is allowed to grow, and nesting is what it grows into — later.** A
+flat list of thirty variants is hard to read, but a category layer designed
+ahead of the failures it will hold is the same mistake as a type per noun. Two
+things happen in order:
+
+1. **Section the flat enum first.** Group the variants by what was being done,
+   with a one-line comment per group, in the declaration. This is free and
+   reversible and covers most of what nesting is wanted for.
+2. **Nest when a subsystem earns it**, meaning three or more failures sharing
+   vocabulary of their own — git, HTTP, archive extraction, remotes — or the
+   first time a caller genuinely matches, which is likelier to come first than
+   it sounds: 4.5 has to tell a dirty clone from a network failure to decide
+   whether to skip or fail. Then that subsystem's failures become one
+   `Error::Git(git::Error)` variant, with the sub-enum in the module that raises
+   it rather than in `error.rs`, for the same reason `ItemId` lives in
+   `item.rs`.
+
+Do not carve categories any earlier. `Read` and `Write` are the proof: they
+serve documents, actions, and state files alike, so any category cut made today
+either duplicates them or files them under a mechanism-shaped tag that tells a
+reader nothing.
 
 **6. Shell out to `git`.** Never link a git library. The user's `~/.gitconfig`,
 credential helpers, and SSH agent have to apply. The old `init.rs` already did
