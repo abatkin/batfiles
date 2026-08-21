@@ -63,19 +63,10 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **0.13** ✅ Reject a stale `// CARRY(x.y)` marker whose step is already marked
   ✅, so a carried-forward note self-cleans the way rule 1's annotations do
   (`guidance.md`, "Carrying work forward").
-- **0.14** Add the unimplemented-option check every command calls at entry, and
-  populate it from the options ported at 0.2 (`guidance.md`, rule 12). The four
-  location options went live at 0.3 and are off the list, and `--quiet` went
-  live at 0.7, so what remains is the shared action-execution, selection, and
-  bootstrap options. `sync`'s nine are already done — 0.7 could not wait,
-  because it is the step that gave `--dry-run` a filesystem to silently write
-  to — so this step generalizes `app::unsupported` to the commands that are
-  still stubs and moves it out of `app.rs`. Keep 0.7's ordering: the check runs
-  before root resolution, because an unsupported option is a status-2 "nothing
-  was attempted", and resolving first would let a status-1 missing-home failure
-  preempt it on the machines least able to explain why. Note that a stub command
-  reports its own unimplemented status anyway, so for those the check only
-  changes *which* message they get — it earns its place as each command lands.
+- **0.14** ✅ Add the unimplemented-option check every command calls at entry,
+  and populate it from the options ported at 0.2 (`guidance.md`, rule 12). An
+  option arriving with its own command is deliberately not listed, so
+  `--no-git-init` and `--machine-only` wait for 8.1 and 5.8 without an entry.
 - **0.15** Add a real leaf repository under `tests/fixtures/` and CLI tests that
   sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails. All three assertions exist

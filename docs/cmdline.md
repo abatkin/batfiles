@@ -21,8 +21,11 @@ and it disappears one command at a time.
 
 `sync` is the first command that writes. It executes the one action type that
 exists, which is enough to install a repository made of symlinks and nothing
-else. Options it accepts but does not honor yet fail rather than being ignored,
-so nothing appears to have happened that did not.
+else.
+
+An option any command accepts but does not honor yet fails rather than being
+ignored, ahead of everything else the command would do — see
+[unimplemented options](#unimplemented-options).
 
 ## Command Overview
 
@@ -135,12 +138,35 @@ that is already installed is the ordinary case and forty lines of "unchanged"
 is how output stops being read; `-v` reports those too. `--quiet` suppresses
 both.
 
-These options parse and are refused rather than ignored, each naming the step
-that makes it live: `--dry-run`, `--skip-action`, `--skip-group`, `--var`,
-`--refresh-remotes`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`,
-and `--interactive`. The refusal is a status-2 "nothing was attempted", raised
-before any root is resolved or any file is opened. The list shrinking to empty
-is how you know `sync` is finished.
+Every option `sync` accepts other than the global ones is
+[refused for now](#unimplemented-options); that list shrinking to empty is how
+you know `sync` is finished.
+
+## Unimplemented Options
+
+The whole option set parses from the first release, so the shape of each command
+is visible before the command works. An option that parses but is not honored
+yet is **refused, never ignored**: the run exits 2 naming the option and the
+step that makes it live, before any root is resolved or any file is opened.
+Silently accepting it would be worse than not accepting it at all, because
+nothing would have happened and it would look as though something had.
+
+The refusal comes ahead of a command's own not-implemented message, so
+`batfiles clone <url> --interactive` reports `--interactive` rather than
+`clone`. The option is the part of the invocation that would still be wrong once
+the command exists.
+
+| Command                         | Options refused for now                                                                                                                                     |
+|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `sync`                          | `--dry-run`, `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--skip-action`, `--skip-group`         |
+| `clone`                         | the above without `--dry-run` and `--refresh-remotes`, plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`                       |
+| `apply-action`, `apply-group`   | `--dry-run`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                                               |
+| `vars list`                     | `--no-refresh`                                                                                                                                              |
+| everything else                 | none                                                                                                                                                        |
+
+An option that arrives together with the command that takes it is not listed —
+`init`'s `--no-git-init` and `vars list`'s `--machine-only` — because the
+command's own not-implemented message already covers it.
 
 ## Exit Statuses
 

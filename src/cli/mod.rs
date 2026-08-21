@@ -14,6 +14,7 @@ mod toggles;
 mod vars;
 
 pub(crate) mod color;
+pub(crate) mod unsupported;
 
 // The argument types appear in `Command`'s variants, so they are re-exported
 // here rather than reached through their submodule paths.

@@ -982,6 +982,66 @@ fn an_unsupported_option_is_reported_before_the_roots_are_resolved() {
     );
 }
 
+#[test]
+fn a_stub_command_names_the_option_before_it_names_itself() {
+    let tree = Tree::new();
+    let assertion = tree
+        .batfiles()
+        .args([
+            "clone",
+            "https://example.invalid/dotfiles.git",
+            "--interactive",
+        ])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    for expected in ["--interactive", "9.4"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert!(
+        !stderr.contains("`clone` is not implemented yet"),
+        "the command's own message preempted the option's:\n{stderr}"
+    );
+}
+
+#[test]
+fn each_command_withholds_the_options_it_does_not_honor_yet() {
+    let tree = Tree::new();
+    for (args, option, step) in [
+        (
+            &[
+                "clone",
+                "https://example.invalid/d.git",
+                "--enable-action",
+                "shell",
+            ][..],
+            "--enable-action",
+            "8.3",
+        ),
+        (
+            &["apply-action", "--id", "vim", "--dry-run"],
+            "--dry-run",
+            "2.4",
+        ),
+        (
+            &["apply-group", "--group", "gui", "--var", "profile=work"],
+            "--var",
+            "5.3",
+        ),
+        (&["vars", "list", "--no-refresh"], "--no-refresh", "9.1"),
+    ] {
+        let assertion = tree.batfiles().args(args).assert().failure().code(2);
+        let stderr = stderr_of(&assertion);
+        for expected in [option, step] {
+            assert!(
+                stderr.contains(expected),
+                "no `{expected}` for `{args:?}` in:\n{stderr}"
+            );
+        }
+    }
+}
+
 // Batfiles' own diagnostics, as opposed to the ones clap renders.
 
 #[test]

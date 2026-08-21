@@ -139,6 +139,13 @@ something happened. Each command checks its not-yet-live options at entry and
 exits with a message naming the option and the slice it arrives in. The list
 shrinking to empty is how you know a command is finished.
 
+The list is one file — `src/cli/unsupported.rs` — checked once at dispatch
+entry, ahead of root resolution and ahead of a stub command's own message,
+because an unsupported option means nothing was attempted. Like rule 1's
+annotations it is self-cleaning: `tests/hygiene.rs` rejects any step it names
+that `steps.md` marks ✅, so the slice that makes an option live cannot land
+while the entry withholding it survives.
+
 A consequence worth stating, because it answers "what about types the CLI shape
 needs early": **a stubbed option's value can stay a `String`.** `--var
 NAME=VALUE` is rejected wholesale until 5.3 makes it live, so nothing needs

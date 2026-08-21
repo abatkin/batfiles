@@ -3,9 +3,9 @@
 //! exit status.
 //!
 //! Every command in the surface parses; `version` and `sync` run. The rest
-//! resolve their roots and then report that they do not exist yet, which is the
-//! honest thing to do and the reason the whole surface can be committed before
-//! the tool works.
+//! report an option they accept and do not honor yet, or else resolve their
+//! roots and report that they do not exist yet, which is the honest thing to do
+//! and the reason the whole surface can be committed before the tool works.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -13,7 +13,8 @@ use std::process::ExitCode;
 
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, GlobalOptions, SyncArgs, color};
+use crate::cli::unsupported::{self, Unsupported};
+use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::error::Error;
 use crate::location::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::manifest::Manifest;
@@ -75,6 +76,13 @@ fn dispatch(
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<ExitCode, Error> {
+    // Ahead of every command and of root resolution: an unsupported option
+    // means nothing was attempted, and resolving first would let a missing-home
+    // failure preempt it on the machines least able to explain why.
+    if let Some(found) = unsupported::first(&cli.command) {
+        return Ok(not_yet(reporter, &found));
+    }
+
     match &cli.command {
         // Rendered through clap so `version` and `--version` cannot drift.
         Command::Version => {
@@ -83,10 +91,7 @@ fn dispatch(
         }
         // `init` works on the current directory, so it resolves no roots either.
         Command::Init(_) => Ok(unimplemented(reporter, name)),
-        Command::Sync(args) => {
-            if let Some((option, step)) = unsupported(args) {
-                return Ok(not_yet(reporter, option, step));
-            }
+        Command::Sync(_) => {
             let roots = locate(cli, env, reporter)?;
             // The manifest is read and checked whole before any of it is acted
             // on, so a repository whose manifest is missing, malformed, or
@@ -141,41 +146,12 @@ fn unimplemented(reporter: &Reporter, name: &str) -> ExitCode {
 }
 
 /// An option that parsed but does nothing yet (`guidance.md`, rule 12).
-fn not_yet(reporter: &Reporter, option: &str, step: &str) -> ExitCode {
+fn not_yet(reporter: &Reporter, found: &Unsupported) -> ExitCode {
     reporter.error(&format!(
-        "`{option}` is not implemented yet; it arrives at step {step}"
+        "`{}` is not implemented yet; it arrives at step {}",
+        found.option, found.step
     ));
     ExitCode::from(EXIT_UNIMPLEMENTED)
-}
-
-/// The first option `sync` accepts and does not honor yet, if any.
-///
-/// Checked before the roots are resolved: an unsupported option means nothing
-/// was attempted, and resolving first would let a missing-home failure preempt
-/// it on the machines least able to explain why. 0.14 does the same for the
-/// commands that are still stubs, and each entry leaves as its step lands.
-fn unsupported(args: &SyncArgs) -> Option<(&'static str, &'static str)> {
-    let live = [
-        (args.dry_run, "--dry-run", "2.4"),
-        (
-            !args.selection.skip_actions.is_empty(),
-            "--skip-action",
-            "3.4",
-        ),
-        (
-            !args.selection.skip_groups.is_empty(),
-            "--skip-group",
-            "3.4",
-        ),
-        (!args.action.vars.is_empty(), "--var", "5.3"),
-        (args.refresh_remotes, "--refresh-remotes", "6.2"),
-        (args.action.refresh_vars, "--refresh-vars", "9.1"),
-        (args.action.refresh_content, "--refresh-content", "9.4"),
-        (args.action.no_overwrite, "--no-overwrite", "9.4"),
-        (args.action.interactive, "--interactive", "9.4"),
-    ];
-    live.into_iter()
-        .find_map(|(given, option, step)| given.then_some((option, step)))
 }
 
 /// Parse without exiting the process, so the caller controls presentation, and

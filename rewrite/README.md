@@ -59,7 +59,9 @@ alive. Retire `rewrite/` at slice 8 in three moves:
    would rather track them there.
 3. The directory is deleted. It stays reachable at the tag.
 
-The `CARRY` marker check in `tests/hygiene.rs` reads `steps.md` for its ✅ marks,
-so move 3 either repoints it at wherever the remaining steps land or retires it
-along with the directory. It only opens the file when a marker exists, so a tree
-with none does not force the choice.
+Two checks in `tests/hygiene.rs` read `steps.md` for its ✅ marks, so move 3
+either repoints them at wherever the remaining steps land or retires them along
+with the directory. The `CARRY` marker check only opens the file when a marker
+exists, so a tree with none does not force the choice. The rule 12 check does
+force it: `src/cli/unsupported.rs` still withholds the options that arrive at
+9.1, 9.3, and 9.4, so it must be repointed at the roadmap those steps move to.
