@@ -172,11 +172,21 @@ suggests.
 Start flat and let slices add depth:
 
 ```
-main.rs  app.rs  cli/  output.rs  config/  tomlfile.rs
-item.rs  var.rs  repo/  action/  state/
+main.rs  app.rs  cli/  output.rs  location.rs  tomlfile.rs
+item.rs  var.rs  manifest/  action/  state/
 ```
 
-Modules are added when implemented behavior needs them. `repo/` earns its
+Modules are added when implemented behavior needs them. `manifest/` earns its
 directory at 0.6 because the manifest genuinely has sections; `action/` earns one
 when the third action type lands at 1.2. Nothing gets a directory to hold a
 single file, and nothing gets one in anticipation.
+
+Two of these are named for what they hold rather than for what the old crate
+called them, because the old names collided. `config` meant three things at once
+— the location resolution ported from `src/config/`, the `config_dir` root that
+holds `vars.toml` and `disabled.toml`, and `BatfilesConfig`, which is the
+manifest — so the resolution is `location.rs` (the term `environment.md` uses)
+and the document type is `Manifest`. `repo/` is only ever the manifest schema,
+so it is `manifest/`, which leaves "repository" free for the materialization
+work that arrives at 6.2. The file lists above still name the old crate's paths,
+which is where the salvageable code is.

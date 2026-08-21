@@ -21,11 +21,11 @@ fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
-use crate::config::Roots;
 use crate::error::{Error, ExistingNode};
+use crate::location::Roots;
+use crate::manifest::Manifest;
+use crate::manifest::action::{Action, SymlinkAction};
 use crate::output::Reporter;
-use crate::repo::BatfilesConfig;
-use crate::repo::action::{Action, SymlinkAction};
 
 /// Execute every action in declaration order, stopping at the first failure.
 ///
@@ -34,14 +34,10 @@ use crate::repo::action::{Action, SymlinkAction};
 /// link's own directory rather than to wherever batfiles happened to be run,
 /// so a relative `--batfiles-dir` would otherwise produce a link that points
 /// nowhere and a next run that calls it correct.
-pub(crate) fn sync(
-    roots: &Roots,
-    config: &BatfilesConfig,
-    reporter: &Reporter,
-) -> Result<(), Error> {
+pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> Result<(), Error> {
     let repository = anchor(&roots.batfiles_dir)?;
     let home = anchor(&roots.home)?;
-    for action in &config.actions {
+    for action in &manifest.actions {
         match action {
             Action::Symlink(action) => link(action, &repository, &home, reporter)?,
         }

@@ -14,10 +14,10 @@ use std::process::ExitCode;
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::{Cli, Command, GlobalOptions, SyncArgs, color};
-use crate::config::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::error::Error;
+use crate::location::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::manifest::Manifest;
 use crate::output::{Reporter, Verbosity};
-use crate::repo::BatfilesConfig;
 use crate::sync;
 
 /// A command that ran and failed.
@@ -91,8 +91,8 @@ fn dispatch(
             // The manifest is read and checked whole before any of it is acted
             // on, so a repository whose manifest is missing, malformed, or
             // invalid fails with the file named rather than partway through.
-            let config = BatfilesConfig::load(&roots.batfiles_config())?;
-            sync::sync(&roots, &config, reporter)?;
+            let manifest = Manifest::load(&roots.manifest())?;
+            sync::sync(&roots, &manifest, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         _ => {

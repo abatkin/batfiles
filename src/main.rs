@@ -2,11 +2,11 @@
 
 mod app;
 mod cli;
-mod config;
 mod error;
 mod item;
+mod location;
+mod manifest;
 mod output;
-mod repo;
 mod sync;
 mod tomlfile;
 

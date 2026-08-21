@@ -2,7 +2,7 @@
 //!
 //! The record mirrors the file. Constraints that span fields cannot be
 //! expressed in serde, so they parse unchecked here and are rejected by
-//! [`BatfilesConfig::validate`].
+//! [`Manifest::validate`].
 
 pub(crate) mod action;
 
@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::error::Error;
 use crate::item::ItemId;
-use crate::repo::action::Action;
+use crate::manifest::action::Action;
 use crate::tomlfile;
 
 /// A parsed `batfiles.toml`.
@@ -25,14 +25,14 @@ use crate::tomlfile;
 /// looking as though it took effect.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct BatfilesConfig {
+pub(crate) struct Manifest {
     /// The ordered action list. Order is significant, so this is the one
     /// section that is a sequence rather than a map.
     #[serde(default)]
     pub actions: Vec<Action>,
 }
 
-impl BatfilesConfig {
+impl Manifest {
     /// The manifest's name within a repository root.
     ///
     /// The name travels with the parser, but *where* a repository is does not:
@@ -42,9 +42,9 @@ impl BatfilesConfig {
 
     /// Read, parse, and check one manifest.
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let config: Self = tomlfile::read(path)?;
-        config.validate(path)?;
-        Ok(config)
+        let manifest: Self = tomlfile::read(path)?;
+        manifest.validate(path)?;
+        Ok(manifest)
     }
 
     /// The cross-record rules serde cannot express.
