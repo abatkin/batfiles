@@ -36,82 +36,43 @@ and update their cache, as described by the command-line specification's
 
 ## Destination paths
 
-As applied to `symlink`'s `dest`, these rules run and are specified in
-[`docs/repoformat.md`](../repoformat.md#symlink). Step 0.9 promotes the general
-statement here once there is more than one action type it governs.
+Promoted at 0.10 to
+[Sources and destinations](../repoformat.md#sources-and-destinations), where
+these rules are stated for every action type rather than for `symlink` alone.
+What remains here has no code yet.
 
-Most destinations are expected to be in the selected home directory, but that
-is a convention rather than a containment rule.
-
-- A relative destination is resolved from the selected home directory.
-- A destination beginning with `~` uses the selected home directory rather
-  than an independently discovered shell home.
-- An absolute destination is used as written.
-- Lexical components such as `.` and `..` may be normalized, but normalization
-  does not turn the selected home into a boundary.
-- Batfiles does not canonicalize every path component to prove that the result
-  remains beneath the home directory. If a parent component is a symlink,
-  ordinary operating-system path resolution follows it.
-
-Consequently, `--home-dir` selects the base for home-relative behavior; it does
-not create a filesystem jail. This is deliberate. Users commonly symlink parts
-of their home into other volumes, and explicit absolute or traversing paths
-must continue to work.
-
-This policy applies to action destination fields. A `git-clone-list` manifest's
-per-entry `dest-name` is not a destination path: it is restricted to one
-ordinary directory component beneath the action's `dest`, as defined by the
+A `git-clone-list` manifest's per-entry `dest-name` is not a destination path
+and is not governed by those rules: it is restricted to one ordinary directory
+component beneath the action's `dest`, as defined by the
 [Git clone manifest format](repoformat.md#git-clone-manifest-format).
 
 Before mutation, batfiles should resolve and display the effective destination
-in plans and diagnostics. It must never silently substitute the current
-working directory when the selected home cannot be determined.
+in plans. The diagnostic half of that runs; plans arrive at slice 2.
 
 ## Repository source paths
 
-The lexical containment rule runs for `symlink`'s `source` and is specified in
-[`docs/repoformat.md`](../repoformat.md#symlink). The `remotes/` tree and the
-per-remote materializations below are not built.
+Promoted at 0.10 to
+[Sources and destinations](../repoformat.md#sources-and-destinations), minus the
+remote materializations below, which are not built.
 
-Repository-backed sources have a narrower policy than destinations. A source
-path is resolved from its owning leaf repository or remote materialization,
-and the lexically resolved result must remain within the selected batfiles
-directory. The tool-owned `remotes/` tree is inside that directory and is a
-valid source location.
-
-Absolute repository source paths are invalid. Relative paths that normalize
-outside the selected batfiles directory are also invalid, even if the resulting
-outside path happens to exist. Components such as `.` and an internal `..` are
-acceptable when the normalized result remains inside the directory.
-
-This is a lexical containment check, not canonicalization of the whole source
-path. A symlink deliberately stored inside the batfiles directory may point
-outside it and is followed according to ordinary operating-system behavior.
+A source path resolves from its owning leaf repository *or remote
+materialization*, and the tool-owned `remotes/` tree is inside the selected
+batfiles directory and is a valid source location. Until remotes exist, the
+leaf repository is the only thing a source can be contained by, which is how the
+promoted rule is written.
 
 ## Replacement and backups
 
-Steps 1 through 3 run for `symlink`, minus the remote materializations, and are
-specified in [`docs/repoformat.md`](../repoformat.md#symlink). Step 4 is not
-built: until the backup policy exists at 9.4, an unmanaged destination is an
-error rather than something to preserve and replace, and `--no-overwrite` and
+Steps 1 through 3 and the definition of a batfiles-owned symlink were promoted
+at 0.10 to
+[Replacing what is already there](../repoformat.md#replacing-what-is-already-there),
+minus the remote materializations, which are not built. Step 4 is what remains:
+until the backup policy exists at 9.4, an unmanaged destination is an error
+rather than something to preserve and replace, and `--no-overwrite` and
 `--interactive` are refused rather than honored.
 
-Creating an absent path is normally safe. Replacing an existing filesystem
-node is destructive and follows a stricter rule:
-
-1. Determine what exists at the destination without treating the final
-   symlink itself as its target.
-2. If the requested result already exists, do nothing.
-3. If the destination is a batfiles-owned symlink, replace it directly.
 4. Otherwise, preserve the existing node in a recoverable backup before
    replacing it.
-
-A symlink is considered batfiles-owned only when the destination itself is a
-symlink whose target points into the selected leaf repository or one of its
-tool-owned remote materializations. Replacing that link does not destroy the
-target, and batfiles may repair it without producing a backup. A symlink to any
-other location is unmanaged even when its name resembles a batfiles-managed
-destination.
 
 The backup is placed next to the node it replaces and uses a collision-resistant
 name that never overwrites an earlier backup. Successful output tells the user
@@ -284,8 +245,11 @@ destructive step still checks the filesystem immediately before mutation; the
 earlier inspection is not an ownership claim and cannot eliminate races with
 other processes.
 
-Single-file writes should use a temporary sibling and atomic rename where
-practical. Multi-file directory updates are neither atomic nor automatically
+Single-file writes that carry content should use a temporary sibling and atomic
+rename where practical. Content is what the rule is about: a node batfiles can
+rebuild from the manifest — an owned symlink — is replaced in place and simply
+redone if a run is interrupted, per
+[Replacing what is already there](../repoformat.md#replacing-what-is-already-there). Multi-file directory updates are neither atomic nor automatically
 rolled back. As the first phase of a directory action's execution, batfiles
 performs a best-effort inspection of the intended overlay. It then applies the
 overlay in a deterministic order, leaving adjacent backups for every

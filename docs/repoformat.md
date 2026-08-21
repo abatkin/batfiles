@@ -79,6 +79,94 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 User variable names follow a deliberately different rule, which arrives with
 variables.
 
+## Sources and destinations
+
+A `source` names a path in a repository, and a `dest` names a path on the
+machine. Which of the two an action takes is a property of the action type, and
+the tables below say; these rules decide what the field means wherever one
+appears. Both kinds are resolved when the action runs rather than when the
+manifest is read, and both are anchored to absolute paths first. A selected root may be written relative to
+wherever batfiles was invoked, and a path batfiles stores on disk — the target of
+a symlink, say — is read back relative to its own location rather than to that
+working directory.
+
+Resolution is lexical throughout: `.` and `..` are cancelled textually, and
+batfiles does not canonicalize every component to prove where a path ends up. A
+parent component that is itself a symlink is followed by ordinary
+operating-system path resolution, because that link is something the user put
+there deliberately.
+
+**A `source` is contained by its repository.** It resolves from the repository
+that declared it, and the result must stay inside that repository. An absolute
+source is invalid, and so is a relative one that normalizes outside it, even
+where the outside path exists; an internal `.` or `..` is fine as long as the
+result stays in. The containment check is lexical, so a symlink deliberately
+stored inside the repository may point anywhere and is followed like any other.
+The path must exist: a repository naming a file it does not contain is a mistake
+batfiles can see, and the alternative is installing something that points at
+nothing.
+
+**A `dest` is anchored to the selected home, which is not a boundary.** A `dest`
+beginning with `~` uses the selected home rather than an independently discovered
+shell home, and `~user` is not expanded and is an error. A relative `dest`
+resolves from the selected home, and an absolute one is used as written. Most
+destinations sit in the home by convention rather than by rule: `--home-dir`
+selects the base for home-relative behavior, it does not create a jail. People
+symlink parts of their home onto other volumes, and an explicit absolute or
+traversing destination has to keep working.
+
+Where the selected home cannot be determined, batfiles reports that rather than
+silently substituting the working directory. See
+[location selection](environment.md#location-selection).
+
+## Replacing what is already there
+
+Creating something where nothing exists is safe. Replacing a node that is already
+there is destructive, so an action that installs something at a `dest` inspects
+that destination first and decides from what it finds.
+
+**The destination is examined without following a final symlink**, so a link is
+judged by where it points rather than by what it reaches. Its target is read as
+the operating system would read it, with a relative target resolved from the
+link's own directory. A link spelled `../dotfiles/zshrc` may point exactly where
+an action wants it to, and one spelled `<repository>/../elsewhere` leaves the
+repository despite beginning inside it; judging the spelling gets both backwards.
+
+What is found there is one of:
+
+- **Nothing**, in which case the action creates what it was asked to, along with
+  any missing parent directories.
+- **A symlink batfiles owns** — one whose target resolves inside the selected
+  leaf repository. Replacing it destroys nothing: the link holds no content of
+  its own, and what it pointed at is left alone. A link anywhere else is
+  unmanaged, even when its name is exactly the one an action would install.
+- **A regular file, a directory, or none of those** — a socket, a fifo, a device.
+  This is someone's data.
+
+An action decides in this order:
+
+1. Determine what exists, without treating a final symlink as its target.
+2. If the requested result is already there, do nothing, and say so only at `-v`.
+3. If it is a symlink batfiles owns, replace it directly.
+4. Otherwise the node is unmanaged. Until there is a backup policy with which to
+   give it back, the action fails and names the path; see
+   [`future/safety.md`](future/safety.md#replacement-and-backups).
+
+A refusal under 4 says which of those kinds it found, because the path alone does
+not tell the user whether they are looking at a file to move, a directory to
+merge by hand, or a link some other tool installed. A link is named both as it is
+written and as it resolves — the two differ exactly when the target is relative,
+and the resolved form is the one the refusal was decided on. There is no way to
+waive any of this yet; the remedy is to move the destination aside and run the
+command again.
+
+Replacing an owned symlink under 3 happens in place rather than through a
+temporary sibling. The link carries no content, so a run interrupted partway
+through leaves at most a missing link that the next `sync` puts back from the
+manifest. The staged-write rule that machine-local state files follow governs
+writes that carry content, which is a different case from a node batfiles can
+reconstruct.
+
 ## Actions
 
 `[[actions]]` is an ordered list. Each entry is a closed record selected by its
@@ -107,26 +195,14 @@ dest = "~/.zshrc"
 | `source` | string |   yes    | The source, relative to the repository root. |
 | `dest`   | string |   yes    | The destination path, as written.            |
 
-Both paths are resolved when the action runs, not when the manifest is read, and
-both are anchored to absolute paths first. A selected root may be written
-relative to wherever batfiles is invoked, but a symlink stores the target it is
-handed and reads it back relative to the link's own directory, so a relative
-target would point somewhere other than where it was meant to.
+`source` is the link's target and `dest` is the link itself; both follow
+[Sources and destinations](#sources-and-destinations). The anchoring matters more
+here than elsewhere, because a symlink stores the target it is handed and reads
+it back relative to the link's own directory: a target left relative to the
+working directory would point somewhere other than where it was meant to.
 
-- `source` names a path within the repository that declares it. An absolute
-  source is invalid, and so is a relative one that climbs out of the repository.
-  That check is lexical rather than a canonicalization of every component, so a
-  symlink deliberately stored inside the repository may point anywhere and is
-  followed like any other. The path must exist: a repository naming a file it
-  does not contain is a mistake batfiles can see, and the alternative is a link
-  to nothing.
-- `dest` beginning with `~` uses the selected home rather than an independently
-  discovered one. `~user` is not expanded and is an error. A relative `dest`
-  also resolves from the selected home, and an absolute one is used as written;
-  `.` and `..` are resolved textually. None of this makes the home a boundary —
-  a destination may deliberately point outside it.
-
-What happens at the destination depends on what is already there:
+What happens at the destination depends on what is already there, applying
+[Replacing what is already there](#replacing-what-is-already-there):
 
 | Already at the destination                     | Result                                                            |
 |------------------------------------------------|-------------------------------------------------------------------|
@@ -138,32 +214,15 @@ What happens at the destination depends on what is already there:
 | a directory                                    | An error naming the path and what it found, with nothing written. |
 | anything else                                  | An error naming the path and what it found, with nothing written. |
 
+Where it points, not how it is spelled, is what the three symlink rows mean by
+"the source", "elsewhere in the repository", and "outside the repository". The
+four error rows are one refusal but not one message, and a repaired link is
+repointed regardless of how the stale one was written.
+
 On a platform where batfiles cannot create a symlink, a `symlink` action is an
 error naming the action rather than a silent skip or a copy substituted for the
-link. The check happens before the destination is examined, so a repair cannot
-remove the existing link and then discover it has nothing to put back.
-
-The destination is examined without following a final symlink, so a link is
-judged by where it points rather than by what it reaches. Where it points is
-also what the symlink rows above mean by "the source", "elsewhere in the
-repository", and "outside the repository": a link's target is read as the
-operating system would read it, with a relative one resolved from the link's own
-directory. A link spelled `../dotfiles/zshrc` can be exactly the link the action
-asks for, and one spelled `<repository>/../elsewhere` leaves the repository
-despite beginning inside it.
-
-A symlink into the repository is one batfiles would have made and holds no
-content of its own, so repairing it loses nothing. A file, a directory, or a
-link somewhere unexpected is someone's data, and there is no backup policy yet
-with which to give it back.
-
-The four error rows are one refusal, but not one message: the diagnostic says
-which of them it found, because the path alone does not tell the user whether
-they are looking at a file to move, a directory to merge by hand, or a link some
-other tool installed. A link is named both as it is written and as it resolves,
-the two differing exactly when the target is relative, and the resolved form
-being the one the row above was decided on. There is no way to waive any of
-this yet; the remedy is to move the destination aside and run `sync` again.
+link. The check happens before the destination is examined, so the refusal
+arrives without anything already there having been inspected or touched.
 
 Directory mode, which links a directory's children through `source-dir`,
 `dest-dir`, and glob filters, is specified in

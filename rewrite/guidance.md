@@ -222,8 +222,8 @@ Two consequences:
   "read at 3.2")]` cannot rot, because the compiler deletes the note for you when
   the reader lands (rule 1). The same shape covers an ordering not yet pinned
   (`#[ignore = "3.1"]`), an option that is parsed but dead (rule 12's list,
-  shrinking to empty), and anything else greppable (`// CARRY(0.9): …`, which
-  0.13 teaches `task ci` to reject once 0.9 is marked ✅). Write prose only for
+  shrinking to empty), and anything else greppable (`// CARRY(1.3): …`, which
+  0.13 teaches `task ci` to reject once 1.3 is marked ✅). Write prose only for
   what none of these can hold.
 
 ## Test environments

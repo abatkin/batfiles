@@ -47,25 +47,11 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   directory, a symlink outside the repository named as written and as it
   resolves, or none of those — in the diagnostic and in
   `docs/repoformat.md`'s destination table.
-- **0.9** Make repairing a link atomic: build the replacement at a temporary
-  sibling and rename it over the destination. 0.7 removes and re-creates, so
-  there is a window in which the destination does not exist — which contradicts
-  `safety.md`'s "single-file writes should use a temporary sibling and atomic
-  rename where practical", and 0.10 cannot promote that sentence honestly until
-  this is true or the exception is stated.
-- **0.10** Promote `safety.md`'s destination resolution and symlink traversal
-  rules into `docs/`, since 0.7 through 0.9 are the first code they govern. Three
-  sections carry a pointer paragraph naming what already runs — destination
-  paths, repository source paths, and the first three steps of replacement and
-  backups — and the rules themselves are in `docs/repoformat.md` under
-  `symlink`, written for one action type. Promoting means lifting them to
-  general statements now that they are about to govern `create-dir` and `copy`
-  as well, and leaving the `symlink` section pointing at them. The destination
-  table 0.8 split is where the two kinds separate: what the existing node *is* —
-  file, directory, foreign symlink, other — is general and lifts, while what to
-  do about it does not. An existing directory refuses a `symlink` and satisfies a
-  `create-dir`, so the same row reads differently per action type and the
-  outcome column stays behind.
+- **0.10** ✅ Promote `safety.md`'s destination resolution and symlink traversal
+  rules into `docs/`, lifted to general statements before `create-dir` and `copy`
+  arrive. Absorbed 0.9, which proposed staging a link repair through a temporary
+  sibling and was dropped rather than built: an owned symlink carries no content,
+  so the window it closed cost nothing that the next `sync` does not rebuild.
 - **0.11** Make rule 1 mechanical in `task ci`. Two halves: no
   `allow(dead_code)` under `src/` at all, and every `expect(dead_code)` carrying
   a `reason`. The second is what keeps rule 1's record-field exception honest,

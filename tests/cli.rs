@@ -652,6 +652,23 @@ mod linking {
     }
 
     #[test]
+    fn a_relative_link_pointing_at_the_wrong_file_is_repaired() {
+        // The spelling decides nothing: this one resolves into the repository,
+        // so it is repairable, and the replacement is written anchored like any
+        // other. The neighbouring cases cover a relative link that is already
+        // right and an absolute one that is wrong.
+        let tree = Tree::new();
+        tree.repo_file("shell/zshrc.old", "# old\n");
+        let wanted = tree.repo_file("shell/zshrc", "# zsh\n");
+        std::os::unix::fs::symlink("../repo/shell/zshrc.old", tree.home(".zshrc"))
+            .expect("a stale relative link");
+        tree.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+        tree.batfiles().arg("sync").assert().success();
+        assert_eq!(link_target(&tree.home(".zshrc")), wanted);
+    }
+
+    #[test]
     fn a_relative_repository_still_yields_a_link_that_resolves() {
         // A symlink stores the target it is handed, and a relative one is read back
         // from the link's own directory — not from wherever batfiles was run. So a
