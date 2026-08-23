@@ -1426,6 +1426,136 @@ mod linking {
         assert!(stale.exists(), "the old source was removed");
     }
 
+    // A destination reached through a symlinked parent. `~/bin -> ~/.local/bin`
+    // is an ordinary arrangement, and a relative link sitting in it is read by
+    // the operating system from the directory it is *physically* in. Composing
+    // that answer from the written path instead classifies the link against a
+    // directory it is not in, and every case below is a way for that to go
+    // wrong (`guidance.md`, rule 14).
+
+    /// A home whose `~/bin` is a symlink to `~/.local/bin`, with the repository
+    /// at `~/dotfiles` holding `bin/tool`, and one existing link already at the
+    /// destination, spelled as given.
+    ///
+    /// Returns the manifest to run and the physical path of that existing link.
+    fn through_an_aliased_parent(tree: &Tree, existing: &str) -> (String, PathBuf) {
+        let repo = tree.home("dotfiles");
+        fs::create_dir_all(repo.join("bin")).expect("a repository");
+        fs::write(repo.join("bin/tool"), "#!/bin/sh\n# ours\n").expect("the source");
+
+        // What a relative link in `~/.local/bin` reaches by climbing out of it,
+        // which is not what the same spelling reaches from `~/bin`.
+        fs::create_dir_all(tree.home(".local/dotfiles/bin")).expect("a neighbour");
+        fs::write(tree.home(".local/dotfiles/bin/tool"), "# theirs\n").expect("their file");
+        fs::write(tree.home(".local/dotfiles/bin/other"), "# theirs\n").expect("their file");
+
+        fs::create_dir_all(tree.home(".local/bin")).expect("the real directory");
+        std::os::unix::fs::symlink(".local/bin", tree.home("bin")).expect("the alias");
+
+        let link = tree.home(".local/bin/tool");
+        std::os::unix::fs::symlink(existing, &link).expect("the existing link");
+
+        fs::write(
+            repo.join("batfiles.toml"),
+            one_symlink_dir("bin", "~/bin", false),
+        )
+        .expect("a manifest");
+        (display(&repo), link)
+    }
+
+    /// `sync` against a repository that is not the tree's default one.
+    fn sync_against(tree: &Tree, repo: &str) -> assert_cmd::assert::Assert {
+        tree.batfiles()
+            .args(["--color", "never", "--batfiles-dir", repo, "sync"])
+            .assert()
+    }
+
+    #[test]
+    fn a_link_reached_through_an_aliased_parent_is_not_called_ours() {
+        // Read from `~/bin`, `../dotfiles/bin/tool` looks like `~/dotfiles`.
+        // Read from `~/.local/bin`, where the link actually is, it is
+        // `~/.local/dotfiles` — someone else's. Judging it lexically reported
+        // the repository as installed while `~/bin/tool` ran the wrong program,
+        // and said nothing at all, which is the worst way to be wrong.
+        let tree = Tree::new();
+        let (repo, link) = through_an_aliased_parent(&tree, "../dotfiles/bin/tool");
+
+        let assertion = sync_against(&tree, &repo).failure().code(1);
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains(&display(&tree.home(".local/dotfiles/bin/tool"))),
+            "the refusal did not say where the link really points:\n{stderr}"
+        );
+        assert_eq!(
+            link_target(&link),
+            PathBuf::from("../dotfiles/bin/tool"),
+            "the unmanaged link was touched"
+        );
+    }
+
+    #[test]
+    fn a_link_reached_through_an_aliased_parent_is_not_deleted_as_ours() {
+        // The same misreading, one step further: here the lexical answer is
+        // inside the repository but not what the action wants, so the link was
+        // deleted and replaced rather than merely mistaken for correct.
+        let tree = Tree::new();
+        let (repo, link) = through_an_aliased_parent(&tree, "../dotfiles/bin/other");
+
+        let assertion = sync_against(&tree, &repo).failure().code(1);
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains(&display(&tree.home(".local/dotfiles/bin/other"))),
+            "the refusal did not say where the link really points:\n{stderr}"
+        );
+        assert_eq!(
+            link_target(&link),
+            PathBuf::from("../dotfiles/bin/other"),
+            "an unmanaged link was destroyed"
+        );
+    }
+
+    #[test]
+    fn a_correct_link_reached_through_an_aliased_parent_is_left_alone() {
+        // The other direction of the same misreading, and the one a user hits
+        // by doing everything right: this link resolves to exactly what the
+        // action installs, and was refused as pointing outside the repository.
+        let tree = Tree::new();
+        let (repo, link) = through_an_aliased_parent(&tree, "../../dotfiles/bin/tool");
+        assert_eq!(
+            fs::canonicalize(&link).expect("the link resolves"),
+            fs::canonicalize(tree.home("dotfiles/bin/tool")).expect("the source"),
+            "the fixture is wrong: this link should already be correct"
+        );
+
+        sync_against(&tree, &repo).success().stderr("");
+        assert_eq!(
+            link_target(&link),
+            PathBuf::from("../../dotfiles/bin/tool"),
+            "a correct link was rewritten"
+        );
+    }
+
+    #[test]
+    fn a_repository_reached_through_a_symlink_still_converges() {
+        // The other half of resolving what is already there: the repository
+        // root has to be compared in the same space. Selected through a
+        // symlink, its written form and its resolved form are the same place by
+        // two names — and comparing across the two calls every freshly written
+        // link stale, relinking the whole repository on every run and never
+        // reaching a quiet one. A `/home` that is a symlink is enough to do it.
+        let tree = Tree::new();
+        let (_, _) = through_an_aliased_parent(&tree, "../dotfiles/bin/tool");
+        fs::remove_file(tree.home(".local/bin/tool")).expect("start from nothing");
+
+        std::os::unix::fs::symlink(tree.path("home"), tree.path("by-another-name"))
+            .expect("a symlinked route to the home");
+        let aliased = display(&tree.path("by-another-name/dotfiles"));
+
+        sync_against(&tree, &aliased).success();
+        // Quiet: everything it just wrote is recognised as already right.
+        sync_against(&tree, &aliased).success().stderr("");
+    }
+
     // The `leaf` fixture: several actions over a directory tree, as opposed to
     // the manifests above, which are written inline to isolate one rule each.
 

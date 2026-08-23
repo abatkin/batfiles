@@ -2,6 +2,7 @@
 
 mod app;
 mod cli;
+mod destination;
 mod error;
 mod item;
 mod location;

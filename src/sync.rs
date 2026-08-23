@@ -4,10 +4,14 @@
 //! One loop over one ordered list, each action inspecting the filesystem as the
 //! previous one left it. Resolving what a `source` and a `dest` mean happens
 //! here rather than inside the records, so there is one place that decides.
+//!
+//! What is already *at* a destination, and whether batfiles may replace it, is
+//! [`crate::destination`]'s: every action asks it the same question and it is
+//! not asked twice.
 
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 // Making a symlink is the one platform-specific call here. Windows needs
 // `symlink_file` against `symlink_dir` and a privilege check, with no CI runner
@@ -21,7 +25,8 @@ fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
-use crate::error::{Error, ExistingNode};
+use crate::destination::{self, Occupant, Repository};
+use crate::error::Error;
 use crate::location::Roots;
 use crate::manifest::Manifest;
 use crate::manifest::action::{Action, SymlinkAction, SymlinkDirAction};
@@ -35,8 +40,8 @@ use crate::output::Reporter;
 /// so a relative `--batfiles-dir` would otherwise produce a link that points
 /// nowhere and a next run that calls it correct.
 pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> Result<(), Error> {
-    let repository = anchor(&roots.batfiles_dir)?;
-    let home = anchor(&roots.home)?;
+    let repository = Repository::at(&roots.batfiles_dir)?;
+    let home = destination::anchor(&roots.home)?;
     for action in &manifest.actions {
         match action {
             Action::Symlink(action) => link(action, &repository, &home, reporter)?,
@@ -49,7 +54,7 @@ pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> R
 /// Carry out one `symlink` action: the whole of it is one link.
 fn link(
     action: &SymlinkAction,
-    repository: &Path,
+    repository: &Repository,
     home: &Path,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -73,7 +78,7 @@ fn link(
 /// there later needs no further sync.
 fn link_dir(
     action: &SymlinkDirAction,
-    repository: &Path,
+    repository: &Repository,
     home: &Path,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -98,7 +103,7 @@ fn link_dir(
     }
 
     let dest_dir = resolve_destination(home, &action.dest_dir);
-    ensure_directory(&dest_dir)?;
+    destination::ensure_directory(&dest_dir)?;
 
     let children = children_of(&source_dir)?;
     if children.is_empty() {
@@ -155,107 +160,40 @@ fn children_of(dir: &Path) -> Result<Vec<std::ffi::OsString>, Error> {
     Ok(names)
 }
 
-/// Make sure a destination directory is one, creating it where nothing is.
-///
-/// Followed rather than inspected as a destination would be: this is the
-/// container the links go in, not a node an action installs, and a home
-/// directory whose `~/.config` is a symlink onto another volume is an ordinary
-/// arrangement (`docs/repoformat.md`, "Sources and destinations").
-fn ensure_directory(dir: &Path) -> Result<(), Error> {
-    match fs::metadata(dir) {
-        Ok(existing) if existing.is_dir() => Ok(()),
-        Ok(existing) => Err(Error::DestinationExists {
-            path: dir.to_path_buf(),
-            found: existing_node(&existing),
-        }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            // Nothing resolves here, but something may still be here: a
-            // dangling symlink. `create_dir_all` would fail on it with a bare
-            // `EEXIST` naming nothing, so it is identified rather than hit.
-            //
-            // Reported as its own kind rather than as an unowned link. Where a
-            // dangling one points decides nothing — batfiles will not create
-            // the far end of a link somebody else made, inside the repository
-            // or out — so the refusal says the target is missing instead of
-            // claiming it is somewhere.
-            if fs::symlink_metadata(dir).is_ok_and(|node| node.is_symlink()) {
-                let written = fs::read_link(dir).map_err(|source| Error::Read {
-                    path: dir.to_path_buf(),
-                    source,
-                })?;
-                return Err(Error::DestinationExists {
-                    path: dir.to_path_buf(),
-                    found: ExistingNode::DanglingLink { written },
-                });
-            }
-            fs::create_dir_all(dir).map_err(|source| Error::Write {
-                path: dir.to_path_buf(),
-                source,
-            })
-        }
-        Err(error) => Err(Error::Read {
-            path: dir.to_path_buf(),
-            source: error,
-        }),
-    }
-}
-
 /// Create one symlink, repair it, or leave it alone.
 ///
-/// The destination is inspected without following a final symlink, so a link is
-/// judged by where it points rather than by what it reaches. A link into the
-/// repository is one batfiles would have made and holds no data of its own, so
-/// repointing it loses nothing; anything else is someone's, and this refuses it
-/// (`guidance.md`, rule 13).
+/// What is at the destination, and whether it is batfiles' to replace, is
+/// [`Occupant::at`]'s answer — see that module for why the question cannot be
+/// asked of the written path. This decides only what a `symlink` does with each
+/// answer.
 ///
 /// Both action types end here, one call per link either of them installs, so
-/// rule 13 is decided in one place regardless of how many links an action is.
+/// rule 13 is applied in one place regardless of how many links an action is.
 fn link_one(
     target: &Path,
     dest: &Path,
-    repository: &Path,
+    repository: &Repository,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    match fs::symlink_metadata(dest) {
-        Ok(existing) if existing.is_symlink() => {
-            let current = fs::read_link(dest).map_err(|source| Error::Read {
-                path: dest.to_path_buf(),
-                source,
-            })?;
-            // Where the link points, not how it was spelled. A target is read
-            // back exactly as it was written, and a relative one means "from
-            // the link's own directory" — so `../dotfiles/zshrc` may well point
-            // into the repository, and `repo/../elsewhere` may well point out
-            // of it. Judging the spelling gets both backwards.
-            let points_at = pointed_at(dest, &current);
-            if points_at == target {
-                reporter.detail(1, &format!("unchanged {}", dest.display()));
-            } else if points_at.starts_with(repository) {
-                remove(dest)?;
-                create(target, dest)?;
-                reporter.info(&format!(
-                    "relinked {} -> {} (was {})",
-                    dest.display(),
-                    target.display(),
-                    current.display()
-                ));
-            } else {
-                return Err(Error::DestinationExists {
-                    path: dest.to_path_buf(),
-                    found: ExistingNode::Link {
-                        written: current,
-                        points_at,
-                    },
-                });
-            }
+    match Occupant::at(dest, repository)? {
+        // Compared in resolved form on both sides. A link written by an earlier
+        // run holds the anchored spelling, which is the same place by a
+        // different name wherever a root contains a symlink — and calling that
+        // stale would relink it, and every link like it, on every run.
+        Occupant::Owned { points_at, .. } if points_at == destination::resolved(target) => {
+            reporter.detail(1, &format!("unchanged {}", dest.display()));
         }
-        Ok(existing) => {
-            return Err(Error::DestinationExists {
-                path: dest.to_path_buf(),
-                found: existing_node(&existing),
-            });
+        Occupant::Owned { written, .. } => {
+            remove(dest)?;
+            create(target, dest)?;
+            reporter.info(&format!(
+                "relinked {} -> {} (was {})",
+                dest.display(),
+                target.display(),
+                written.display()
+            ));
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        Occupant::Vacant => {
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|source| Error::Write {
                     path: parent.to_path_buf(),
@@ -269,63 +207,28 @@ fn link_one(
                 target.display()
             ));
         }
-        Err(error) => {
-            return Err(Error::Read {
+        Occupant::Unmanaged(found) => {
+            return Err(Error::DestinationExists {
                 path: dest.to_path_buf(),
-                source: error,
+                found,
             });
         }
     }
     Ok(())
 }
 
-/// Name what is sitting at a destination, so the refusal can say which of rule
-/// 13's cases it hit rather than only that it hit one.
-///
-/// The symlink case is not here: it needs the link's target, which the caller
-/// has already read in order to decide the link is not repairable.
-fn existing_node(existing: &fs::Metadata) -> ExistingNode {
-    if existing.is_file() {
-        ExistingNode::File
-    } else if existing.is_dir() {
-        ExistingNode::Directory
-    } else {
-        ExistingNode::Other
-    }
-}
-
-/// Where an existing symlink points, as the operating system would read it.
-///
-/// Lexical, like every other path decision here: intermediate components that
-/// are themselves symlinks are not resolved, because a parent link is something
-/// the user put there deliberately and following it is ordinary path
-/// resolution, not a fact batfiles needs to establish.
-fn pointed_at(link: &Path, target: &Path) -> PathBuf {
-    match link.parent() {
-        Some(parent) if target.is_relative() => normalize(&parent.join(target)),
-        _ => normalize(target),
-    }
-}
-
-/// Make a path absolute and lexically clean, so that what is compared, reported,
-/// and written into a link does not depend on the working directory.
-fn anchor(path: &Path) -> Result<PathBuf, Error> {
-    let absolute =
-        std::path::absolute(path).map_err(|source| Error::WorkingDirectory { source })?;
-    Ok(normalize(&absolute))
-}
-
 /// An action's `source`, resolved against the repository that declared it.
 ///
 /// The manifest has already settled what a source may say, so this expects one
 /// that is relative and lands strictly inside the repository, and checks only
-/// the rule needing a filesystem: the path has to exist. `repository` is already
-/// anchored, so the result is too.
+/// the rule needing a filesystem: the path has to exist. The repository is
+/// already anchored, so the result is too — this is a path batfiles writes into
+/// a link, not one it classifies, so it keeps the spelling the user chose.
 ///
 /// The one place a repository path is resolved, which 6.3 widens to take
 /// `@remote/path` (`guidance.md`, "Seams the late slices need").
-fn resolve_source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
-    let resolved = normalize(&repository.join(source));
+fn resolve_source(repository: &Repository, source: &str) -> Result<PathBuf, Error> {
+    let resolved = destination::normalize(&repository.path().join(source));
 
     // Presence, not reachability: a source that is itself a dangling symlink is
     // there, and linking to it is what the repository asked for.
@@ -359,32 +262,7 @@ fn resolve_destination(home: &Path, dest: &str) -> PathBuf {
         // one, so the relative and absolute cases are the same line.
         None => home.join(dest),
     };
-    normalize(&path)
-}
-
-/// Resolve `.` and `..` textually, without consulting the filesystem.
-///
-/// Deliberately not canonicalization: batfiles does not prove that a path stays
-/// beneath a root by resolving every component, because a parent that is a
-/// symlink is followed by ordinary path resolution and should be here too.
-fn normalize(path: &Path) -> PathBuf {
-    let mut result = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match result.components().next_back() {
-                // Only a named component can be cancelled. Above a root there is
-                // nowhere to go, and after another `..` the pair is meaningful.
-                Some(Component::Normal(_)) => {
-                    result.pop();
-                }
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                _ => result.push(".."),
-            },
-            named => result.push(named),
-        }
-    }
-    result
+    destination::normalize(&path)
 }
 
 fn create(target: &Path, dest: &Path) -> Result<(), Error> {
@@ -431,27 +309,6 @@ mod tests {
         assert_eq!(dest_of("~/../shared/rc"), PathBuf::from("/home/shared/rc"));
     }
 
-    #[test]
-    fn a_link_is_judged_by_where_it_points_not_how_it_is_spelled() {
-        let link = Path::new("/home/user/.zshrc");
-        // Relative to the link's own directory, which is what the OS does.
-        assert_eq!(
-            pointed_at(link, Path::new("../dotfiles/zshrc")),
-            PathBuf::from("/home/dotfiles/zshrc")
-        );
-        // Textually inside `/repo`, and nowhere near it once resolved.
-        assert_eq!(
-            pointed_at(link, Path::new("/repo/../outside")),
-            PathBuf::from("/outside")
-        );
-    }
-
-    #[test]
-    fn normalizing_cancels_only_what_it_can() {
-        assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
-        // Nothing to cancel: the root has no parent, and a leading `..` in a
-        // relative path is part of where it points.
-        assert_eq!(normalize(Path::new("/..")), PathBuf::from("/"));
-        assert_eq!(normalize(Path::new("../../a")), PathBuf::from("../../a"));
-    }
+    // Classifying what is already at a destination moved to `destination`, and
+    // its tests went with it.
 }

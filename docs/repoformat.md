@@ -105,11 +105,28 @@ The two happen at different moments, and the split is worth stating once:
   path batfiles stores on disk, such as the target of a symlink, is read back
   relative to its own location rather than to that working directory.
 
-Resolution is lexical throughout: `.` and `..` are cancelled textually, and
+**Composing a path is lexical.** `.` and `..` are cancelled textually, and
 batfiles does not canonicalize every component to prove where a path ends up. A
 parent component that is itself a symlink is followed by ordinary
 operating-system path resolution, because that link is something the user put
-there deliberately.
+there deliberately. `~/.config/nvim` means those components joined to the
+selected home, whatever `~/.config` turns out to be.
+
+**Classifying what is already at a path is not.** The two are different
+questions, and only the first is about the path batfiles was given. A symlink
+already sitting at a destination has a target the operating system reads from
+the directory the link is *physically* in — so where `~/bin` is a symlink to
+`~/.local/bin`, a link at `~/bin/tool` spelled `../dotfiles/bin/tool` points
+into `~/.local/`, not into `~/`. Composing that answer lexically judges the link
+against a directory it is not in, which is how a link pointing outside a
+repository comes to look like one batfiles owns. So an existing link's target,
+and the repository the result is tested against, are both resolved before they
+are compared. See [Replacing what is already there](#replacing-what-is-already-there).
+
+This affects only what batfiles *concludes* about a node it found. The path it
+writes into a link is still the anchored, lexical one, spelled from the
+repository root as selected — a repository chosen as `~/dotfiles` is not
+rewritten to some other route to the same directory.
 
 **A `source` is contained by its repository.** It resolves from the repository
 that declared it, and the result must stay inside that repository. A source that
@@ -174,9 +191,17 @@ that destination first and decides from what it finds.
 **The destination is examined without following a final symlink**, so a link is
 judged by where it points rather than by what it reaches. Its target is read as
 the operating system would read it, with a relative target resolved from the
-link's own directory. A link spelled `../dotfiles/zshrc` may point exactly where
-an action wants it to, and one spelled `<repository>/../elsewhere` leaves the
-repository despite beginning inside it; judging the spelling gets both backwards.
+directory the link is physically in — which is not always the directory the
+destination path names, since any parent may itself be a symlink. A link spelled
+`../dotfiles/zshrc` may point exactly where an action wants it to, and one
+spelled `<repository>/../elsewhere` leaves the repository despite beginning
+inside it; judging the spelling gets both backwards.
+
+Every check in this section is decided in that resolved form, on both sides:
+whether the link is already right, and whether it lands inside the repository.
+A repository selected by one route and a link resolving through another are the
+same repository, and mixing the two forms is what makes an unmanaged link look
+owned.
 
 What is found there is one of:
 

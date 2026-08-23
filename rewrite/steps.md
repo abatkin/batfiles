@@ -74,11 +74,14 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **1.3** Add `copy` with its missing-only seed semantics, preserved once
   created.
 - **1.4** Extract only what all four variants genuinely share, and not before
-  all four exist. The candidates are visible in `src/sync.rs`: destination
-  resolution, source resolution, and creating a missing parent are all written
-  for the two symlink types, which 1.1 already made share `link_one` — the
-  question is what `create-dir` and `copy` turn out to want from the same set,
-  and it is not answerable until they do. This is also where `action/` earns its
+  all four exist. One piece is already out: classifying what is at a destination
+  is `src/destination.rs`, because rule 13 has to be decided identically by
+  every action and rule 14 says the containment check lives in exactly one
+  place. Ask it rather than re-reading a destination, and add to it rather than
+  around it. What remains in `src/sync.rs` is source resolution and destination
+  *composition*, written for the two symlink types — what `create-dir` and
+  `copy` want from those is not answerable until they exist. This is also where
+  `action/` earns its
   directory and `sync.rs` stops holding both the loop and one action's work. The
   accessors that match over every variant are the same question in miniature:
   0.6 wrote `Action::id()` as the first, 3.2 reads `group` as the second, and at
