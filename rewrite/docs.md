@@ -55,11 +55,19 @@ would inherit them, which is the thing rule 9 exists to stop.
 
 - **`AGENTS.md`**, and `CLAUDE.md` which symlinks to it — **rewrite at slice 8**,
   in the same change that deletes `rewrite/`. It is the file agents auto-load, so
-  leaving it stale is worse than leaving any document in `docs/` stale. Four
+  leaving it stale is worse than leaving any document in `docs/` stale. Five
   edits: drop the "Status: rewrite in progress" block; replace "Where the
   documentation lives" with the `docs/` versus `docs/future/` rule above; cut
   "Source organization" down to a pointer at the recreated `architecture.md`;
-  add `task test:docker` to the canonical commands if 8.4 added it.
+  add `task test:docker` to the canonical commands if 8.4 added it; and carry
+  `guidance.md`'s "How a slice lands" over next to the canonical commands —
+  its three workflow paragraphs only. That last one is a change of mind about
+  which list it belongs on: branch, commit as you go, squash to `main` is how
+  the repository is worked rather than how the rewrite was, so it outlives the
+  rewrite the way the toolchain pin does. Its closing sentence does not: nothing
+  merging back from the salvage tag is a rule about the rewrite, and it points
+  at `keep.md`, which this same slice deletes. Leave it behind with the
+  directory rather than copying a link to a file that is going away.
 
   That third edit is the one to get right, and it is a change from how the file
   reads today. `AGENTS.md` currently states the source-organization rules *and*

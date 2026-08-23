@@ -181,9 +181,24 @@ Not hard limits. If you are far over one, stop and ask why.
 
 ## How a slice lands
 
-Work on `main`; CI runs on `main` and on pull requests. Branch per slice if you
-want one reviewed. Nothing merges back from the tag that holds the old crate —
-see `keep.md`.
+**Every change goes on a branch.** Nothing is committed to `main` directly, not
+a slice and not a one-line fix. One branch per change, named for the step it
+lands where it has one. CI runs on `main` and on pull requests.
+
+**Commit as you go.** Every change on the branch gets a commit when it is made,
+including the ones that correct what the previous commit got wrong. A branch is
+a working record and nothing on it is permanent, so there is no reason to hold
+work uncommitted while deciding whether it was right.
+
+**Merging to `main` is a squash merge**, unless the merge says otherwise. `main`
+gets one commit per change, and its message describes the change as a whole:
+what the tree does now that it did not before, and why it was done that way. Not
+the route — a correction made mid-branch, a test that failed first, an approach
+tried and dropped are archaeology of the branch, and the branch still has them
+if anyone wants them. This is the message rule 4 means by "rationale goes in
+commit messages", because it is the only one `main` keeps.
+
+Nothing merges back from the tag that holds the old crate — see `keep.md`.
 
 ## Definition of done for a slice
 
