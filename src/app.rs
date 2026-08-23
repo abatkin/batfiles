@@ -4,8 +4,9 @@
 //!
 //! Every command in the surface parses; `version` and `sync` run. The rest
 //! report an option they accept and do not honor yet, or else resolve their
-//! roots and report that they do not exist yet, which is the honest thing to do
-//! and the reason the whole surface can be committed before the tool works.
+//! roots and report that they are not implemented yet, which is the honest
+//! thing to do and the reason the whole surface can be committed before the
+//! tool works.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;

@@ -73,8 +73,9 @@ directory and does not use any selected roots.
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
 
 `--color` and the four location options have their full effect. `--verbose` at
-one level prints the resolved roots and the actions `sync` found nothing to do
-about. `--quiet` suppresses the lines saying what `sync` did, and nothing else.
+one level prints the resolved roots, and the actions `sync` left alone because
+they were already correct. `--quiet` suppresses the lines saying what `sync`
+did, and nothing else.
 
 Two of the four resolved roots are live, and only for `sync`: it reads the leaf
 repository and writes into the selected home. Nothing reads or writes anything
@@ -156,13 +157,13 @@ The refusal comes ahead of a command's own not-implemented message, so
 `clone`. The option is the part of the invocation that would still be wrong once
 the command exists.
 
-| Command                         | Options refused for now                                                                                                                                     |
-|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                          | `--dry-run`, `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--skip-action`, `--skip-group`         |
-| `clone`                         | the above without `--dry-run` and `--refresh-remotes`, plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`                       |
-| `apply-action`, `apply-group`   | `--dry-run`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                                               |
-| `vars list`                     | `--no-refresh`                                                                                                                                              |
-| everything else                 | none                                                                                                                                                        |
+| Command                       | Options refused for now                                                                                                                    |
+|-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `sync`                        | `--dry-run`, `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--skip-action`, `--skip-group` |
+| `clone`                       | `sync`'s list except `--dry-run` and `--refresh-remotes`, which `clone` does not accept at all, plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group` |
+| `apply-action`, `apply-group` | `--dry-run`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
+| `vars list`                   | `--no-refresh`                                                                                                                             |
+| everything else               | none                                                                                                                                       |
 
 An option that arrives together with the command that takes it is not listed —
 `init`'s `--no-git-init` and `vars list`'s `--machine-only` — because the

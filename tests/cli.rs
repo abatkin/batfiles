@@ -22,9 +22,9 @@ fn batfiles() -> Command {
 /// A throwaway tree standing in for the four location roots, with an empty leaf
 /// manifest in place.
 ///
-/// `sync` opens the repository root now, so tests point at directories that
-/// exist rather than at fixed absolute paths. A path that is never opened —
-/// an alternative home, an `$XDG_*` base — can still be written inline.
+/// `sync` opens the repository root, so tests point at directories that exist
+/// rather than at fixed absolute paths. A path that is never opened — an
+/// alternative home, an `$XDG_*` base — can still be written inline.
 struct Tree {
     dir: TempDir,
 }
@@ -498,25 +498,10 @@ fn rejected(manifest: &str) -> String {
     stderr
 }
 
-// Asserting the link makes this one platform-specific, unlike the rejections
-// around it, which never get as far as executing anything.
-#[cfg(unix)]
-#[test]
-fn a_symlink_action_parses_with_every_field_it_accepts() {
-    let tree = Tree::new();
-    tree.repo_file("files/zshrc", "# zsh\n");
-    tree.write_manifest(
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         id = \"zshrc\"\n\
-         group = \"shell\"\n\
-         source = \"files/zshrc\"\n\
-         dest = \"~/.zshrc\"\n",
-    );
-
-    tree.batfiles().arg("sync").assert().success();
-    assert!(tree.home(".zshrc").is_symlink());
-}
+// The rejections below never get as far as executing anything, so they run
+// everywhere. Their positive counterpart — a record using every field it
+// accepts, which has to be executed to be worth asserting — is
+// `linking::a_symlink_action_parses_with_every_field_it_accepts`.
 
 #[test]
 fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
@@ -583,6 +568,73 @@ fn an_id_that_breaks_the_id_rule_is_rejected() {
     }
 }
 
+// What a `source` and a `dest` may say is decided from the manifest alone, so
+// these are rejections like the ones above rather than actions that failed:
+// nothing is resolved, nothing is opened, and they run on every platform.
+
+#[test]
+fn a_source_outside_the_repository_is_rejected() {
+    for source in ["../secrets", "shell/../../secrets", "/etc/hosts"] {
+        let stderr = rejected(&one_symlink(source, "~/.zshrc"));
+        assert!(
+            stderr.contains(source),
+            "`{source}` was not named:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_source_naming_the_whole_repository_is_rejected() {
+    // Containment alone lets the root through, and installing it would put
+    // `batfiles.toml` and `.git` in the home. The spelling decides which
+    // diagnostic it gets, not whether it is refused.
+    for (source, expected) in [
+        ("", "source is empty"),
+        (".", "names the whole repository"),
+        ("shell/..", "names the whole repository"),
+    ] {
+        let stderr = rejected(&one_symlink(source, "~/.zshrc"));
+        assert!(
+            stderr.contains(expected),
+            "no `{expected}` for source `{source}` in:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_dest_is_rejected_in_favor_of_writing_the_home_out() {
+    // `~` already means the home directory itself, so the diagnostic points at
+    // that spelling rather than only refusing.
+    let stderr = rejected(&one_symlink("shell/zshrc", ""));
+    for expected in ["dest is empty", "write `~`"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn a_dest_naming_another_users_home_is_rejected() {
+    let stderr = rejected(&one_symlink("shell/zshrc", "~other/.zshrc"));
+    assert!(
+        stderr.contains("~other/.zshrc"),
+        "the destination was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_rejected_path_names_the_action_it_was_written_on() {
+    // One-based, so it reads against the file. Action 1 here is valid, which
+    // is what makes the number worth checking.
+    let stderr = rejected(&format!(
+        "{}{}",
+        one_symlink("shell/zshrc", "~/.zshrc"),
+        one_symlink("", "~/.zshenv")
+    ));
+    assert!(
+        stderr.contains("action 2"),
+        "the offending action was not located:\n{stderr}"
+    );
+}
+
 #[test]
 fn a_repeated_action_id_is_rejected_and_both_uses_located() {
     // Serde cannot see across records, so this is the rule `validate` exists
@@ -636,6 +688,25 @@ fn a_command_that_does_not_need_the_manifest_does_not_read_it() {
 #[cfg(unix)]
 mod linking {
     use super::*;
+
+    #[test]
+    fn a_symlink_action_parses_with_every_field_it_accepts() {
+        // The counterpart to the rejections outside this module: a record
+        // spelling out every field `symlink` takes is accepted and carried out.
+        let tree = Tree::new();
+        tree.repo_file("files/zshrc", "# zsh\n");
+        tree.write_manifest(
+            "[[actions]]\n\
+             type = \"symlink\"\n\
+             id = \"zshrc\"\n\
+             group = \"shell\"\n\
+             source = \"files/zshrc\"\n\
+             dest = \"~/.zshrc\"\n",
+        );
+
+        tree.batfiles().arg("sync").assert().success();
+        assert!(tree.home(".zshrc").is_symlink());
+    }
 
     #[test]
     fn a_symlink_action_creates_the_link_and_says_so() {
@@ -931,22 +1002,6 @@ mod linking {
             link_target(&tree.home(".zshrc")),
             PathBuf::from("../elsewhere")
         );
-    }
-
-    #[test]
-    fn a_source_outside_the_repository_is_refused() {
-        let tree = Tree::new();
-        for source in ["../secrets", "shell/../../secrets", "/etc/hosts"] {
-            let stderr = refused(&tree, &one_symlink(source, "~/.zshrc"));
-            assert!(
-                stderr.contains(source),
-                "`{source}` was not named:\n{stderr}"
-            );
-            assert!(
-                !tree.home(".zshrc").is_symlink(),
-                "`{source}` was linked anyway"
-            );
-        }
     }
 
     #[test]

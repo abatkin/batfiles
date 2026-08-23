@@ -65,8 +65,8 @@ fn link(
         return Err(Error::Unsupported { action: "symlink" });
     }
 
-    let target = source(repository, &action.source)?;
-    let dest = destination(home, &action.dest)?;
+    let target = resolve_source(repository, &action.source)?;
+    let dest = resolve_destination(home, &action.dest);
 
     match fs::symlink_metadata(&dest) {
         Ok(existing) if existing.is_symlink() => {
@@ -121,7 +121,12 @@ fn link(
                 target.display()
             ));
         }
-        Err(source) => return Err(Error::Read { path: dest, source }),
+        Err(error) => {
+            return Err(Error::Read {
+                path: dest,
+                source: error,
+            });
+        }
     }
     Ok(())
 }
@@ -164,22 +169,15 @@ fn anchor(path: &Path) -> Result<PathBuf, Error> {
 
 /// An action's `source`, resolved against the repository that declared it.
 ///
-/// A source names a path within its repository, so an absolute one and one that
-/// climbs out are both refused. `repository` is already anchored, so the result
-/// is too. The containment check is lexical: a symlink deliberately stored
-/// inside the repository may point anywhere, and is followed like any other.
-fn source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
-    if Path::new(source).is_absolute() {
-        return Err(Error::SourceAbsolute {
-            value: source.to_owned(),
-        });
-    }
+/// The manifest has already settled what a source may say, so this expects one
+/// that is relative and lands strictly inside the repository, and checks only
+/// the rule needing a filesystem: the path has to exist. `repository` is already
+/// anchored, so the result is too.
+///
+/// The one place a repository path is resolved, which 6.3 widens to take
+/// `@remote/path` (`guidance.md`, "Seams the late slices need").
+fn resolve_source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
     let resolved = normalize(&repository.join(source));
-    if !resolved.starts_with(repository) {
-        return Err(Error::SourceOutsideRepository {
-            value: source.to_owned(),
-        });
-    }
 
     // Presence, not reachability: a source that is itself a dangling symlink is
     // there, and linking to it is what the repository asked for.
@@ -188,9 +186,9 @@ fn source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             Err(Error::SourceMissing { path: resolved })
         }
-        Err(source) => Err(Error::Read {
+        Err(error) => Err(Error::Read {
             path: resolved,
-            source,
+            source: error,
         }),
     }
 }
@@ -201,20 +199,19 @@ fn source(repository: &Path, source: &str) -> Result<PathBuf, Error> {
 /// an independently discovered one, and an absolute path is used as written.
 /// None of this makes the home a boundary: a destination may deliberately point
 /// outside it, and only `--home-dir` decides what "home" means.
-fn destination(home: &Path, dest: &str) -> Result<PathBuf, Error> {
+///
+/// Infallible: the manifest has already refused an empty `dest` and a `~other`,
+/// so what reaches this is `~`, `~/…`, or an ordinary path.
+fn resolve_destination(home: &Path, dest: &str) -> PathBuf {
     let path = match dest.strip_prefix('~') {
-        Some("") => home.to_path_buf(),
-        Some(rest) if rest.starts_with('/') => home.join(rest.trim_start_matches('/')),
-        Some(_) => {
-            return Err(Error::DestinationOtherHome {
-                value: dest.to_owned(),
-            });
-        }
+        // `~` leaves nothing and `~/…` leaves a separator, so trimming covers
+        // both without a second arm.
+        Some(rest) => home.join(rest.trim_start_matches('/')),
         // `join` returns an absolute `dest` unchanged, which is the rule for
         // one, so the relative and absolute cases are the same line.
         None => home.join(dest),
     };
-    Ok(normalize(&path))
+    normalize(&path)
 }
 
 /// Resolve `.` and `..` textually, without consulting the filesystem.
@@ -264,42 +261,26 @@ mod tests {
         PathBuf::from("/home/user")
     }
 
-    fn dest_of(dest: &str) -> Result<PathBuf, Error> {
-        destination(&home(), dest)
+    fn dest_of(dest: &str) -> PathBuf {
+        resolve_destination(&home(), dest)
     }
+
+    // What a `dest` may say is checked by `manifest`, and tested there. These
+    // cover the other half: what an accepted one resolves to.
 
     #[test]
     fn a_destination_resolves_against_the_selected_home() {
-        assert_eq!(dest_of("~/.zshrc").unwrap(), home().join(".zshrc"));
-        assert_eq!(dest_of(".zshrc").unwrap(), home().join(".zshrc"));
-        assert_eq!(dest_of("~").unwrap(), home());
-        assert_eq!(dest_of("/etc/hosts").unwrap(), PathBuf::from("/etc/hosts"));
-    }
-
-    #[test]
-    fn only_the_selected_home_is_spelled_with_a_tilde() {
-        assert!(dest_of("~other/.zshrc").is_err());
+        assert_eq!(dest_of("~/.zshrc"), home().join(".zshrc"));
+        assert_eq!(dest_of(".zshrc"), home().join(".zshrc"));
+        assert_eq!(dest_of("~"), home());
+        assert_eq!(dest_of("/etc/hosts"), PathBuf::from("/etc/hosts"));
     }
 
     #[test]
     fn a_destination_may_deliberately_leave_the_home() {
         // The home is a base, not a boundary. Someone linking into a sibling
         // directory is expressing intent, not making a mistake.
-        assert_eq!(
-            dest_of("~/../shared/rc").unwrap(),
-            PathBuf::from("/home/shared/rc")
-        );
-    }
-
-    #[test]
-    fn a_source_stays_within_its_repository() {
-        let repository = Path::new("/repo");
-        for escaping in ["/etc/passwd", "../secrets", "files/../../secrets"] {
-            assert!(
-                source(repository, escaping).is_err(),
-                "`{escaping}` was accepted"
-            );
-        }
+        assert_eq!(dest_of("~/../shared/rc"), PathBuf::from("/home/shared/rc"));
     }
 
     #[test]

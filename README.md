@@ -33,9 +33,11 @@ Implemented so far: `symlink`.
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
   destroy what it did not create.
-- **The manifest is read strictly.** An unknown key, an unknown action type, or
-  a section belonging to an unbuilt part of the format is an error — never a
-  setting that looks accepted and does nothing.
+- **The manifest is read strictly.** An unknown key, an unknown action type, a
+  section belonging to an unbuilt part of the format, or a `source` or `dest`
+  that cannot mean what it says is an error — never a setting that looks
+  accepted and does nothing. All of it is caught while the file is read, so a
+  manifest batfiles will not honor stops the run before it installs half of it.
 - **An option that is not live yet is refused rather than ignored.** `sync
   --dry-run` exits 2 naming the option, because silently accepting it would let
   you believe a dry run had happened.

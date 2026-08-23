@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::item::ItemId;
+use crate::manifest;
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -29,11 +29,17 @@ pub(crate) enum Error {
     #[error("could not determine the current directory: {source}")]
     WorkingDirectory { source: io::Error },
 
-    // Documents batfiles reads.
-    /// A document that could not be read off the disk.
+    // Touching the filesystem, for documents, actions, and state files alike.
+    /// A path that could not be read or inspected: a document off the disk, or
+    /// a destination whose existing node had to be identified.
     #[error("could not read {}: {source}", .path.display())]
     Read { path: PathBuf, source: io::Error },
 
+    /// A path that could not be created or replaced.
+    #[error("could not write {}: {source}", .path.display())]
+    Write { path: PathBuf, source: io::Error },
+
+    // The documents batfiles parses.
     /// A document that was read but is not valid TOML. The `toml` message is a
     /// multi-line excerpt pointing at the value, so it goes last and on its own
     /// line.
@@ -43,32 +49,13 @@ pub(crate) enum Error {
         source: toml::de::Error,
     },
 
-    /// Two actions claiming one ID, which would make every address naming it
-    /// ambiguous. The first manifest rule serde cannot check on its own; when
-    /// the third lands these collapse into one variant over a rule enum.
-    #[error(
-        "invalid configuration in {}: action {second} repeats the id `{id}`, \
-         which action {first} already uses",
-        .path.display()
-    )]
-    DuplicateActionId {
+    /// A manifest that is valid TOML but breaks a rule serde cannot express.
+    /// The rules themselves are in [`manifest::Invalid`].
+    #[error("invalid configuration in {}: {source}", .path.display())]
+    InvalidManifest {
         path: PathBuf,
-        id: ItemId,
-        first: usize,
-        second: usize,
+        source: manifest::Invalid,
     },
-
-    // Paths a record wrote that batfiles will not use as written.
-    #[error("source `{value}` is absolute; a source names a path within the repository")]
-    SourceAbsolute { value: String },
-
-    #[error("source `{value}` resolves outside the repository")]
-    SourceOutsideRepository { value: String },
-
-    #[error(
-        "destination `{value}` names another user's home; `~` expands only to the selected home"
-    )]
-    DestinationOtherHome { value: String },
 
     // Carrying an action out.
     /// An action naming a source the repository does not contain.
@@ -82,10 +69,6 @@ pub(crate) enum Error {
         .path.display()
     )]
     DestinationExists { path: PathBuf, found: ExistingNode },
-
-    /// A path that could not be created, replaced, or inspected.
-    #[error("could not write {}: {source}", .path.display())]
-    Write { path: PathBuf, source: io::Error },
 
     /// An action this build of batfiles cannot carry out on this platform.
     #[error("`{action}` actions are not supported on this platform")]

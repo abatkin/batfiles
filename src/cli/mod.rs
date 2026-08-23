@@ -5,7 +5,8 @@
 //! input is deliberately not read here.
 //!
 //! The whole surface parses from the first slice, so the product is visible
-//! before it works. Only `version` does anything yet.
+//! before it works. `version` and `sync` are the only commands that do
+//! anything yet.
 
 mod actions;
 mod init;

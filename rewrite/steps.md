@@ -49,14 +49,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   `docs/repoformat.md`'s destination table.
 - **0.10** ✅ Promote `safety.md`'s destination resolution and symlink traversal
   rules into `docs/`, lifted to general statements before `create-dir` and `copy`
-  arrive. Absorbed 0.9, which proposed staging a link repair through a temporary
-  sibling and was dropped rather than built: an owned symlink carries no content,
-  so the window it closed cost nothing that the next `sync` does not rebuild.
+  arrive. Absorbed 0.9, so no bullet defines that number.
 - **0.11** ✅ Make rule 1 mechanical in `tests/hygiene.rs`: no `allow(dead_code)`
-  under `src/`, and every `expect(dead_code)` carrying a `reason`. The second
-  half this step proposed — linting the default targets too — was dropped rather
-  than built: `--all-targets` already includes them, so `cfg(test)`-only dead
-  code is reported today.
+  under `src/`, and every `expect(dead_code)` carrying a `reason`.
 - **0.12** ✅ Add the cross-target build 0.7 left on the honor system: `task
   lint` checks `x86_64-pc-windows-msvc` too, so an ubuntu-only CI catches a
   `#[cfg(unix)]` gate that has rotted.
@@ -64,15 +59,12 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   ✅, so a carried-forward note self-cleans the way rule 1's annotations do
   (`guidance.md`, "Carrying work forward").
 - **0.14** ✅ Add the unimplemented-option check every command calls at entry,
-  and populate it from the options ported at 0.2 (`guidance.md`, rule 12). An
-  option arriving with its own command is deliberately not listed, so
-  `--no-git-init` and `--machine-only` wait for 8.1 and 5.8 without an entry.
+  and populate it from the options ported at 0.2 (`guidance.md`, rule 12).
 - **0.15** ✅ Add a real leaf repository under `tests/fixtures/` and CLI tests
   that sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails.
 - **0.16** ✅ Rewrite the project `README.md` to describe what the binary does
-  today. Keeping it honest thereafter is a line in the definition of done, and
-  its action-type list is held to the `Action` enum by `tests/hygiene.rs`.
+  today.
 
 ## Slice 1 — The rest of the local actions
 

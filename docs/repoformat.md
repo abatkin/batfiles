@@ -42,9 +42,14 @@ state instead.
 - A valid TOML file is not automatically a valid manifest: the records below are
   closed, so an unknown key is an error too. An empty document is still a valid
   manifest, since every section is optional.
-- A document that parses but breaks a rule spanning more than one record — the
-  [uniqueness of action IDs](#names-and-ids), so far — is an error on the same
-  terms, raised before anything acts on any of it.
+- A document that parses but breaks a rule TOML cannot express is an error on
+  the same terms, raised before anything acts on any of it. Two kinds: a rule
+  spanning more than one record, such as the
+  [uniqueness of action IDs](#names-and-ids); and a rule about the shape of a
+  single value that its type does not capture, such as what a `source` and a
+  `dest` may say. Both are decidable from the document alone, so both are
+  settled while it is being read. The diagnostic names the action by its
+  position in the file, counting from 1.
 
 ## Top-level schema
 
@@ -84,11 +89,21 @@ variables.
 A `source` names a path in a repository, and a `dest` names a path on the
 machine. Which of the two an action takes is a property of the action type, and
 the tables below say; these rules decide what the field means wherever one
-appears. Both kinds are resolved when the action runs rather than when the
-manifest is read, and both are anchored to absolute paths first. A selected root may be written relative to
-wherever batfiles was invoked, and a path batfiles stores on disk — the target of
-a symlink, say — is read back relative to its own location rather than to that
-working directory.
+appears.
+
+The two happen at different moments, and the split is worth stating once:
+
+- **What a path may say is settled when the manifest is read.** Every rule below
+  about the shape of a written value is decidable from the document alone, with
+  no root selected and no filesystem consulted, so a manifest that says
+  something batfiles cannot honor is refused whole rather than partway through
+  executing it.
+- **What a path resolves to is settled when the action runs.** Anchoring to
+  absolute paths, and the one rule that genuinely needs a filesystem — whether a
+  `source` exists — cannot be answered earlier and are not attempted earlier. A
+  selected root may be written relative to wherever batfiles was invoked, and a
+  path batfiles stores on disk, such as the target of a symlink, is read back
+  relative to its own location rather than to that working directory.
 
 Resolution is lexical throughout: `.` and `..` are cancelled textually, and
 batfiles does not canonicalize every component to prove where a path ends up. A
@@ -97,14 +112,35 @@ operating-system path resolution, because that link is something the user put
 there deliberately.
 
 **A `source` is contained by its repository.** It resolves from the repository
-that declared it, and the result must stay inside that repository. An absolute
-source is invalid, and so is a relative one that normalizes outside it, even
+that declared it, and the result must stay inside that repository. A source that
+names its own starting point is invalid — a leading `/`, a leading `\`, or a
+drive letter such as `C:config` — and so is a relative one that climbs out, even
 where the outside path exists; an internal `.` or `..` is fine as long as the
-result stays in. The containment check is lexical, so a symlink deliberately
-stored inside the repository may point anywhere and is followed like any other.
-The path must exist: a repository naming a file it does not contain is a mistake
-batfiles can see, and the alternative is installing something that points at
-nothing.
+result stays in. How far a relative source climbs is a property of the source
+itself, so this is decided while the manifest is read, before any repository is
+selected. The containment check is lexical, so a symlink deliberately stored
+inside the repository may point anywhere and is followed like any other.
+
+The three anchored spellings are named individually because "absolute" does not
+cover them on every platform: Windows treats a path as absolute only when it
+carries both a drive and a root, so `/etc/hosts` and `C:config` are absolute by
+neither that definition nor any useful one, while both still start somewhere
+outside the repository. A manifest is meant to be shared between machines, so
+the rule is the same everywhere: a `source` is written relative to the
+repository root, with `/` separators.
+
+**A `source` names a path *within* the repository, not the repository itself.**
+An empty `source` is invalid, and so is one that lands on the repository root —
+`.`, `./`, and `shell/..` all do. Such a source would install the whole
+repository, `batfiles.toml` and `.git` along with it, which is what a manifest
+that lost a value looks like rather than what one asking for that looks like.
+The two are reported differently, because an empty field is something left blank
+while the others named a real path and need to say which part was meant.
+
+**A `source` must exist.** A repository naming a file it does not contain is a
+mistake batfiles can see, and the alternative is installing something that
+points at nothing. This is the one path rule that needs a filesystem, so it is
+the one checked when the action runs rather than when the manifest is read.
 
 **A `dest` is anchored to the selected home, which is not a boundary.** A `dest`
 beginning with `~` uses the selected home rather than an independently discovered
@@ -114,6 +150,16 @@ destinations sit in the home by convention rather than by rule: `--home-dir`
 selects the base for home-relative behavior, it does not create a jail. People
 symlink parts of their home onto other volumes, and an explicit absolute or
 traversing destination has to keep working.
+
+**An empty `dest` is invalid; write `~` for the home directory itself.** The two
+would otherwise mean the same thing, and only one of them says so on purpose. A
+`dest` that has gone missing — a field left blank, a value a template never
+filled in — looks exactly like the empty one, so batfiles refuses it and names
+the spelling that is deliberate.
+
+That and `~user` are the two things a `dest` may not say. There is no
+containment rule here to match the one on `source`, because the home is a base
+rather than a boundary.
 
 Where the selected home cannot be determined, batfiles reports that rather than
 silently substituting the working directory. See
@@ -190,10 +236,10 @@ source = "shell/zshrc"
 dest = "~/.zshrc"
 ```
 
-| Field    | Type   | Required | Description                                  |
-|----------|--------|:--------:|----------------------------------------------|
-| `source` | string |   yes    | The source, relative to the repository root. |
-| `dest`   | string |   yes    | The destination path, as written.            |
+| Field    | Type   | Required | Description                                                        |
+|----------|--------|:--------:|--------------------------------------------------------------------|
+| `source` | string |   yes    | The source, relative to the repository root. Never empty.          |
+| `dest`   | string |   yes    | The destination path, as written. Never empty; `~` is the home.    |
 
 `source` is the link's target and `dest` is the link itself; both follow
 [Sources and destinations](#sources-and-destinations). The anchoring matters more

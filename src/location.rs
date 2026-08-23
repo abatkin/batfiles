@@ -17,6 +17,10 @@ use crate::manifest::Manifest;
 /// Names and values are already lossily decoded, so no `OsString` travels
 /// further. The map is ordered, which keeps iteration — and therefore tests —
 /// deterministic.
+// CARRY(3.4): the capture shares this file with the root resolution because
+// resolving roots is nearly all it is read for. `Environment::list` is the
+// first accessor that is about something else, so it is the point at which
+// this type earns an `env.rs` of its own.
 #[derive(Debug)]
 pub(crate) struct Environment {
     entries: BTreeMap<String, String>,

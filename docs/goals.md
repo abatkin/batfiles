@@ -1,4 +1,4 @@
-# Batfiles Manifesto
+# Batfiles Product Goals
 
 ## Purpose
 
