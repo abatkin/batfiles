@@ -1,7 +1,7 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, and the one kind of action it can declare. The rest of the schema —
+it is read, and the two kinds of action it can declare. The rest of the schema —
 remotes, variables, conditions, and the other action types — is in
 [`future/repoformat.md`](future/repoformat.md) until those records parse.
 
@@ -220,9 +220,14 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink` is the only one that exists.     |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink` and `symlink-dir` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. Validated as an ID; nothing selects by group yet. |
+
+Each variant's record is closed independently, so a field belonging to the other
+variant is an unknown field rather than one that is quietly ignored. Writing
+`source-dir` on a `symlink` is an error, and so is writing `source` on a
+`symlink-dir`.
 
 ### `symlink`
 
@@ -270,7 +275,73 @@ error naming the action rather than a silent skip or a copy substituted for the
 link. The check happens before the destination is examined, so the refusal
 arrives without anything already there having been inspected or touched.
 
-Directory mode, which links a directory's children through `source-dir`,
-`dest-dir`, and glob filters, is specified in
-[`future/repoformat.md`](future/repoformat.md#symlink) and is not built. A
-manifest that writes those fields is rejected rather than linking nothing.
+### `symlink-dir`
+
+Declares one symlink per direct child of a directory in the repository, all of
+them in one destination directory.
+
+```toml
+[[actions]]
+type = "symlink-dir"
+id = "rcfiles"
+source-dir = "files"
+dest-dir = "~"
+dot-prefix = true
+```
+
+| Field        | Type    | Required | Description                                                             |
+|--------------|---------|:--------:|---------------------------------------------------------------------------|
+| `source-dir` | string  |   yes    | The directory whose direct children are linked, relative to the root.     |
+| `dest-dir`   | string  |   yes    | The directory the links are made in. Created if it is missing.            |
+| `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.                 |
+
+This is the action for a directory whose contents you do not want to enumerate.
+Adding a file to `source-dir` installs it on the next `sync` with no change to
+the manifest, which is the whole reason it exists rather than one `symlink` per
+file.
+
+`source-dir` follows the [`source` rules](#sources-and-destinations) and
+`dest-dir` the `dest` rules; both are decided while the manifest is read. A
+`source-dir` naming the repository root is refused by the rule that already
+covers it, which matters more here than for `symlink` — it would link
+`batfiles.toml` and `.git` into the home rather than install one of them.
+
+**One link per direct child, whatever the child is.** Nothing descends. A child
+that is itself a directory becomes a single symlink to that directory, exactly
+as a directory `source` does for `symlink`, and what is under it is reached
+through that one link. So `files/config/` holding `a` and `b` installs as one
+link at `~/.config`, not as a directory holding two.
+
+**The children are linked in sorted order**, because the order a filesystem
+happens to hold them in is not one anybody can diff.
+
+**`dest-dir` is a container, not a destination.** It is resolved following a
+final symlink, unlike the destination of each individual link: a home whose
+`~/.config` is a link onto another volume is an ordinary arrangement, and the
+links are made where it points. It may hold entries batfiles did not put there,
+and those are left alone. Where it holds something that is not a directory —
+a regular file, or a symlink resolving to one — the action fails and names it
+under [Replacing what is already there](#replacing-what-is-already-there).
+
+Each child's own destination is then decided by that same section, one at a
+time. A child link batfiles owns is repaired; anything else stops the action
+where it stands, so the children before it stay installed and the ones after it
+are not attempted. That is what stopping at the first failure already means
+across a manifest, applied within one action.
+
+**`dot-prefix` refuses a child that is already dotted.** A `source-dir`
+containing `.hidden` would install `..hidden`, which is a legal file name and
+never the one that was meant, so the action fails and names the child. A
+dot-prefixed directory holds undotted names.
+
+An empty `source-dir` links nothing and is not an error; `-v` says so. A
+`source-dir` that exists but is not a directory is an error, because there are
+no children to link and linking the thing itself is what `symlink` is for.
+
+The platform rule is `symlink`'s: where batfiles cannot create a symlink the
+action is refused by name, before the source directory is read.
+
+Filtering the children — `include` and `exclude` — is specified in
+[`future/repoformat.md`](future/repoformat.md#symlink-dir) and is not built. A
+manifest that writes either is rejected rather than linking every child while
+looking as though it had linked a chosen few.

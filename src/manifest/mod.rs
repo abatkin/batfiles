@@ -91,6 +91,14 @@ impl Manifest {
                     check_source(&symlink.source, action_number)?;
                     check_dest(&symlink.dest, action_number)?;
                 }
+                Action::SymlinkDir(symlink) => {
+                    // The same two rules: a `source-dir` is a source and a
+                    // `dest-dir` is a destination. Refusing the repository root
+                    // matters more here — it would link `batfiles.toml` and
+                    // `.git` into the home rather than install one of them.
+                    check_source(&symlink.source_dir, action_number)?;
+                    check_dest(&symlink.dest_dir, action_number)?;
+                }
             }
         }
         Ok(())

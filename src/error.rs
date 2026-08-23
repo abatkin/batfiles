@@ -62,6 +62,21 @@ pub(crate) enum Error {
     #[error("no such file in the repository: {}", .path.display())]
     SourceMissing { path: PathBuf },
 
+    /// A `source-dir` naming something the repository holds, but not a
+    /// directory. There are no children to link, and linking the thing itself
+    /// is what a `symlink` action is for.
+    #[error("not a directory: {}", .path.display())]
+    SourceNotADirectory { path: PathBuf },
+
+    /// A dot-prefixed action over a child whose name already starts with `.`.
+    /// The link would be `..name`, which is a legal file name and never the
+    /// one that was meant.
+    #[error(
+        "`{child}` already starts with a dot, so `dot-prefix` would install it as `.{child}`; \
+         a dot-prefixed directory holds undotted names"
+    )]
+    DotPrefixOnDotfile { child: String },
+
     /// A destination holding something batfiles did not create and cannot
     /// safely replace (`guidance.md`, rule 13).
     #[error(

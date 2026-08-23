@@ -458,9 +458,9 @@ bootstrap policy belongs to the leaf repository.
 
 The ordered list, the tagged-record shape, and the common `type`, `id`, and
 `group` fields are specified in
-[`docs/repoformat.md`](../repoformat.md#actions), along with `symlink`'s single
-mode. `when` and `unless` are not built, nor is any variant other than
-`symlink`.
+[`docs/repoformat.md`](../repoformat.md#actions), along with `symlink` and
+`symlink-dir` in full. `when` and `unless` are not built, nor is any variant
+other than those two.
 
 `[[actions]]` is an ordered heterogeneous array. Each action is a tagged record
 selected by its required `type` field.
@@ -474,45 +474,40 @@ All action variants share these fields:
 | `when`  | `Condition`        |    no    | Conditionally enables the action.                                          |
 | `group` | `ID`               |    no    | Places the action in one group.                                            |
 
-### `symlink`
+### `symlink-dir`
 
-Single mode — `source` and `dest` — is specified in
-[`docs/repoformat.md`](../repoformat.md#symlink). Directory mode below is not
-built, and a manifest that writes its fields is rejected.
+The action itself — `source-dir`, `dest-dir`, and `dot-prefix` — is built and
+specified in [`docs/repoformat.md`](../repoformat.md#symlink-dir). Only the two
+filters below are not built, and a manifest that writes either is rejected.
 
-Creates one symlink or a shallow set of symlinks. Exactly one of the two modes
-is valid.
-
-Single-item mode:
-
-```toml
-[[actions]]
-type = "symlink"
-source = "shell/zshrc"
-dest = "~/.zshrc"
-```
-
-Directory mode:
+This was originally specified as a second *mode* of `symlink`, selected by
+writing `source-dir` instead of `source`, with "exactly one of the two modes is
+valid" as a rule spanning the record. It was built as its own action type
+instead: each record is then closed independently, serde decides which fields
+are required, and there is no half-inert record whose meaning depends on a
+sibling field. The build wins, per [`docs/README.md`](../README.md).
 
 ```toml
 [[actions]]
-type = "symlink"
+type = "symlink-dir"
 source-dir = "files"
 dest-dir = "~"
 include = ["zshrc", "config"]
 exclude = "private"
-dot-prefix = true
 ```
 
-| Field        | Type         | Mode                | Description                                                         |
-|--------------|--------------|---------------------|---------------------------------------------------------------------|
-| `source`     | `RepoPath`   | single, required    | Source file, symlink, or directory.                                 |
-| `dest`       | string       | single, required    | Exact destination path.                                             |
-| `source-dir` | `RepoPath`   | directory, required | Directory whose direct children are selected.                       |
-| `dest-dir`   | string       | directory, required | Destination directory for selected children.                        |
-| `include`    | `GlobFilter` | directory, optional | Direct child names to include.                                      |
-| `exclude`    | `GlobFilter` | directory, optional | Direct child names to exclude.                                      |
-| `dot-prefix` | boolean      | directory, optional | Prefix the first destination segment with `.`; defaults to `false`. |
+| Field     | Type         | Required | Description                    |
+|-----------|--------------|:--------:|----------------------------------|
+| `include` | `GlobFilter` |    no    | Direct child names to include. |
+| `exclude` | `GlobFilter` |    no    | Direct child names to exclude. |
+
+Neither is built, and neither is scheduled. They were deferred rather than
+declined: the two repositories this action exists for need no filter, adding one
+to an existing record later is purely additive, and the pattern dialect is an
+open question a real need should settle. Note that a child is a single path
+segment here, since nothing descends — so a `GlobFilter` in this action can
+never usefully contain a `/`, which is what distinguishes it from
+[`copy`](#copy)'s filters, where selection is recursive.
 
 ### `copy`
 

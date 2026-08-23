@@ -68,18 +68,22 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 
 ## Slice 1 — The rest of the local actions
 
-- **1.1** Add `create-dir`.
-- **1.2** Add `copy` with its missing-only seed semantics, preserved once
+- **1.1** ✅ Add `symlink-dir`: one link per direct child of a directory, into
+  one destination directory, with an optional `dot-prefix`.
+- **1.2** Add `create-dir`.
+- **1.3** Add `copy` with its missing-only seed semantics, preserved once
   created.
-- **1.3** Extract only what all three variants genuinely share, and not before
-  all three exist. The candidates are already visible in `src/sync.rs`:
-  destination resolution, source resolution, and creating a missing parent are
-  each written for `symlink` alone. This is also where `action/` earns its
+- **1.4** Extract only what all four variants genuinely share, and not before
+  all four exist. The candidates are visible in `src/sync.rs`: destination
+  resolution, source resolution, and creating a missing parent are all written
+  for the two symlink types, which 1.1 already made share `link_one` — the
+  question is what `create-dir` and `copy` turn out to want from the same set,
+  and it is not answerable until they do. This is also where `action/` earns its
   directory and `sync.rs` stops holding both the loop and one action's work. The
   accessors that match over every variant are the same question in miniature:
   0.6 wrote `Action::id()` as the first, 3.2 reads `group` as the second, and at
   the third they collapse into one `fn common(&self)`.
-- **1.4** Extend `tests/fixtures/leaf` and add one CLI test per action type.
+- **1.5** Extend `tests/fixtures/leaf` and add one CLI test per action type.
   `create-dir` and `copy` are not platform-specific, so their fixture
   expectations go *outside* `mod linking` (`guidance.md`, "Test environments");
   only the symlink half belongs in it. `LEAF_ACTIONS` sits inside that module

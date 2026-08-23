@@ -157,6 +157,17 @@ fn one_symlink(source: &str, dest: &str) -> String {
     format!("[[actions]]\ntype = \"symlink\"\nsource = \"{source}\"\ndest = \"{dest}\"\n")
 }
 
+/// A manifest declaring one `symlink-dir` and nothing else.
+fn one_symlink_dir(source_dir: &str, dest_dir: &str, dot_prefix: bool) -> String {
+    format!(
+        "[[actions]]\n\
+         type = \"symlink-dir\"\n\
+         source-dir = \"{source_dir}\"\n\
+         dest-dir = \"{dest_dir}\"\n\
+         dot-prefix = {dot_prefix}\n"
+    )
+}
+
 /// Where a symlink points, without following it.
 #[cfg(unix)]
 fn link_target(path: &Path) -> PathBuf {
@@ -515,9 +526,11 @@ fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
 }
 
 #[test]
-fn a_field_the_symlink_record_does_not_have_yet_is_rejected() {
-    // Directory mode is specified and not built. Ignoring it would link
-    // nothing while looking like it linked a directory's worth.
+fn the_two_symlink_types_do_not_share_a_field_set() {
+    // `symlink` links one path and `symlink-dir` links a directory's children.
+    // Each record is closed, so a field belonging to the other type is an
+    // error rather than something quietly ignored — which is what borrowing
+    // one field from the wrong type would otherwise be.
     let stderr = rejected(
         "[[actions]]\n\
          type = \"symlink\"\n\
@@ -528,6 +541,71 @@ fn a_field_the_symlink_record_does_not_have_yet_is_rejected() {
         stderr.contains("source-dir"),
         "the field was not named:\n{stderr}"
     );
+
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink-dir\"\n\
+         source = \"files/zshrc\"\n\
+         dest-dir = \"~\"\n",
+    );
+    assert!(
+        stderr.contains("source"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_filter_symlink_dir_does_not_have_yet_is_rejected() {
+    // `include` and `exclude` are specified in `docs/future/repoformat.md` and
+    // not built. Ignoring one would link every child while looking as though
+    // it had linked a chosen few, which is the worse of the two failures.
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink-dir\"\n\
+         source-dir = \"files\"\n\
+         dest-dir = \"~\"\n\
+         exclude = \"README.md\"\n",
+    );
+    assert!(
+        stderr.contains("exclude"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_symlink_dir_missing_a_required_field_is_rejected() {
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"symlink-dir\"\n\
+         source-dir = \"files\"\n",
+    );
+    assert!(
+        stderr.contains("dest-dir"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_symlink_dirs_paths_follow_the_same_rules_as_a_symlinks() {
+    // `source-dir` is a source and `dest-dir` is a destination, so both are
+    // decided from the manifest alone by the same two checkers. The
+    // repository-root case matters more here than it does for `symlink`:
+    // it would link `batfiles.toml` and `.git` into the home rather than
+    // install one of them.
+    for (source_dir, dest_dir, expected) in [
+        ("../secrets", "~", "resolves outside the repository"),
+        ("/etc", "~", "not relative to the repository root"),
+        (".", "~", "names the whole repository"),
+        ("", "~", "source is empty"),
+        ("files", "", "dest is empty"),
+        ("files", "~other/x", "another user's home"),
+    ] {
+        let stderr = rejected(&one_symlink_dir(source_dir, dest_dir, false));
+        assert!(
+            stderr.contains(expected),
+            "no `{expected}` for `{source_dir}` -> `{dest_dir}` in:\n{stderr}"
+        );
+    }
 }
 
 #[test]
@@ -1020,14 +1098,317 @@ mod linking {
         );
     }
 
+    // `symlink-dir`: one link per direct child of a directory, all of them in
+    // one destination directory.
+
+    /// A repository holding `files/{ackrc,zshrc}` and a directory child
+    /// `files/config/` with something inside it, which is the shape every case
+    /// below reasons about.
+    fn with_children(tree: &Tree) {
+        tree.repo_file("files/zshrc", "# zsh\n");
+        tree.repo_file("files/ackrc", "--smart-case\n");
+        tree.repo_file("files/config/starship.toml", "# prompt\n");
+    }
+
+    #[test]
+    fn a_symlink_dir_action_links_every_direct_child() {
+        let tree = Tree::new();
+        with_children(&tree);
+        tree.write_manifest(&one_symlink_dir("files", "~/installed", false));
+
+        tree.batfiles().arg("sync").assert().success();
+
+        // The destination directory did not exist, and holds exactly the three
+        // children — no more, and nothing renamed.
+        assert_eq!(
+            entries(&tree.home("installed")),
+            ["ackrc", "config", "zshrc"]
+        );
+        for child in ["ackrc", "config", "zshrc"] {
+            assert_eq!(
+                link_target(&tree.home(&format!("installed/{child}"))),
+                tree.path("repo").join("files").join(child),
+                "`{child}` does not point into the repository"
+            );
+        }
+    }
+
+    #[test]
+    fn a_directory_child_is_one_link_with_its_contents_reached_through_it() {
+        // Decision 3: every direct child becomes exactly one symlink, whatever
+        // it is. Nothing descends, so a file added under `files/config/` later
+        // appears without the manifest or a further sync mentioning it.
+        let tree = Tree::new();
+        with_children(&tree);
+        tree.write_manifest(&one_symlink_dir("files", "~/installed", false));
+
+        tree.batfiles().arg("sync").assert().success();
+        assert!(tree.home("installed/config").is_symlink());
+        assert_eq!(
+            fs::read_to_string(tree.home("installed/config/starship.toml"))
+                .expect("the directory link resolves"),
+            "# prompt\n"
+        );
+
+        // Added after the sync, and reachable with no second run.
+        tree.repo_file("files/config/added-later.toml", "# later\n");
+        assert!(tree.home("installed/config/added-later.toml").exists());
+    }
+
+    #[test]
+    fn dot_prefix_dots_every_installed_name_and_nothing_else() {
+        let tree = Tree::new();
+        with_children(&tree);
+        tree.write_manifest(&one_symlink_dir("files", "~", true));
+
+        tree.batfiles().arg("sync").assert().success();
+        assert_eq!(entries(&tree.path("home")), [".ackrc", ".config", ".zshrc"]);
+        // The name in the repository is undotted, which is the point: a
+        // repository reads better without a tree of dot-files in it.
+        assert_eq!(
+            link_target(&tree.home(".zshrc")),
+            tree.path("repo").join("files/zshrc")
+        );
+    }
+
+    #[test]
+    fn the_children_are_linked_in_a_stable_order() {
+        // `read_dir` yields whatever order the filesystem holds. An action that
+        // reports its work differently on every machine is one nobody can diff.
+        let tree = Tree::new();
+        for name in ["zshrc", "ackrc", "inputrc", "curlrc"] {
+            tree.repo_file(&format!("files/{name}"), "# rc\n");
+        }
+        tree.write_manifest(&one_symlink_dir("files", "~", true));
+
+        let assertion = tree
+            .batfiles()
+            .args(["--color", "never", "sync"])
+            .assert()
+            .success();
+        let reported: Vec<String> = stderr_of(&assertion)
+            .lines()
+            .filter_map(|line| Some(line.strip_prefix("linked ")?.split(' ').next()?.to_owned()))
+            .collect();
+        let expected: Vec<String> = [".ackrc", ".curlrc", ".inputrc", ".zshrc"]
+            .iter()
+            .map(|name| display(&tree.home(name)))
+            .collect();
+        assert_eq!(reported, expected);
+    }
+
+    #[test]
+    fn an_existing_destination_directory_is_used_rather_than_refused() {
+        // `dest-dir` is the container the links go in, not a node the action
+        // installs, so finding one already there is the ordinary case — and it
+        // may hold things batfiles did not put there.
+        let tree = Tree::new();
+        with_children(&tree);
+        fs::create_dir(tree.home("bin")).expect("an existing directory");
+        fs::write(tree.home("bin/theirs"), "mine\n").expect("a file inside it");
+        tree.write_manifest(&one_symlink_dir("files", "~/bin", false));
+
+        tree.batfiles().arg("sync").assert().success();
+        assert_eq!(
+            entries(&tree.home("bin")),
+            ["ackrc", "config", "theirs", "zshrc"]
+        );
+        assert_eq!(
+            fs::read_to_string(tree.home("bin/theirs")).expect("the file"),
+            "mine\n"
+        );
+    }
+
+    #[test]
+    fn a_destination_directory_symlinked_elsewhere_is_followed() {
+        // Unlike a destination, which is judged without following a final
+        // link, `dest-dir` is resolved: someone whose `~/.config` lives on
+        // another volume put that link there deliberately.
+        let tree = Tree::new();
+        with_children(&tree);
+        let elsewhere = tree.path("elsewhere");
+        fs::create_dir(&elsewhere).expect("a directory on another volume");
+        std::os::unix::fs::symlink(&elsewhere, tree.home("bin")).expect("a deliberate link");
+        tree.write_manifest(&one_symlink_dir("files", "~/bin", false));
+
+        tree.batfiles().arg("sync").assert().success();
+        assert_eq!(entries(&elsewhere), ["ackrc", "config", "zshrc"]);
+        assert!(tree.home("bin").is_symlink(), "the link was replaced");
+    }
+
+    #[test]
+    fn a_symlink_dir_run_twice_changes_nothing() {
+        let tree = Tree::new();
+        with_children(&tree);
+        tree.write_manifest(&one_symlink_dir("files", "~", true));
+        tree.batfiles().arg("sync").assert().success();
+
+        tree.batfiles().arg("sync").assert().success().stderr("");
+        let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+        let stderr = stderr_of(&assertion);
+        for name in [".ackrc", ".config", ".zshrc"] {
+            let expected = format!("unchanged {}", display(&tree.home(name)));
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+    }
+
+    #[test]
+    fn an_empty_source_directory_links_nothing_and_says_so_only_at_verbose() {
+        // Not an error: a directory that is empty today is a repository in
+        // progress, not a manifest that cannot be honored.
+        let tree = Tree::new();
+        fs::create_dir_all(tree.path("repo/files")).expect("an empty source directory");
+        tree.write_manifest(&one_symlink_dir("files", "~/installed", false));
+
+        tree.batfiles().arg("sync").assert().success().stderr("");
+        let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+        assert!(
+            stderr_of(&assertion).contains("no children to link"),
+            "the empty directory was not reported:\n{}",
+            stderr_of(&assertion)
+        );
+    }
+
+    #[test]
+    fn a_child_that_is_already_a_dotfile_is_refused_under_dot_prefix() {
+        // `..hidden` is a legal file name and never the one that was meant, so
+        // the mistake is named rather than installed.
+        let tree = Tree::new();
+        with_children(&tree);
+        tree.repo_file("files/.hidden", "# oops\n");
+
+        let stderr = refused(&tree, &one_symlink_dir("files", "~", true));
+        for expected in [".hidden", "..hidden"] {
+            assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert!(
+            !tree.home("..hidden").exists(),
+            "the doubly-dotted name was installed anyway"
+        );
+    }
+
+    #[test]
+    fn a_source_directory_that_is_not_a_directory_is_refused() {
+        // There are no children to link, and linking the file itself is what a
+        // `symlink` action is for.
+        let tree = Tree::new();
+        with_children(&tree);
+
+        let stderr = refused(&tree, &one_symlink_dir("files/zshrc", "~/installed", false));
+        for expected in [
+            "not a directory".to_owned(),
+            display(&tree.path("repo/files/zshrc")),
+        ] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+    }
+
+    #[test]
+    fn a_source_directory_the_repository_does_not_have_is_refused() {
+        let tree = Tree::new();
+        let stderr = refused(&tree, &one_symlink_dir("files", "~/installed", false));
+        assert!(
+            stderr.contains(&display(&tree.path("repo/files"))),
+            "the source was not named:\n{stderr}"
+        );
+    }
+
+    #[test]
+    fn a_destination_directory_holding_a_file_is_refused() {
+        let tree = Tree::new();
+        with_children(&tree);
+        fs::write(tree.home("bin"), "mine\n").expect("an existing file");
+
+        let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
+        for expected in [display(&tree.home("bin")), "a regular file".to_owned()] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert_eq!(
+            fs::read_to_string(tree.home("bin")).expect("the file"),
+            "mine\n"
+        );
+    }
+
+    #[test]
+    fn a_destination_directory_that_is_a_dangling_link_is_named_rather_than_hit() {
+        // Nothing resolves there, so the directory looks absent — and creating
+        // it fails with a bare `EEXIST` naming nothing unless the link is
+        // identified first.
+        let tree = Tree::new();
+        with_children(&tree);
+        let nowhere = tree.path("nowhere");
+        std::os::unix::fs::symlink(&nowhere, tree.home("bin")).expect("a dangling link");
+
+        let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
+        for expected in [display(&tree.home("bin")), display(&nowhere)] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert!(tree.home("bin").is_symlink(), "the link was removed");
+    }
+
+    #[test]
+    fn an_occupied_child_destination_stops_the_action_where_it_stands() {
+        // Rule 13 inside one action. Partial application within a
+        // `symlink-dir` is the same story as partial application across a
+        // manifest: earlier children stay, later ones are not attempted.
+        let tree = Tree::new();
+        with_children(&tree);
+        // `config` sorts between `ackrc` and `zshrc`, so one child is installed
+        // before the refusal and one is never reached.
+        fs::create_dir(tree.home("installed")).expect("the destination directory");
+        fs::write(tree.home("installed/config"), "mine\n").expect("an occupied child");
+
+        let stderr = refused(&tree, &one_symlink_dir("files", "~/installed", false));
+        assert!(
+            stderr.contains(&display(&tree.home("installed/config"))),
+            "the child was not named:\n{stderr}"
+        );
+        assert!(
+            tree.home("installed/ackrc").is_symlink(),
+            "the child before the refusal was rolled back"
+        );
+        assert!(
+            fs::symlink_metadata(tree.home("installed/zshrc")).is_err(),
+            "a child after the refusal was installed"
+        );
+        assert_eq!(
+            fs::read_to_string(tree.home("installed/config")).expect("the file"),
+            "mine\n"
+        );
+    }
+
+    #[test]
+    fn a_child_link_batfiles_owns_is_repaired() {
+        // The same rule `symlink` follows, reached through the same code: a
+        // link pointing elsewhere in the repository holds no content of its
+        // own, so repointing it loses nothing.
+        let tree = Tree::new();
+        with_children(&tree);
+        let stale = tree.repo_file("files/zshrc.old", "# old\n");
+        fs::create_dir(tree.home("installed")).expect("the destination directory");
+        std::os::unix::fs::symlink(&stale, tree.home("installed/zshrc")).expect("a stale link");
+
+        tree.write_manifest(&one_symlink_dir("files", "~/installed", false));
+        tree.batfiles().arg("sync").assert().success();
+
+        assert_eq!(
+            link_target(&tree.home("installed/zshrc")),
+            tree.path("repo").join("files/zshrc")
+        );
+        assert!(stale.exists(), "the old source was removed");
+    }
+
     // The `leaf` fixture: several actions over a directory tree, as opposed to
     // the manifests above, which are written inline to isolate one rule each.
 
-    /// What `tests/fixtures/leaf` declares, in declaration order.
+    /// Every link `tests/fixtures/leaf` installs, in the order it installs
+    /// them.
     ///
     /// Written out rather than read back from the manifest: a test that derives
-    /// its expectations from the file under test asserts nothing.
-    const LEAF_ACTIONS: [(&str, &str); 7] = [
+    /// its expectations from the file under test asserts nothing. The last
+    /// three are the one `symlink-dir` action expanded — one entry per child,
+    /// dotted and in sorted order, because that is what the run produces.
+    const LEAF_ACTIONS: [(&str, &str); 10] = [
         ("shell/zshrc", ".zshrc"),
         ("shell/zshenv", ".zshenv"),
         ("shell/aliases.zsh", ".config/zsh/aliases.zsh"),
@@ -1035,6 +1416,9 @@ mod linking {
         ("git/gitignore", ".config/git/ignore"),
         ("editor/nvim", ".config/nvim"),
         ("bin/batgrep", ".local/bin/batgrep"),
+        ("files/ackrc", ".ackrc"),
+        ("files/curlrc", ".curlrc"),
+        ("files/inputrc", ".inputrc"),
     ];
 
     #[test]
@@ -1076,7 +1460,16 @@ mod linking {
         // start is not one anybody would keep.
         assert_eq!(
             entries(&tree.path("home")),
-            [".config", ".gitconfig", ".local", ".zshenv", ".zshrc"]
+            [
+                ".ackrc",
+                ".config",
+                ".curlrc",
+                ".gitconfig",
+                ".inputrc",
+                ".local",
+                ".zshenv",
+                ".zshrc"
+            ]
         );
     }
 

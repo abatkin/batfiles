@@ -14,6 +14,7 @@ use crate::item::ItemId;
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum Action {
     Symlink(SymlinkAction),
+    SymlinkDir(SymlinkDirAction),
 }
 
 impl Action {
@@ -29,15 +30,12 @@ impl Action {
     pub fn id(&self) -> Option<&ItemId> {
         match self {
             Self::Symlink(action) => action.id.as_ref(),
+            Self::SymlinkDir(action) => action.id.as_ref(),
         }
     }
 }
 
 /// `symlink`: one symlink, from a path in the repository to a destination.
-///
-/// Directory mode — `source-dir`, `dest-dir`, and the filters — is not here.
-/// It needs a glob filter to mean anything, so a manifest that writes it is
-/// rejected rather than silently linking nothing.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct SymlinkAction {
@@ -52,4 +50,33 @@ pub(crate) struct SymlinkAction {
     /// The destination path as written, resolved against the selected home when
     /// the action runs.
     pub dest: String,
+}
+
+/// `symlink-dir`: one symlink per direct child of a directory in the
+/// repository, all of them into one destination directory.
+///
+/// A separate type rather than a second mode of `symlink`, so that serde
+/// decides which fields a record must carry and there is no invariant spanning
+/// two optional halves. Filtering the children — `include` and `exclude` — is
+/// specified in `docs/future/repoformat.md` and not built; adding it later is
+/// additive, and neither repository this exists for needs it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct SymlinkDirAction {
+    /// Makes the action addressable. The children never are, individually: the
+    /// action installs all of them or none.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    #[expect(dead_code, reason = "3.2 selects by group")]
+    pub group: Option<ItemId>,
+    /// The directory whose direct children are linked, relative to the
+    /// repository root.
+    pub source_dir: String,
+    /// The directory the links are made in, resolved against the selected home
+    /// when the action runs and created if it is missing.
+    pub dest_dir: String,
+    /// Whether each link's name gains a leading `.`, for a repository that
+    /// keeps its dotfiles undotted.
+    #[serde(default)]
+    pub dot_prefix: bool,
 }

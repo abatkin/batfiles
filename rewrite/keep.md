@@ -90,7 +90,7 @@ Taskfile or the test suite; the one workflow edit any of them needed is 0.12's
   budget. The reserved list is load-bearing and must survive intact: it is what
   makes namespace dispatch unambiguous without a precedence rule.
 - **`src/repo/action.rs`** (573) — variants arrive one step at a time: 0.6, 1.1,
-  1.2, 4.1, 4.3, 4.5, 6.1, 7.1. The `#[serde(tag = "type", rename_all =
+  1.2, 1.3, 4.1, 4.3, 4.5, 6.1, 7.1. The `#[serde(tag = "type", rename_all =
   "kebab-case")]` plus `deny_unknown_fields` shape is correct; copy that pattern,
   not the whole enum. Note that the fetching variants are **records only** — see
   "Nothing exists yet" below.
@@ -179,7 +179,7 @@ item.rs  var.rs  manifest/  action/  state/
 
 Modules are added when implemented behavior needs them. `manifest/` earns its
 directory at 0.6 because the manifest genuinely has sections; `action/` earns one
-when the third action type lands at 1.2. Nothing gets a directory to hold a
+when the third action type lands at 1.3. Nothing gets a directory to hold a
 single file, and nothing gets one in anticipation.
 
 Two of these are named for what they hold rather than for what the old crate

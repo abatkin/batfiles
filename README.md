@@ -16,9 +16,13 @@ nothing in the repository you cannot read with `cat`.
 > implemented yet. The plan, and the reason there is a rewrite, are in
 > [`rewrite/README.md`](rewrite/README.md).
 
+> [!NOTE]
+> There is a sample repository to read and install:
+> [batfiles-samples/simple-dotfiles](https://github.com/batfiles-samples/simple-dotfiles).
+
 ## What works today
 
-Implemented so far: `symlink`.
+Implemented so far: `symlink`, `symlink-dir`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -29,6 +33,11 @@ Implemented so far: `symlink`.
   content of its own and what it pointed at is untouched. A link that is
   already right is left alone and says nothing, since an installed repository
   is the ordinary case.
+- **A whole directory can be linked child by child.** `symlink-dir` names a
+  directory in the repository and one destination directory, and links every
+  direct child into it — optionally dotting each name on the way. Adding a file
+  to that directory installs it on the next `sync` with no change to the
+  manifest, which is the point of it.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
@@ -42,10 +51,10 @@ Implemented so far: `symlink`.
   --dry-run` exits 2 naming the option, because silently accepting it would let
   you believe a dry run had happened.
 - **`version` prints the version.**
-- **Unix only, so far.** Windows compiles and every command runs there, but a
-  `symlink` action is refused by name rather than performed — the platform needs
-  a file-against-directory distinction and a privilege check that are not built,
-  and no step schedules them yet. Since `symlink` is the only action there is,
+- **Unix only, so far.** Windows compiles and every command runs there, but
+  either symlink action is refused by name rather than performed — the platform
+  needs a file-against-directory distinction and a privilege check that are not
+  built, and no step schedules them yet. Since both action types make symlinks,
   Windows can currently install nothing.
 
 Everything else — `init`, `clone`, the four enable/disable commands,
@@ -65,6 +74,7 @@ dotfiles/
 ├── editor/nvim/
 │   ├── init.lua
 │   └── lua/plugins.lua
+├── files/{ackrc,curlrc,inputrc}
 ├── git/{gitconfig,gitignore}
 └── shell/{zshrc,zshenv,aliases.zsh}
 ```
@@ -86,6 +96,16 @@ id = "nvim"
 group = "editor"
 source = "editor/nvim"
 dest = "~/.config/nvim"
+
+# Every direct child of `files/`, dotted on the way into the home. Adding one
+# there needs no change here.
+[[actions]]
+type = "symlink-dir"
+id = "rcfiles"
+group = "shell"
+source-dir = "files"
+dest-dir = "~"
+dot-prefix = true
 ```
 
 With that repository at `~/dotfiles`, which is where batfiles looks by default:
@@ -99,6 +119,9 @@ linked /home/you/.gitconfig -> /home/you/dotfiles/git/gitconfig
 linked /home/you/.config/git/ignore -> /home/you/dotfiles/git/gitignore
 linked /home/you/.config/nvim -> /home/you/dotfiles/editor/nvim
 linked /home/you/.local/bin/batgrep -> /home/you/dotfiles/bin/batgrep
+linked /home/you/.ackrc -> /home/you/dotfiles/files/ackrc
+linked /home/you/.curlrc -> /home/you/dotfiles/files/curlrc
+linked /home/you/.inputrc -> /home/you/dotfiles/files/inputrc
 ```
 
 Missing parent directories are created. Run it again and it says nothing at
