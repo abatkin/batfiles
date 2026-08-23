@@ -67,12 +67,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   and populate it from the options ported at 0.2 (`guidance.md`, rule 12). An
   option arriving with its own command is deliberately not listed, so
   `--no-git-init` and `--machine-only` wait for 8.1 and 5.8 without an entry.
-- **0.15** Add a real leaf repository under `tests/fixtures/` and CLI tests that
-  sync it, assert the symlink, assert an occupied destination fails without
-  writing, and assert an unimplemented option fails. All three assertions exist
-  as of 0.7, against manifests written inline into a temporary tree; what is
-  missing is a repository shaped like a real one, which is a different test —
-  several actions over a directory tree that someone might actually keep.
+- **0.15** ✅ Add a real leaf repository under `tests/fixtures/` and CLI tests
+  that sync it, assert the symlink, assert an occupied destination fails without
+  writing, and assert an unimplemented option fails.
 - **0.16** Rewrite the project `README.md` to describe what the binary does
   today, and keep it honest at every slice thereafter.
 
@@ -89,7 +86,15 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   accessors that match over every variant are the same question in miniature:
   0.6 wrote `Action::id()` as the first, 3.2 reads `group` as the second, and at
   the third they collapse into one `fn common(&self)`.
-- **1.4** Extend the fixture and add one CLI test per action type.
+- **1.4** Extend `tests/fixtures/leaf` and add one CLI test per action type.
+  `create-dir` and `copy` are not platform-specific, so their fixture
+  expectations go *outside* `mod linking` (`guidance.md`, "Test environments");
+  only the symlink half belongs in it. `LEAF_ACTIONS` sits inside that module
+  today because every fixture action so far is a symlink and the list would be
+  dead code off unix — the step that adds a portable action type is the one that
+  splits it, keeping the two halves written out by hand rather than read back
+  from the manifest, since a test that derives its expectations from the file
+  under test asserts nothing.
 
 ## Slice 2 — Dry-run
 
@@ -110,10 +115,11 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
 ## Slice 3 — Selection and ordering
 
 - **3.1** Make declaration order the execution order, explicitly and tested.
-  0.7's loop already runs the list in order and stops at the first failure; what
-  is owed here is the test that pins it, which needs two actions whose order is
-  observable — one creating what the next depends on — rather than two that
-  merely both happen.
+  0.15 pinned half of it: syncing the fixture over an occupied destination
+  refuses that action and leaves the ones after it undone, so stopping at the
+  first failure is covered. What is still owed is order itself, which needs two
+  actions whose order is observable — one creating what the next depends on —
+  rather than two that merely both happen.
 - **3.2** Add groups and group membership. The `group` field has parsed and been
   validated as an `ItemId` since 0.6; this is the step that reads it, so its
   `expect(dead_code)` goes — CI will insist — along with the line in
@@ -217,7 +223,8 @@ No inclusion of remote actions yet.
 - **6.5** Gate remotes on `when` and `unless`.
 - **6.6** Let `--dry-run` materialize into the tool-owned `remotes/` tree while
   leaving `$HOME` untouched, so an included remote's actions are knowable.
-- **6.7** Fixture: a local bare git repository standing in for a remote.
+- **6.7** Fixture: a local bare git repository standing in for a remote, as a
+  sibling of `leaf` under `tests/fixtures/` rather than as a growth of it.
 
 ## Slice 7 — `include-remote`
 

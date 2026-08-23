@@ -1,0 +1,48 @@
+# A leaf repository shaped like one someone would actually keep: several
+# actions over a directory tree, with files the manifest never names.
+
+[[actions]]
+type = "symlink"
+id = "zshrc"
+group = "shell"
+source = "shell/zshrc"
+dest = "~/.zshrc"
+
+[[actions]]
+type = "symlink"
+group = "shell"
+source = "shell/zshenv"
+dest = "~/.zshenv"
+
+[[actions]]
+type = "symlink"
+group = "shell"
+source = "shell/aliases.zsh"
+dest = "~/.config/zsh/aliases.zsh"
+
+[[actions]]
+type = "symlink"
+id = "gitconfig"
+group = "git"
+source = "git/gitconfig"
+dest = "~/.gitconfig"
+
+[[actions]]
+type = "symlink"
+group = "git"
+source = "git/gitignore"
+dest = "~/.config/git/ignore"
+
+[[actions]]
+type = "symlink"
+id = "nvim"
+group = "editor"
+source = "editor/nvim"
+dest = "~/.config/nvim"
+
+[[actions]]
+type = "symlink"
+id = "batgrep"
+group = "bin"
+source = "bin/batgrep"
+dest = "~/.local/bin/batgrep"

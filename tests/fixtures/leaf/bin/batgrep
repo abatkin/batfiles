@@ -1,0 +1,3 @@
+#!/bin/sh
+# Two missing parent directories away from the selected home.
+exec grep --color=auto "$@"

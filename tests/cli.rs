@@ -33,13 +33,34 @@ impl Tree {
     /// The four roots as sibling directories, with `repo/batfiles.toml` empty
     /// but present, which is what a command needs to get past reading it.
     fn new() -> Self {
+        let tree = Self::roots();
+        tree.repository("repo");
+        tree
+    }
+
+    /// The same roots, with the leaf repository copied from
+    /// `tests/fixtures/<name>` rather than holding a manifest written inline.
+    ///
+    /// One directory per repository shape, and copied rather than pointed at:
+    /// the suite writes only inside the temporary tree, so a fixture is never
+    /// mutated in place by a run.
+    fn fixture(name: &str) -> Self {
+        let tree = Self::roots();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        copy_tree(&source, &tree.path("repo"));
+        tree
+    }
+
+    /// The three roots that are directories in their own right, with nothing in
+    /// the repository yet.
+    fn roots() -> Self {
         let dir = tempfile::tempdir().expect("a temporary directory");
         for name in ["home", "config", "cache"] {
             fs::create_dir(dir.path().join(name)).expect("a root directory");
         }
-        let tree = Self { dir };
-        tree.repository("repo");
-        tree
+        Self { dir }
     }
 
     fn path(&self, relative: &str) -> PathBuf {
@@ -98,6 +119,37 @@ impl Tree {
 
 fn display(path: &Path) -> String {
     path.display().to_string()
+}
+
+/// Copy a directory tree, creating `to` and everything beneath it.
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("a destination directory");
+    for entry in fs::read_dir(from).expect("a fixture directory") {
+        let entry = entry.expect("a directory entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("a file type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).expect("a fixture file");
+        }
+    }
+}
+
+/// The names directly inside a directory, sorted, for asserting that a run
+/// installed everything it should have and nothing else.
+fn entries(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = fs::read_dir(dir)
+        .expect("a readable directory")
+        .map(|entry| {
+            entry
+                .expect("a directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// A manifest declaring one symlink and nothing else.
@@ -912,6 +964,108 @@ mod linking {
             "a dangling link was made"
         );
     }
+
+    // The `leaf` fixture: several actions over a directory tree, as opposed to
+    // the manifests above, which are written inline to isolate one rule each.
+
+    /// What `tests/fixtures/leaf` declares, in declaration order.
+    ///
+    /// Written out rather than read back from the manifest: a test that derives
+    /// its expectations from the file under test asserts nothing.
+    const LEAF_ACTIONS: [(&str, &str); 7] = [
+        ("shell/zshrc", ".zshrc"),
+        ("shell/zshenv", ".zshenv"),
+        ("shell/aliases.zsh", ".config/zsh/aliases.zsh"),
+        ("git/gitconfig", ".gitconfig"),
+        ("git/gitignore", ".config/git/ignore"),
+        ("editor/nvim", ".config/nvim"),
+        ("bin/batgrep", ".local/bin/batgrep"),
+    ];
+
+    #[test]
+    fn syncing_a_real_repository_installs_every_action_and_nothing_else() {
+        let tree = Tree::fixture("leaf");
+        tree.batfiles().arg("sync").assert().success();
+
+        for (source, dest) in LEAF_ACTIONS {
+            assert_eq!(
+                link_target(&tree.home(dest)),
+                tree.path("repo").join(source),
+                "`{dest}` does not point at `{source}`"
+            );
+        }
+
+        // A link to a directory is only worth making if what is under it reads
+        // back, and `lua/plugins.lua` is reachable no other way.
+        assert!(
+            fs::read_to_string(tree.home(".config/nvim/lua/plugins.lua"))
+                .expect("the directory link resolves")
+                .contains("vim-fugitive")
+        );
+
+        // The link is only a usable command if what it reaches is executable,
+        // which is a property of the repository rather than of batfiles — so
+        // this is here to keep the fixture honest about being one someone
+        // keeps, and it fails if the mode is lost getting the fixture in place.
+        use std::os::unix::fs::PermissionsExt;
+        let installed = fs::metadata(tree.home(".local/bin/batgrep")).expect("the link resolves");
+        assert!(
+            installed.permissions().mode() & 0o111 != 0,
+            "`bin/batgrep` installed as a file nobody can run"
+        );
+
+        // Only `batfiles.toml` has intrinsic meaning: `README.md` is a file it
+        // never names, so nothing of it reaches the home on its own. Every file
+        // the installed configuration refers to does — `.zshrc` sources both of
+        // the other two shell files, and a fixture whose shell would fail to
+        // start is not one anybody would keep.
+        assert_eq!(
+            entries(&tree.path("home")),
+            [".config", ".gitconfig", ".local", ".zshenv", ".zshrc"]
+        );
+    }
+
+    #[test]
+    fn an_occupied_destination_stops_the_run_where_it_stands() {
+        // Rule 13 at repository scale. What one action's worth of it cannot
+        // show is what happens to the rest of the list: the run stops, so the
+        // actions after the refusal are not attempted. Which of two actions
+        // runs first, where one depends on the other, is 3.1's to pin.
+        let tree = Tree::fixture("leaf");
+        let occupied = "[user]\n\temail = mine\n";
+        fs::write(tree.home(".gitconfig"), occupied).expect("an existing file");
+        // Found rather than counted, so an action added to the fixture ahead of
+        // this one does not silently move the two halves of the assertion.
+        let refused = LEAF_ACTIONS
+            .iter()
+            .position(|(_, dest)| *dest == ".gitconfig")
+            .expect("the occupied destination is one the fixture declares");
+
+        let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+        let stderr = stderr_of(&assertion);
+        for expected in [
+            display(&tree.home(".gitconfig")),
+            "a regular file".to_owned(),
+        ] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert_eq!(
+            fs::read_to_string(tree.home(".gitconfig")).expect("the file"),
+            occupied
+        );
+
+        for (_, dest) in &LEAF_ACTIONS[..refused] {
+            assert!(tree.home(dest).is_symlink(), "`{dest}` was not installed");
+        }
+        for (_, dest) in &LEAF_ACTIONS[refused + 1..] {
+            // Not `exists`, which follows the link and would call a dangling
+            // one absent.
+            assert!(
+                fs::symlink_metadata(tree.home(dest)).is_err(),
+                "`{dest}` was installed after the refusal"
+            );
+        }
+    }
 }
 
 /// The other side of the gate above: what a `symlink` action does where
@@ -957,6 +1111,28 @@ fn an_option_sync_does_not_honor_yet_stops_it_before_it_writes() {
     assert!(
         !tree.home(".zshrc").exists(),
         "an unsupported option wrote anyway"
+    );
+}
+
+#[test]
+fn an_option_sync_does_not_honor_yet_stops_a_whole_repository() {
+    // The same refusal against the `leaf` fixture, where "before it writes"
+    // means six actions' worth of nothing rather than one link's.
+    let tree = Tree::fixture("leaf");
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    for expected in ["--dry-run", "2.4"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert!(
+        entries(&tree.path("home")).is_empty(),
+        "an unsupported option wrote into the home"
     );
 }
 

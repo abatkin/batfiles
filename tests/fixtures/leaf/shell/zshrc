@@ -1,0 +1,4 @@
+source ~/.zshenv
+source ~/.config/zsh/aliases.zsh
+
+setopt hist_ignore_dups
