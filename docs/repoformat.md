@@ -323,6 +323,13 @@ and those are left alone. Where it holds something that is not a directory —
 a regular file, or a symlink resolving to one — the action fails and names it
 under [Replacing what is already there](#replacing-what-is-already-there).
 
+A `dest-dir` that is a symlink whose target is not there is refused as a
+dangling link, and the refusal says only that: batfiles will not create the far
+end of a link somebody else made, so where the link points decides nothing and
+the diagnostic does not claim the target is anywhere. That is the one place a
+symlink is described without saying whether it leaves the repository, because
+it is the one place the answer is not what the refusal turns on.
+
 Each child's own destination is then decided by that same section, one at a
 time. A child link batfiles owns is repaired; anything else stops the action
 where it stands, so the children before it stay installed and the ones after it

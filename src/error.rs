@@ -93,7 +93,7 @@ pub(crate) enum Error {
 /// What a refused destination turned out to hold, as the data half of
 /// [`Error::DestinationExists`].
 ///
-/// Which one it is decides nothing — all four are refused — but it is the
+/// Which one it is decides nothing — all five are refused — but it is the
 /// difference between a diagnostic someone can act on and one that only says
 /// no. This is the crate's one hand-written `Display`: the symlink case renders
 /// conditionally, which no `#[error]` attribute can express.
@@ -107,6 +107,13 @@ pub(crate) enum ExistingNode {
     Link {
         written: PathBuf,
         points_at: PathBuf,
+    },
+    /// A symlink whose target is not there. Where it points decides nothing —
+    /// batfiles will not create the far end of a link somebody else made — so
+    /// only the spelling is reported, and the refusal does not claim the target
+    /// is anywhere in particular.
+    DanglingLink {
+        written: PathBuf,
     },
     /// A socket, a fifo, a device — something batfiles has no idea how to give
     /// back, which is exactly why it will not take it.
@@ -126,6 +133,9 @@ impl fmt::Display for ExistingNode {
                     write!(f, " ({})", points_at.display())?;
                 }
                 write!(f, ", which is outside the repository")
+            }
+            Self::DanglingLink { written } => {
+                write!(f, "a symlink to {}, which is not there", written.display())
             }
             Self::Other => write!(f, "neither a regular file, a directory, nor a symlink"),
         }

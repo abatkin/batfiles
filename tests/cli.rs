@@ -1340,10 +1340,38 @@ mod linking {
         std::os::unix::fs::symlink(&nowhere, tree.home("bin")).expect("a dangling link");
 
         let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
-        for expected in [display(&tree.home("bin")), display(&nowhere)] {
+        for expected in [
+            display(&tree.home("bin")),
+            format!("a symlink to {}, which is not there", display(&nowhere)),
+        ] {
             assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
         }
         assert!(tree.home("bin").is_symlink(), "the link was removed");
+    }
+
+    #[test]
+    fn a_dangling_destination_directory_is_not_reported_as_pointing_outside() {
+        // A dangling link is refused because its target is missing, which is
+        // true wherever it points. Describing it as an unowned link would
+        // claim it points outside the repository — demonstrably false for
+        // this one, which points inside.
+        let tree = Tree::new();
+        with_children(&tree);
+        let inside = tree.path("repo/missing");
+        std::os::unix::fs::symlink(&inside, tree.home("bin")).expect("a dangling link");
+
+        let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
+        assert!(
+            stderr.contains(&format!(
+                "a symlink to {}, which is not there",
+                display(&inside)
+            )),
+            "unexpected description:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("outside the repository"),
+            "a link into the repository was called outside it:\n{stderr}"
+        );
     }
 
     #[test]

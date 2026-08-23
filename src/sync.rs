@@ -172,21 +172,20 @@ fn ensure_directory(dir: &Path) -> Result<(), Error> {
             // Nothing resolves here, but something may still be here: a
             // dangling symlink. `create_dir_all` would fail on it with a bare
             // `EEXIST` naming nothing, so it is identified rather than hit.
-            if let Ok(dangling) = fs::symlink_metadata(dir) {
+            //
+            // Reported as its own kind rather than as an unowned link. Where a
+            // dangling one points decides nothing — batfiles will not create
+            // the far end of a link somebody else made, inside the repository
+            // or out — so the refusal says the target is missing instead of
+            // claiming it is somewhere.
+            if fs::symlink_metadata(dir).is_ok_and(|node| node.is_symlink()) {
                 let written = fs::read_link(dir).map_err(|source| Error::Read {
                     path: dir.to_path_buf(),
                     source,
                 })?;
                 return Err(Error::DestinationExists {
                     path: dir.to_path_buf(),
-                    found: if dangling.is_symlink() {
-                        ExistingNode::Link {
-                            points_at: pointed_at(dir, &written),
-                            written,
-                        }
-                    } else {
-                        existing_node(&dangling)
-                    },
+                    found: ExistingNode::DanglingLink { written },
                 });
             }
             fs::create_dir_all(dir).map_err(|source| Error::Write {
