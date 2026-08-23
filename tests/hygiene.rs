@@ -1,10 +1,11 @@
-//! Source-hygiene checks that keep three of `rewrite/guidance.md`'s rules
+//! Source-hygiene checks that keep four of `rewrite/guidance.md`'s rules
 //! mechanical rather than honor-system: rule 1's dead-code annotations, the
-//! `CARRY` markers of "Carrying work forward", and rule 12's list of options
-//! that parse but are not honored yet.
+//! `CARRY` markers of "Carrying work forward", rule 12's list of options that
+//! parse but are not honored yet, and the definition of done's requirement that
+//! the documents keep saying what the binary actually does.
 //!
-//! The first two scans are textual and line-oriented, so an attribute or a
-//! marker split across lines is not seen. Neither is worth a parser.
+//! The scans are textual and line-oriented, so an attribute or a marker split
+//! across lines is not seen. None of it is worth a parser.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -15,6 +16,16 @@ const STEPS: &str = "rewrite/steps.md";
 
 /// Rule 12's list, and the only file whose step literals are checked.
 const UNSUPPORTED: &str = "src/cli/unsupported.rs";
+
+/// The enum that decides which action types a manifest may declare.
+const ACTIONS: &str = "src/manifest/action.rs";
+
+/// The documents that answer "what can `sync` actually do", each on a line
+/// beginning [`IMPLEMENTED`].
+const ACTION_TYPE_DOCS: [&str; 2] = ["README.md", "docs/goals.md"];
+
+/// What that line starts with, in both documents.
+const IMPLEMENTED: &str = "Implemented so far:";
 
 /// This file, which the marker scan skips: its fixtures spell out the forms the
 /// check rejects, so scanning it would report its own examples.
@@ -203,6 +214,66 @@ fn live_step_reason(step: &str, steps: &BTreeMap<String, bool>) -> Option<String
     }
 }
 
+/// The action types a manifest may declare: every `Action` variant, spelled the
+/// way that enum's `rename_all` makes serde write it.
+fn implemented_action_types(source: &str) -> Vec<String> {
+    let after = source
+        .split_once("enum Action {")
+        .map(|(_, rest)| rest)
+        .unwrap_or_else(|| panic!("{ACTIONS} no longer declares `enum Action`"));
+    let body = after
+        .split_once('}')
+        .map(|(body, _)| body)
+        .unwrap_or_else(|| panic!("`enum Action` in {ACTIONS} is not closed"));
+
+    let mut types: Vec<String> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('#'))
+        .map(|line| kebab_case(variant_name(line)))
+        .collect();
+    types.sort();
+    types
+}
+
+/// The variant an enum body's line declares, without its payload.
+fn variant_name(line: &str) -> &str {
+    line.split(|c: char| c == '(' || c == '{' || c == ',' || c.is_whitespace())
+        .next()
+        .unwrap_or(line)
+}
+
+/// A variant name as `rename_all = "kebab-case"` writes it.
+fn kebab_case(variant: &str) -> String {
+    let mut kebab = String::new();
+    for (index, character) in variant.char_indices() {
+        if character.is_uppercase() && index != 0 {
+            kebab.push('-');
+        }
+        kebab.extend(character.to_lowercase());
+    }
+    kebab
+}
+
+/// The action types a document claims are built, from its [`IMPLEMENTED`] line.
+///
+/// `None` where the document has no such line at all, which is a failure rather
+/// than an empty answer: a document that stops naming them stops being checked.
+fn documented_action_types(document: &str) -> Option<Vec<String>> {
+    let (_, named) = document
+        .lines()
+        .find_map(|line| line.split_once(IMPLEMENTED))?;
+    // Between the first and second backtick, the third and fourth, and so on.
+    let mut types: Vec<String> = named
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect();
+    types.sort();
+    Some(types)
+}
+
 /// [`STEPS`] as the step-to-done map both checks are cleared by.
 fn recorded_steps() -> BTreeMap<String, bool> {
     let steps = fs::read_to_string(crate_dir().join(STEPS))
@@ -291,6 +362,67 @@ fn withheld_options_name_steps_that_are_still_open() {
         })
         .collect();
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
+#[test]
+fn the_documents_name_every_action_type_that_exists() {
+    let source = fs::read_to_string(crate_dir().join(ACTIONS))
+        .unwrap_or_else(|error| panic!("{ACTIONS} declares the action types: {error}"));
+    assert!(
+        source.contains(r#"rename_all = "kebab-case""#),
+        "{ACTIONS} no longer renames its variants kebab-case, so this check is comparing \
+         the wrong spelling"
+    );
+    let built = implemented_action_types(&source);
+
+    for relative in ACTION_TYPE_DOCS {
+        let document = fs::read_to_string(crate_dir().join(relative))
+            .unwrap_or_else(|error| panic!("{relative} says what `sync` can do: {error}"));
+        let documented = documented_action_types(&document).unwrap_or_else(|| {
+            panic!("{relative} has no `{IMPLEMENTED}` line, so nothing keeps it honest")
+        });
+        assert_eq!(
+            documented, built,
+            "{relative} has fallen behind {ACTIONS}: its `{IMPLEMENTED}` line names the \
+             wrong action types"
+        );
+    }
+}
+
+/// Stands in for [`ACTIONS`]: the enum as it looks once slice 1 has landed,
+/// with the comment and attribute lines a real one carries.
+fn fixture_actions() -> &'static str {
+    "#[derive(Debug, Deserialize)]\n\
+     #[serde(tag = \"type\", rename_all = \"kebab-case\")]\n\
+     pub(crate) enum Action {\n\
+     \x20   Symlink(SymlinkAction),\n\
+     \x20   /// A directory, created when it is missing.\n\
+     \x20   CreateDir(CreateDirAction),\n\
+     \x20   Copy(CopyAction),\n\
+     }\n"
+}
+
+#[test]
+fn an_action_type_is_named_the_way_a_manifest_writes_it() {
+    assert_eq!(
+        implemented_action_types(fixture_actions()),
+        ["copy", "create-dir", "symlink"]
+    );
+}
+
+#[test]
+fn a_document_that_has_fallen_behind_the_enum_is_caught() {
+    let built = implemented_action_types(fixture_actions());
+    // The shape both documents use today, and what slice 1 owes them.
+    let behind = "**Implemented so far: `symlink`.**\n";
+    let current = "Implemented so far: `symlink`, `create-dir`, and `copy`.\n";
+    assert_ne!(documented_action_types(behind).as_ref(), Some(&built));
+    assert_eq!(documented_action_types(current), Some(built));
+}
+
+#[test]
+fn a_document_that_stopped_naming_them_is_not_silently_passed() {
+    assert_eq!(documented_action_types("# Batfiles\n"), None);
 }
 
 /// Stands in for [`STEPS`]: one step done, one still open.

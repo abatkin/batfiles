@@ -208,6 +208,11 @@ Every slice, without exception:
 - A `tests/cli.rs` test drives the new behavior through the binary.
 - Any `docs/future/` section the slice implemented has been promoted into
   `docs/`, re-read against what was actually built rather than pasted.
+- The project `README.md` still describes what the binary does. It is the only
+  document here with an audience outside the project, so a slice that changes
+  what `sync` can do changes it too. `tests/hygiene.rs` holds the action-type
+  line to the `Action` enum; the rest — the worked example, the status note, the
+  not-built-yet list — is prose and is yours to keep true.
 - Every cross-document link and step reference still resolves.
 - The unimplemented-option list (rule 12) shrank if the slice made an option
   live.

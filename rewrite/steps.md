@@ -70,8 +70,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **0.15** ✅ Add a real leaf repository under `tests/fixtures/` and CLI tests
   that sync it, assert the symlink, assert an occupied destination fails without
   writing, and assert an unimplemented option fails.
-- **0.16** Rewrite the project `README.md` to describe what the binary does
-  today, and keep it honest at every slice thereafter.
+- **0.16** ✅ Rewrite the project `README.md` to describe what the binary does
+  today. Keeping it honest thereafter is a line in the definition of done, and
+  its action-type list is held to the `Action` enum by `tests/hygiene.rs`.
 
 ## Slice 1 — The rest of the local actions
 

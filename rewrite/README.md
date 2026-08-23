@@ -59,6 +59,11 @@ alive. Retire `rewrite/` at slice 8 in three moves:
    would rather track them there.
 3. The directory is deleted. It stays reachable at the tag.
 
+The project `README.md` links here twice — at the status note and at the
+not-built-yet table, which cites `steps.md` — so move 3 repoints both at
+wherever the remaining steps land. It is the one document with an audience
+outside the project, and a dead link is what a first-time reader hits first.
+
 Two checks in `tests/hygiene.rs` read `steps.md` for its ✅ marks, so move 3
 either repoints them at wherever the remaining steps land or retires them along
 with the directory. The `CARRY` marker check only opens the file when a marker

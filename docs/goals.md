@@ -65,8 +65,11 @@ fetching files and archives, and including a reusable remote's actions. The
 [future repository format](future/repoformat.md#actions) enumerates the intended
 set.
 
-**Implemented so far: `symlink`.** That line is the answer to "what can `sync`
-actually do", and it gains an action each time one is built.
+**Implemented so far: `symlink`.**
+
+That line is the answer to "what can `sync` actually do", and it gains an action
+each time one is built. `tests/hygiene.rs` checks it against the `Action` enum,
+here and in the project `README.md`, so it cannot fall behind the build.
 
 Normal synchronization is convergence-oriented but intentionally asymmetric:
 symlinks can be repaired, while copied files, fetched content, created

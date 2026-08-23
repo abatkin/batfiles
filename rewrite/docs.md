@@ -120,12 +120,14 @@ would inherit them, which is the thing rule 9 exists to stop.
 - **`docs/README.md`** (23) — the docs index. Rewrite last, once the split has
   settled.
 
-- **The project `README.md`** — **rewrite at 0.16, and keep honest every slice
-  after.** It currently describes `install.sh` as the entry point and the tool as
-  merging multiple sources, none of which will be true again until slices 10 and
-  7 respectively. It is the first thing a human reads and the only document here
-  with an audience outside the project, so it is the one place where describing
-  unbuilt behavior is not merely untidy but misleading.
+- **The project `README.md`** — **rewritten at 0.16.** It described `install.sh`
+  as the entry point and the tool as merging multiple sources, neither of which
+  will be true again until slices 10 and 7. It is the first thing a human reads
+  and the only document here with an audience outside the project, so it is the
+  one place where describing unbuilt behavior is not merely untidy but
+  misleading. Keeping it honest is now a line in `guidance.md`'s definition of
+  done rather than an instruction sitting here, and `tests/hygiene.rs` holds its
+  action-type line — and `goals.md`'s — to the `Action` enum.
 
 **Nothing is lost to the tag.** `docs/future/` is committed and searchable, so
 the safety reasoning, the precedence tables, and the per-command specifications
