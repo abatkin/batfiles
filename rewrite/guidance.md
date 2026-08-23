@@ -194,9 +194,16 @@ work uncommitted while deciding whether it was right.
 gets one commit per change, and its message describes the change as a whole:
 what the tree does now that it did not before, and why it was done that way. Not
 the route — a correction made mid-branch, a test that failed first, an approach
-tried and dropped are archaeology of the branch, and the branch still has them
-if anyone wants them. This is the message rule 4 means by "rationale goes in
-commit messages", because it is the only one `main` keeps.
+tried and dropped are how the change was arrived at rather than what it is. This
+is the message rule 4 means by "rationale goes in commit messages", and after
+the merge it is the only account of the change that exists, so whatever is worth
+keeping has to be in it.
+
+**The branch is deleted once it is merged**, unless the merge says to keep it. A
+squash merge leaves no merge parent, so git does not consider the branch merged
+and `git branch -d` refuses it: `-D` is the ordinary spelling here rather than a
+sign that something went wrong. That deletion is what makes the paragraph above
+a rule instead of a preference — the intermediate commits go with the branch.
 
 Nothing merges back from the tag that holds the old crate — see `keep.md`.
 

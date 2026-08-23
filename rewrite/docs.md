@@ -61,7 +61,7 @@ would inherit them, which is the thing rule 9 exists to stop.
   "Source organization" down to a pointer at the recreated `architecture.md`;
   add `task test:docker` to the canonical commands if 8.4 added it; and carry
   `guidance.md`'s "How a slice lands" over next to the canonical commands —
-  its three workflow paragraphs only. That last one is a change of mind about
+  its four workflow paragraphs only. That last one is a change of mind about
   which list it belongs on: branch, commit as you go, squash to `main` is how
   the repository is worked rather than how the rewrite was, so it outlives the
   rewrite the way the toolchain pin does. Its closing sentence does not: nothing
