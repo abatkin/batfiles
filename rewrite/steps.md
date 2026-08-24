@@ -70,12 +70,8 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 
 - **1.1** ✅ Add `symlink-dir`: one link per direct child of a directory, into
   one destination directory, with an optional `dot-prefix`.
-- **1.2** Add `create-dir`, and settle what `symlink-dir` does with an empty
-  `source-dir`. Today it creates its `dest-dir` and links nothing, which
-  `docs/repoformat.md` permits — `dest-dir` is "created if it is missing" — but
-  which leaves an empty directory in `$HOME` for an action that installed
-  nothing. Once creating a directory is something a manifest asks for outright,
-  doing it as a side effect is a choice rather than the only spelling.
+- **1.2** ✅ Add `create-dir`, and settle what `symlink-dir` does with an empty
+  `source-dir`: it creates its `dest-dir` and says so.
 - **1.3** Add `copy` with its missing-only seed semantics, preserved once
   created.
 - **1.4** Extract only what all four variants genuinely share, and not before
@@ -83,10 +79,14 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   what is at one, is `src/paths.rs`, because rule 13 has to be decided
   identically by every action and rule 14 says the containment check lives in
   exactly one place. Ask it rather than re-reading a destination, and add to it
-  rather than around it. What remains in `src/sync.rs` is source resolution and destination
-  *composition*, written for the two symlink types — what `create-dir` and
-  `copy` want from those is not answerable until they exist. This is also where
-  `action/` earns its
+  rather than around it. 1.2 answered half of what was open here: `create-dir`
+  wanted `resolve_destination` exactly as the symlink types left it and wanted
+  no source resolution at all, so only `copy` can still argue with either. It
+  also put the second piece out of `sync.rs` on its own: `paths::ensure_directory`
+  now returns whether it created the directory, and the one `sync::ensure_directory`
+  that reports it is called by both actions that make one. What remains in
+  `src/sync.rs` is source resolution and destination *composition*. This is also
+  where `action/` earns its
   directory and `sync.rs` stops holding both the loop and one action's work. The
   accessors that match over every variant are the same question in miniature:
   0.6 wrote `Action::id()` as the first, 3.2 reads `group` as the second, and at
@@ -94,12 +94,17 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **1.5** Extend `tests/fixtures/leaf` and add one CLI test per action type.
   `create-dir` and `copy` are not platform-specific, so their fixture
   expectations go *outside* `mod linking` (`guidance.md`, "Test environments");
-  only the symlink half belongs in it. `LEAF_ACTIONS` sits inside that module
-  today because every fixture action so far is a symlink and the list would be
-  dead code off unix — the step that adds a portable action type is the one that
-  splits it, keeping the two halves written out by hand rather than read back
-  from the manifest, since a test that derives its expectations from the file
-  under test asserts nothing.
+  only the symlink half belongs in it. 1.2 and 1.3 each add their action's own
+  CLI tests from a manifest written inline, which is why neither had to touch
+  the fixture — so **splitting `LEAF_ACTIONS` is this step's job**, since this is
+  where the fixture first declares an action that is not a symlink. Keep the two
+  halves written out by hand rather than read back from the manifest, since a
+  test that derives its expectations from the file under test asserts nothing.
+  Note what the split runs into: the test that syncs the whole fixture lives in
+  `mod linking` and would fail off unix at the first symlink action, so the
+  portable half needs a test that does not sync the whole fixture — or the
+  fixture's portable actions have to be reachable without the symlink ones,
+  which they are not while the run stops at the first failure.
 
 ## Slice 2 — Dry-run
 

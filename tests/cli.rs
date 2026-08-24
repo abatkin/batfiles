@@ -168,6 +168,11 @@ fn one_symlink_dir(source_dir: &str, dest_dir: &str, dot_prefix: bool) -> String
     )
 }
 
+/// A manifest declaring one `create-dir` and nothing else.
+fn one_create_dir(dest: &str) -> String {
+    format!("[[actions]]\ntype = \"create-dir\"\ndest = \"{dest}\"\n")
+}
+
 /// Where a symlink points, without following it.
 #[cfg(unix)]
 fn link_target(path: &Path) -> PathBuf {
@@ -609,6 +614,48 @@ fn a_symlink_dirs_paths_follow_the_same_rules_as_a_symlinks() {
 }
 
 #[test]
+fn a_create_dir_has_nothing_to_install_and_so_takes_no_source() {
+    // The record is closed like every other, and this is the field someone
+    // reaches for by habit. There is no source because nothing is installed —
+    // linking a directory's contents is what the two symlink types are for.
+    let stderr = rejected(
+        "[[actions]]\n\
+         type = \"create-dir\"\n\
+         source = \"files\"\n\
+         dest = \"~/.config\"\n",
+    );
+    assert!(
+        stderr.contains("source"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_create_dir_without_a_destination_is_rejected() {
+    let stderr = rejected("[[actions]]\ntype = \"create-dir\"\n");
+    assert!(
+        stderr.contains("dest"),
+        "the field was not named:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_create_dirs_destination_follows_the_same_rules_as_a_symlinks() {
+    // Its `dest` is a destination like any other, decided from the manifest
+    // alone by the same checker.
+    for (dest, expected) in [
+        ("", "dest is empty"),
+        ("~other/.config", "another user's home"),
+    ] {
+        let stderr = rejected(&one_create_dir(dest));
+        assert!(
+            stderr.contains(expected),
+            "no `{expected}` for dest `{dest}` in:\n{stderr}"
+        );
+    }
+}
+
+#[test]
 fn an_action_type_that_has_not_landed_is_rejected() {
     let stderr = rejected(
         "[[actions]]\n\
@@ -754,6 +801,106 @@ fn a_command_that_does_not_need_the_manifest_does_not_read_it() {
         stderr.contains("`vars get` is not implemented yet"),
         "unexpected stderr:\n{stderr}"
     );
+}
+
+// Executing `create-dir`, the first action type that is not platform-specific:
+// every platform makes directories, so these run everywhere rather than inside
+// `mod linking`. The one below that builds its fixture with a symlink is gated
+// on its own, because what it asserts is not platform-specific either.
+
+#[test]
+fn a_create_dir_action_makes_the_directory_and_says_so() {
+    let tree = Tree::new();
+    tree.write_manifest(&one_create_dir("~/.local/share/zsh-plugins"));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        stderr_of(&assertion),
+        format!(
+            "created {}\n",
+            display(&tree.home(".local/share/zsh-plugins"))
+        )
+    );
+    // Missing parents come with it, as they do for a symlink's destination.
+    assert!(tree.home(".local/share/zsh-plugins").is_dir());
+}
+
+#[test]
+fn a_create_dir_action_parses_with_every_field_it_accepts() {
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[[actions]]\n\
+         type = \"create-dir\"\n\
+         id = \"plugin-root\"\n\
+         group = \"shell\"\n\
+         dest = \"~/.config\"\n",
+    );
+
+    tree.batfiles().arg("sync").assert().success();
+    assert!(tree.home(".config").is_dir());
+}
+
+#[test]
+fn a_create_dir_action_run_twice_changes_nothing() {
+    let tree = Tree::new();
+    tree.write_manifest(&one_create_dir("~/.config"));
+    tree.batfiles().arg("sync").assert().success();
+    // Something else put a file in it, which the second run has no business
+    // touching: the action creates a directory, it does not own one.
+    fs::write(tree.home(".config/theirs"), "mine\n").expect("a file inside it");
+
+    tree.batfiles().arg("sync").assert().success().stderr("");
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let expected = format!("unchanged {}", display(&tree.home(".config")));
+    assert!(
+        stderr_of(&assertion).contains(&expected),
+        "no `{expected}` in:\n{}",
+        stderr_of(&assertion)
+    );
+    assert_eq!(entries(&tree.home(".config")), ["theirs"]);
+}
+
+#[test]
+fn a_create_dir_action_over_a_file_is_refused() {
+    // Rule 13: someone's data is in the way, and until there is a backup policy
+    // there is nothing to do with it but name it.
+    let tree = Tree::new();
+    fs::write(tree.home(".config"), "mine\n").expect("an existing file");
+    tree.write_manifest(&one_create_dir("~/.config"));
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+    for expected in [display(&tree.home(".config")), "a regular file".to_owned()] {
+        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert_eq!(
+        fs::read_to_string(tree.home(".config")).expect("the file"),
+        "mine\n"
+    );
+}
+
+/// A destination that is already a directory by another route. Gated only
+/// because the fixture needs a symlink to build; the rule it covers is not
+/// platform-specific, which is why it is not in `mod linking`.
+#[cfg(unix)]
+#[test]
+fn a_create_dir_destination_symlinked_elsewhere_is_satisfied_by_what_it_reaches() {
+    // `create-dir` replaces nothing, so its destination is a container like
+    // `symlink-dir`'s `dest-dir` rather than a node to judge: someone whose
+    // `~/.config` lives on another volume put that link there deliberately, and
+    // the directory they asked for is already at the far end of it.
+    let tree = Tree::new();
+    let elsewhere = tree.path("elsewhere");
+    fs::create_dir(&elsewhere).expect("a directory on another volume");
+    std::os::unix::fs::symlink(&elsewhere, tree.home(".config")).expect("a deliberate link");
+    tree.write_manifest(&one_create_dir("~/.config"));
+
+    tree.batfiles().arg("sync").assert().success().stderr("");
+    assert!(tree.home(".config").is_symlink(), "the link was replaced");
 }
 
 // Executing symlink actions, which is the whole of what `sync` does so far.
@@ -1253,14 +1400,28 @@ mod linking {
     }
 
     #[test]
-    fn an_empty_source_directory_links_nothing_and_says_so_only_at_verbose() {
+    fn an_empty_source_directory_still_makes_its_destination_and_links_nothing() {
         // Not an error: a directory that is empty today is a repository in
-        // progress, not a manifest that cannot be honored.
+        // progress, not a manifest that cannot be honored. The destination is
+        // made anyway — it is what the action was told to fill, and `create-dir`
+        // makes exactly that directory when a manifest asks for it outright —
+        // and saying so is what keeps a run that changed the home from being
+        // silent about it.
         let tree = Tree::new();
         fs::create_dir_all(tree.path("repo/files")).expect("an empty source directory");
         tree.write_manifest(&one_symlink_dir("files", "~/installed", false));
 
-        tree.batfiles().arg("sync").assert().success().stderr("");
+        let assertion = tree
+            .batfiles()
+            .args(["--color", "never", "sync"])
+            .assert()
+            .success();
+        assert_eq!(
+            stderr_of(&assertion),
+            format!("created {}\n", display(&tree.home("installed")))
+        );
+        assert_eq!(entries(&tree.home("installed")), Vec::<String>::new());
+
         let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
         assert!(
             stderr_of(&assertion).contains("no children to link"),

@@ -99,6 +99,9 @@ impl Manifest {
                     check_source(&symlink_dir.source_dir, action_number)?;
                     check_dest(&symlink_dir.dest_dir, action_number)?;
                 }
+                // The one action with nothing to install, so the only one whose
+                // paths are all destination and no source.
+                Action::CreateDir(create_dir) => check_dest(&create_dir.dest, action_number)?,
             }
         }
         Ok(())

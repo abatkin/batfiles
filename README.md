@@ -22,7 +22,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -38,6 +38,9 @@ Implemented so far: `symlink`, `symlink-dir`.
   direct child into it — optionally dotting each name on the way. Adding a file
   to that directory installs it on the next `sync` with no change to the
   manifest, which is the point of it.
+- **A directory can be asked for on its own.** `create-dir` makes one and
+  nothing else — `mkdir -p`, for a plugin root or a cache that some other tool
+  fills in. An existing directory is left exactly as it is, contents and all.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
@@ -51,11 +54,12 @@ Implemented so far: `symlink`, `symlink-dir`.
   --dry-run` exits 2 naming the option, because silently accepting it would let
   you believe a dry run had happened.
 - **`version` prints the version.**
-- **Unix only, so far.** Windows compiles and every command runs there, but
+- **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
   needs a file-against-directory distinction and a privilege check that are not
-  built, and no step schedules them yet. Since both action types make symlinks,
-  Windows can currently install nothing.
+  built, and no step schedules them yet. `create-dir` is the one action that
+  works everywhere, so a Windows run can currently make directories and nothing
+  else.
 
 Everything else — `init`, `clone`, the four enable/disable commands,
 `apply-action`, `apply-group`, and `vars` — parses its arguments and exits 2.
@@ -153,7 +157,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 1     | The `create-dir` and `copy` actions                                 |
+| 1     | The `copy` action                                                   |
 | 2     | `--dry-run`                                                         |
 | 3     | Groups, enable/disable, `--skip`, `apply-action`, `apply-group`     |
 | 4     | Fetching files and archives, and cloning Git repositories           |

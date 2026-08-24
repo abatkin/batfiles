@@ -1,8 +1,8 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, and the two kinds of action it can declare. The rest of the schema —
-remotes, variables, conditions, and the other action types — is in
+it is read, and the three kinds of action it can declare. The rest of the
+schema — remotes, variables, conditions, and the other action types — is in
 [`future/repoformat.md`](future/repoformat.md) until those records parse.
 
 ## Repository layout
@@ -231,6 +231,26 @@ and the resolved form is the one the refusal was decided on. There is no way to
 waive any of this yet; the remedy is to move the destination aside and run the
 command again.
 
+**A directory an action puts things into is a container, not a destination, and
+is judged by a shorter rule.** `symlink-dir`'s `dest-dir` and `create-dir`'s
+`dest` are both `mkdir -p`: an existing directory satisfies them, missing parents
+come with the one they name, and what is already inside is left alone. A final
+symlink *is* followed there, unlike everywhere else in this section — a home
+whose `~/.config` is a link onto another volume is an ordinary arrangement, and
+the directory the action wants is at the far end of it. Following it is safe
+precisely because neither action replaces what it finds; the rules above are for
+a node an action installs *over*, and that is the case where following the last
+link would judge a node by what it reaches rather than by what it is.
+
+A container still refuses a non-directory — a regular file, a socket, or a
+symlink resolving to one — under rule 4 above. A symlink whose target is not
+there is refused too, and the refusal says only that: batfiles will not create
+the far end of a link somebody else made, so where that link points decides
+nothing and the diagnostic does not claim the target is anywhere. That is the
+one place a symlink is described without saying whether it leaves the
+repository, because it is the one place the answer is not what the refusal turns
+on.
+
 Replacing an owned symlink under 3 happens in place rather than through a
 temporary sibling. The link carries no content, so a run interrupted partway
 through leaves at most a missing link that the next `sync` puts back from the
@@ -245,14 +265,15 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink` and `symlink-dir` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, and `create-dir` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. Validated as an ID; nothing selects by group yet. |
 
-Each variant's record is closed independently, so a field belonging to the other
+Each variant's record is closed independently, so a field belonging to another
 variant is an unknown field rather than one that is quietly ignored. Writing
-`source-dir` on a `symlink` is an error, and so is writing `source` on a
-`symlink-dir`.
+`source-dir` on a `symlink` is an error, so is writing `source` on a
+`symlink-dir`, and so is writing either on a `create-dir`, which installs
+nothing and therefore has no source at all.
 
 ### `symlink`
 
@@ -340,20 +361,13 @@ link at `~/.config`, not as a directory holding two.
 **The children are linked in sorted order**, because the order a filesystem
 happens to hold them in is not one anybody can diff.
 
-**`dest-dir` is a container, not a destination.** It is resolved following a
-final symlink, unlike the destination of each individual link: a home whose
-`~/.config` is a link onto another volume is an ordinary arrangement, and the
-links are made where it points. It may hold entries batfiles did not put there,
-and those are left alone. Where it holds something that is not a directory —
-a regular file, or a symlink resolving to one — the action fails and names it
-under [Replacing what is already there](#replacing-what-is-already-there).
-
-A `dest-dir` that is a symlink whose target is not there is refused as a
-dangling link, and the refusal says only that: batfiles will not create the far
-end of a link somebody else made, so where the link points decides nothing and
-the diagnostic does not claim the target is anywhere. That is the one place a
-symlink is described without saying whether it leaves the repository, because
-it is the one place the answer is not what the refusal turns on.
+**`dest-dir` is a container, not a destination**, so it is created where it is
+missing and followed where it is a symlink, under
+[Replacing what is already there](#replacing-what-is-already-there) — unlike the
+destination of each individual link, which is judged without following one. It
+may hold entries batfiles did not put there, and those are left alone. Creating
+it is reported, because a directory that appeared in the home is worth a line
+whichever action made it.
 
 Each child's own destination is then decided by that same section, one at a
 time. A child link batfiles owns is repaired; anything else stops the action
@@ -366,8 +380,16 @@ containing `.hidden` would install `..hidden`, which is a legal file name and
 never the one that was meant, so the action fails and names the child. A
 dot-prefixed directory holds undotted names.
 
-An empty `source-dir` links nothing and is not an error; `-v` says so. A
-`source-dir` that exists but is not a directory is an error, because there are
+**An empty `source-dir` links nothing, is not an error, and still creates its
+`dest-dir`.** A directory that is empty today is a repository in progress rather
+than a manifest that cannot be honored. The destination is what the action was
+told to fill, so it is made whether or not there is anything to put in it yet —
+the same directory `create-dir` makes when a manifest asks for one outright, and
+reported the same way, so an action that installed nothing does not leave a
+directory in the home without saying so. That there were no children to link is
+said at `-v`.
+
+A `source-dir` that exists but is not a directory is an error, because there are
 no children to link and linking the thing itself is what `symlink` is for.
 
 The platform rule is `symlink`'s: where batfiles cannot create a symlink the
@@ -377,3 +399,44 @@ Filtering the children — `include` and `exclude` — is specified in
 [`future/repoformat.md`](future/repoformat.md#symlink-dir) and is not built. A
 manifest that writes either is rejected rather than linking every child while
 looking as though it had linked a chosen few.
+
+### `create-dir`
+
+Declares one directory, created where nothing is.
+
+```toml
+[[actions]]
+type = "create-dir"
+dest = "~/.local/share/zsh-plugins"
+```
+
+| Field  | Type   | Required | Description                                             |
+|--------|--------|:--------:|-----------------------------------------------------------|
+| `dest` | string |   yes    | The directory to create. Never empty; `~` is the home.    |
+
+The only action with no `source`, because it installs nothing. It is for a
+directory whose contents come from somewhere else — a plugin root another tool
+clones into, a cache a program expects to find already there — which a manifest
+would otherwise have no way to ask for.
+
+`dest` follows [Sources and destinations](#sources-and-destinations), and is a
+container rather than a destination under
+[Replacing what is already there](#replacing-what-is-already-there). The action
+is `mkdir -p`:
+
+| Already at the destination            | Result                                                            |
+|---------------------------------------|-------------------------------------------------------------------|
+| nothing                               | The directory is created, along with any missing parents.         |
+| a directory                           | Nothing, reported only at `-v`.                                   |
+| a symlink to a directory              | Nothing, reported only at `-v`; the link is left as it is.        |
+| a symlink whose target is not there   | An error naming the path and the missing target, with nothing written. |
+| a regular file                        | An error naming the path and what it found, with nothing written. |
+| anything else                         | An error naming the path and what it found, with nothing written. |
+
+A directory that is already there is left exactly as it is, contents and all:
+the action creates a directory, it does not own one. Nothing here removes
+anything, which is why a symlink to a directory satisfies it where the same node
+at a `symlink`'s destination would be refused.
+
+Every platform batfiles builds for creates directories, so unlike the two
+symlink actions there is no platform on which this one is refused by name.

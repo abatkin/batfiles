@@ -24,9 +24,9 @@ use std::os::unix::fs::symlink;
 use crate::error::Error;
 use crate::location::Roots;
 use crate::manifest::Manifest;
-use crate::manifest::action::{Action, SymlinkAction, SymlinkDirAction};
+use crate::manifest::action::{Action, CreateDirAction, SymlinkAction, SymlinkDirAction};
 use crate::output::Reporter;
-use crate::paths::{self, Occupant, Repository};
+use crate::paths::{self, Directory, Occupant, Repository};
 
 #[cfg(not(unix))]
 fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
@@ -47,6 +47,7 @@ pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> R
         match action {
             Action::Symlink(action) => link(action, &repository, &home, reporter)?,
             Action::SymlinkDir(action) => link_dir(action, &repository, &home, reporter)?,
+            Action::CreateDir(action) => create_dir(action, &home, reporter)?,
         }
     }
     Ok(())
@@ -108,7 +109,7 @@ fn link_dir(
     }
 
     let dest_dir = resolve_destination(home, &action.dest_dir);
-    paths::ensure_directory(&dest_dir)?;
+    ensure_directory(&dest_dir, reporter)?;
 
     let children = children_of(&source_dir)?;
     if children.is_empty() {
@@ -139,6 +140,31 @@ fn link_dir(
             repository,
             reporter,
         )?;
+    }
+    Ok(())
+}
+
+/// Carry out one `create-dir` action: the whole of it is one directory.
+///
+/// No source, and no platform check — every platform batfiles builds for makes
+/// directories. What is at the destination is [`ensure_directory`]'s question
+/// rather than [`Occupant::at`]'s: this action replaces nothing, so a directory
+/// already there, however it is reached, is what was asked for.
+fn create_dir(action: &CreateDirAction, home: &Path, reporter: &Reporter) -> Result<(), Error> {
+    let dest = resolve_destination(home, &action.dest);
+    ensure_directory(&dest, reporter)
+}
+
+/// [`paths::ensure_directory`], plus the report it has no reporter to make.
+///
+/// Both callers say the same thing about the same directory, because the two
+/// are the same operation: `create-dir` asks for one outright, and
+/// `symlink-dir` needs one to link into. A directory that appeared in the home
+/// is worth a line either way.
+fn ensure_directory(dir: &Path, reporter: &Reporter) -> Result<(), Error> {
+    match paths::ensure_directory(dir)? {
+        Directory::Created => reporter.info(&format!("created {}", dir.display())),
+        Directory::AlreadyThere => reporter.detail(1, &format!("unchanged {}", dir.display())),
     }
     Ok(())
 }

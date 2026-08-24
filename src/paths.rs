@@ -212,15 +212,35 @@ fn target_of(link: &Path, written: &Path) -> PathBuf {
     resolved(&joined)
 }
 
+/// What [`ensure_directory`] found, for a caller that reports what it did.
+///
+/// The distinction is the whole output of a `create-dir` action, and it is the
+/// difference between a run that changed the home and one that agreed with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Directory {
+    /// Nothing was there, and now the directory is — along with any missing
+    /// parents.
+    Created,
+    /// A directory was already there. Nothing was written.
+    AlreadyThere,
+}
+
 /// Make sure a destination *directory* is one, creating it where nothing is.
+///
+/// `mkdir -p`, and deliberately: an existing directory satisfies it, a
+/// non-directory refuses it, and missing parents come with it. The one
+/// departure is the diagnostic — `mkdir -p` reports a bare `EEXIST` naming
+/// nothing where a dangling symlink is in the way, and this says which link and
+/// where it points.
 ///
 /// A container rather than a destination, so unlike [`Occupant::at`] this
 /// follows a final symlink: a home whose `~/.config` is a link onto another
 /// volume is an ordinary arrangement, and the contents belong where it points.
+/// Nothing is replaced either way, which is what makes following it safe.
 /// What is already inside is left alone.
-pub(crate) fn ensure_directory(dir: &Path) -> Result<(), Error> {
+pub(crate) fn ensure_directory(dir: &Path) -> Result<Directory, Error> {
     match fs::metadata(dir) {
-        Ok(existing) if existing.is_dir() => Ok(()),
+        Ok(existing) if existing.is_dir() => Ok(Directory::AlreadyThere),
         Ok(existing) => Err(Error::DestinationExists {
             path: dir.to_path_buf(),
             found: kind_of(&existing),
@@ -245,10 +265,12 @@ pub(crate) fn ensure_directory(dir: &Path) -> Result<(), Error> {
                     found: ExistingNode::DanglingLink { written },
                 });
             }
-            fs::create_dir_all(dir).map_err(|source| Error::Write {
-                path: dir.to_path_buf(),
-                source,
-            })
+            fs::create_dir_all(dir)
+                .map(|()| Directory::Created)
+                .map_err(|source| Error::Write {
+                    path: dir.to_path_buf(),
+                    source,
+                })
         }
         Err(error) => Err(Error::Read {
             path: dir.to_path_buf(),

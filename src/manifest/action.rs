@@ -15,6 +15,7 @@ use crate::item::ItemId;
 pub(crate) enum Action {
     Symlink(SymlinkAction),
     SymlinkDir(SymlinkDirAction),
+    CreateDir(CreateDirAction),
 }
 
 impl Action {
@@ -27,6 +28,7 @@ impl Action {
         match self {
             Self::Symlink(action) => action.id.as_ref(),
             Self::SymlinkDir(action) => action.id.as_ref(),
+            Self::CreateDir(action) => action.id.as_ref(),
         }
     }
 }
@@ -75,4 +77,23 @@ pub(crate) struct SymlinkDirAction {
     /// keeps its dotfiles undotted.
     #[serde(default)]
     pub dot_prefix: bool,
+}
+
+/// `create-dir`: one directory, created where nothing is.
+///
+/// The only action with no source. It exists for a directory whose contents
+/// come from somewhere else — a plugin root another tool clones into, a cache a
+/// program expects to find — where the manifest has nothing of its own to put
+/// there.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct CreateDirAction {
+    /// Makes the action addressable.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    #[expect(dead_code, reason = "3.2 selects by group")]
+    pub group: Option<ItemId>,
+    /// The directory to create, resolved against the selected home when the
+    /// action runs. Missing parents are created with it.
+    pub dest: String,
 }

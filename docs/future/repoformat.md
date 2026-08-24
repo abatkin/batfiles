@@ -458,9 +458,9 @@ bootstrap policy belongs to the leaf repository.
 
 The ordered list, the tagged-record shape, and the common `type`, `id`, and
 `group` fields are specified in
-[`docs/repoformat.md`](../repoformat.md#actions), along with `symlink` and
-`symlink-dir` in full. `when` and `unless` are not built, nor is any variant
-other than those two.
+[`docs/repoformat.md`](../repoformat.md#actions), along with `symlink`,
+`symlink-dir`, and `create-dir` in full. `when` and `unless` are not built, nor
+is any variant other than those three.
 
 `[[actions]]` is an ordered heterogeneous array. Each action is a tagged record
 selected by its required `type` field.
@@ -539,15 +539,9 @@ dot-prefix = true
 
 ### `create-dir`
 
-```toml
-[[actions]]
-type = "create-dir"
-dest = "~/.config"
-```
-
-| Field  | Type   | Required | Description                     |
-|--------|--------|:--------:|---------------------------------|
-| `dest` | string |   yes    | Exact directory path to create. |
+Built and specified in [`docs/repoformat.md`](../repoformat.md#create-dir).
+Nothing about it is deferred: the action is one `dest` and no source, and it is
+the whole of what was specified here.
 
 ### `git-clone-list`
 
