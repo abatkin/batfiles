@@ -5,32 +5,33 @@
 //! previous one left it. Resolving what a `source` and a `dest` mean happens
 //! here rather than inside the records, so there is one place that decides.
 //!
-//! What is already *at* a destination, and whether batfiles may replace it, is
-//! [`crate::destination`]'s: every action asks it the same question and it is
-//! not asked twice.
+//! What a path means, and what is already *at* one, is [`crate::paths`]':
+//! every action asks it the same questions and they are not asked twice.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 // Making a symlink is the one platform-specific call here. Windows needs
 // `symlink_file` against `symlink_dir` and a privilege check, with no CI runner
-// and no user to prove it against, so it is not built — `link` refuses the
-// action instead, and this stands in so the crate still compiles there.
+// and no user to prove it against, so it is not built —
+// `require_symlink_support` refuses the action instead, and the stand-in below
+// keeps the crate compiling there.
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-#[cfg(not(unix))]
-fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
-    Err(io::Error::from(io::ErrorKind::Unsupported))
-}
-
-use crate::destination::{self, Occupant, Repository};
 use crate::error::Error;
 use crate::location::Roots;
 use crate::manifest::Manifest;
 use crate::manifest::action::{Action, SymlinkAction, SymlinkDirAction};
 use crate::output::Reporter;
+use crate::paths::{self, Occupant, Repository};
+
+#[cfg(not(unix))]
+fn symlink(_target: &Path, _dest: &Path) -> io::Result<()> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
 
 /// Execute every action in declaration order, stopping at the first failure.
 ///
@@ -41,7 +42,7 @@ use crate::output::Reporter;
 /// nowhere and a next run that calls it correct.
 pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> Result<(), Error> {
     let repository = Repository::at(&roots.batfiles_dir)?;
-    let home = destination::anchor(&roots.home)?;
+    let home = paths::anchor(&roots.home)?;
     for action in &manifest.actions {
         match action {
             Action::Symlink(action) => link(action, &repository, &home, reporter)?,
@@ -51,6 +52,19 @@ pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> R
     Ok(())
 }
 
+/// Refuse an action type that makes symlinks where batfiles cannot make one.
+///
+/// Called on sight, before anything is inspected or removed. Repairing a link
+/// deletes the old one first, so a platform check made at the moment of writing
+/// would fail with the destination already gone.
+fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
+    if cfg!(unix) {
+        Ok(())
+    } else {
+        Err(Error::Unsupported { action_type })
+    }
+}
+
 /// Carry out one `symlink` action: the whole of it is one link.
 fn link(
     action: &SymlinkAction,
@@ -58,12 +72,7 @@ fn link(
     home: &Path,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    // Refused on sight, before anything is inspected or removed. Repairing a
-    // link deletes the old one first, so a platform check made at the moment of
-    // writing would fail with the destination already gone.
-    if !cfg!(unix) {
-        return Err(Error::Unsupported { action: "symlink" });
-    }
+    require_symlink_support("symlink")?;
 
     let target = resolve_source(repository, &action.source)?;
     let dest = resolve_destination(home, &action.dest);
@@ -82,11 +91,7 @@ fn link_dir(
     home: &Path,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    if !cfg!(unix) {
-        return Err(Error::Unsupported {
-            action: "symlink-dir",
-        });
-    }
+    require_symlink_support("symlink-dir")?;
 
     let source_dir = resolve_source(repository, &action.source_dir)?;
     // Followed, unlike a destination: a `source-dir` that is a symlink to a
@@ -103,7 +108,7 @@ fn link_dir(
     }
 
     let dest_dir = resolve_destination(home, &action.dest_dir);
-    destination::ensure_directory(&dest_dir)?;
+    paths::ensure_directory(&dest_dir)?;
 
     let children = children_of(&source_dir)?;
     if children.is_empty() {
@@ -122,7 +127,7 @@ fn link_dir(
             });
         }
         let installed = if action.dot_prefix {
-            let mut dotted = std::ffi::OsString::from(".");
+            let mut dotted = OsString::from(".");
             dotted.push(&child);
             dotted
         } else {
@@ -143,7 +148,7 @@ fn link_dir(
 /// Sorted because `read_dir` yields whatever order the filesystem holds, and an
 /// action that reports its work in a different order on every machine is one
 /// nobody can diff.
-fn children_of(dir: &Path) -> Result<Vec<std::ffi::OsString>, Error> {
+fn children_of(dir: &Path) -> Result<Vec<OsString>, Error> {
     let read = fs::read_dir(dir).map_err(|source| Error::Read {
         path: dir.to_path_buf(),
         source,
@@ -180,7 +185,7 @@ fn link_one(
         // run holds the anchored spelling, which is the same place by a
         // different name wherever a root contains a symlink — and calling that
         // stale would relink it, and every link like it, on every run.
-        Occupant::Owned { points_at, .. } if points_at == destination::resolved(target) => {
+        Occupant::Owned { points_at, .. } if points_at == paths::resolved(target) => {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
         }
         Occupant::Owned { written, .. } => {
@@ -228,7 +233,7 @@ fn link_one(
 /// The one place a repository path is resolved, which 6.3 widens to take
 /// `@remote/path` (`guidance.md`, "Seams the late slices need").
 fn resolve_source(repository: &Repository, source: &str) -> Result<PathBuf, Error> {
-    let resolved = destination::normalize(&repository.path().join(source));
+    let resolved = paths::normalize(&repository.path().join(source));
 
     // Presence, not reachability: a source that is itself a dangling symlink is
     // there, and linking to it is what the repository asked for.
@@ -262,7 +267,7 @@ fn resolve_destination(home: &Path, dest: &str) -> PathBuf {
         // one, so the relative and absolute cases are the same line.
         None => home.join(dest),
     };
-    destination::normalize(&path)
+    paths::normalize(&path)
 }
 
 fn create(target: &Path, dest: &Path) -> Result<(), Error> {
@@ -309,6 +314,6 @@ mod tests {
         assert_eq!(dest_of("~/../shared/rc"), PathBuf::from("/home/shared/rc"));
     }
 
-    // Classifying what is already at a destination moved to `destination`, and
-    // its tests went with it.
+    // Composing a path, and classifying what is already at one, moved to
+    // `paths`, and their tests went with them.
 }

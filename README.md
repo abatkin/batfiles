@@ -10,11 +10,11 @@ nothing in the repository you cannot read with `cat`.
 
 > **Status: early, and not yet useful as a dotfiles manager.**
 >
-> Batfiles is being rebuilt from scratch, and the first of the plan's eleven
-> slices is done. On Unix, `sync` installs symlinks — and that is the whole of
-> it; every other command parses its arguments and then exits saying it is not
-> implemented yet. The plan, and the reason there is a rewrite, are in
-> [`rewrite/README.md`](rewrite/README.md).
+> Batfiles is being rebuilt from scratch. The first of the plan's eleven slices
+> is done and the second is under way. On Unix, `sync` installs symlinks — and
+> that is the whole of it; every other command parses its arguments and then
+> exits saying it is not implemented yet. The plan, and the reason there is a
+> rewrite, are in [`rewrite/README.md`](rewrite/README.md).
 
 > [!NOTE]
 > There is a sample repository to read and install:

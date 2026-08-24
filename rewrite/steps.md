@@ -70,15 +70,20 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 
 - **1.1** ✅ Add `symlink-dir`: one link per direct child of a directory, into
   one destination directory, with an optional `dot-prefix`.
-- **1.2** Add `create-dir`.
+- **1.2** Add `create-dir`, and settle what `symlink-dir` does with an empty
+  `source-dir`. Today it creates its `dest-dir` and links nothing, which
+  `docs/repoformat.md` permits — `dest-dir` is "created if it is missing" — but
+  which leaves an empty directory in `$HOME` for an action that installed
+  nothing. Once creating a directory is something a manifest asks for outright,
+  doing it as a side effect is a choice rather than the only spelling.
 - **1.3** Add `copy` with its missing-only seed semantics, preserved once
   created.
 - **1.4** Extract only what all four variants genuinely share, and not before
-  all four exist. One piece is already out: classifying what is at a destination
-  is `src/destination.rs`, because rule 13 has to be decided identically by
-  every action and rule 14 says the containment check lives in exactly one
-  place. Ask it rather than re-reading a destination, and add to it rather than
-  around it. What remains in `src/sync.rs` is source resolution and destination
+  all four exist. One piece is already out: composing a path, and classifying
+  what is at one, is `src/paths.rs`, because rule 13 has to be decided
+  identically by every action and rule 14 says the containment check lives in
+  exactly one place. Ask it rather than re-reading a destination, and add to it
+  rather than around it. What remains in `src/sync.rs` is source resolution and destination
   *composition*, written for the two symlink types — what `create-dir` and
   `copy` want from those is not answerable until they exist. This is also where
   `action/` earns its
@@ -203,7 +208,11 @@ fetching.
   read-only `env` namespace exposes — is the last piece of the environment 0.3
   left at the tag.
 - **5.6** Gate leaf actions and groups on `when` and `unless`, rejecting a
-  record that sets both.
+  record that sets both. The conditions are the third accessor to match over
+  every `Action` variant, after `id` at 0.6 and `group` at 3.2, so this is the
+  step 1.4 defers the collapse to: replace the per-field accessors with one `fn
+  common(&self) -> Common<'_>` returning a borrowed view of the shared fields,
+  so there is one exhaustive match rather than one per field.
 - **5.7** Make an unevaluable condition close the gate and warn, in both
   spellings.
 - **5.8** Add `vars list`.

@@ -1,27 +1,31 @@
-//! What is already at a destination, and whether batfiles may replace it.
+//! How batfiles reasons about a path: how one is composed, and what is already
+//! sitting at it.
+//!
+//! Two rules meet here, which is why they share a module.
 //!
 //! Rule 13 — never destroy what you did not create — is one decision, and every
 //! action that installs something has to make it. It is made here so that
 //! `symlink` and `symlink-dir` reach the same answer today and the actions that
 //! arrive at 1.2 and later reach it without restating the rule.
 //!
-//! Rule 14 is the reason this is not a lexical comparison. A destination *path*
-//! is composed lexically, which is deliberate and specified: `~/.config/nvim`
-//! means those components joined to the selected home, and a parent that is a
-//! symlink is followed by ordinary path resolution rather than being resolved
-//! away. But a symlink already sitting at that path is a different question:
-//! the operating system reads its target from the directory the link is
-//! *physically* in, so composing the answer lexically classifies it against a
-//! directory it is not in. That is how a link pointing outside the repository
-//! comes to look like one batfiles owns.
+//! Rule 14 is the reason that decision is not a lexical comparison. A *path* is
+//! composed lexically, which is deliberate and specified: `~/.config/nvim` means
+//! those components joined to the selected home, and a parent that is a symlink
+//! is followed by ordinary path resolution rather than being resolved away. But
+//! a symlink already sitting at that path is a different question: the operating
+//! system reads its target from the directory the link is *physically* in, so
+//! composing the answer lexically classifies it against a directory it is not
+//! in. That is how a link pointing outside the repository comes to look like one
+//! batfiles owns.
 //!
 //! So: paths are built lexically, and existing nodes are classified physically.
 
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::error::{Error, ExistingNode};
+use crate::error::Error;
 
 /// The repository an action installs from, in both forms it is needed in.
 ///
@@ -34,7 +38,7 @@ use crate::error::{Error, ExistingNode};
 /// it is compared with have been resolved by the operating system.
 ///
 /// Holding both in one value is what stops the two being crossed. Comparing an
-/// anchored root against a resolved path is precisely the bug this module
+/// anchored root against a resolved path is precisely the mistake rule 14
 /// exists to prevent, and it is invisible on any machine whose home contains no
 /// symlink.
 #[derive(Debug)]
@@ -120,6 +124,58 @@ impl Occupant {
                 path: dest.to_path_buf(),
                 source: error,
             }),
+        }
+    }
+}
+
+/// What a refused destination turned out to hold, as the data half of
+/// [`Error::DestinationExists`].
+///
+/// Which one it is decides nothing — all five are refused — but it is the
+/// difference between a diagnostic someone can act on and one that only says
+/// no. This is the crate's one hand-written `Display`: the symlink case renders
+/// conditionally, which no `#[error]` attribute can express.
+#[derive(Debug)]
+pub(crate) enum ExistingNode {
+    File,
+    Directory,
+    /// A symlink pointing somewhere other than into the repository, named both
+    /// as it is written and as it resolves: a relative target is read from the
+    /// link's own directory, so the spelling alone does not say where it goes.
+    Link {
+        written: PathBuf,
+        points_at: PathBuf,
+    },
+    /// A symlink whose target is not there. Where it points decides nothing —
+    /// batfiles will not create the far end of a link somebody else made — so
+    /// only the spelling is reported, and the refusal does not claim the target
+    /// is anywhere in particular.
+    DanglingLink {
+        written: PathBuf,
+    },
+    /// A socket, a fifo, a device — something batfiles has no idea how to give
+    /// back, which is exactly why it will not take it.
+    Other,
+}
+
+impl fmt::Display for ExistingNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::File => write!(f, "a regular file"),
+            Self::Directory => write!(f, "a directory"),
+            Self::Link { written, points_at } => {
+                write!(f, "a symlink to {}", written.display())?;
+                // An absolute target resolves to itself, and printing it twice
+                // reads as though two paths were involved.
+                if written != points_at {
+                    write!(f, " ({})", points_at.display())?;
+                }
+                write!(f, ", which is outside the repository")
+            }
+            Self::DanglingLink { written } => {
+                write!(f, "a symlink to {}, which is not there", written.display())
+            }
+            Self::Other => write!(f, "neither a regular file, a directory, nor a symlink"),
         }
     }
 }

@@ -22,11 +22,7 @@ impl Action {
     ///
     /// IDs share one namespace across a repository, so uniqueness is checked
     /// over the list as a whole — by a caller that does not know, and should
-    /// not have to ask, which variant it is holding. More such accessors are
-    /// coming: `group` at 3.2 and the conditions at 5.6. At the third, collapse
-    /// them into one `fn common(&self) -> Common<'_>` returning a borrowed view
-    /// of the shared fields, so there is one exhaustive match rather than one
-    /// per field.
+    /// not have to ask, which variant it is holding.
     pub fn id(&self) -> Option<&ItemId> {
         match self {
             Self::Symlink(action) => action.id.as_ref(),

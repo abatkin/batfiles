@@ -2,12 +2,12 @@
 
 mod app;
 mod cli;
-mod destination;
 mod error;
 mod item;
 mod location;
 mod manifest;
 mod output;
+mod paths;
 mod sync;
 mod tomlfile;
 

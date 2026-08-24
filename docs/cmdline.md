@@ -19,9 +19,9 @@ location roots it needs and then reports that it is not implemented yet, exiting
 2 having written nothing. That message is the answer to "what can batfiles do",
 and it disappears one command at a time.
 
-`sync` is the first command that writes. It executes the one action type that
-exists, which is enough to install a repository made of symlinks and nothing
-else.
+`sync` is the first command that writes. It executes the action types that
+exist, which between them are enough to install a repository made of symlinks
+and nothing else.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -73,9 +73,9 @@ directory and does not use any selected roots.
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
 
 `--color` and the four location options have their full effect. `--verbose` at
-one level prints the resolved roots, and the actions `sync` left alone because
-they were already correct. `--quiet` suppresses the lines saying what `sync`
-did, and nothing else.
+one level prints the resolved roots, and the destinations `sync` left alone
+because they were already correct. `--quiet` suppresses the lines saying what
+`sync` did, and nothing else.
 
 Two of the four resolved roots are live, and only for `sync`: it reads the leaf
 repository and writes into the selected home. Nothing reads or writes anything
@@ -133,11 +133,11 @@ execute its actions in declaration order, each one inspecting the filesystem as
 the previous one left it. The first failure stops the run; what earlier actions
 did stays done, and nothing is rolled back.
 
-One line on standard error names each action that changed something. An action
-that found its destination already correct says nothing, because a repository
-that is already installed is the ordinary case and forty lines of "unchanged"
-is how output stops being read; `-v` reports those too. `--quiet` suppresses
-both.
+One line on standard error names each change made — one per link, so an action
+that installs several names each of them. A destination that was already
+correct says nothing, because a repository that is already installed is the
+ordinary case and forty lines of "unchanged" is how output stops being read;
+`-v` reports those too. `--quiet` suppresses both.
 
 Every option `sync` accepts other than the global ones is
 [refused for now](#unimplemented-options); that list shrinking to empty is how

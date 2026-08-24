@@ -1723,7 +1723,7 @@ fn an_option_sync_does_not_honor_yet_stops_it_before_it_writes() {
 #[test]
 fn an_option_sync_does_not_honor_yet_stops_a_whole_repository() {
     // The same refusal against the `leaf` fixture, where "before it writes"
-    // means six actions' worth of nothing rather than one link's.
+    // means a whole repository's worth of nothing rather than one link's.
     let tree = Tree::fixture("leaf");
 
     let assertion = tree
