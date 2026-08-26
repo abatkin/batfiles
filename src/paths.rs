@@ -434,14 +434,27 @@ fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
 /// These correspond to nothing in the repository — they exist only so the
 /// destination can, so they take the platform default rather than any source's
 /// permissions.
-pub(crate) fn create_parents(dest: &Path) -> Result<(), Error> {
-    let Some(parent) = dest.parent() else {
-        return Ok(());
-    };
-    fs::create_dir_all(parent).map_err(|source| Error::Write {
-        path: parent.to_path_buf(),
-        source,
-    })
+///
+/// A parent is a container in exactly the sense [`ensure_directory`] means, so
+/// it is one. Two things change by saying so. A broken symlink in the way is
+/// cleared and reported, where a bare [`fs::create_dir_all`] fails on it with an
+/// `EEXIST` that names nothing. And an ordinary *file* in the way is named for
+/// what it is — the caller reached here because the destination under that file
+/// reads as vacant ([`Occupant::at`]), and this is the step that can say which
+/// component is the problem rather than reporting the path below it.
+///
+/// The outcome is returned rather than discarded because clearing a link removed
+/// something, and a caller that says nothing about it would be destroying a node
+/// silently — the one thing rule 13 is unwilling to do even for a node it is
+/// willing to destroy.
+pub(crate) fn create_parents(dest: &Path) -> Result<Directory, Error> {
+    match dest.parent() {
+        // An empty parent is what a one-component relative path has; there is
+        // no directory to make, and the destination is the working directory's.
+        Some(parent) if !parent.as_os_str().is_empty() => ensure_directory(parent),
+        // A path with no parent is a root, which is already there.
+        _ => Ok(Directory::AlreadyThere),
+    }
 }
 
 /// The direct children of a directory, sorted by name.

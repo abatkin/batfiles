@@ -94,7 +94,9 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
             ));
         }
         Occupant::Vacant => {
-            paths::create_parents(dest)?;
+            for link in paths::create_parents(dest)?.removals() {
+                reporter.info(&link.removal_note());
+            }
             create(target, dest)?;
             reporter.info(&format!(
                 "linked {} -> {}",

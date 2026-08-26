@@ -2073,6 +2073,51 @@ mod linking {
         assert_eq!(link_target(&tree.home(".config/nvim/init.lua")), source);
     }
 
+    #[test]
+    fn a_file_in_the_way_of_a_parent_is_named_for_what_it_is() {
+        // A destination under a regular file reads as vacant — nothing is at
+        // it — so the refusal falls to whoever makes the parents, which is the
+        // step that can say *which* component is the problem. Reporting the
+        // kernel's answer where it arose would name the path below the file.
+        let tree = Tree::new();
+        tree.repo_file("shell/zshrc", "# zsh\n");
+        fs::write(tree.home(".config"), "not a directory\n").expect("a file in the way");
+
+        let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.config/zsh/zshrc"));
+        for expected in [display(&tree.home(".config")), "a regular file".to_owned()] {
+            assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+        }
+        assert_eq!(
+            fs::read_to_string(tree.home(".config")).expect("the file"),
+            "not a directory\n"
+        );
+    }
+
+    #[test]
+    fn a_broken_link_in_the_way_of_a_parent_is_cleared_and_the_removal_reported() {
+        // The parent is made, because the link that was there reached nothing.
+        // Silently is the one way it must not happen: a run that removes a node
+        // says so, even one it is entitled to remove.
+        let tree = Tree::new();
+        let source = tree.repo_file("nvim/init.lua", "-- nvim\n");
+        fs::create_dir(tree.home(".config")).expect("a config directory");
+        let nowhere = tree.path("nowhere");
+        std::os::unix::fs::symlink(&nowhere, tree.home(".config/nvim")).expect("a broken link");
+        tree.write_manifest(&one_symlink("nvim/init.lua", "~/.config/nvim/init.lua"));
+
+        let assertion = tree.batfiles().arg("sync").assert().success();
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains(&format!(
+                "removed a broken symlink to {} to make {}",
+                display(&nowhere),
+                display(&tree.home(".config/nvim"))
+            )),
+            "the removal was not reported:\n{stderr}"
+        );
+        assert_eq!(link_target(&tree.home(".config/nvim/init.lua")), source);
+    }
+
     /// Run `sync` against a manifest expected to fail while executing, and return
     /// the diagnostic. Status 1: the command started work and stopped.
     fn refused(tree: &Tree, manifest: &str) -> String {

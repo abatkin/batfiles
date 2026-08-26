@@ -50,7 +50,9 @@ pub(crate) fn seed(
         if let Copyable::Directory = kind {
             refuse_destination_inside_source(source, dest)?;
         }
-        paths::create_parents(dest)?;
+        for link in paths::create_parents(dest)?.removals() {
+            reporter.info(&link.removal_note());
+        }
         install(source, kind, dest, reporter)?
     };
 
