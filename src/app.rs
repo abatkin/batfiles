@@ -98,7 +98,7 @@ fn dispatch(
             // on, so a repository whose manifest is missing, malformed, or
             // invalid fails with the file named rather than partway through.
             let manifest = Manifest::load(&roots.manifest())?;
-            sync::sync(&roots, &manifest, reporter)?;
+            sync::run(&roots, &manifest, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         _ => {

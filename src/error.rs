@@ -129,5 +129,5 @@ pub(crate) enum Error {
 
     /// An action type this build of batfiles cannot carry out on this platform.
     #[error("`{action_type}` actions are not supported on this platform")]
-    Unsupported { action_type: &'static str },
+    UnsupportedOnPlatform { action_type: &'static str },
 }

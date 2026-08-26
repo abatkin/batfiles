@@ -53,7 +53,7 @@ pub(crate) fn seed(
         for link in paths::create_parents(dest)?.removals() {
             reporter.info(&link.removal_note());
         }
-        install(source, kind, dest, reporter)?
+        build_and_publish(source, kind, dest, reporter)?
     };
 
     if installed {
@@ -87,7 +87,12 @@ pub(crate) fn seed(
 ///
 /// Reports whether it installed: a destination taken while the copy was being
 /// made is left alone, like one that was taken before it started.
-fn install(source: &Path, kind: Copyable, dest: &Path, reporter: &Reporter) -> Result<bool, Error> {
+fn build_and_publish(
+    source: &Path,
+    kind: Copyable,
+    dest: &Path,
+    reporter: &Reporter,
+) -> Result<bool, Error> {
     let staging = staging_path(dest);
     // Created before anything else can fail, so that everything after it is
     // working on a node this run made. Cleanup that runs on a path this run did
@@ -279,7 +284,7 @@ fn staging_path(dest: &Path) -> PathBuf {
 /// Naming a thing and reproducing one are different questions, and every
 /// action's source resolves through a link — that is how a repository points at
 /// something it stores under another name.
-pub(crate) fn named_kind(source: &Path) -> Result<Copyable, Error> {
+pub(crate) fn kind_of_named_source(source: &Path) -> Result<Copyable, Error> {
     let found = fs::metadata(source).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             // Reachability, not presence: the source has already been resolved
@@ -305,7 +310,7 @@ pub(crate) fn named_kind(source: &Path) -> Result<Copyable, Error> {
 /// re-reads a relative target from a directory it is no longer in. Refusing is
 /// the answer that can be changed later without changing what a working
 /// manifest does today.
-pub(crate) fn found_kind(source: &Path) -> Result<Copyable, Error> {
+pub(crate) fn kind_of_found_node(source: &Path) -> Result<Copyable, Error> {
     let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
@@ -337,30 +342,34 @@ fn kind_of(found: &fs::Metadata, source: &Path) -> Result<Copyable, Error> {
 /// only thing this can write into is one that did not exist a moment ago. The
 /// permissions [`fs::copy`] would have carried are set here instead, which is
 /// also where a directory gets them.
-fn copy_file(source: &Path, mut into: fs::File, dest: &Path) -> Result<(), Error> {
+///
+/// `built_at` is where `into` lives, which is never the action's destination:
+/// everything this writes is inside the staging tree, and reaches the
+/// destination only when [`publish`] moves it there whole.
+fn copy_file(source: &Path, mut into: fs::File, built_at: &Path) -> Result<(), Error> {
     let mut from = fs::File::open(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
     })?;
     io::copy(&mut from, &mut into).map_err(|error| Error::Write {
-        path: dest.to_path_buf(),
+        path: built_at.to_path_buf(),
         source: error,
     })?;
-    mirror_permissions(source, dest)
+    mirror_permissions(source, built_at)
 }
 
 /// Copy everything under a source directory into a directory being built.
 ///
-/// What it walks, it reproduces, and every node is new: this is inside the
-/// staging directory, which nothing else knows about, so a path already taken
-/// is a failure rather than a thing to keep. Keeping one here would publish an
+/// What it walks, it reproduces, and every node is new: `built_at` is inside the
+/// staging directory, which nothing else knows about, so a path already taken is
+/// a failure rather than a thing to keep. Keeping one here would publish an
 /// incomplete copy as a finished one, which is the opposite of what staging is
 /// for.
-fn copy_children(source: &Path, dest: &Path) -> Result<(), Error> {
+fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
     for child in paths::children_of(source)? {
         let from = source.join(&child);
-        let to = dest.join(&child);
-        match found_kind(&from)? {
+        let to = built_at.join(&child);
+        match kind_of_found_node(&from)? {
             Copyable::File => {
                 copy_file(&from, create_new_file(&to)?, &to)?;
             }
@@ -375,7 +384,7 @@ fn copy_children(source: &Path, dest: &Path) -> Result<(), Error> {
     }
     // Last, and not at creation: a source directory its owner cannot write into
     // would otherwise lock batfiles out of the copy it is still filling.
-    mirror_permissions(source, dest)
+    mirror_permissions(source, built_at)
 }
 
 /// Give a copied file or directory the permissions of what it was copied from,
@@ -384,13 +393,13 @@ fn copy_children(source: &Path, dest: &Path) -> Result<(), Error> {
 /// Ownership is not copied; the copy belongs to whoever ran the command.
 /// Directories batfiles creates only to *reach* a destination are not these,
 /// and keep the platform default: they correspond to nothing in the repository.
-fn mirror_permissions(source: &Path, dest: &Path) -> Result<(), Error> {
+fn mirror_permissions(source: &Path, built_at: &Path) -> Result<(), Error> {
     let found = fs::metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
     })?;
-    fs::set_permissions(dest, found.permissions()).map_err(|error| Error::Write {
-        path: dest.to_path_buf(),
+    fs::set_permissions(built_at, found.permissions()).map_err(|error| Error::Write {
+        path: built_at.to_path_buf(),
         source: error,
     })
 }

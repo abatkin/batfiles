@@ -99,7 +99,7 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
   `create_dir` in `action/mod.rs`. Three things it left are the ones to use
   rather than work around. `action::Context` is where the dry-run flag goes —
   it already holds the anchored roots and the reporter, and 9.4's
-  `--refresh-content` is a second flag on the same value. `install_children`
+  `--refresh-content` is a second flag on the same value. `for_each_child`
   takes the per-child work as a closure, which is the seam through which a
   `-dir` action's effects come back one child at a time; its `install_one`
   parameter becomes the thing that returns effects rather than performs them.
@@ -166,7 +166,7 @@ variable and condition slices.
   words as `copy`, and it should be the same code path. A download is the worst
   case rule 15 is about: it is slow, so the window in which the destination
   holds something unfinished is wide, and a network that drops mid-transfer is
-  ordinary rather than exceptional. Publish through `install.rs`'s `install`, and
+  ordinary rather than exceptional. Publish through `install.rs`'s `build_and_publish`, and
   take the digest check from `future/safety.md` with it — verifying content is a
   step between building and publishing, which is exactly the shape that path
   already has. Slice 1 spent four rounds of review getting this right for

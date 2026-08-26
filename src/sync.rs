@@ -13,7 +13,7 @@ use crate::manifest::Manifest;
 use crate::output::Reporter;
 
 /// Execute every action in declaration order, stopping at the first failure.
-pub(crate) fn sync(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> Result<(), Error> {
+pub(crate) fn run(roots: &Roots, manifest: &Manifest, reporter: &Reporter) -> Result<(), Error> {
     let context = Context::new(roots, reporter)?;
     for entry in &manifest.actions {
         action::run(entry, &context)?;

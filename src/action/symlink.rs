@@ -14,7 +14,7 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-use super::{Context, install_children, source_directory};
+use super::{Context, for_each_child, source_directory};
 use crate::error::Error;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
 use crate::paths::{self, Occupant};
@@ -49,7 +49,7 @@ pub(super) fn link_dir(action: &SymlinkDirAction, context: &Context) -> Result<(
     // children about to be linked, and it would then be linked into itself.
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
-    install_children(
+    for_each_child(
         context,
         &source_dir,
         &dest_dir,
@@ -68,7 +68,7 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
     if cfg!(unix) {
         Ok(())
     } else {
-        Err(Error::Unsupported { action_type })
+        Err(Error::UnsupportedOnPlatform { action_type })
     }
 }
 

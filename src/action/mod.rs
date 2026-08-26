@@ -187,7 +187,7 @@ fn source_directory(context: &Context, source_dir: &str) -> Result<PathBuf, Erro
 /// rather than decided entry by entry.
 ///
 /// `verb` is the one word the two differ by, in the one line they both report.
-fn install_children(
+fn for_each_child(
     context: &Context,
     source_dir: &Path,
     dest_dir: &Path,

@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use super::{Context, install_children, source_directory};
+use super::{Context, for_each_child, source_directory};
 use crate::error::Error;
 use crate::install;
 use crate::manifest::action::{CopyAction, CopyDirAction};
@@ -22,7 +22,7 @@ pub(super) fn copy(action: &CopyAction, context: &Context) -> Result<(), Error> 
     let dest = context.destination(&action.dest);
     install::seed(
         &source,
-        install::named_kind(&source)?,
+        install::kind_of_named_source(&source)?,
         &dest,
         context.reporter(),
     )
@@ -44,7 +44,7 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), 
     // wrote, which is what the author can act on.
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
-    install_children(
+    for_each_child(
         context,
         &source_dir,
         &dest_dir,
@@ -61,7 +61,7 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), 
 fn seed_child(source: &Path, dest: &Path, context: &Context) -> Result<(), Error> {
     install::seed(
         source,
-        install::found_kind(source)?,
+        install::kind_of_found_node(source)?,
         dest,
         context.reporter(),
     )

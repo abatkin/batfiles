@@ -249,7 +249,7 @@ pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
 /// land inside one.
 pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Result<(), Error> {
     let source = resolved(source);
-    if intended(dest).starts_with(&source) {
+    if will_resolve_to(dest).starts_with(&source) {
         return Err(Error::DestinationInsideSource {
             installed: source,
             dest: dest.to_path_buf(),
@@ -258,13 +258,15 @@ pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Re
     Ok(())
 }
 
-/// Where a path *will* be, resolved as far as the filesystem can say.
+/// Where a path *will* be once it exists, resolved as far as the filesystem can
+/// say today.
 ///
-/// [`resolved`] answers this for something that is there. A destination need
-/// not be there yet, so the deepest ancestor that does exist is resolved and
-/// the rest is joined back on. That is enough to compare a destination against
-/// a path the operating system resolved, without pretending the leaf exists.
-pub(crate) fn intended(path: &Path) -> PathBuf {
+/// The tense is the whole difference from [`resolved`], which answers for
+/// something that is there now. A destination need not be there yet, so the
+/// deepest ancestor that does exist is resolved and the rest is joined back on.
+/// That is enough to compare a destination against a path the operating system
+/// resolved, without pretending the leaf exists.
+pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     let mut trailing = Vec::new();
     let mut ancestor = path;
     loop {
@@ -283,11 +285,12 @@ pub(crate) fn intended(path: &Path) -> PathBuf {
     }
 }
 
-/// A path in the form [`Repository::contains`] and [`Occupant::Owned`] compare
-/// against.
+/// Where a path *is*, in the form [`Repository::contains`] and
+/// [`Occupant::Replaceable`] compare against.
 ///
 /// Used on an action's intended target so that "is this link already right?" is
-/// asked in one space rather than across two.
+/// asked in one space rather than across two. [`will_resolve_to`] is the same
+/// question for a path that does not exist yet.
 pub(crate) fn resolved(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| normalize(path))
 }

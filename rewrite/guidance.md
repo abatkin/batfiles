@@ -212,7 +212,7 @@ created**, never on one that was already there: "it is probably ours" in front o
 a recursive delete is how a tool destroys data it was written to protect.
 
 `copy` at 1.3 is the worked example, and `src/install.rs` is where it lives —
-`install`, `publish`, and `discard` in particular. Slice 4 inherits all of it — `fetch-url` and
+`build_and_publish`, `publish`, and `discard` in particular. Slice 4 inherits all of it — `fetch-url` and
 archive extraction are seeds with the same destinations and the same failure —
 so reuse that path rather than deriving it again.
 
