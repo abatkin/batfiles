@@ -78,59 +78,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   its expectations into the symlink half inside `mod linking` and the portable
   half outside it, which the manifest declares first so a platform that cannot
   make a symlink still runs it.
-- **1.5** Extract only what all five variants genuinely share — 1.3 landed as
-  two actions, so the count this step was written against is one higher. Three
-  pieces are already out, each because a second caller wanted it exactly as the
-  first left it, not in anticipation: composing a path and classifying what is
-  at one is `src/paths.rs` (rule 13 has to be decided identically by every
-  action, and rule 14 says the containment check lives in one place);
-  `sync::ensure_directory` reports the directory that `copy-dir`, `symlink-dir`,
-  and `create-dir` each need made; and `installed_name` holds the dot-prefix
-  rule and its refusal for the two `-dir` actions. Ask them rather than
-  re-deriving, and add to them rather than around them.
-
-  What is genuinely still duplicated is the shape of the two `-dir` actions:
-  resolve the source, insist it is a directory, ensure the destination, then
-  loop over sorted children doing one action's work per child. `link_dir` and
-  `copy_dir` are that shape twice, differing only in the per-child call and one
-  diagnostic. Both `resolve_source` and `resolve_destination` came through 1.2
-  and 1.3 unchanged, so nothing is owed there. The accessors that match over
-  every variant are the same question in miniature: 0.6 wrote `Action::id()` as
-  the first, 3.2 reads `group` as the second, and at the third they collapse
-  into one `fn common(&self)`.
-
-  **Do this before 2.1, which rewrites every action body into an `effects` half
-  and an `apply` half.** That across five actions inside one 831-line file is
-  the expensive spelling of the same work, and the one where the publication
-  path gets reshaped while something else is being done.
-
-  The split is by action *pair* rather than by action, because the pairs share
-  their per-item function and their child loop, and one file per action puts
-  that shared piece in an awkward third place. `create-dir` is four lines; leave
-  it with the dispatch rather than manufacturing a file for it:
-
-  ```text
-  sync.rs       the loop, and nothing else
-  action/mod.rs dispatch, create-dir, the shared -dir child loop, field resolution
-  action/symlink.rs   symlink + symlink-dir
-  action/copy.rs      copy + copy-dir
-  install.rs    stage, publish, discard — rule 15 in one place
-  ```
-
-  **`install.rs` is the part to get right, and the obvious split gets it
-  wrong.** `seed`, `install`, `create_staging`, `create_closed`, `fill`,
-  `publish`, `discard`, and `staging_path` are 112 lines — a peer of the symlink
-  group, not a sub-part of copy — and they have three callers coming: `copy`
-  now, `fetch-url` at 4.1, archive extraction at 4.2. Inside `action/copy.rs`
-  they would be something `action/fetch_url.rs` has to reach sideways into,
-  which is the shape that ends with 4.1 reimplementing them instead. They are
-  also the code four separate rounds of review found defects in, so move them as
-  a unit and move them unchanged; a rewrite on the way past is how that work
-  gets undone.
-
-  Do **not** parameterize `install` over what content to produce yet. It has one
-  caller today, 4.1 is the second and can introduce the seam then, and rule 3
-  still applies — moving it out is about locality, not abstraction.
+- **1.5** ✅ Extract what the five variants genuinely share, splitting the
+  831-line `sync.rs` by action *pair* into `action/`, with the seed machinery
+  moved unchanged into `install.rs` and the roots behind a `Context`.
 
 ## Slice 2 — Dry-run
 
@@ -143,6 +93,19 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
   effect that names what it will write, rather than enumerating it, is what that
   wants — which is also the shape 4.1 needs, so getting it wrong here is paid
   for twice.
+
+  1.5 laid out what this works within, so the split is per file rather than
+  across an 831-line one: `action/symlink.rs`, `action/copy.rs`, and
+  `create_dir` in `action/mod.rs`. Three things it left are the ones to use
+  rather than work around. `action::Context` is where the dry-run flag goes —
+  it already holds the anchored roots and the reporter, and 9.4's
+  `--refresh-content` is a second flag on the same value. `install_children`
+  takes the per-child work as a closure, which is the seam through which a
+  `-dir` action's effects come back one child at a time; its `install_one`
+  parameter becomes the thing that returns effects rather than performs them.
+  And `install.rs`'s `seed` already asks `paths::occupied` before doing
+  anything — that call is the whole of a seed's `effects`, so the phase
+  boundary is a line that already exists.
 - **2.2** Interleave the two per action, so a real run computes each action's
   effects against the filesystem the previous action left.
 - **2.3** Make `effects` return either known effects or an unknown-with-reason,
@@ -203,11 +166,21 @@ variable and condition slices.
   words as `copy`, and it should be the same code path. A download is the worst
   case rule 15 is about: it is slow, so the window in which the destination
   holds something unfinished is wide, and a network that drops mid-transfer is
-  ordinary rather than exceptional. Publish through `sync.rs`'s `install`, and
+  ordinary rather than exceptional. Publish through `install.rs`'s `install`, and
   take the digest check from `future/safety.md` with it — verifying content is a
   step between building and publishing, which is exactly the shape that path
   already has. Slice 1 spent four rounds of review getting this right for
   `copy`; none of it is worth deriving a second time.
+
+  **This is the step that parameterizes `fill`.** 1.5 moved `install.rs` out
+  whole but deliberately left it naming its one content producer directly,
+  because `copy` was the only caller and rule 3 says wait. A download is the
+  second, so `fill` becomes the argument — what to write into the staging node
+  this run created — and `copy_file`, `copy_children`, and `mirror_permissions`
+  go to `action/copy.rs` with it. What must **not** move is anything between
+  the staging node and the destination: `create_staging`, `publish`, and
+  `discard` are the rule-15 property itself, and a download reaches them by the
+  same route a copy does.
 - **4.2** Add archive extraction, rejecting absolute paths, `..` traversal, and
   symlinks escaping the destination root. A directory seed, so rule 15 again:
   extract into the staging tree and publish once, rather than into the
@@ -335,7 +308,7 @@ before.
   written for a tool that cannot give anything back, and `future/safety.md`
   parks `--no-overwrite` and `--interactive` here for the same reason.
 
-  For the seed actions this is one function, not a sweep: `sync.rs`'s `publish`
+  For the seed actions this is one function, not a sweep: `install.rs`'s `publish`
   is the single place that decides whether an occupied destination is kept, and
   `--refresh-content` is that decision inverted — back the destination up, then
   replace it. Everything the copy needed in order to be safe is already on the

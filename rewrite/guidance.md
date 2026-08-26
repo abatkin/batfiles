@@ -191,8 +191,8 @@ never briefly a public one — it is left behind by an interrupted run, so
 created**, never on one that was already there: "it is probably ours" in front of
 a recursive delete is how a tool destroys data it was written to protect.
 
-`copy` at 1.3 is the worked example, and `src/sync.rs`'s `install`, `publish`,
-and `discard` are where it lives. Slice 4 inherits all of it — `fetch-url` and
+`copy` at 1.3 is the worked example, and `src/install.rs` is where it lives —
+`install`, `publish`, and `discard` in particular. Slice 4 inherits all of it — `fetch-url` and
 archive extraction are seeds with the same destinations and the same failure —
 so reuse that path rather than deriving it again.
 

@@ -20,6 +20,7 @@
 //!
 //! So: paths are built lexically, and existing nodes are classified physically.
 
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -320,6 +321,43 @@ pub(crate) fn ensure_directory(dir: &Path) -> Result<Directory, Error> {
             source: error,
         }),
     }
+}
+
+/// Create the directories a destination sits in, if they are not there.
+///
+/// These correspond to nothing in the repository — they exist only so the
+/// destination can, so they take the platform default rather than any source's
+/// permissions.
+pub(crate) fn create_parents(dest: &Path) -> Result<(), Error> {
+    let Some(parent) = dest.parent() else {
+        return Ok(());
+    };
+    fs::create_dir_all(parent).map_err(|source| Error::Write {
+        path: parent.to_path_buf(),
+        source,
+    })
+}
+
+/// The direct children of a directory, sorted by name.
+///
+/// Sorted because `read_dir` yields whatever order the filesystem holds, and an
+/// action that reports its work in a different order on every machine is one
+/// nobody can diff.
+pub(crate) fn children_of(dir: &Path) -> Result<Vec<OsString>, Error> {
+    let read = fs::read_dir(dir).map_err(|source| Error::Read {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    let mut names = Vec::new();
+    for entry in read {
+        let entry = entry.map_err(|source| Error::Read {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        names.push(entry.file_name());
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// Name what is sitting at a destination, so a refusal can say which kind it

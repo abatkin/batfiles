@@ -1,8 +1,10 @@
 //! The `batfiles` binary.
 
+mod action;
 mod app;
 mod cli;
 mod error;
+mod install;
 mod item;
 mod location;
 mod manifest;

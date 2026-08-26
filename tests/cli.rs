@@ -1225,6 +1225,37 @@ fn a_copy_dir_action_creates_its_destination_directory() {
 }
 
 #[test]
+fn a_copy_dir_with_nothing_in_it_creates_its_destination_and_says_so() {
+    // The `symlink-dir` half of this is
+    // `linking::an_empty_source_directory_still_makes_its_destination_and_links_nothing`,
+    // and the
+    // two say the same thing in the same order for the same reason: an empty
+    // source is a repository mid-progress, and the destination is made anyway
+    // because it is what the action was told to fill.
+    let tree = Tree::new();
+    fs::create_dir_all(tree.path("repo/seed")).expect("an empty source directory");
+    tree.write_manifest(&one_copy_dir("seed", "~/installed", false));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        stderr_of(&assertion),
+        format!("created {}\n", display(&tree.home("installed")))
+    );
+    assert_eq!(entries(&tree.home("installed")), Vec::<String>::new());
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    assert!(
+        stderr_of(&assertion).contains("no children to copy"),
+        "the empty directory was not reported:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
 fn copy_dir_dots_every_installed_name_and_nothing_else() {
     let tree = Tree::new();
     with_seed(&tree);
@@ -1346,6 +1377,37 @@ fn a_copy_dir_whose_destination_is_inside_its_source_is_refused() {
         stderr_of(&assertion)
     );
     assert_eq!(entries(&repo.join("seed")), ["a"]);
+}
+
+#[test]
+fn a_copy_dir_checks_its_source_before_it_checks_its_destination() {
+    // Both rules are broken at once: the source is a file, and the destination
+    // lands inside it. The source is what the run reports, because a
+    // `source-dir` that is not a directory is a mistake in the record itself,
+    // and there is no reading of the rest of the action until it is fixed.
+    let tree = Tree::new();
+    let repo = seeded_repository_in_the_home(&tree);
+    fs::write(
+        repo.join("batfiles.toml"),
+        one_copy_dir("seed/a", "~/dotfiles/seed/a/inner", false),
+    )
+    .expect("a manifest");
+
+    let assertion = tree
+        .batfiles()
+        .args(["--batfiles-dir", &display(&repo), "sync"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("not a directory"),
+        "the source was not what was reported:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("which is inside it"),
+        "the destination was reported ahead of the source:\n{stderr}"
+    );
 }
 
 /// A copy stopped partway. Gated because a symlink is the cheapest way to make
