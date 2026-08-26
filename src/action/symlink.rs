@@ -14,7 +14,8 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-use super::{Context, for_each_child, source_directory};
+use super::Context;
+use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
 use crate::paths::{self, Occupant};
@@ -42,7 +43,7 @@ pub(super) fn link(action: &SymlinkAction, context: &Context) -> Result<(), Erro
 pub(super) fn link_dir(action: &SymlinkDirAction, context: &Context) -> Result<(), Error> {
     require_symlink_support("symlink-dir")?;
 
-    let source_dir = source_directory(context, &action.source_dir)?;
+    let source_dir = context.source_directory(&action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     // Before the destination is created, for the same reason `copy-dir` checks
     // first: creating it inside the source is what puts it in the list of
@@ -51,10 +52,12 @@ pub(super) fn link_dir(action: &SymlinkDirAction, context: &Context) -> Result<(
 
     for_each_child(
         context,
-        &source_dir,
-        &dest_dir,
-        action.dot_prefix,
-        "link",
+        &ChildInstall {
+            source_dir: &source_dir,
+            dest_dir: &dest_dir,
+            dot_prefix: action.dot_prefix,
+            verb: "link",
+        },
         |source, dest| link_one(source, dest, context),
     )
 }

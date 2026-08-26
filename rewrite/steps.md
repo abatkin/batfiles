@@ -95,14 +95,15 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
   for twice.
 
   1.5 laid out what this works within, so the split is per file rather than
-  across an 831-line one: `action/symlink.rs`, `action/copy.rs`, and
-  `create_dir` in `action/mod.rs`. Three things it left are the ones to use
-  rather than work around. `action::Context` is where the dry-run flag goes —
-  it already holds the anchored roots and the reporter, and 9.4's
-  `--refresh-content` is a second flag on the same value. `for_each_child`
-  takes the per-child work as a closure, which is the seam through which a
-  `-dir` action's effects come back one child at a time; its `install_one`
-  parameter becomes the thing that returns effects rather than performs them.
+  across an 831-line one: one file per action type under `action/`, with
+  `action/mod.rs` holding only the dispatch. Three things it left are the ones
+  to use rather than work around. `action::Context` — now `action/context.rs` —
+  is where the dry-run flag goes: it already holds the anchored roots and the
+  reporter, and 9.4's `--refresh-content` is a second flag on the same value.
+  `children::for_each_child` takes the per-child work as a closure, which is the
+  seam through which a `-dir` action's effects come back one child at a time;
+  its `install_one` parameter becomes the thing that returns effects rather than
+  performs them.
   And `install.rs`'s `seed` already asks `paths::occupied` before doing
   anything — that call is the whole of a seed's `effects`, so the phase
   boundary is a line that already exists.

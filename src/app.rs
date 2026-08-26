@@ -18,7 +18,6 @@ use crate::cli::unsupported::{self, Unsupported};
 use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::error::Error;
 use crate::location::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
-use crate::manifest::Manifest;
 use crate::output::{Reporter, Verbosity};
 use crate::sync;
 
@@ -94,11 +93,7 @@ fn dispatch(
         Command::Init(_) => Ok(unimplemented(reporter, name)),
         Command::Sync(_) => {
             let roots = locate(cli, env, reporter)?;
-            // The manifest is read and checked whole before any of it is acted
-            // on, so a repository whose manifest is missing, malformed, or
-            // invalid fails with the file named rather than partway through.
-            let manifest = Manifest::load(&roots.manifest())?;
-            sync::run(&roots, &manifest, reporter)?;
+            sync::run(&roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         _ => {

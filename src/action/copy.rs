@@ -7,7 +7,8 @@
 
 use std::path::Path;
 
-use super::{Context, for_each_child, source_directory};
+use super::Context;
+use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::install;
 use crate::manifest::action::{CopyAction, CopyDirAction};
@@ -36,7 +37,7 @@ pub(super) fn copy(action: &CopyAction, context: &Context) -> Result<(), Error> 
 /// entry inside a child, so a directory the user already has is never seeded
 /// into.
 pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), Error> {
-    let source_dir = source_directory(context, &action.source_dir)?;
+    let source_dir = context.source_directory(&action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     // Before the destination is created, because creating it inside the source
     // is what puts it in the list of children about to be copied. Each child is
@@ -46,10 +47,12 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), 
 
     for_each_child(
         context,
-        &source_dir,
-        &dest_dir,
-        action.dot_prefix,
-        "copy",
+        &ChildInstall {
+            source_dir: &source_dir,
+            dest_dir: &dest_dir,
+            dot_prefix: action.dot_prefix,
+            verb: "copy",
+        },
         |source, dest| seed_child(source, dest, context),
     )
 }
