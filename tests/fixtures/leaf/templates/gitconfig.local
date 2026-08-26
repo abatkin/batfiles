@@ -1,0 +1,4 @@
+; Machine-local git identity. Included by `git/gitconfig`; fill it in.
+[user]
+	name =
+	email =

@@ -1,6 +1,37 @@
 # A leaf repository shaped like one someone would actually keep: several
 # actions over a directory tree, with files the manifest never names, and both
 # ways of declaring a symlink.
+#
+# The actions that need no symlink come first, so a platform that cannot make
+# one still runs them before the refusal stops the list.
+
+# The shell writes its history here, and writing it is what fails if the
+# directory is missing — a directory nothing else in the manifest creates.
+[[actions]]
+type = "create-dir"
+id = "zsh-cache"
+group = "shell"
+dest = "~/.cache/zsh"
+
+# Seeded rather than linked, because it holds the identity of one machine:
+# `git/gitconfig` includes it, editing it must not write into the repository,
+# and a later sync must not undo the edit.
+[[actions]]
+type = "copy"
+id = "gitconfig-local"
+group = "git"
+source = "templates/gitconfig.local"
+dest = "~/.config/git/local"
+
+# The same bargain once per child: `.zshrc` sources everything in this
+# directory, the repository supplies the starting contents, and what is already
+# there is left alone while the rest is filled in.
+[[actions]]
+type = "copy-dir"
+id = "zsh-local"
+group = "shell"
+source-dir = "zsh-local"
+dest-dir = "~/.config/zsh/local"
 
 [[actions]]
 type = "symlink"

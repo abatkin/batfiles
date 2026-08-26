@@ -74,25 +74,10 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   `source-dir`: it creates its `dest-dir` and says so.
 - **1.3** ✅ Add `copy` with its missing-only seed semantics, preserved once
   created. Landed as two actions, `copy` and `copy-dir`.
-- **1.4** Extend `tests/fixtures/leaf` and add one CLI test per action type.
-  `create-dir` and `copy` are not platform-specific, so their fixture
-  expectations go *outside* `mod linking` (`guidance.md`, "Test environments");
-  only the symlink half belongs in it. 1.2 and 1.3 each add their action's own
-  CLI tests from a manifest written inline, which is why neither had to touch
-  the fixture — so **splitting `LEAF_ACTIONS` is this step's job**, since this is
-  where the fixture first declares an action that is not a symlink. Keep the two
-  halves written out by hand rather than read back from the manifest, since a
-  test that derives its expectations from the file under test asserts nothing.
-  Note what the split runs into: the test that syncs the whole fixture lives in
-  `mod linking` and would fail off unix at the first symlink action, so the
-  portable half needs a test that does not sync the whole fixture — or the
-  fixture's portable actions have to be reachable without the symlink ones,
-  which they are not while the run stops at the first failure.
-
-  Ahead of the extraction below on purpose, though neither step needs the other:
-  `tests/cli.rs` is the net an internal restructuring falls into (rule 10), so
-  it is worth widening before rather than after, and tests written now describe
-  the behavior rather than the shape that replaced it.
+- **1.4** ✅ Extend `tests/fixtures/leaf` to declare every action type, splitting
+  its expectations into the symlink half inside `mod linking` and the portable
+  half outside it, which the manifest declares first so a platform that cannot
+  make a symlink still runs it.
 - **1.5** Extract only what all five variants genuinely share — 1.3 landed as
   two actions, so the count this step was written against is one higher. Three
   pieces are already out, each because a second caller wanted it exactly as the
@@ -175,7 +160,13 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
   refuses that action and leaves the ones after it undone, so stopping at the
   first failure is covered. What is still owed is order itself, which needs two
   actions whose order is observable — one creating what the next depends on —
-  rather than two that merely both happen.
+  rather than two that merely both happen. 1.4 left a second consumer of
+  declaration order and no coverage of it:
+  `the_actions_that_need_no_symlink_run_where_symlinks_cannot_be_made` reads the
+  `leaf` fixture's portable actions as the ones ahead of the first `symlink`
+  record, and being `#[cfg(not(unix))]` it runs on no CI runner. Reordering that
+  manifest breaks a test nothing here would notice, so the observable pair this
+  step owes belongs in the fixture rather than in a manifest written inline.
 - **3.2** Add groups and group membership. The `group` field has parsed and been
   validated as an `ItemId` since 0.6; this is the step that reads it, so its
   `expect(dead_code)` goes — CI will insist — along with the line in

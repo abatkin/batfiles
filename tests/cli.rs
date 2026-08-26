@@ -1681,6 +1681,78 @@ fn a_source_the_manifest_named_through_a_link_is_followed() {
     );
 }
 
+// The portable half of the `leaf` fixture: the actions that need no symlink,
+// which the manifest declares first so that a platform which cannot make one
+// still runs them before the refusal stops the list.
+
+/// Every directory `tests/fixtures/leaf` creates outright, as opposed to the
+/// ones made on the way to a destination.
+const LEAF_DIRS: [&str; 1] = [".cache/zsh"];
+
+/// Every file it seeds, and the repository file each one is a copy of, in the
+/// order it seeds them.
+///
+/// Written out rather than read back from the manifest: a test that derives its
+/// expectations from the file under test asserts nothing. The last two are the
+/// one `copy-dir` action expanded — one entry per child, in sorted order,
+/// because that is what the run produces.
+const LEAF_SEEDS: [(&str, &str); 3] = [
+    ("templates/gitconfig.local", ".config/git/local"),
+    ("zsh-local/env.zsh", ".config/zsh/local/env.zsh"),
+    ("zsh-local/prompt.zsh", ".config/zsh/local/prompt.zsh"),
+];
+
+/// Assert that every action in [`LEAF_DIRS`] and [`LEAF_SEEDS`] has been
+/// carried out, which every platform can do.
+fn assert_leaf_portable_actions(tree: &Tree) {
+    for dest in LEAF_DIRS {
+        assert!(
+            tree.home(dest).is_dir(),
+            "`{dest}` is not a directory that exists"
+        );
+    }
+    for (source, dest) in LEAF_SEEDS {
+        let installed = tree.home(dest);
+        // A seed is the user's copy, not a view of the repository's file: what
+        // it holds is what an editor would write to, and nothing links back.
+        assert!(
+            !installed.is_symlink(),
+            "`{dest}` was linked rather than seeded"
+        );
+        assert_eq!(
+            fs::read_to_string(&installed).unwrap_or_else(|error| panic!("`{dest}`: {error}")),
+            fs::read_to_string(tree.path("repo").join(source)).expect("the repository file"),
+            "`{dest}` does not hold what `{source}` holds"
+        );
+    }
+}
+
+/// Syncing the whole fixture where symlinks cannot be made: the actions ahead
+/// of the first `symlink` record are carried out, and the refusal stops the run
+/// there.
+///
+/// The unix side of this is `linking::syncing_a_real_repository_installs_every_
+/// action_and_nothing_else`, which asserts the same half and the links besides.
+#[cfg(not(unix))]
+#[test]
+fn the_actions_that_need_no_symlink_run_where_symlinks_cannot_be_made() {
+    let tree = Tree::fixture("leaf");
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("`symlink` actions are not supported"),
+        "unexpected stderr:\n{stderr}"
+    );
+
+    assert_leaf_portable_actions(&tree);
+    // The first symlink the manifest declares, and the one the run stopped at.
+    assert!(
+        !tree.home(".zshrc").exists(),
+        "a symlink action ran on a platform that cannot make one"
+    );
+}
+
 // Executing symlink actions, which is the whole of what `sync` does so far.
 //
 // Gated as a whole: where batfiles cannot make a symlink it refuses the action
@@ -2497,15 +2569,17 @@ mod linking {
 
     // The `leaf` fixture: several actions over a directory tree, as opposed to
     // the manifests above, which are written inline to isolate one rule each.
+    // Only its links are in here; the half that needs no symlink is outside,
+    // with the tests that can run anywhere.
 
     /// Every link `tests/fixtures/leaf` installs, in the order it installs
-    /// them.
+    /// them, all of them after everything in [`LEAF_DIRS`] and [`LEAF_SEEDS`].
     ///
     /// Written out rather than read back from the manifest: a test that derives
     /// its expectations from the file under test asserts nothing. The last
     /// three are the one `symlink-dir` action expanded — one entry per child,
     /// dotted and in sorted order, because that is what the run produces.
-    const LEAF_ACTIONS: [(&str, &str); 10] = [
+    const LEAF_LINKS: [(&str, &str); 10] = [
         ("shell/zshrc", ".zshrc"),
         ("shell/zshenv", ".zshenv"),
         ("shell/aliases.zsh", ".config/zsh/aliases.zsh"),
@@ -2523,7 +2597,9 @@ mod linking {
         let tree = Tree::fixture("leaf");
         tree.batfiles().arg("sync").assert().success();
 
-        for (source, dest) in LEAF_ACTIONS {
+        assert_leaf_portable_actions(&tree);
+
+        for (source, dest) in LEAF_LINKS {
             assert_eq!(
                 link_target(&tree.home(dest)),
                 tree.path("repo").join(source),
@@ -2552,13 +2628,15 @@ mod linking {
 
         // Only `batfiles.toml` has intrinsic meaning: `README.md` is a file it
         // never names, so nothing of it reaches the home on its own. Every file
-        // the installed configuration refers to does — `.zshrc` sources both of
-        // the other two shell files, and a fixture whose shell would fail to
-        // start is not one anybody would keep.
+        // the installed configuration refers to does — `.zshrc` sources the
+        // other two shell files, everything the `copy-dir` seeds, and a history
+        // file in the directory the `create-dir` makes, and a fixture whose
+        // shell would fail to start is not one anybody would keep.
         assert_eq!(
             entries(&tree.path("home")),
             [
                 ".ackrc",
+                ".cache",
                 ".config",
                 ".curlrc",
                 ".gitconfig",
@@ -2581,7 +2659,7 @@ mod linking {
         fs::write(tree.home(".gitconfig"), occupied).expect("an existing file");
         // Found rather than counted, so an action added to the fixture ahead of
         // this one does not silently move the two halves of the assertion.
-        let refused = LEAF_ACTIONS
+        let refused = LEAF_LINKS
             .iter()
             .position(|(_, dest)| *dest == ".gitconfig")
             .expect("the occupied destination is one the fixture declares");
@@ -2599,10 +2677,14 @@ mod linking {
             occupied
         );
 
-        for (_, dest) in &LEAF_ACTIONS[..refused] {
+        // Everything ahead of the refusal, links and seeds alike: the whole
+        // portable half is declared before the first link, so it is all of it
+        // before this one.
+        assert_leaf_portable_actions(&tree);
+        for (_, dest) in &LEAF_LINKS[..refused] {
             assert!(tree.home(dest).is_symlink(), "`{dest}` was not installed");
         }
-        for (_, dest) in &LEAF_ACTIONS[refused + 1..] {
+        for (_, dest) in &LEAF_LINKS[refused + 1..] {
             // Not `exists`, which follows the link and would call a dangling
             // one absent.
             assert!(

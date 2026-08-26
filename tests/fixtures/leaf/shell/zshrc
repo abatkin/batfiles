@@ -1,4 +1,9 @@
 source ~/.zshenv
 source ~/.config/zsh/aliases.zsh
 
+for local_file in ~/.config/zsh/local/*.zsh(N); do
+	source $local_file
+done
+
+HISTFILE=~/.cache/zsh/history
 setopt hist_ignore_dups
