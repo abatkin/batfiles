@@ -1977,6 +1977,9 @@ mod linking {
         let tree = Tree::new();
         tree.repo_file("shell/zshrc", "# zsh\n");
         let escaping = tree.path("repo").join("../outside");
+        // The target has to exist: a link reaching nothing is replaceable
+        // whatever it names, so a missing one would prove the wrong thing.
+        fs::write(tree.path("outside"), "someone else's\n").expect("the target");
         std::os::unix::fs::symlink(&escaping, tree.home(".zshrc")).expect("an escaping link");
 
         let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
@@ -1985,6 +1988,49 @@ mod linking {
             "the destination was not named:\n{stderr}"
         );
         assert_eq!(link_target(&tree.home(".zshrc")), escaping);
+    }
+
+    #[test]
+    fn a_broken_link_at_a_destination_is_replaced_wherever_it_pointed() {
+        // Rule 13 protects data, and a link reaching nothing gives access to
+        // none — so unlike a link that leaves the repository and lands on
+        // something, this one is batfiles' to repoint.
+        let tree = Tree::new();
+        tree.repo_file("shell/zshrc", "# zsh\n");
+        let nowhere = tree.path("nowhere");
+        std::os::unix::fs::symlink(&nowhere, tree.home(".zshrc")).expect("a broken link");
+        tree.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+        let assertion = tree.batfiles().arg("sync").assert().success();
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains(&format!("(was {})", display(&nowhere))),
+            "the replaced target was not named:\n{stderr}"
+        );
+        assert_eq!(
+            link_target(&tree.home(".zshrc")),
+            tree.path("repo/shell/zshrc")
+        );
+        assert!(
+            !nowhere.exists(),
+            "the far end of the broken link was created"
+        );
+    }
+
+    #[test]
+    fn a_link_at_a_deliberately_broken_source_is_still_left_alone() {
+        // A repository may name a source that is itself a broken link — it is
+        // there, and linking at it is what was asked for. The destination then
+        // reaches nothing either, so "already right" has to be decided before
+        // "broken", or every run relinks a link that is correct.
+        let tree = Tree::new();
+        fs::create_dir(tree.path("repo/shell")).expect("a source directory");
+        std::os::unix::fs::symlink("nowhere", tree.path("repo/shell/zshrc"))
+            .expect("a broken source");
+        tree.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+        tree.batfiles().arg("sync").assert().success();
+
+        tree.batfiles().arg("sync").assert().success().stderr("");
     }
 
     #[test]
@@ -2107,6 +2153,9 @@ mod linking {
         let tree = Tree::new();
         tree.repo_file("shell/zshrc", "# zsh\n");
         let elsewhere = tree.path("elsewhere");
+        // The target has to exist: a link reaching nothing is replaceable
+        // whatever it names, so a missing one would prove the wrong thing.
+        fs::write(&elsewhere, "someone else's\n").expect("the target");
         std::os::unix::fs::symlink(&elsewhere, tree.home(".zshrc")).expect("an unmanaged link");
 
         let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
@@ -2129,6 +2178,9 @@ mod linking {
         // differ, and neither alone explains the other.
         let tree = Tree::new();
         tree.repo_file("shell/zshrc", "# zsh\n");
+        // Reachable, so that what is under test is how the refusal names the
+        // link rather than whether it is refused at all.
+        fs::write(tree.path("elsewhere"), "someone else's\n").expect("the target");
         std::os::unix::fs::symlink("../elsewhere", tree.home(".zshrc")).expect("an unmanaged link");
 
         let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
@@ -2403,47 +2455,100 @@ mod linking {
     }
 
     #[test]
-    fn a_destination_directory_that_is_a_dangling_link_is_named_rather_than_hit() {
+    fn a_destination_directory_that_is_a_broken_link_is_replaced_and_said_so() {
         // Nothing resolves there, so the directory looks absent — and creating
         // it fails with a bare `EEXIST` naming nothing unless the link is
-        // identified first.
+        // cleared first. It holds nothing, so clearing it destroys nothing.
         let tree = Tree::new();
         with_children(&tree);
         let nowhere = tree.path("nowhere");
-        std::os::unix::fs::symlink(&nowhere, tree.home("bin")).expect("a dangling link");
+        std::os::unix::fs::symlink(&nowhere, tree.home("bin")).expect("a broken link");
+        tree.write_manifest(&one_symlink_dir("files", "~/bin", false));
 
-        let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
+        let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+        let stderr = stderr_of(&assertion);
+        // The removal is its own line, and comes first: it is the part the user
+        // may need to act on, and it is true of a path they did not name.
         for expected in [
-            display(&tree.home("bin")),
-            format!("a symlink to {}, which is not there", display(&nowhere)),
+            format!(
+                "removed a broken symlink to {} to make {}",
+                display(&nowhere),
+                display(&tree.home("bin"))
+            ),
+            format!("created {}", display(&tree.home("bin"))),
         ] {
             assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
         }
-        assert!(tree.home("bin").is_symlink(), "the link was removed");
+        assert!(tree.home("bin").is_dir(), "the directory was not created");
+        assert_eq!(entries(&tree.home("bin")), ["ackrc", "config", "zshrc"]);
     }
 
     #[test]
-    fn a_dangling_destination_directory_is_not_reported_as_pointing_outside() {
-        // A dangling link is refused because its target is missing, which is
-        // true wherever it points. Describing it as an unowned link would
-        // claim it points outside the repository — demonstrably false for
-        // this one, which points inside.
+    fn a_broken_destination_directory_is_replaced_wherever_it_pointed() {
+        // Where a broken link points decides nothing: it reaches no content
+        // either way, so one naming a path inside the repository is cleared on
+        // the same terms as one naming a path outside it.
         let tree = Tree::new();
         with_children(&tree);
         let inside = tree.path("repo/missing");
-        std::os::unix::fs::symlink(&inside, tree.home("bin")).expect("a dangling link");
+        std::os::unix::fs::symlink(&inside, tree.home("bin")).expect("a broken link");
+        tree.write_manifest(&one_symlink_dir("files", "~/bin", false));
 
-        let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
+        tree.batfiles().arg("sync").assert().success();
+        assert!(tree.home("bin").is_dir(), "the directory was not created");
+        assert!(
+            !tree.path("repo/missing").exists(),
+            "the far end of the link was created"
+        );
+    }
+
+    #[test]
+    fn a_broken_link_above_the_directory_being_made_is_cleared_too() {
+        // The link is at an ancestor nobody named, so a single `mkdir -p` hits
+        // it and reports `EEXIST` against the path that does *not* exist. Each
+        // level is asked the same question the named directory is, so the link
+        // is found where it actually is and the removal names that path.
+        let tree = Tree::new();
+        with_children(&tree);
+        let nowhere = tree.path("nowhere");
+        fs::create_dir(tree.home("a")).expect("an existing directory");
+        std::os::unix::fs::symlink(&nowhere, tree.home("a/broken")).expect("a broken link");
+        tree.write_manifest(&one_create_dir("~/a/broken/b/c"));
+
+        let assertion = tree.batfiles().arg("sync").assert().success();
+        let stderr = stderr_of(&assertion);
         assert!(
             stderr.contains(&format!(
-                "a symlink to {}, which is not there",
-                display(&inside)
+                "removed a broken symlink to {} to make {}",
+                display(&nowhere),
+                display(&tree.home("a/broken"))
             )),
-            "unexpected description:\n{stderr}"
+            "the ancestor removal was not reported:\n{stderr}"
         );
-        assert!(
-            !stderr.contains("outside the repository"),
-            "a link into the repository was called outside it:\n{stderr}"
+        assert!(tree.home("a/broken/b/c").is_dir(), "nothing was created");
+    }
+
+    #[test]
+    fn a_link_reaching_nothing_through_a_file_is_replaceable_too() {
+        // `<some-file>/child` resolves nowhere, but the kernel says so with
+        // `ENOTDIR` rather than `ENOENT`. Reading only the second calls this
+        // link someone else's data and refuses a destination holding nothing.
+        let tree = Tree::new();
+        tree.repo_file("shell/zshrc", "# zsh\n");
+        let through_a_file = tree.path("afile").join("nope");
+        fs::write(tree.path("afile"), "not a directory\n").expect("a file");
+        std::os::unix::fs::symlink(&through_a_file, tree.home(".zshrc")).expect("a broken link");
+        tree.write_manifest(&one_symlink("shell/zshrc", "~/.zshrc"));
+
+        tree.batfiles().arg("sync").assert().success();
+        assert_eq!(
+            link_target(&tree.home(".zshrc")),
+            tree.path("repo/shell/zshrc")
+        );
+        assert_eq!(
+            fs::read_to_string(tree.path("afile")).expect("the file"),
+            "not a directory\n",
+            "the file the link resolved through was touched"
         );
     }
 

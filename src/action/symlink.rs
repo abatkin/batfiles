@@ -80,10 +80,10 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
         // run holds the anchored spelling, which is the same place by a
         // different name wherever a root contains a symlink — and calling that
         // stale would relink it, and every link like it, on every run.
-        Occupant::Owned { points_at, .. } if points_at == paths::resolved(target) => {
+        Occupant::Replaceable { points_at, .. } if points_at == paths::resolved(target) => {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
         }
-        Occupant::Owned { written, .. } => {
+        Occupant::Replaceable { written, .. } => {
             remove(dest)?;
             create(target, dest)?;
             reporter.info(&format!(

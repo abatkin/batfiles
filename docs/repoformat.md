@@ -209,16 +209,30 @@ What is found there is one of:
   any missing parent directories.
 - **A symlink batfiles owns** — one whose target resolves inside the selected
   leaf repository. Replacing it destroys nothing: the link holds no content of
-  its own, and what it pointed at is left alone. A link anywhere else is
-  unmanaged, even when its name is exactly the one an action would install.
-- **A regular file, a directory, or none of those** — a socket, a fifo, a device.
-  This is someone's data.
+  its own, and what it pointed at is left alone.
+- **A broken symlink** — one whose target is not there, wherever it names. It
+  reaches no content and gives access to none, so replacing it destroys nothing
+  either, and where it pointed is not consulted: batfiles will not create the far
+  end of a link somebody else made, inside the repository or out.
+- **A regular file, a directory, a symlink that leaves the repository and lands
+  on something, or none of those** — a socket, a fifo, a device. This is
+  someone's data.
+
+The dividing line is whether the node holds content, not who put it there. A link
+that leaves the repository is unmanaged when it reaches something, even where its
+name is exactly the one an action would install; the same link reaching nothing
+is replaceable.
 
 An action decides in this order:
 
 1. Determine what exists, without treating a final symlink as its target.
 2. If the requested result is already there, do nothing, and say so only at `-v`.
-3. If it is a symlink batfiles owns, replace it directly.
+   This is decided before brokenness, so a repository that deliberately names a
+   source which is itself a broken link converges rather than relinking on every
+   run.
+3. If it is a symlink batfiles owns, or one that is broken, replace it directly.
+   Replacing a broken link is reported at normal verbosity rather than at `-v`:
+   something was removed, and a broken link may be one the user meant to fix.
 4. Otherwise the node is unmanaged. Until there is a backup policy with which to
    give it back, the action fails and names the path; see
    [`future/safety.md`](future/safety.md#replacement-and-backups).
@@ -243,13 +257,28 @@ a node an action installs *over*, and that is the case where following the last
 link would judge a node by what it reaches rather than by what it is.
 
 A container still refuses a non-directory — a regular file, a socket, or a
-symlink resolving to one — under rule 4 above. A symlink whose target is not
-there is refused too, and the refusal says only that: batfiles will not create
-the far end of a link somebody else made, so where that link points decides
-nothing and the diagnostic does not claim the target is anywhere. That is the
-one place a symlink is described without saying whether it leaves the
-repository, because it is the one place the answer is not what the refusal turns
-on.
+symlink resolving to one — under rule 4 above. A *broken* symlink is not one of
+those: it is replaced here on exactly the terms rule 3 replaces one at a
+destination, removed and the directory made in its place, and the line saying so
+names both the target it held and the path it was at. Nothing else in this
+section would have been able to say anything useful about it — `mkdir -p`
+reports a bare `EEXIST` naming nothing where a broken link is in the way — and
+treating it as a container's own special refusal would have made the same node
+mean two different things depending on which action reached it.
+
+**That applies to the missing parents a container brings with it, not only to
+the container itself.** A `dest-dir` of `~/a/b/c` creates `~/a` and `~/a/b` on
+the way, and each is judged as a container in its own right: a directory
+satisfies it, a broken symlink is cleared and reported by the path it was at, and
+a regular file is refused and named. The removal lines therefore mention paths
+the manifest never wrote, which is the point — a link at `~/a` is where the
+problem is, and reporting it against `~/a/b/c` would name the one path in the
+chain that does not exist.
+
+**A symlink resolves nowhere whether the path it names is absent or runs through
+something that is not a directory.** `<some-file>/child` is broken in exactly the
+sense that a link to a deleted file is. A symlink loop is not: it is refused and
+named like any other node batfiles cannot account for.
 
 ### Seeds do not replace, and so do not refuse
 
@@ -263,7 +292,7 @@ This is the same rule 4 in different circumstances, not an exception to it. A
 `symlink` refuses because it *wants* to write and may not; a seed does not want
 to write, because a copy that has been edited since it was installed is the
 point of copying rather than a state to converge away from. Nothing is examined
-beyond whether something is present: a file, a directory, or a link, dangling or
+beyond whether something is present: a file, a directory, or a link, broken or
 not, all end the question, and who put them there does not matter.
 
 Consequently a seed never reports an error for a destination it found occupied,
@@ -385,20 +414,22 @@ working directory would point somewhere other than where it was meant to.
 What happens at the destination depends on what is already there, applying
 [Replacing what is already there](#replacing-what-is-already-there):
 
-| Already at the destination                     | Result                                                            |
-|------------------------------------------------|-------------------------------------------------------------------|
-| nothing                                        | The link is created, along with any missing parent directories.   |
-| a symlink already pointing at the source       | Nothing, reported only at `-v`.                                   |
-| a symlink pointing elsewhere in the repository | It is repointed at the source.                                    |
-| a symlink pointing outside the repository      | An error naming the path and what it found, with nothing written. |
-| a regular file                                 | An error naming the path and what it found, with nothing written. |
-| a directory                                    | An error naming the path and what it found, with nothing written. |
-| anything else                                  | An error naming the path and what it found, with nothing written. |
+| Already at the destination                          | Result                                                            |
+|-----------------------------------------------------|-------------------------------------------------------------------|
+| nothing                                             | The link is created, along with any missing parent directories.   |
+| a symlink already pointing at the source            | Nothing, reported only at `-v`.                                   |
+| a symlink pointing elsewhere in the repository      | It is repointed at the source.                                    |
+| a symlink whose target is not there                 | It is repointed at the source, and the target it held is named.   |
+| a symlink pointing outside the repository, and there | An error naming the path and what it found, with nothing written. |
+| a regular file                                      | An error naming the path and what it found, with nothing written. |
+| a directory                                         | An error naming the path and what it found, with nothing written. |
+| anything else                                       | An error naming the path and what it found, with nothing written. |
 
-Where it points, not how it is spelled, is what the three symlink rows mean by
-"the source", "elsewhere in the repository", and "outside the repository". The
-four error rows are one refusal but not one message, and a repaired link is
-repointed regardless of how the stale one was written.
+Where it points, not how it is spelled, is what the four symlink rows mean by
+"the source", "elsewhere in the repository", and "outside the repository" — and
+the fourth row does not read where it points at all, only whether anything is
+there. The three error rows are one refusal but not one message, and a repaired
+link is repointed regardless of how the stale one was written.
 
 On a platform where batfiles cannot create a symlink, a `symlink` action is an
 error naming the action rather than a silent skip or a copy substituted for the
@@ -513,14 +544,15 @@ is `mkdir -p`:
 | nothing                               | The directory is created, along with any missing parents.         |
 | a directory                           | Nothing, reported only at `-v`.                                   |
 | a symlink to a directory              | Nothing, reported only at `-v`; the link is left as it is.        |
-| a symlink whose target is not there   | An error naming the path and the missing target, with nothing written. |
+| a symlink whose target is not there   | The link is removed and the directory made in its place, naming the target it held. |
 | a regular file                        | An error naming the path and what it found, with nothing written. |
 | anything else                         | An error naming the path and what it found, with nothing written. |
 
 A directory that is already there is left exactly as it is, contents and all:
-the action creates a directory, it does not own one. Nothing here removes
-anything, which is why a symlink to a directory satisfies it where the same node
-at a `symlink`'s destination would be refused.
+the action creates a directory, it does not own one. The only node it removes is
+a broken symlink, which holds nothing to keep; that aside it removes nothing,
+which is why a symlink to a directory satisfies it where the same node at a
+`symlink`'s destination would be refused.
 
 Every platform batfiles builds for creates directories, so unlike the two
 symlink actions there is no platform on which this one is refused by name.

@@ -156,10 +156,30 @@ for rule 1.
 
 **13. Never destroy what you did not create.** Until the backup policy exists at
 9.4, an action that finds its destination occupied by anything it cannot safely
-repair fails and names the path. A symlink batfiles would have made is
-repairable — relinking loses nothing. A regular file, a directory, or a symlink
-pointing somewhere unexpected is not; it is someone's data, and slice 0 has no
-way to give it back.
+repair fails and names the path.
+
+**The rule protects data, so what it turns on is whether the node holds any.**
+Two kinds hold none and are therefore batfiles' to replace: a symlink resolving
+inside the repository — one batfiles would have made, where relinking loses
+nothing — and a symlink resolving nowhere at all, which reaches no content and
+gives access to none, so there is nothing there to give back. A regular file, a
+directory, and a symlink that both leaves the repository *and* lands on something
+are someone's data, and slice 0 has no way to return them.
+
+That test is asked in one place and gets one answer, so a broken link is cleared
+wherever it turns up: at a destination an action installs over, at a directory an
+action installs *into*, and at any ancestor of one that has to be created on the
+way, where the alternative was a bare `EEXIST` naming nothing. Where a broken
+link pointed decides nothing and is never used to classify it — batfiles will not
+create the far end of a link somebody else made, inside the repository or out.
+
+**"Reaches nothing" is a question about the whole resolution, not about the last
+hop.** A link naming an absent path and a link naming `<some-file>/child` both
+end nowhere; the operating system distinguishes them only by whether it gives up
+with `ENOENT` or `ENOTDIR`, and a check that reads one and not the other calls
+half of them someone's data. A symlink *loop* is the case that stays refused:
+that resolution did not end nowhere, it did not end, and removing what it cannot
+explain is what this rule exists to stop batfiles doing.
 
 **14. Judge a path by where it points, not by how it is spelled.** Anchor the
 roots to absolute paths before writing a target into a link, and resolve an

@@ -61,8 +61,8 @@ impl<'a> Context<'a> {
     fn source(&self, source: &str) -> Result<PathBuf, Error> {
         let resolved = paths::normalize(&self.repository.path().join(source));
 
-        // Presence, not reachability: a source that is itself a dangling
-        // symlink is there, and linking to it is what the repository asked for.
+        // Presence, not reachability: a source that is itself a broken symlink
+        // is there, and linking at it is what the repository asked for.
         match fs::symlink_metadata(&resolved) {
             Ok(_) => Ok(resolved),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -97,8 +97,15 @@ impl<'a> Context<'a> {
     /// two directory-wide actions need one to install into. A directory that
     /// appeared in the home is worth a line either way.
     fn ensure_directory(&self, dir: &Path) -> Result<(), Error> {
-        match paths::ensure_directory(dir)? {
-            Directory::Created => self.reporter.info(&format!("created {}", dir.display())),
+        let outcome = paths::ensure_directory(dir)?;
+        // Ahead of the line about the directory, and at normal verbosity rather
+        // than at `-v`: each of these is a removal, and a broken link is still
+        // one the user may have been meaning to fix.
+        for link in outcome.removals() {
+            self.reporter.info(&link.removal_note());
+        }
+        match outcome {
+            Directory::Created { .. } => self.reporter.info(&format!("created {}", dir.display())),
             Directory::AlreadyThere => self
                 .reporter
                 .detail(1, &format!("unchanged {}", dir.display())),

@@ -89,13 +89,15 @@ impl Repository {
 pub(crate) enum Occupant {
     /// Nothing is there. The action may create what it was asked to.
     Vacant,
-    /// A symlink resolving inside the repository — one batfiles would have
-    /// made. It holds no content of its own, so replacing it destroys nothing.
-    Owned {
+    /// A symlink holding no content of its own, so replacing it destroys
+    /// nothing. Either it resolves inside the repository — one batfiles would
+    /// have made — or it resolves nowhere at all, in which case it is already
+    /// broken and where it was meant to point decides nothing.
+    Replaceable {
         /// The target as written, for saying what a repair replaced.
         written: PathBuf,
-        /// Where it actually resolves, for deciding whether it is already
-        /// right.
+        /// Where it resolves, for deciding whether it is already right. A
+        /// broken link has no such place, so this is where it *would* land.
         points_at: PathBuf,
     },
     /// Someone's data, whatever kind. Until the backup policy at 9.4 there is
@@ -113,14 +115,24 @@ impl Occupant {
                     source,
                 })?;
                 let points_at = target_of(dest, &written);
-                Ok(if repository.contains(&points_at) {
-                    Self::Owned { written, points_at }
+                // A link into the repository is batfiles' to repair, and a link
+                // reaching nothing is anybody's: it holds no content and gives
+                // access to none, so the data rule 13 protects is not there to
+                // lose. Only a link that both leaves the repository and lands on
+                // something is someone else's arrangement.
+                Ok(if repository.contains(&points_at) || is_broken(dest) {
+                    Self::Replaceable { written, points_at }
                 } else {
                     Self::Unmanaged(ExistingNode::Link { written, points_at })
                 })
             }
             Ok(existing) => Ok(Self::Unmanaged(kind_of(&existing))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::Vacant),
+            // Vacant covers both ways of reaching nothing. A destination under
+            // a component that is not a directory holds nothing either, and
+            // saying so hands the refusal to whoever creates the parents, which
+            // can name the offending component — where reporting the raw error
+            // here would name only the path below it.
+            Err(error) if reaches_nothing(&error) => Ok(Self::Vacant),
             Err(error) => Err(Error::Read {
                 path: dest.to_path_buf(),
                 source: error,
@@ -129,10 +141,37 @@ impl Occupant {
     }
 }
 
+/// Whether a symlink reaches nothing at all.
+///
+/// Asked of the link rather than of the target that was read off it, so a chain
+/// ending nowhere is broken too and not merely its last hop.
+fn is_broken(link: &Path) -> bool {
+    matches!(fs::metadata(link), Err(error) if reaches_nothing(&error))
+}
+
+/// Whether an error from resolving a path means nothing is at the far end.
+///
+/// `NotFound` is the ordinary answer. `NotADirectory` is the same answer
+/// arrived at differently: a path resolving through a component that is not a
+/// directory — a link to `<some-file>/child` — reaches nothing just as surely
+/// as one naming something that was never there, and the kernel distinguishes
+/// them only by which step it gave up on.
+///
+/// A symlink loop is deliberately not here. `FilesystemLoop` says resolution
+/// never terminated, not that it ended nowhere, so the link is left classified
+/// by where it points and refused: removing what it cannot explain is the thing
+/// rule 13 exists to stop batfiles doing.
+fn reaches_nothing(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
+}
+
 /// What a refused destination turned out to hold, as the data half of
 /// [`Error::DestinationExists`].
 ///
-/// Which one it is decides nothing — all five are refused — but it is the
+/// Which one it is decides nothing — all four are refused — but it is the
 /// difference between a diagnostic someone can act on and one that only says
 /// no. This is the crate's one hand-written `Display`: the symlink case renders
 /// conditionally, which no `#[error]` attribute can express.
@@ -140,19 +179,15 @@ impl Occupant {
 pub(crate) enum ExistingNode {
     File,
     Directory,
-    /// A symlink pointing somewhere other than into the repository, named both
+    /// A symlink that leaves the repository and reaches something, named both
     /// as it is written and as it resolves: a relative target is read from the
     /// link's own directory, so the spelling alone does not say where it goes.
+    ///
+    /// A link reaching *nothing* is not here, because it is not refused —
+    /// see [`Occupant::Replaceable`].
     Link {
         written: PathBuf,
         points_at: PathBuf,
-    },
-    /// A symlink whose target is not there. Where it points decides nothing —
-    /// batfiles will not create the far end of a link somebody else made — so
-    /// only the spelling is reported, and the refusal does not claim the target
-    /// is anywhere in particular.
-    DanglingLink {
-        written: PathBuf,
     },
     /// A socket, a fifo, a device — something batfiles has no idea how to give
     /// back, which is exactly why it will not take it.
@@ -173,9 +208,6 @@ impl fmt::Display for ExistingNode {
                 }
                 write!(f, ", which is outside the repository")
             }
-            Self::DanglingLink { written } => {
-                write!(f, "a symlink to {}, which is not there", written.display())
-            }
             Self::Other => write!(f, "neither a regular file, a directory, nor a symlink"),
         }
     }
@@ -185,13 +217,15 @@ impl fmt::Display for ExistingNode {
 ///
 /// The question a seed asks, and the only one it asks: an action that never
 /// replaces anything does not need to know what it found — a file, a directory,
-/// or a link, dangling or not, all mean the same thing to it, and mean it
+/// or a link, broken or not, all mean the same thing to it, and mean it
 /// whoever put them there. Telling them apart is [`Occupant::at`]'s job, and
 /// that exists because an action which *replaces* has to decide whether it may.
 pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        // Both ways of reaching nothing, as in [`Occupant::at`]: nothing is at a
+        // path under a component that is not a directory either.
+        Err(error) if reaches_nothing(&error) => Ok(false),
         Err(error) => Err(Error::Read {
             path: path.to_path_buf(),
             source: error,
@@ -241,8 +275,8 @@ pub(crate) fn resolved(path: &Path) -> PathBuf {
 /// `../dotfiles/bin/tool` points into `~/.local/`, not into `~/`.
 ///
 /// The target itself is resolved where it can be and cancelled textually where
-/// it cannot: a link may dangle, and a dangling one still has to be classified
-/// rather than error out.
+/// it cannot: a link may reach nothing, and a broken one still has to be
+/// classified rather than error out.
 fn target_of(link: &Path, written: &Path) -> PathBuf {
     let directory = match link.parent() {
         Some(parent) => fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()),
@@ -260,22 +294,60 @@ fn target_of(link: &Path, written: &Path) -> PathBuf {
 ///
 /// The distinction is the whole output of a `create-dir` action, and it is the
 /// difference between a run that changed the home and one that agreed with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Directory {
-    /// Nothing was there, and now the directory is — along with any missing
-    /// parents.
-    Created,
     /// A directory was already there. Nothing was written.
     AlreadyThere,
+    /// Nothing was there, and now the directory is — along with any missing
+    /// parents, and minus any broken symlink that had to be cleared to make
+    /// one. `replaced` is empty in the ordinary case.
+    Created { replaced: Vec<BrokenLink> },
+}
+
+impl Directory {
+    /// The links this cleared, which a caller has to say something about.
+    ///
+    /// Making a directory is unremarkable; removing something is not, at any
+    /// verbosity. Empty for an outcome that removed nothing, which is nearly
+    /// all of them.
+    pub fn removals(&self) -> &[BrokenLink] {
+        match self {
+            Self::AlreadyThere => &[],
+            Self::Created { replaced } => replaced,
+        }
+    }
+}
+
+/// A broken symlink that was cleared so a directory could be made where it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BrokenLink {
+    /// Where the link was, which is not always a path the caller named: making
+    /// a directory makes its missing ancestors too, and any of them can be the
+    /// one that was in the way.
+    pub path: PathBuf,
+    /// The target it named, reported so the removal can be recognized rather
+    /// than merely announced.
+    pub written: PathBuf,
+}
+
+impl BrokenLink {
+    /// The one sentence for a cleared link, wherever it was cleared.
+    pub fn removal_note(&self) -> String {
+        format!(
+            "removed a broken symlink to {} to make {}",
+            self.written.display(),
+            self.path.display()
+        )
+    }
 }
 
 /// Make sure a destination *directory* is one, creating it where nothing is.
 ///
 /// `mkdir -p`, and deliberately: an existing directory satisfies it, a
 /// non-directory refuses it, and missing parents come with it. The one
-/// departure is the diagnostic — `mkdir -p` reports a bare `EEXIST` naming
-/// nothing where a dangling symlink is in the way, and this says which link and
-/// where it points.
+/// departure is a broken symlink in the way, where `mkdir -p` reports a bare
+/// `EEXIST` naming nothing: that link reaches nothing, so it is removed and the
+/// directory made in its place, and the caller is told what went.
 ///
 /// A container rather than a destination, so unlike [`Occupant::at`] this
 /// follows a final symlink: a home whose `~/.config` is a link onto another
@@ -289,38 +361,72 @@ pub(crate) fn ensure_directory(dir: &Path) -> Result<Directory, Error> {
             path: dir.to_path_buf(),
             found: kind_of(&existing),
         }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            // Nothing resolves here, but something may still be here: a
-            // dangling symlink. `create_dir_all` would fail on it with a bare
-            // `EEXIST` naming nothing, so it is identified rather than hit.
-            //
-            // Reported as its own kind rather than as an unowned link. Where a
-            // dangling one points decides nothing — batfiles will not create
-            // the far end of a link somebody else made, inside the repository
-            // or out — so the refusal says the target is missing instead of
-            // claiming it is somewhere.
-            if fs::symlink_metadata(dir).is_ok_and(|node| node.is_symlink()) {
-                let written = fs::read_link(dir).map_err(|source| Error::Read {
-                    path: dir.to_path_buf(),
-                    source,
-                })?;
-                return Err(Error::DestinationExists {
-                    path: dir.to_path_buf(),
-                    found: ExistingNode::DanglingLink { written },
-                });
-            }
-            fs::create_dir_all(dir)
-                .map(|()| Directory::Created)
-                .map_err(|source| Error::Write {
-                    path: dir.to_path_buf(),
-                    source,
-                })
-        }
+        // Nothing resolves here — either the path is empty or something on the
+        // way to it is not a directory, and only making it will say which.
+        Err(error) if reaches_nothing(&error) => make_directory(dir),
         Err(error) => Err(Error::Read {
             path: dir.to_path_buf(),
             source: error,
         }),
     }
+}
+
+/// Make one directory and every missing ancestor, clearing a broken symlink at
+/// any level that has to become one.
+///
+/// A level at a time, rather than one [`fs::create_dir_all`]. The bulk call
+/// cannot be told about the broken links this is here to clear, and where one
+/// is partway up it fails with an `EEXIST` reported against the path that was
+/// asked for — a path which, being the one that does not exist, is the least
+/// informative name the failure could carry. Walking down means each level is
+/// asked the same question the named directory was, so a link is cleared
+/// wherever on the way it turns up and a *file* in the way is named for what it
+/// is rather than surfacing as a raw write failure.
+fn make_directory(dir: &Path) -> Result<Directory, Error> {
+    // The ancestors first, so this is only ever creating a directory whose
+    // parent is known to be one.
+    let mut replaced = match dir.parent() {
+        // An empty parent is what a one-component relative path has, and it is
+        // not a directory anything should try to make.
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            ensure_directory(parent)?.removals().to_vec()
+        }
+        _ => Vec::new(),
+    };
+
+    if let Some(written) = broken_link_at(dir)? {
+        replaced.push(BrokenLink {
+            path: dir.to_path_buf(),
+            written,
+        });
+    }
+    fs::create_dir(dir).map_err(|source| Error::Write {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    Ok(Directory::Created { replaced })
+}
+
+/// Clear a broken symlink out of a path nothing resolves at, naming what it
+/// held.
+///
+/// Only ever called where [`fs::metadata`] has already reported that nothing is
+/// reachable, so a symlink found here is broken by construction and needs no
+/// second question asked of it. `None` where the path is simply empty, which is
+/// the ordinary case.
+fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
+    if !fs::symlink_metadata(path).is_ok_and(|node| node.is_symlink()) {
+        return Ok(None);
+    }
+    let written = fs::read_link(path).map_err(|source| Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    fs::remove_file(path).map_err(|source| Error::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(Some(written))
 }
 
 /// Create the directories a destination sits in, if they are not there.
