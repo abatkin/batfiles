@@ -233,6 +233,31 @@ pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
     }
 }
 
+/// Refuse a destination that lands inside the source it installs from.
+///
+/// An action that installs *into* the thing it installs *from* has no reading
+/// worth honoring, and for a directory it does not simply fail: the destination
+/// becomes a child of the source, enumerating the source finds it, and the
+/// action works on what it is writing. `copy` descends until the filesystem
+/// refuses a longer path, having written a deep tree into the repository on the
+/// way; `symlink-dir` links the destination it just created into itself. Either
+/// way the tool has written into the repository, which it otherwise never does.
+///
+/// Judged by where the two resolve rather than how they are spelled, since a
+/// destination can reach the source by a route that does not look like it
+/// (`guidance.md`, rule 14). Naturally a no-op for a file source: nothing can
+/// land inside one.
+pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Result<(), Error> {
+    let source = resolved(source);
+    if intended(dest).starts_with(&source) {
+        return Err(Error::DestinationInsideSource {
+            installed: source,
+            dest: dest.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
 /// Where a path *will* be, resolved as far as the filesystem can say.
 ///
 /// [`resolved`] answers this for something that is there. A destination need

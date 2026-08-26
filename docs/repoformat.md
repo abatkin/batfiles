@@ -182,6 +182,35 @@ Where the selected home cannot be determined, batfiles reports that rather than
 silently substituting the working directory. See
 [location selection](environment.md#location-selection).
 
+### Installing into what you install from
+
+**A destination that lands inside the source it installs from is an error**, for
+every action that installs anything. `~/dotfiles` is an ordinary place for a
+repository and a `dest` may point anywhere, so this is a manifest batfiles
+accepts and an action it cannot carry out.
+
+It is refused rather than merely allowed to fail, because for a directory it
+does not fail: the destination becomes a child of the source, and the action
+then works on what it is writing. `copy` and `copy-dir` descend into the tree
+they are producing; `symlink-dir` creates its destination directory, enumerates
+the source, finds that directory among the children, and links it into itself.
+Every one of them writes into the repository, which `sync` otherwise never does.
+
+Decided by where the two paths resolve rather than by how they are spelled, as
+everywhere else, and refused before anything is created — for the `-dir`
+actions, before the destination directory that would join the children exists.
+
+The one action that cannot ask this question up front is `symlink` for a single
+link, because a link that is already correct *resolves into* its own source: a
+converged destination is indistinguishable from an offending one until what is
+already there has been inspected. So it is asked at the moment the link would be
+written — which is both the case where nothing is there and the case where a
+link batfiles may replace is, since repairing writes a link just as creating one
+does, and asks before removing what it found rather than after. `copy` and
+`copy-dir` ask it per destination for the same reason, after the seed's
+occupancy check — see
+[Seeds do not replace](#seeds-do-not-replace-and-so-do-not-refuse).
+
 ## Replacing what is already there
 
 Creating something where nothing exists is safe. Replacing a node that is already
@@ -431,6 +460,14 @@ the fourth row does not read where it points at all, only whether anything is
 there. The three error rows are one refusal but not one message, and a repaired
 link is repointed regardless of how the stale one was written.
 
+A `dest` landing inside the `source` is an error, under
+[Installing into what you install from](#installing-into-what-you-install-from).
+Unlike the other actions this one is decided at the moment the link would be
+written rather than up front, because a link that is already correct resolves
+into its own source and would otherwise be refused on every run. Repointing a
+replaceable link counts as writing one, and is refused before the link it found
+is removed.
+
 On a platform where batfiles cannot create a symlink, a `symlink` action is an
 error naming the action rather than a silent skip or a copy substituted for the
 link. The check happens before the destination is examined, so the refusal
@@ -506,6 +543,11 @@ said at `-v`.
 
 A `source-dir` that exists but is not a directory is an error, because there are
 no children to link and linking the thing itself is what `symlink` is for.
+
+A `dest-dir` landing inside the `source-dir` is an error, under
+[Installing into what you install from](#installing-into-what-you-install-from),
+and is refused before the destination directory is created — creating it is what
+would put it among the children about to be linked.
 
 The platform rule is `symlink`'s: where batfiles cannot create a symlink the
 action is refused by name, before the source directory is read.
@@ -611,14 +653,11 @@ nobody else, whatever the source's mode turns out to be. A copy of a private
 file is never briefly a public one — which matters most exactly when a run does
 not finish, since what it was building is deliberately left where it is.
 
-**A destination inside the directory being copied is an error.** `~/dotfiles`
-is an ordinary place for a repository and a `dest` may point anywhere, so a
-destination that lands under its own `source` is a manifest batfiles accepts and
-an action it cannot carry out: the destination would become a child of the
-source, enumerating the source would find it, and the copy would descend into
-what it was writing until the filesystem refused a longer path. It is refused
-before anything is created, and — as everywhere else — by where the two paths
-resolve rather than by how they are spelled.
+**A destination inside the directory being copied is an error**, under the rule
+[every install action shares](#installing-into-what-you-install-from). For a
+copy the consequence is the worst of the four: the destination would become a
+child of the source, enumerating the source would find it, and the copy would
+descend into what it was writing until the filesystem refused a longer path.
 
 **Only files and directories are copied.** A symlink found inside a directory
 being copied is an error naming it, not something to follow or to recreate:

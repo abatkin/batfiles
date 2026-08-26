@@ -44,6 +44,11 @@ pub(super) fn link_dir(action: &SymlinkDirAction, context: &Context) -> Result<(
 
     let source_dir = source_directory(context, &action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
+    // Before the destination is created, for the same reason `copy-dir` checks
+    // first: creating it inside the source is what puts it in the list of
+    // children about to be linked, and it would then be linked into itself.
+    paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
+
     install_children(
         context,
         &source_dir,
@@ -73,6 +78,13 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 /// [`Occupant::at`]'s answer — see that module for why the question cannot be
 /// asked of the written path. This decides only what a `symlink` does with each
 /// answer.
+///
+/// Both arms that write a link first refuse a destination inside the target, and
+/// neither can ask that before the destination has been inspected: a link that
+/// is already correct *resolves into* its own target, so the converged case is
+/// indistinguishable from the offending one until it has been told apart. That
+/// is why the check sits in two arms rather than above the match — the third
+/// arm, which writes nothing, is exactly the one it would misjudge.
 fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> {
     let reporter = context.reporter();
     match Occupant::at(dest, context.repository())? {
@@ -84,6 +96,10 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
             reporter.detail(1, &format!("unchanged {}", dest.display()));
         }
         Occupant::Replaceable { written, .. } => {
+            // Before the removal, not after: this arm destroys the link that is
+            // there, and a refusal arriving afterwards has already done the
+            // damage it was raised to prevent.
+            paths::refuse_destination_inside_source(target, dest)?;
             remove(dest)?;
             create(target, dest)?;
             reporter.info(&format!(
@@ -94,6 +110,8 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
             ));
         }
         Occupant::Vacant => {
+            paths::refuse_destination_inside_source(target, dest)?;
+            // After that, so a doomed action makes no directories on its way.
             for link in paths::create_parents(dest)?.removals() {
                 reporter.info(&link.removal_note());
             }

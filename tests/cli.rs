@@ -2034,6 +2034,101 @@ mod linking {
     }
 
     #[test]
+    fn a_symlink_inside_its_source_is_refused_even_over_a_link_it_could_repair() {
+        // The refusal has to cover repairing as well as creating. A destination
+        // inside the source that already holds a replaceable link takes the
+        // repair arm, and a check that only guards the vacant one lets exactly
+        // this case through — writing into the repository after removing what
+        // was there.
+        let tree = Tree::new();
+        let repo = seeded_repository_in_the_home(&tree);
+        // Broken, so it is batfiles' to replace and the repair arm is reached.
+        std::os::unix::fs::symlink(tree.path("nowhere"), repo.join("seed/inner"))
+            .expect("a replaceable link");
+        fs::write(
+            repo.join("batfiles.toml"),
+            one_symlink("seed", "~/dotfiles/seed/inner"),
+        )
+        .expect("a manifest");
+
+        let assertion = tree
+            .batfiles()
+            .args(["--batfiles-dir", &display(&repo), "sync"])
+            .assert()
+            .failure()
+            .code(1);
+        assert!(
+            stderr_of(&assertion).contains("which is inside it"),
+            "unexpected stderr:\n{}",
+            stderr_of(&assertion)
+        );
+        // Refused before the old link was removed, so nothing was destroyed on
+        // the way to failing.
+        assert_eq!(
+            link_target(&repo.join("seed/inner")),
+            tree.path("nowhere"),
+            "the link was replaced despite the refusal"
+        );
+    }
+
+    #[test]
+    fn a_symlink_whose_destination_is_inside_its_source_is_refused() {
+        // Linking a directory into itself means nothing, and making the link
+        // would write into the repository — which is the one place `sync` never
+        // writes. Refused on the same terms as the copy actions, by where the
+        // two paths resolve rather than by how they are spelled.
+        let tree = Tree::new();
+        let repo = seeded_repository_in_the_home(&tree);
+        fs::write(
+            repo.join("batfiles.toml"),
+            one_symlink("seed", "~/dotfiles/seed/inner"),
+        )
+        .expect("a manifest");
+
+        let assertion = tree
+            .batfiles()
+            .args(["--batfiles-dir", &display(&repo), "sync"])
+            .assert()
+            .failure()
+            .code(1);
+        assert!(
+            stderr_of(&assertion).contains("which is inside it"),
+            "unexpected stderr:\n{}",
+            stderr_of(&assertion)
+        );
+        assert_eq!(entries(&repo.join("seed")), ["a"]);
+    }
+
+    #[test]
+    fn a_symlink_dir_whose_destination_is_inside_its_source_is_refused() {
+        // The same hazard one level up, and worse than for a single link: the
+        // destination directory is created before the children are enumerated,
+        // so it would be among them and would be linked into itself.
+        let tree = Tree::new();
+        let repo = seeded_repository_in_the_home(&tree);
+        fs::write(
+            repo.join("batfiles.toml"),
+            one_symlink_dir("seed", "~/dotfiles/seed/inner", false),
+        )
+        .expect("a manifest");
+
+        let assertion = tree
+            .batfiles()
+            .args(["--batfiles-dir", &display(&repo), "sync"])
+            .assert()
+            .failure()
+            .code(1);
+        assert!(
+            stderr_of(&assertion).contains("which is inside it"),
+            "unexpected stderr:\n{}",
+            stderr_of(&assertion)
+        );
+        // And it found out before creating the destination directory, which is
+        // what would have put it among the children.
+        assert_eq!(entries(&repo.join("seed")), ["a"]);
+    }
+
+    #[test]
     fn a_link_that_is_already_right_is_left_alone() {
         let tree = Tree::new();
         tree.repo_file("shell/zshrc", "# zsh\n");

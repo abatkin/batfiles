@@ -11,6 +11,7 @@ use super::{Context, install_children, source_directory};
 use crate::error::Error;
 use crate::install;
 use crate::manifest::action::{CopyAction, CopyDirAction};
+use crate::paths;
 
 /// Carry out one `copy` action: one file or one directory, at one destination.
 ///
@@ -41,7 +42,7 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), 
     // is what puts it in the list of children about to be copied. Each child is
     // checked again on its own; this one names the two directories the manifest
     // wrote, which is what the author can act on.
-    install::refuse_destination_inside_source(&source_dir, &dest_dir)?;
+    paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
     install_children(
         context,

@@ -48,7 +48,7 @@ pub(crate) fn seed(
         // — by a link of the user's own resolving into the source, say — into
         // an error, and a seed does not fail on an occupied destination.
         if let Copyable::Directory = kind {
-            refuse_destination_inside_source(source, dest)?;
+            paths::refuse_destination_inside_source(source, dest)?;
         }
         for link in paths::create_parents(dest)?.removals() {
             reporter.info(&link.removal_note());
@@ -64,26 +64,6 @@ pub(crate) fn seed(
         ));
     } else {
         reporter.detail(1, &format!("kept {}", dest.display()));
-    }
-    Ok(())
-}
-
-/// Refuse a destination that lands inside the directory being copied.
-///
-/// Copying a directory into itself has no reading worth honoring, and it does
-/// not simply fail: the destination becomes a child of the source, enumerating
-/// the source finds it, and the copy descends into what it is writing until the
-/// filesystem refuses a longer path — having written a deep tree into the
-/// repository on the way. Judged by where the two resolve rather than how they
-/// are spelled, since a destination can reach the source by a route that does
-/// not look like it (`guidance.md`, rule 14).
-pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Result<(), Error> {
-    let source = paths::resolved(source);
-    if paths::intended(dest).starts_with(&source) {
-        return Err(Error::DestinationInsideSource {
-            copied: source,
-            dest: dest.to_path_buf(),
-        });
     }
     Ok(())
 }

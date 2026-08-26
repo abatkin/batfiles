@@ -79,18 +79,18 @@ pub(crate) enum Error {
     )]
     SourceIsSymlink { path: PathBuf },
 
-    /// A `copy` whose destination is inside the directory it copies. The
-    /// destination would become a child of the source and the copy would
-    /// descend into what it was writing.
+    /// An action whose destination is inside the directory it installs from.
+    /// The destination would become a child of the source, and the action would
+    /// then work on what it was writing.
     ///
     /// The field is not called `source`: `thiserror` reads that name as the
     /// error this one wrapped, and every other variant here uses it that way.
     #[error(
-        "cannot copy {} into {}, which is inside it",
-        .copied.display(),
+        "cannot install {} into {}, which is inside it",
+        .installed.display(),
         .dest.display()
     )]
-    DestinationInsideSource { copied: PathBuf, dest: PathBuf },
+    DestinationInsideSource { installed: PathBuf, dest: PathBuf },
 
     /// Something is at the path a copy would be built on. Very likely an
     /// earlier run's, but batfiles does not remove what it did not create, so
