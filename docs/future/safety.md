@@ -101,39 +101,51 @@ rules in [Local state and cache files](state.md#shared-read-and-write-rules).
 
 ## Installed permissions
 
-When a source file carries filesystem permission bits, a newly installed or
-replaced destination file receives those permissions, including whether it is
-executable. Replacing a destination does not preserve the old destination's
-permissions; its adjacent backup preserves them, while the replacement follows
-the source.
+Promoted at 1.3 to [`copy`](../repoformat.md#copy), which is the only action
+that installs content carrying permissions of its own. What is written there is
+this section minus the replacement clause: a copied file receives the source's
+permission bits including the executable one, a copied directory receives the
+source directory's, synthetic parents that exist only to reach a destination
+take the platform default subject to the umask, and ownership is not copied.
 
-Ownership is not copied from the source. New content is owned according to the
-invoking user and operating-system rules, and batfiles does not elevate
-privileges to reproduce another owner. A source without meaningful permission
-metadata uses the platform default subject to the process umask. Symlink
-permission bits are not portable and carry no separate guarantee.
-
-New destination directories corresponding to source directories follow the
-source directory's permissions where the platform supports it. Synthetic
-parent directories that exist only to reach a destination use the platform
-default subject to the process umask.
+What remains here has no code yet. Replacing a destination does not preserve the
+old destination's permissions; its adjacent backup preserves them, while the
+replacement follows the source. Batfiles does not elevate privileges to
+reproduce another owner. Symlink permission bits are not portable and carry no
+separate guarantee.
 
 ## Seed actions and deletion
 
-`copy` and `fetch-url` actions are missing-only seeds during `sync` and
-`apply-*`. For a file-like copy or a fetch without extraction, the existence
-check applies to the exact `dest`: if any filesystem node already occupies
-that path, the action skips it.
+The copy half was promoted at 1.3 to
+[Seeds do not replace, and so do not refuse](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse)
+and the two `copy` action sections, and the build changed it in one way worth
+recording. This section had one `copy` whose `dest` was an exact destination or
+a merge root depending on the source type, with the missing-only check applied
+recursively to every mapped entry below a merge root and existing directories
+traversed as merge points. What was built is two actions and one level: `copy`
+installs one thing at one name and does nothing at all if something is at that
+name, `copy-dir` installs each direct child on its own, and a child directory
+that already exists is kept whole rather than descended into. Deep merging is
+what interleaves two configurations that were never written to combine, and it
+can be added later without changing what a working manifest does; taking it away
+afterwards could not.
 
-For a directory-source copy or an extracting fetch, `dest` is instead a merge
-root. Its existence does not skip the action. The existence check applies to
-each selected entry at its mapped path below that root. A selected file or
-symlink is installed only when its mapped path is absent; any existing node at
-that path is left unchanged. A selected directory, including an empty one, is
-created when absent; an existing directory at that path is traversed as a
-merge point. If a non-directory node occupies a path where a selected
-directory is required, batfiles leaves that node and the selected directory
-subtree unchanged and reports the skip.
+What remains here has no code yet.
+
+`fetch-url` actions are missing-only seeds during `sync` and `apply-*`. For a
+fetch without extraction, the existence check applies to the exact `dest`: if
+any filesystem node already occupies that path, the action skips it.
+
+For an extracting fetch, `dest` is instead a merge root. Its existence does not
+skip the action. The existence check applies to each selected entry at its
+mapped path below that root. A selected file or symlink is installed only when
+its mapped path is absent; any existing node at that path is left unchanged. A
+selected directory, including an empty one, is created when absent; an existing
+directory at that path is traversed as a merge point. If a non-directory node
+occupies a path where a selected directory is required, batfiles leaves that
+node and the selected directory subtree unchanged and reports the skip. Whether
+that survives contact with an implementation the way the `copy` version did not
+is for slice 4 to find out.
 
 Thus an earlier `create-dir` for an extraction root does not disable a later
 extracting fetch; the later action can still seed its missing selected entries.
@@ -249,8 +261,19 @@ Single-file writes that carry content should use a temporary sibling and atomic
 rename where practical. Content is what the rule is about: a node batfiles can
 rebuild from the manifest — an owned symlink — is replaced in place and simply
 redone if a run is interrupted, per
-[Replacing what is already there](../repoformat.md#replacing-what-is-already-there). Multi-file directory updates are neither atomic nor automatically
-rolled back. As the first phase of a directory action's execution, batfiles
+[Replacing what is already there](../repoformat.md#replacing-what-is-already-there).
+
+The build went further than "where practical" and further than "single-file",
+and the sentence that used to follow — that multi-file directory updates are
+neither atomic nor automatically rolled back — is no longer true of the actions
+that exist. `copy` and `copy-dir` build a whole directory beside its destination
+and move it in with one rename, so a directory install is atomic and an
+unfinished one leaves the destination untouched; see
+[Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse).
+It is stated as a rule rather than a preference because the failure it prevents
+is a run that reports success over a half-installed destination forever. The
+actions that do not exist yet inherit it — `fetch-url` and archive extraction
+most of all, being seeds over the same destinations. As the first phase of a directory action's execution, batfiles
 performs a best-effort inspection of the intended overlay. It then applies the
 overlay in a deterministic order, leaving adjacent backups for every
 destination node it replaces. On failure, it stops, reports what completed,

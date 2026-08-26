@@ -102,6 +102,14 @@ impl Manifest {
                 // The one action with nothing to install, so the only one whose
                 // paths are all destination and no source.
                 Action::CreateDir(create_dir) => check_dest(&create_dir.dest, action_number)?,
+                Action::Copy(copy) => {
+                    check_source(&copy.source, action_number)?;
+                    check_dest(&copy.dest, action_number)?;
+                }
+                Action::CopyDir(copy_dir) => {
+                    check_source(&copy_dir.source_dir, action_number)?;
+                    check_dest(&copy_dir.dest_dir, action_number)?;
+                }
             }
         }
         Ok(())

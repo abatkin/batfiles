@@ -170,6 +170,32 @@ Every action that stores a path, or classifies one already stored, needs the sam
 treatment. The containment check is lexical and lives in exactly one place, which
 is the seam 6.3 extends rather than replaces.
 
+**15. Install completely or not at all.** A destination holding half of something
+is worse than one holding nothing, because no later run can tell the difference:
+it finds the path occupied, treats the work as done, and reports success over the
+wreckage on every run from then on. A tool that converges on a broken state is
+worse than one that fails. So build what you are installing somewhere else and
+move it into place in one step, and never let the destination hold a partial
+write, a placeholder, or anything else standing in for the finished thing.
+
+**Cleanup is not where this is enforced.** A run that fails can tidy up after
+itself; a run that is killed returns nothing and tidies nothing, and a copied
+tree carrying a read-only directory's permissions is one the tool can no longer
+remove. The property has to hold when no cleanup runs at all — which is what
+building elsewhere buys, and why it is not merely tidier.
+
+Two corollaries, each cheap and each learned by getting it wrong first. What is
+being built is **created closed and widened at the end**, so a private thing is
+never briefly a public one — it is left behind by an interrupted run, so
+"briefly" is not guaranteed. And cleanup runs **only on a path this run
+created**, never on one that was already there: "it is probably ours" in front of
+a recursive delete is how a tool destroys data it was written to protect.
+
+`copy` at 1.3 is the worked example, and `src/sync.rs`'s `install`, `publish`,
+and `discard` are where it lives. Slice 4 inherits all of it — `fetch-url` and
+archive extraction are seeds with the same destinations and the same failure —
+so reuse that path rather than deriving it again.
+
 ## Budgets
 
 Not hard limits. If you are far over one, stop and ask why.

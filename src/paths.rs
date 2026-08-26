@@ -180,6 +180,49 @@ impl fmt::Display for ExistingNode {
     }
 }
 
+/// Whether anything at all is at a path, without following a final symlink.
+///
+/// The question a seed asks, and the only one it asks: an action that never
+/// replaces anything does not need to know what it found — a file, a directory,
+/// or a link, dangling or not, all mean the same thing to it, and mean it
+/// whoever put them there. Telling them apart is [`Occupant::at`]'s job, and
+/// that exists because an action which *replaces* has to decide whether it may.
+pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::Read {
+            path: path.to_path_buf(),
+            source: error,
+        }),
+    }
+}
+
+/// Where a path *will* be, resolved as far as the filesystem can say.
+///
+/// [`resolved`] answers this for something that is there. A destination need
+/// not be there yet, so the deepest ancestor that does exist is resolved and
+/// the rest is joined back on. That is enough to compare a destination against
+/// a path the operating system resolved, without pretending the leaf exists.
+pub(crate) fn intended(path: &Path) -> PathBuf {
+    let mut trailing = Vec::new();
+    let mut ancestor = path;
+    loop {
+        if let Ok(canonical) = fs::canonicalize(ancestor) {
+            let mut result = canonical;
+            result.extend(trailing.iter().rev());
+            return result;
+        }
+        // Nothing on this path exists, so there is nothing to resolve against
+        // and the lexical answer is the only one available.
+        let (Some(parent), Some(name)) = (ancestor.parent(), ancestor.file_name()) else {
+            return normalize(path);
+        };
+        trailing.push(name);
+        ancestor = parent;
+    }
+}
+
 /// A path in the form [`Repository::contains`] and [`Occupant::Owned`] compare
 /// against.
 ///

@@ -1,7 +1,7 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, and the three kinds of action it can declare. The rest of the
+it is read, and the five kinds of action it can declare. The rest of the
 schema — remotes, variables, conditions, and the other action types — is in
 [`future/repoformat.md`](future/repoformat.md) until those records parse.
 
@@ -251,6 +251,81 @@ one place a symlink is described without saying whether it leaves the
 repository, because it is the one place the answer is not what the refusal turns
 on.
 
+### Seeds do not replace, and so do not refuse
+
+`copy` and `copy-dir` install content the user then owns, and they install it
+**only where nothing is**. That makes an occupied destination their ordinary
+steady state rather than an obstruction, so they do not apply the four steps
+above at all. A seed asks one question — is anything there? — and where the
+answer is yes it keeps what it found and reports it at `-v`.
+
+This is the same rule 4 in different circumstances, not an exception to it. A
+`symlink` refuses because it *wants* to write and may not; a seed does not want
+to write, because a copy that has been edited since it was installed is the
+point of copying rather than a state to converge away from. Nothing is examined
+beyond whether something is present: a file, a directory, or a link, dangling or
+not, all end the question, and who put them there does not matter.
+
+Consequently a seed never reports an error for a destination it found occupied,
+never repairs anything, and never removes anything it did not just create. Where
+a manifest changes an action from `symlink` to `copy`, the old link stays and the
+copy is not made; the `-v` line says so. Re-seeding over content that is already
+there is [`--refresh-content`](future/safety.md#seed-actions-and-deletion)'s job
+and is not built.
+
+**Nothing is at the destination until the copy is whole.** Every copy, of a
+file or of a directory, is built *beside* where it is going and moved into place
+in one step at the end. Until then the destination is exactly as it was, which
+for a seed means absent.
+
+That is what a run which does not finish depends on. A half-written file, a
+half-filled directory, or an empty placeholder standing in for one would all be
+found by the next run, called occupied, kept, and reported as success over a
+seed that never finished — a broken state that converges rather than one that
+gets noticed. A run that *fails* could tidy that up itself, but a run that is
+interrupted cannot, and a copy that is somewhere else until it is complete needs
+no tidying to be correct.
+
+Removing what an unfinished run left behind is therefore a separate matter, and
+is allowed to fail. Taking back a copied tree needs write permission on every
+directory in it, and a copy carries the source's permissions, so a repository
+holding a read-only directory produces a copy batfiles cannot remove. What
+survives is named `<destination>.batfiles-incomplete`, sits next to where the
+copy was going, and is reported when batfiles is still running to report it.
+Nothing ever reads it: it is litter, and deleting it is safe.
+
+**A leftover stops the next run rather than being cleared.** That path is
+somebody's, and "it is probably ours" is not something batfiles acts on —
+clearing a directory it did not create is exactly the thing rule 13 forbids, and
+a recursive removal of the wrong one takes the whole tree. So a copy whose
+staging path is occupied fails, names the path, and says to remove it. Deciding
+that is the user's.
+
+**Publishing tries not to replace a destination that appeared meanwhile.** A
+copy can take a while, and the destination was checked before it started. A file
+is therefore published by a link, which is the one move the standard library
+offers that *refuses* to replace what is already there: a destination that
+appeared during the copy is kept and reported as kept, exactly as one that was
+there from the start.
+
+**Directories are the case this does not close, and it is a gap rather than a
+technicality.** There is no portable atomic move that refuses to replace, so
+`dest-dir` is checked again immediately before the move — two adjacent
+operations, with no way to make them one. A directory created in between is
+replaced if it is empty; one holding anything fails the move instead. An empty
+directory is still a node somebody made, so this does not meet the standard the
+rest of this section is written to. A file falls into the same gap on a
+filesystem with no links, where the move is all that is left.
+
+Closing it needs a platform-specific call — `renameat2` on Linux, `renamex_np`
+on macOS, neither on the BSDs, and not guaranteed by every filesystem on the two
+that have them. **The same gap, considerably wider, is in every other action:**
+`symlink` inspects a destination, removes what it finds, and creates the
+replacement, which is three steps with a deletion in the middle. Closing it here
+alone would buy nothing, so it is recorded rather than patched, and batfiles
+does not claim to be safe against another process writing to a destination while
+a run is in progress. Nothing in a run takes a lock. Do not run two at once.
+
 Replacing an owned symlink under 3 happens in place rather than through a
 temporary sibling. The link carries no content, so a run interrupted partway
 through leaves at most a missing link that the next `sync` puts back from the
@@ -265,15 +340,24 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, and `create-dir` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, and `copy-dir` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. Validated as an ID; nothing selects by group yet. |
 
 Each variant's record is closed independently, so a field belonging to another
 variant is an unknown field rather than one that is quietly ignored. Writing
 `source-dir` on a `symlink` is an error, so is writing `source` on a
-`symlink-dir`, and so is writing either on a `create-dir`, which installs
-nothing and therefore has no source at all.
+`symlink-dir`, so is writing either on a `create-dir`, which installs nothing
+and therefore has no source at all, and so is writing `dot-prefix` anywhere but
+on the two actions that install a directory's children.
+
+**The action types come in pairs, and the pairing is not about the source
+type.** `symlink` and `copy` install **one thing at one name**, and that thing
+may be a file or a directory. `symlink-dir` and `copy-dir` install **each direct
+child of a directory, into a directory**. The `-dir` suffix says what is done
+with the source's contents — enumerate them — rather than what the source is.
+Choosing between the two members of a pair is the author's, and it is not
+inferred from what happens to be on disk.
 
 ### `symlink`
 
@@ -440,3 +524,122 @@ at a `symlink`'s destination would be refused.
 
 Every platform batfiles builds for creates directories, so unlike the two
 symlink actions there is no platform on which this one is refused by name.
+
+### `copy`
+
+Declares one file or one directory, copied to a destination where nothing is.
+
+```toml
+[[actions]]
+type = "copy"
+id = "gitconfig-local"
+source = "seed/gitconfig.local"
+dest = "~/.gitconfig.local"
+```
+
+| Field    | Type   | Required | Description                                                     |
+|----------|--------|:--------:|-------------------------------------------------------------------|
+| `source` | string |   yes    | The file or directory to copy, relative to the repository root. |
+| `dest`   | string |   yes    | Where the copy goes, exactly. Never empty; `~` is the home.     |
+
+The same two fields as [`symlink`](#symlink), installing the same thing in the
+same place, and the difference is what the user gets: a detached copy that
+editing does not write back into the repository and that a later `sync` will not
+undo. This is the action for a file whose *initial* contents a repository wants
+to supply — a machine-local override, a template to fill in.
+
+`source` and `dest` follow [Sources and destinations](#sources-and-destinations),
+and `dest` is a destination rather than a container, so it is examined without
+following a final symlink. Missing parent directories are created.
+
+**A directory source is installed whole.** The destination decides once, for the
+action as a whole:
+
+| Already at the destination | Result                                                             |
+|----------------------------|----------------------------------------------------------------------|
+| nothing                    | The copy is made, with any missing parents. A directory source is reproduced to the bottom. |
+| anything at all            | Nothing at all, reported only at `-v`.                             |
+
+So `copy` over an existing directory does nothing — it does not seed into it.
+Filling in around what someone already has is [`copy-dir`](#copy-dir), and
+choosing between them is the whole of the difference between the two.
+
+**A copy carries the permissions of what it copied**, including whether a file
+is executable, and a copied directory arrives with the source directory's
+permissions rather than more broadly readable. Ownership is not copied: the copy
+belongs to whoever ran the command. Directories created only to *reach* a
+destination correspond to nothing in the repository and take the platform
+default subject to the umask.
+
+Those permissions are set once the copy is whole, because a source directory its
+owner cannot write into would otherwise lock batfiles out of the copy it is
+still filling. **So a copy is made closed and opened up at the end, never the
+other way round**: while it is being built it is reachable by its owner and
+nobody else, whatever the source's mode turns out to be. A copy of a private
+file is never briefly a public one — which matters most exactly when a run does
+not finish, since what it was building is deliberately left where it is.
+
+**A destination inside the directory being copied is an error.** `~/dotfiles`
+is an ordinary place for a repository and a `dest` may point anywhere, so a
+destination that lands under its own `source` is a manifest batfiles accepts and
+an action it cannot carry out: the destination would become a child of the
+source, enumerating the source would find it, and the copy would descend into
+what it was writing until the filesystem refused a longer path. It is refused
+before anything is created, and — as everywhere else — by where the two paths
+resolve rather than by how they are spelled.
+
+**Only files and directories are copied.** A symlink found inside a directory
+being copied is an error naming it, not something to follow or to recreate:
+following it would turn a link the repository chose into a detached file with
+nothing said about it, and recreating it would re-read a relative target from a
+directory it is no longer in. A socket, a fifo, or a device is an error on the
+same terms. The `source` the manifest *named* is not covered by this — like
+every other action's source it resolves through a final symlink, because naming
+a thing through a link the repository stores is naming that thing.
+
+### `copy-dir`
+
+Declares one copy per direct child of a directory, all of them in one
+destination directory.
+
+```toml
+[[actions]]
+type = "copy-dir"
+id = "seeds"
+source-dir = "seed"
+dest-dir = "~"
+dot-prefix = true
+```
+
+| Field        | Type    | Required | Description                                                          |
+|--------------|---------|:--------:|------------------------------------------------------------------------|
+| `source-dir` | string  |   yes    | The directory whose direct children are copied, relative to the root. |
+| `dest-dir`   | string  |   yes    | The directory the copies are made in. Created if it is missing.       |
+| `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.             |
+
+This is [`copy`](#copy) done once per child, exactly as
+[`symlink-dir`](#symlink-dir) is `symlink` done once per child. Each child is
+seeded on its own, so a destination that already holds some of them gains the
+rest — which is what makes this, and not `copy`, the way to fill in defaults
+around a configuration someone already has.
+
+`source-dir`, `dest-dir`, `dot-prefix`, the sorted order, the container rules for
+`dest-dir`, and the refusal of an already-dotted child under `dot-prefix` are all
+`symlink-dir`'s, unchanged. The permission and node-type rules are `copy`'s,
+unchanged. What is left to say is one thing:
+
+**One level, and no merging below it.** A child that is itself a directory is one
+thing installed: reproduced whole where nothing is at its destination, and kept
+untouched where something is. Nothing descends to decide entry by entry inside
+it. Seeding *into* a directory the user already has would interleave two
+configurations that were never written to combine, and leave nobody able to tell
+afterwards which file came from where. A child being kept does not stop the
+action — its siblings are still seeded.
+
+An empty `source-dir` copies nothing and is not an error, and creates its
+`dest-dir`, on the same terms as `symlink-dir`'s. A `source-dir` that exists but
+is not a directory is an error.
+
+Filtering the children — `include` and `exclude` — is specified in
+[`future/repoformat.md`](future/repoformat.md#copy) for both `copy` and
+`copy-dir` and is not built on either. A manifest that writes one is rejected.

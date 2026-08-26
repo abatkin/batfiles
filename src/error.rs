@@ -68,6 +68,47 @@ pub(crate) enum Error {
     #[error("not a directory: {}", .path.display())]
     SourceNotADirectory { path: PathBuf },
 
+    /// A symlink found inside something a `copy` action was reproducing.
+    /// Following it would turn a link the repository chose into a detached
+    /// file, and recreating it would re-read a relative target from a directory
+    /// it is no longer in.
+    #[error(
+        "cannot copy {}: it is a symlink, and copying installs files and directories; \
+         `symlink` is the action for a link",
+        .path.display()
+    )]
+    SourceIsSymlink { path: PathBuf },
+
+    /// A `copy` whose destination is inside the directory it copies. The
+    /// destination would become a child of the source and the copy would
+    /// descend into what it was writing.
+    ///
+    /// The field is not called `source`: `thiserror` reads that name as the
+    /// error this one wrapped, and every other variant here uses it that way.
+    #[error(
+        "cannot copy {} into {}, which is inside it",
+        .copied.display(),
+        .dest.display()
+    )]
+    DestinationInsideSource { copied: PathBuf, dest: PathBuf },
+
+    /// Something is at the path a copy would be built on. Very likely an
+    /// earlier run's, but batfiles does not remove what it did not create, so
+    /// clearing it is the user's call.
+    #[error(
+        "cannot build a copy at {}: something is already there. If it is an \
+         incomplete copy from an earlier run, remove it and run sync again",
+        .path.display()
+    )]
+    StagingPathTaken { path: PathBuf },
+
+    /// A socket, a fifo, a device — something with no meaningful copy.
+    #[error(
+        "cannot copy {}: it is neither a regular file nor a directory",
+        .path.display()
+    )]
+    SourceNotCopyable { path: PathBuf },
+
     /// A dot-prefixed action over a child whose name already starts with `.`.
     /// The link would be `..name`, which is a legal file name and never the
     /// one that was meant.

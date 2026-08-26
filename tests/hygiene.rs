@@ -389,8 +389,10 @@ fn the_documents_name_every_action_type_that_exists() {
     }
 }
 
-/// Stands in for [`ACTIONS`]: the enum as it looks once slice 1 has landed,
-/// with the comment and attribute lines a real one carries.
+/// Stands in for [`ACTIONS`]: an enum shaped like the real one, with the
+/// comment and attribute lines it carries. Deliberately not a copy of it —
+/// what is under test is the reading, so a fixture that tracked the real
+/// variants would only prove they equal themselves.
 fn fixture_actions() -> &'static str {
     "#[derive(Debug, Deserialize)]\n\
      #[serde(tag = \"type\", rename_all = \"kebab-case\")]\n\

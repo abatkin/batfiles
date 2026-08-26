@@ -16,6 +16,8 @@ pub(crate) enum Action {
     Symlink(SymlinkAction),
     SymlinkDir(SymlinkDirAction),
     CreateDir(CreateDirAction),
+    Copy(CopyAction),
+    CopyDir(CopyDirAction),
 }
 
 impl Action {
@@ -29,6 +31,8 @@ impl Action {
             Self::Symlink(action) => action.id.as_ref(),
             Self::SymlinkDir(action) => action.id.as_ref(),
             Self::CreateDir(action) => action.id.as_ref(),
+            Self::Copy(action) => action.id.as_ref(),
+            Self::CopyDir(action) => action.id.as_ref(),
         }
     }
 }
@@ -96,4 +100,53 @@ pub(crate) struct CreateDirAction {
     /// The directory to create, resolved against the selected home when the
     /// action runs. Missing parents are created with it.
     pub dest: String,
+}
+
+/// `copy`: one file or one directory, seeded at a destination where nothing is.
+///
+/// The copy is the user's from then on. That is what separates this from
+/// `symlink` — the same pair of fields, installing the same thing at the same
+/// place, but a detached one that editing does not write back into the
+/// repository, and that a later `sync` will not undo.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct CopyAction {
+    /// Makes the action addressable.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    #[expect(dead_code, reason = "3.2 selects by group")]
+    pub group: Option<ItemId>,
+    /// The file or directory to copy, relative to the repository root.
+    pub source: String,
+    /// Where the copy goes, exactly. Resolved against the selected home when
+    /// the action runs.
+    pub dest: String,
+}
+
+/// `copy-dir`: one copy per direct child of a directory, all of them into one
+/// destination directory.
+///
+/// Stands to [`CopyAction`] as [`SymlinkDirAction`] does to [`SymlinkAction`]:
+/// the same installation, done once per child rather than once. There is no
+/// `dot-prefix` on `CopyAction` for the same reason there is none on
+/// `SymlinkAction` — a destination written out in full already says what it is
+/// called.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct CopyDirAction {
+    /// Makes the action addressable. The children never are, individually.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    #[expect(dead_code, reason = "3.2 selects by group")]
+    pub group: Option<ItemId>,
+    /// The directory whose direct children are copied, relative to the
+    /// repository root.
+    pub source_dir: String,
+    /// The directory the copies are made in, resolved against the selected home
+    /// when the action runs and created if it is missing.
+    pub dest_dir: String,
+    /// Whether each installed name gains a leading `.`, for a repository that
+    /// keeps its dotfiles undotted.
+    #[serde(default)]
+    pub dot_prefix: bool,
 }

@@ -22,7 +22,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -41,6 +41,11 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`.
 - **A directory can be asked for on its own.** `create-dir` makes one and
   nothing else — `mkdir -p`, for a plugin root or a cache that some other tool
   fills in. An existing directory is left exactly as it is, contents and all.
+- **Files can be seeded instead of linked.** `copy` and `copy-dir` install a
+  copy the user then owns — a machine-local override, a template to fill in —
+  and install it *only* where nothing is. Editing it afterwards is the point, so
+  a later `sync` finds it occupied and leaves it alone rather than putting the
+  original back. Permissions come across, including the executable bit.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
@@ -57,9 +62,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`.
 - **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
   needs a file-against-directory distinction and a privilege check that are not
-  built, and no step schedules them yet. `create-dir` is the one action that
-  works everywhere, so a Windows run can currently make directories and nothing
-  else.
+  built, and no step schedules them yet. The other three action types work
+  everywhere, so a Windows run can create directories and seed copies but cannot
+  install a link.
 
 Everything else — `init`, `clone`, the four enable/disable commands,
 `apply-action`, `apply-group`, and `vars` — parses its arguments and exits 2.
@@ -157,7 +162,6 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 1     | The `copy` action                                                   |
 | 2     | `--dry-run`                                                         |
 | 3     | Groups, enable/disable, `--skip`, `apply-action`, `apply-group`     |
 | 4     | Fetching files and archives, and cloning Git repositories           |

@@ -72,26 +72,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   one destination directory, with an optional `dot-prefix`.
 - **1.2** ✅ Add `create-dir`, and settle what `symlink-dir` does with an empty
   `source-dir`: it creates its `dest-dir` and says so.
-- **1.3** Add `copy` with its missing-only seed semantics, preserved once
-  created.
-- **1.4** Extract only what all four variants genuinely share, and not before
-  all four exist. One piece is already out: composing a path, and classifying
-  what is at one, is `src/paths.rs`, because rule 13 has to be decided
-  identically by every action and rule 14 says the containment check lives in
-  exactly one place. Ask it rather than re-reading a destination, and add to it
-  rather than around it. 1.2 answered half of what was open here: `create-dir`
-  wanted `resolve_destination` exactly as the symlink types left it and wanted
-  no source resolution at all, so only `copy` can still argue with either. It
-  also put the second piece out of `sync.rs` on its own: `paths::ensure_directory`
-  now returns whether it created the directory, and the one `sync::ensure_directory`
-  that reports it is called by both actions that make one. What remains in
-  `src/sync.rs` is source resolution and destination *composition*. This is also
-  where `action/` earns its
-  directory and `sync.rs` stops holding both the loop and one action's work. The
-  accessors that match over every variant are the same question in miniature:
-  0.6 wrote `Action::id()` as the first, 3.2 reads `group` as the second, and at
-  the third they collapse into one `fn common(&self)`.
-- **1.5** Extend `tests/fixtures/leaf` and add one CLI test per action type.
+- **1.3** ✅ Add `copy` with its missing-only seed semantics, preserved once
+  created. Landed as two actions, `copy` and `copy-dir`.
+- **1.4** Extend `tests/fixtures/leaf` and add one CLI test per action type.
   `create-dir` and `copy` are not platform-specific, so their fixture
   expectations go *outside* `mod linking` (`guidance.md`, "Test environments");
   only the symlink half belongs in it. 1.2 and 1.3 each add their action's own
@@ -106,12 +89,75 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   fixture's portable actions have to be reachable without the symlink ones,
   which they are not while the run stops at the first failure.
 
+  Ahead of the extraction below on purpose, though neither step needs the other:
+  `tests/cli.rs` is the net an internal restructuring falls into (rule 10), so
+  it is worth widening before rather than after, and tests written now describe
+  the behavior rather than the shape that replaced it.
+- **1.5** Extract only what all five variants genuinely share — 1.3 landed as
+  two actions, so the count this step was written against is one higher. Three
+  pieces are already out, each because a second caller wanted it exactly as the
+  first left it, not in anticipation: composing a path and classifying what is
+  at one is `src/paths.rs` (rule 13 has to be decided identically by every
+  action, and rule 14 says the containment check lives in one place);
+  `sync::ensure_directory` reports the directory that `copy-dir`, `symlink-dir`,
+  and `create-dir` each need made; and `installed_name` holds the dot-prefix
+  rule and its refusal for the two `-dir` actions. Ask them rather than
+  re-deriving, and add to them rather than around them.
+
+  What is genuinely still duplicated is the shape of the two `-dir` actions:
+  resolve the source, insist it is a directory, ensure the destination, then
+  loop over sorted children doing one action's work per child. `link_dir` and
+  `copy_dir` are that shape twice, differing only in the per-child call and one
+  diagnostic. Both `resolve_source` and `resolve_destination` came through 1.2
+  and 1.3 unchanged, so nothing is owed there. The accessors that match over
+  every variant are the same question in miniature: 0.6 wrote `Action::id()` as
+  the first, 3.2 reads `group` as the second, and at the third they collapse
+  into one `fn common(&self)`.
+
+  **Do this before 2.1, which rewrites every action body into an `effects` half
+  and an `apply` half.** That across five actions inside one 831-line file is
+  the expensive spelling of the same work, and the one where the publication
+  path gets reshaped while something else is being done.
+
+  The split is by action *pair* rather than by action, because the pairs share
+  their per-item function and their child loop, and one file per action puts
+  that shared piece in an awkward third place. `create-dir` is four lines; leave
+  it with the dispatch rather than manufacturing a file for it:
+
+  ```text
+  sync.rs       the loop, and nothing else
+  action/mod.rs dispatch, create-dir, the shared -dir child loop, field resolution
+  action/symlink.rs   symlink + symlink-dir
+  action/copy.rs      copy + copy-dir
+  install.rs    stage, publish, discard — rule 15 in one place
+  ```
+
+  **`install.rs` is the part to get right, and the obvious split gets it
+  wrong.** `seed`, `install`, `create_staging`, `create_closed`, `fill`,
+  `publish`, `discard`, and `staging_path` are 112 lines — a peer of the symlink
+  group, not a sub-part of copy — and they have three callers coming: `copy`
+  now, `fetch-url` at 4.1, archive extraction at 4.2. Inside `action/copy.rs`
+  they would be something `action/fetch_url.rs` has to reach sideways into,
+  which is the shape that ends with 4.1 reimplementing them instead. They are
+  also the code four separate rounds of review found defects in, so move them as
+  a unit and move them unchanged; a rewrite on the way past is how that work
+  gets undone.
+
+  Do **not** parameterize `install` over what content to produce yet. It has one
+  caller today, 4.1 is the second and can introduce the seam then, and rule 3
+  still applies — moving it out is about locality, not abstraction.
+
 ## Slice 2 — Dry-run
 
 Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
 
 - **2.1** Split every action into an `effects` phase that inspects and a
-  separate `apply` phase that performs.
+  separate `apply` phase that performs. `copy` is the variant to design against:
+  it is the first whose effects are neither one thing nor one per child, since a
+  directory installed whole is one decision covering a tree of unknown size. An
+  effect that names what it will write, rather than enumerating it, is what that
+  wants — which is also the shape 4.1 needs, so getting it wrong here is paid
+  for twice.
 - **2.2** Interleave the two per action, so a real run computes each action's
   effects against the filesystem the previous action left.
 - **2.3** Make `effects` return either known effects or an unknown-with-reason,
@@ -162,9 +208,21 @@ The first slice with a real acceptance test. Individually the hardest work so
 far, but it is what makes the tool usable, so it comes before the easier
 variable and condition slices.
 
-- **4.1** Add `fetch-url` for a single file, seeded only when missing.
+- **4.1** Add `fetch-url` for a single file, seeded only when missing — the same
+  words as `copy`, and it should be the same code path. A download is the worst
+  case rule 15 is about: it is slow, so the window in which the destination
+  holds something unfinished is wide, and a network that drops mid-transfer is
+  ordinary rather than exceptional. Publish through `sync.rs`'s `install`, and
+  take the digest check from `future/safety.md` with it — verifying content is a
+  step between building and publishing, which is exactly the shape that path
+  already has. Slice 1 spent four rounds of review getting this right for
+  `copy`; none of it is worth deriving a second time.
 - **4.2** Add archive extraction, rejecting absolute paths, `..` traversal, and
-  symlinks escaping the destination root.
+  symlinks escaping the destination root. A directory seed, so rule 15 again:
+  extract into the staging tree and publish once, rather than into the
+  destination. That also makes the entry rejections cheap to enforce — an entry
+  that escapes is caught before anything reaches `$HOME`, and the whole
+  extraction is abandoned by discarding one path.
 - **4.3** Add `git-clone` for one repository, and the shared helper that shells
   out to `git`.
 - **4.4** Add the `git-clone` list manifest format.
@@ -215,7 +273,7 @@ fetching.
 - **5.6** Gate leaf actions and groups on `when` and `unless`, rejecting a
   record that sets both. The conditions are the third accessor to match over
   every `Action` variant, after `id` at 0.6 and `group` at 3.2, so this is the
-  step 1.4 defers the collapse to: replace the per-field accessors with one `fn
+  step 1.5 defers the collapse to: replace the per-field accessors with one `fn
   common(&self) -> Common<'_>` returning a borrowed view of the shared fields,
   so there is one exhaustive match rather than one per field.
 - **5.7** Make an unevaluable condition close the gate and warn, in both
@@ -285,6 +343,31 @@ before.
   remedy and the error rows of `docs/repoformat.md`'s destination table are
   written for a tool that cannot give anything back, and `future/safety.md`
   parks `--no-overwrite` and `--interactive` here for the same reason.
+
+  For the seed actions this is one function, not a sweep: `sync.rs`'s `publish`
+  is the single place that decides whether an occupied destination is kept, and
+  `--refresh-content` is that decision inverted — back the destination up, then
+  replace it. Everything the copy needed in order to be safe is already on the
+  other side of it, since what `publish` moves into place is complete before it
+  moves. Note what changes underneath, though: replacing means the destination
+  is no longer required to be absent, so `hard_link` stops being the publication
+  for files and the no-replace property goes with it. That is 9.5's problem
+  arriving early, and the two steps should be read together.
+
+- **9.5** Atomic no-replace publication, across every action or not at all. Each
+  action decides whether a destination is free and then acts on the answer, so
+  each has a window in which another process can take that path: `copy`'s is two
+  adjacent calls, and `symlink`'s is three steps with a `remove` in the middle,
+  which is both wider and the one every user runs. 1.3 closed the file half of
+  `copy`'s with `hard_link` because that was free; the rest needs
+  `renameat2` on Linux, `renamex_np` on macOS, `MoveFileExW` without
+  `MOVEFILE_REPLACE_EXISTING` on Windows, nothing on the BSDs, and a fallback
+  for the filesystems that refuse the flag anyway. That is unsafe FFI on three
+  platforms, two of which CI never runs, to close a window nothing in the tool
+  closes elsewhere. Do it as one piece of work over every action, or leave it
+  documented — `docs/repoformat.md` says plainly that batfiles is not safe
+  against a concurrent writer, which is the honest version of the status quo.
+  Do not close it for one action and leave the wider ones open.
 
 ## Slice 10 — Distribution
 

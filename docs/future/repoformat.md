@@ -459,8 +459,8 @@ bootstrap policy belongs to the leaf repository.
 The ordered list, the tagged-record shape, and the common `type`, `id`, and
 `group` fields are specified in
 [`docs/repoformat.md`](../repoformat.md#actions), along with `symlink`,
-`symlink-dir`, and `create-dir` in full. `when` and `unless` are not built, nor
-is any variant other than those three.
+`symlink-dir`, `create-dir`, `copy`, and `copy-dir` in full. `when` and `unless`
+are not built, nor is any variant other than those five.
 
 `[[actions]]` is an ordered heterogeneous array. Each action is a tagged record
 selected by its required `type` field.
@@ -511,31 +511,43 @@ never usefully contain a `/`, which is what distinguishes it from
 
 ### `copy`
 
-Missing-only seed action that copies a file-like item or recursively seeds the
-contents of a directory. A file-like source is skipped when its exact `dest`
-exists. For a directory source, an existing `dest` is a merge root rather than
-a reason to skip the action; the missing-only check applies separately to each
-selected mapped entry. Thus the example below can seed missing dotfiles even
-though `~` already exists. See
-[Seed actions and deletion](safety.md#seed-actions-and-deletion).
+Built as **two** actions, `copy` and `copy-dir`, specified in
+[`docs/repoformat.md`](../repoformat.md#copy). Only the two filters below are
+not built, and they are rejected on both.
+
+This was originally specified as one action whose `dest` meant an exact
+destination for a file-like source and a merge root for a directory source —
+switching, that is, on a fact that is not in the manifest but on the disk, and
+discovered only when the action runs. It was split along the same line as
+`symlink`/`symlink-dir`, which is not the source type but what happens to the
+source's *contents*: `copy` installs one thing at one name, whatever that thing
+is, and `copy-dir` installs each direct child of a directory into a directory.
+Both readings of the original are still expressible; the author now writes which
+one they meant. The build wins, per [`docs/README.md`](../README.md).
+
+Two consequences went with the split, both recorded in
+[`safety.md`](safety.md#seed-actions-and-deletion): `dot-prefix` belongs only to
+`copy-dir`, so writing it on a `copy` is an unknown field caught while the
+manifest is read rather than a run-time complaint; and a child directory that
+already exists is kept whole rather than traversed as a merge point.
 
 ```toml
 [[actions]]
-type = "copy"
-source = "local-files"
-dest = "~"
+type = "copy-dir"
+source-dir = "local-files"
+dest-dir = "~"
 include = ["*"]
 exclude = ["private/*"]
-dot-prefix = true
 ```
 
-| Field        | Type         | Required | Description                                                                    |
-|--------------|--------------|:--------:|--------------------------------------------------------------------------------|
-| `source`     | `RepoPath`   |   yes    | File, symlink, or directory source.                                            |
-| `dest`       | string       |   yes    | Exact destination for a file-like source, or destination root for a directory. |
-| `include`    | `GlobFilter` |    no    | Recursive selection when the source is a directory.                            |
-| `exclude`    | `GlobFilter` |    no    | Recursive exclusion when the source is a directory.                            |
-| `dot-prefix` | boolean      |    no    | Dot-prefix top-level mapped paths for a directory source; defaults to `false`. |
+| Field     | Type         | Required | Description                                       |
+|-----------|--------------|:--------:|-----------------------------------------------------|
+| `include` | `GlobFilter` |    no    | Recursive selection when the source is a directory. |
+| `exclude` | `GlobFilter` |    no    | Recursive exclusion when the source is a directory. |
+
+Neither is built, and neither is scheduled, for the reasons given under
+[`symlink-dir`](#symlink-dir). Unlike that action's filters these are recursive,
+so a pattern here can usefully contain a `/`.
 
 ### `create-dir`
 
