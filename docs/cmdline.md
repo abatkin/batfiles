@@ -5,9 +5,8 @@ options every command accepts, where output goes, and what the exit status
 means.
 
 The per-command specifications, the shared action-execution and selection
-options, dry-run behavior, and address forms are in
-[`future/cmdline.md`](future/cmdline.md) until the commands that use them are
-built.
+options, and address forms are in [`future/cmdline.md`](future/cmdline.md) until
+the commands that use them are built.
 
 ## What runs today
 
@@ -19,9 +18,9 @@ location roots it needs and then reports that it is not implemented yet, exiting
 2 having written nothing. That message is the answer to "what can batfiles do",
 and it disappears one command at a time.
 
-`sync` is the first command that writes. It executes the action types that
-exist, which between them are enough to install a repository made of symlinks
-and nothing else.
+`sync` is the first command that writes, and the first with an option that is
+honored: it executes the action types that exist, and `--dry-run` reports what
+it would execute without doing any of it.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -125,7 +124,7 @@ command renders the same string clap renders for the flag.
 ### `sync`
 
 ```text
-batfiles sync
+batfiles sync [--dry-run]
 ```
 
 Read the leaf repository's [manifest](repoformat.md#reading-the-manifest) and
@@ -139,9 +138,66 @@ correct says nothing, because a repository that is already installed is the
 ordinary case and forty lines of "unchanged" is how output stops being read;
 `-v` reports those too. `--quiet` suppresses both.
 
-Every option `sync` accepts other than the global ones is
-[refused for now](#unimplemented-options); that list shrinking to empty is how
-you know `sync` is finished.
+| Option      | Purpose                                                                |
+|-------------|--------------------------------------------------------------------------|
+| `--dry-run` | Report the action plan without executing it — see [dry-run behavior](#dry-run-behavior). |
+
+Every other option `sync` accepts is [refused for now](#unimplemented-options);
+that list shrinking to empty is how you know `sync` is finished.
+
+## Dry-Run Behavior
+
+Every action inspects the real filesystem as the previous action left it,
+decides what to do, and then either does it or, under `--dry-run`, says what it
+would have done. That is the whole mechanism: one pass per action, with no
+separate planning phase and nothing forecast. A dry run reports the first
+action's decision exactly, and each later action's as though its predecessors
+had not run — which is accurate for the overwhelmingly common case of actions
+with distinct destinations, and wrong only where one action's output is
+another's input.
+
+**Batfiles does not simulate a filesystem to close that gap.** A shadow
+filesystem layered over the real starting state would have to model creation,
+replacement, permissions, and symlink traversal, and every divergence between
+the model and the real implementation is a dry run that lies.
+
+**A dry run does not do the work.** Nothing is created, replaced, or removed.
+That is a promise about the plan and not about a directory: batfiles' own
+bookkeeping runs in both modes, so a dry run is not a promise that the process
+writes nothing anywhere — it is a promise that none of the plan it prints is
+carried out. "Nothing under the home changes" would be both weaker and false,
+since the repository defaults to `<selected-home>/dotfiles`.
+
+A dry run's lines are the real run's lines in a different tense: `would link`
+and `would copy` where a real run reports `linked` and `copied`. Order and
+granularity match too — one line per child for the directory-wide actions, and
+one line for a whole tree where a real run installs one.
+
+**Tense is the only difference where actions have distinct destinations.** Where
+one action's output is another's input the runs differ in substance, for the
+reason above: a `create-dir` followed by a `copy` at the same path reports
+`would create` and then `would copy`, where a real run reports `created` and
+then `kept`, the second action having seen the first one's work.
+
+One exception has the same cause: a dry run removes nothing, so a broken symlink
+that a real run clears once is rediscovered by everything that looks at that
+path afterwards and reported each time. A `symlink-dir` or `copy-dir` whose
+destination directory is itself a broken symlink therefore says so once per
+child, where a real run says it once.
+
+**A dry run describes intent, not success.** It stops before the write, so a
+permission failure or a destination another process takes first appears only in
+the real run. Every decision resting on inspection is still exact: a `copy`
+whose destination is already occupied reports that it would keep what is there,
+and copies nothing.
+
+What the manifest names is still read. A `source` that is missing or unreadable
+fails in either mode, before the destination is considered — including where the
+destination is occupied and a real run would have kept it. A manifest naming a
+source that is not there is a repository error, and reporting it only on the day
+the destination happens to be empty would be the less useful behavior. A
+destination batfiles will not install over is refused in either mode too, for
+the same reason: the refusal is a decision, and inspection is what decides it.
 
 ## Unimplemented Options
 
@@ -159,9 +215,9 @@ the command exists.
 
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                        | `--dry-run`, `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--skip-action`, `--skip-group` |
-| `clone`                       | `sync`'s list except `--dry-run` and `--refresh-remotes`, which `clone` does not accept at all, plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group` |
-| `apply-action`, `apply-group` | `--dry-run`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
+| `sync`                        | `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--skip-action`, `--skip-group` |
+| `clone`                       | `sync`'s list plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`. `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all |
+| `apply-action`, `apply-group` | `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
 | `vars list`                   | `--no-refresh`                                                                                                                             |
 | everything else               | none                                                                                                                                       |
 

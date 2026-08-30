@@ -275,7 +275,7 @@ directory.
 
 `--dry-run` does not change dynamic-variable cache policy and may therefore
 update this file. The command-line specification defines the shared [dry-run
-behavior](cmdline.md#dry-run-behavior).
+behavior](../cmdline.md#dry-run-behavior).
 
 Deleting `dynamic-vars.toml` is safe and does not change persisted user
 configuration. The next command that needs a dynamic value may rerun its

@@ -55,9 +55,14 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   that cannot mean what it says is an error — never a setting that looks
   accepted and does nothing. All of it is caught while the file is read, so a
   manifest batfiles will not honor stops the run before it installs half of it.
+- **A run can be asked what it would do.** `sync --dry-run` reports the whole
+  plan — one line per link, copy, and directory, in the tense that says it has
+  not happened — and writes nothing. Every action inspects the real filesystem
+  and then stops short of the write, so what you read is what the run decided,
+  not a simulation of one.
 - **An option that is not live yet is refused rather than ignored.** `sync
-  --dry-run` exits 2 naming the option, because silently accepting it would let
-  you believe a dry run had happened.
+  --refresh-content` exits 2 naming the option, because silently accepting it
+  would let you believe your content had been refreshed.
 - **`version` prints the version.**
 - **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
@@ -162,7 +167,6 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 2     | `--dry-run`                                                         |
 | 3     | Groups, enable/disable, `--skip`, `apply-action`, `apply-group`     |
 | 4     | Fetching files and archives, and cloning Git repositories           |
 | 5     | Variables, and `when`/`unless` conditions                           |

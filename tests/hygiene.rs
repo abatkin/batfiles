@@ -1,8 +1,10 @@
-//! Source-hygiene checks that keep four of `rewrite/guidance.md`'s rules
+//! Source-hygiene checks that keep five of `rewrite/guidance.md`'s rules
 //! mechanical rather than honor-system: rule 1's dead-code annotations, the
 //! `CARRY` markers of "Carrying work forward", rule 12's list of options that
-//! parse but are not honored yet, and the definition of done's requirement that
-//! the documents keep saying what the binary actually does.
+//! parse but are not honored yet, "Two lists, and why they are not the same
+//! one" — which modules may touch the filesystem at all — and the definition of
+//! done's requirement that the documents keep saying what the binary actually
+//! does.
 //!
 //! The scans are textual and line-oriented, so an attribute or a marker split
 //! across lines is not seen. None of it is worth a parser.
@@ -27,9 +29,80 @@ const ACTION_TYPE_DOCS: [&str; 2] = ["README.md", "docs/goals.md"];
 /// What that line starts with, in both documents.
 const IMPLEMENTED: &str = "Implemented so far:";
 
+/// The fixture the dry-run tests drive over a whole repository. One test covers
+/// every action type through it, which holds only as long as it declares every
+/// action type.
+const LEAF_MANIFEST: &str = "tests/fixtures/leaf/batfiles.toml";
+
 /// This file, which the marker scan skips: its fixtures spell out the forms the
 /// check rejects, so scanning it would report its own examples.
 const CHECKER: &str = "tests/hygiene.rs";
+
+/// Why a module is allowed to name the filesystem (`guidance.md`, "Two lists,
+/// and why they are not the same one"). An addition that is none of these is
+/// the bug this check exists to catch.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    /// Performs part of an action's work, and therefore consults `RunMode` itself.
+    ModeReader,
+    /// Produces content that only ever lands inside something a mode reader
+    /// created, so it never sees `RunMode` and does not need to.
+    #[expect(
+        dead_code,
+        reason = "4.1 adds the first: action/copy.rs takes install.rs's fillers"
+    )]
+    Downstream,
+    /// Batfiles' own bookkeeping, which runs in both modes: a state file is not
+    /// part of the plan an action carries out.
+    Bookkeeping,
+}
+
+impl Kind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ModeReader => "a mode reader",
+            Self::Downstream => "downstream of a mode reader",
+            Self::Bookkeeping => "bookkeeping, which runs in both modes",
+        }
+    }
+}
+
+/// A module allowed to name the filesystem, and why.
+#[derive(Debug)]
+struct Owner {
+    path: &'static str,
+    kind: Kind,
+    reason: &'static str,
+}
+
+/// The modules that own filesystem access. Every other module under `src/` is
+/// forbidden from *naming* `std::fs`, a platform `fs` module, or
+/// `std::process::Command`.
+///
+/// The list is meant to grow. Growing it means editing this file, which is what
+/// makes saying which [`Kind`] you are adding unavoidable.
+const FILESYSTEM_OWNERS: [Owner; 4] = [
+    Owner {
+        path: "src/paths.rs",
+        kind: Kind::ModeReader,
+        reason: "what a path means and what is at one, plus the directories an action makes",
+    },
+    Owner {
+        path: "src/install.rs",
+        kind: Kind::ModeReader,
+        reason: "rule 15's staging, publication, and discard",
+    },
+    Owner {
+        path: "src/action/symlink.rs",
+        kind: Kind::ModeReader,
+        reason: "the one platform-specific call in the crate",
+    },
+    Owner {
+        path: "src/tomlfile.rs",
+        kind: Kind::Bookkeeping,
+        reason: "reads the documents batfiles parses; 3.3 adds the writer",
+    },
+];
 
 fn crate_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -93,6 +166,53 @@ fn reason_is_filled(packed: &str) -> bool {
     packed
         .split_once("reason=\"")
         .is_some_and(|(_, rest)| !rest.starts_with('"'))
+}
+
+/// Every way a line names the filesystem, with what it named.
+fn filesystem_mentions(source: &str) -> Vec<(usize, &'static str)> {
+    let mut found = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let packed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        if packed.contains("std::fs") {
+            found.push((index + 1, "std::fs"));
+        }
+        // Narrower than rejecting `std::os::` whole, so a future need for
+        // `std::os::unix::ffi` is not caught by a filesystem check.
+        if packed
+            .split_once("std::os::")
+            .is_some_and(|(_, rest)| rest.contains("::fs"))
+        {
+            found.push((index + 1, "a platform `fs` module"));
+        }
+        if packed.contains("process::Command") {
+            found.push((index + 1, "std::process::Command"));
+        }
+    }
+    found
+}
+
+/// The owner entry for a source path, if it has one.
+fn owner_of(path: &Path) -> Option<&'static Owner> {
+    FILESYSTEM_OWNERS
+        .iter()
+        .find(|owner| path.ends_with(Path::new(owner.path)))
+}
+
+/// The allowlist as a failure message renders it, so a violation is read
+/// alongside what the permitted entries look like.
+fn owners_as_written() -> String {
+    FILESYSTEM_OWNERS
+        .iter()
+        .map(|owner| {
+            format!(
+                "  {} — {}: {}",
+                owner.path,
+                owner.kind.label(),
+                owner.reason
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 /// A `CARRY` note found in a source file.
@@ -274,6 +394,19 @@ fn documented_action_types(document: &str) -> Option<Vec<String>> {
     Some(types)
 }
 
+/// The action types a manifest declares, sorted and without repeats.
+fn declared_action_types(manifest: &str) -> Vec<String> {
+    let mut types: Vec<String> = manifest
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("type = \""))
+        .filter_map(|rest| rest.split('"').next())
+        .map(str::to_string)
+        .collect();
+    types.sort();
+    types.dedup();
+    types
+}
+
 /// [`STEPS`] as the step-to-done map both checks are cleared by.
 fn recorded_steps() -> BTreeMap<String, bool> {
     let steps = fs::read_to_string(crate_dir().join(STEPS))
@@ -316,6 +449,78 @@ fn expect_dead_code_is_accepted_only_with_a_filled_reason() {
         r#"#[expect(dead_code, reason = "")]"#,
     ] {
         assert_eq!(dead_code_violations(source).len(), 1, "{source}");
+    }
+}
+
+#[test]
+fn only_the_modules_that_own_filesystem_access_name_it() {
+    let mut failures = Vec::new();
+    for path in rust_sources("src") {
+        if owner_of(&path).is_some() {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("a readable source file");
+        for (line, named) in filesystem_mentions(&source) {
+            failures.push(format!(
+                "{}:{line}: names `{named}`, and does not own filesystem access",
+                display(&path)
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "\n{}\n\nA module that writes carries out part of an action's work, so it has to \
+         consult `Mode` or sit downstream of something that does. If this file genuinely \
+         owns an operation, add it to `FILESYSTEM_OWNERS` with the kind of owner it is:\n{}\n",
+        failures.join("\n"),
+        owners_as_written()
+    );
+}
+
+#[test]
+fn every_module_that_owns_filesystem_access_still_exists() {
+    // A renamed owner would otherwise leave an entry permitting nothing.
+    for owner in &FILESYSTEM_OWNERS {
+        let path = crate_dir().join(owner.path);
+        assert!(
+            path.is_file(),
+            "{} is on the filesystem-owner list and is not there",
+            owner.path
+        );
+    }
+}
+
+#[test]
+fn the_filesystem_is_found_however_it_is_named() {
+    for (source, expected) in [
+        ("use std::fs;", "std::fs"),
+        ("    let found = std::fs::metadata(path)?;", "std::fs"),
+        ("use std :: fs :: File;", "std::fs"),
+        ("use std::os::unix::fs::symlink;", "a platform `fs` module"),
+        (
+            "use std::os::windows::fs::symlink_file;",
+            "a platform `fs` module",
+        ),
+        ("use std::process::Command;", "std::process::Command"),
+        (
+            "    process::Command::new(\"git\")",
+            "std::process::Command",
+        ),
+    ] {
+        assert_eq!(filesystem_mentions(source), [(1, expected)], "{source}");
+    }
+}
+
+#[test]
+fn a_name_that_is_not_the_filesystem_is_left_alone() {
+    for source in [
+        // The exit status every command returns, which `app.rs` needs.
+        "use std::process::ExitCode;",
+        // Platform-specific and not the filesystem.
+        "use std::os::unix::ffi::OsStrExt;",
+        "let contents = read_to_string(path)?;",
+    ] {
+        assert!(filesystem_mentions(source).is_empty(), "{source}");
     }
 }
 
@@ -387,6 +592,34 @@ fn the_documents_name_every_action_type_that_exists() {
              wrong action types"
         );
     }
+}
+
+#[test]
+fn the_leaf_fixture_declares_every_action_type_that_exists() {
+    let source = fs::read_to_string(crate_dir().join(ACTIONS))
+        .unwrap_or_else(|error| panic!("{ACTIONS} declares the action types: {error}"));
+    let manifest = fs::read_to_string(crate_dir().join(LEAF_MANIFEST))
+        .unwrap_or_else(|error| panic!("{LEAF_MANIFEST} is the fixture that covers them: {error}"));
+    assert_eq!(
+        declared_action_types(&manifest),
+        implemented_action_types(&source),
+        "{LEAF_MANIFEST} does not declare every action type in {ACTIONS}, so the dry-run \
+         tests cover fewer of them than they appear to"
+    );
+}
+
+#[test]
+fn a_manifests_action_types_are_read_once_each() {
+    let manifest = "[[actions]]\n\
+                    type = \"symlink\"\n\
+                    source = \"shell/zshrc\"\n\
+                    \n\
+                    [[actions]]\n\
+                    type = \"copy\"\n\
+                    \n\
+                    [[actions]]\n\
+                    type = \"symlink\"\n";
+    assert_eq!(declared_action_types(manifest), ["copy", "symlink"]);
 }
 
 /// Stands in for [`ACTIONS`]: an enum shaped like the real one, with the

@@ -84,38 +84,19 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 
 ## Slice 2 — Dry-run
 
-Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
-
-- **2.1** Split every action into an `effects` phase that inspects and a
-  separate `apply` phase that performs. `copy` is the variant to design against:
-  it is the first whose effects are neither one thing nor one per child, since a
-  directory installed whole is one decision covering a tree of unknown size. An
-  effect that names what it will write, rather than enumerating it, is what that
-  wants — which is also the shape 4.1 needs, so getting it wrong here is paid
-  for twice.
-
-  1.5 laid out what this works within, so the split is per file rather than
-  across an 831-line one: one file per action type under `action/`, with
-  `action/mod.rs` holding only the dispatch. Three things it left are the ones
-  to use rather than work around. `action::Context` — now `action/context.rs` —
-  is where the dry-run flag goes: it already holds the anchored roots and the
-  reporter, and 9.4's `--refresh-content` is a second flag on the same value.
-  `children::for_each_child` takes the per-child work as a closure, which is the
-  seam through which a `-dir` action's effects come back one child at a time;
-  its `install_one` parameter becomes the thing that returns effects rather than
-  performs them.
-  And `install.rs`'s `seed` already asks `paths::occupied` before doing
-  anything — that call is the whole of a seed's `effects`, so the phase
-  boundary is a line that already exists.
-- **2.2** Interleave the two per action, so a real run computes each action's
-  effects against the filesystem the previous action left.
-- **2.3** Make `effects` return either known effects or an unknown-with-reason,
-  even though nothing returns unknown until slice 4.
-- **2.4** Render the computed effects for `--dry-run`, marking the plan partial
-  if any action reported unknown.
-- **2.5** Never simulate a filesystem to close the gap.
-- **2.6** CLI test: a dry run changes nothing on disk, and its output matches
-  what the real run then does.
+- **2.1** ✅ Add `RunMode { Perform, DryRun }` to `action::Context` and read it
+  at the three helpers that carry out an action's work. Under `DryRun`
+  `install::seed` creates no staging node.
+- **2.2** ✅ Report in the tense the mode dictates, through one `Verb` shared by
+  every action.
+- **2.3** ✅ Make 2.1 mechanical: `tests/hygiene.rs` rejects `std::fs`,
+  `std::os::*::fs`, and `std::process::Command` named at all outside an
+  allowlist whose entries each say which kind of owner they are.
+- **2.4** ✅ Un-stub `--dry-run` and promote the docs, creating
+  `docs/cmdline.md`'s "Dry-Run Behavior".
+- **2.5** ✅ CLI test: a dry run over the whole `leaf` fixture leaves the home
+  root byte-for-byte as it found it, snapshotted whole, and its lines match what
+  the real run then reports, word for word but for the tense.
 
 ## Slice 3 — Selection and ordering
 
@@ -131,12 +112,23 @@ Do this before a fourth action type exists. See `guidance.md`, "Dry-run".
   record, and being `#[cfg(not(unix))]` it runs on no CI runner. Reordering that
   manifest breaks a test nothing here would notice, so the observable pair this
   step owes belongs in the fixture rather than in a manifest written inline.
+
+  That pair is also the first thing in the tree whose dry run and real run differ
+  by more than tense — one action creating what the next observes is precisely
+  the case parity does not cover — so it breaks 2.5's parity assertion by
+  construction. Expect that, and repair it by excluding the pair rather than by
+  loosening the assertion: the divergence is the inherent gap (`guidance.md`,
+  "What a dry run says"), and a parity test that tolerates it tests nothing.
 - **3.2** Add groups and group membership. The `group` field has parsed and been
   validated as an `ItemId` since 0.6; this is the step that reads it, so its
   `expect(dead_code)` goes — CI will insist — along with the line in
   `docs/repoformat.md` saying nothing selects by group yet.
 - **3.3** Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and the
-  four enable/disable commands. Three things 0.4 left are finished here.
+  four enable/disable commands. It writes with `rename` and `remove_file` and is
+  meant to: `tomlfile.rs` is on 2.3's allowlist as bookkeeping and reads no
+  `Mode`, because a state file is not part of the plan an action carries out
+  (`guidance.md`, "Two lists, and why they are not the same one").
+  Three things 0.4 left are finished here.
   `read_or_default` and `Error::is_not_found` are still at the tag: together
   they are what lets a state file treat a missing document as empty where the
   leaf manifest treats it as an error. The atomic whole-document rewrite rule in
@@ -163,6 +155,13 @@ The first slice with a real acceptance test. Individually the hardest work so
 far, but it is what makes the tool usable, so it comes before the easier
 variable and condition slices.
 
+Dry-run needs one addition here and no rework. Both fetching actions publish
+through `install::seed`, which reads the mode, so they are dry-run correct as
+written; the git helper at 4.3 is the exception and reads the mode itself. The
+step that made them report unknown effects went with the effect type it was an
+artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
+4.6.
+
 - **4.1** Add `fetch-url` for a single file, seeded only when missing — the same
   words as `copy`, and it should be the same code path. A download is the worst
   case rule 15 is about: it is slow, so the window in which the destination
@@ -182,6 +181,12 @@ variable and condition slices.
   the staging node and the destination: `create_staging`, `publish`, and
   `discard` are the rule-15 property itself, and a download reaches them by the
   same route a copy does.
+
+  Moving the fillers puts `std::fs` in `action/copy.rs`, so add it to 2.3's
+  allowlist here, as a downstream entry rather than a mode reader — nothing it
+  contains is reachable under `DryRun`, because `install::seed` creates no
+  staging node to fill. The fetcher is the same kind of entry for the same
+  reason.
 - **4.2** Add archive extraction, rejecting absolute paths, `..` traversal, and
   symlinks escaping the destination root. A directory seed, so rule 15 again:
   extract into the staging tree and publish once, rather than into the
@@ -189,14 +194,44 @@ variable and condition slices.
   that escapes is caught before anything reaches `$HOME`, and the whole
   extraction is abandoned by discarding one path.
 - **4.3** Add `git-clone` for one repository, and the shared helper that shells
-  out to `git`.
+  out to `git`. **That helper is the fourth thing that reads `Mode`, and the only
+  one slice 4 adds** (`guidance.md`, "Where the mode is read"). It is not covered
+  by anything slice 2 built: a clone destination that already exists is an
+  occupied destination, which `install::seed` declines by design, so the update
+  path reaches the worktree — and the network — through neither `seed` nor
+  `paths`. A dry run that ran it would contact the network and modify a checkout
+  it was asked only to describe, which is the invariant this slice is most able
+  to break. Add the helper to 2.3's allowlist in the same change, since it names
+  `std::process::Command`; it is the one addition of the mode-reader kind.
+
+  **Under `DryRun` the helper runs no git, for any caller.** It needs no write
+  scope and no exception argument, and 6.2 must not add one: a dry run does not
+  materialize remotes either, and that limit is deliberate (`guidance.md`, "Where
+  the mode is read"). **Do not infer the answer from the destination path.** A
+  containment test against the home is wrong in both directions — the batfiles
+  directory is ordinarily inside the home, and an action's `dest` may be an
+  absolute path outside it — and with one rule for every caller there is nothing
+  for such a test to decide anyway.
 - **4.4** Add the `git-clone` list manifest format.
 - **4.5** Add `git-clone-list`, cloning each entry and updating existing clones
-  conservatively.
-- **4.6** Make 4.1 and 4.5 return `Unknown` from `effects` — the first real
-  exercise of the path slice 2 built.
+  conservatively. Say what a dry run reports for each of the two cases, because
+  they are not the same sentence: a destination that is absent is `would clone
+  <url> into <dest>`, and one holding a clone already is `would update the clone
+  at <dest>`. **Neither runs `git`**, so neither reaches the network and neither
+  can say what the update would bring — which is the "intent, not success"
+  boundary rather than a partial plan (`guidance.md`, "Why there is no effect
+  type"). The conservative update rules 6.2 reuses are about what a real run
+  does; a dry run stops before all of them.
 - **4.7** Test against a local HTTP server and local bare git repositories; no
-  step in the suite may reach the network.
+  step in the suite may reach the network. A dry run is part of what is tested
+  here: `fetch-url` says what it would fetch and where, and `git-clone-list`
+  reads its manifest — a repository file, readable at the moment the action runs
+  — and says one line per entry. Neither reaches the network in that mode, and an
+  existing clone is left exactly as it was, unfetched.
+
+  Promote `docs/future/cmdline.md`'s "Remote content is described, not retrieved"
+  paragraph into the section 2.4 created, minus its second half about inclusions,
+  which waits for 7.1.
 - **4.8** **Acceptance: your personal dotfiles are fully managed by `sync`, and
   the personal shell script is retired.**
 
@@ -253,13 +288,29 @@ No inclusion of remote actions yet.
   un-rejects a section the closed document turns away, and edits the same
   paragraph of `docs/repoformat.md`.
 - **6.2** Materialize a declared remote into `remotes/<id>/`, reusing 4.3's git
-  helper and 4.5's conservative update rules.
+  helper and 4.5's conservative update rules. It calls that helper the same way
+  `git-clone` does and asks it for no exception, so under `--dry-run` nothing is
+  cloned or fetched here either; 6.6 is where that is stated and tested.
 - **6.3** Add `@remote/path` as a parsed repository path resolved against
   exactly one repository, in the one resolver every action uses.
 - **6.4** Let a leaf symlink or copy action take its source from a remote.
 - **6.5** Gate remotes on `when` and `unless`.
-- **6.6** Let `--dry-run` materialize into the tool-owned `remotes/` tree while
-  leaving `$HOME` untouched, so an included remote's actions are knowable.
+- **6.6** State and test what `--dry-run` does about materialization: nothing.
+  It reports that it would clone or update `remotes/<id>/` and leaves the tree
+  exactly as it found it, materialized or not. If 4.3 gave the helper one rule
+  for every caller, this step is a report line and a test; if it grew a write
+  scope instead, this is where that surfaces, and the fix belongs in the helper.
+
+  **Test it against 6.7's bare repository**, both from an unmaterialized start
+  and over an existing materialization, snapshotting `remotes/` whole the way 2.5
+  snapshots the home root. The second case is the one worth writing carefully: an
+  implementation that clones only when absent passes the first and fails the
+  second, and quietly re-fetching a remote is exactly what this decision rules
+  out.
+
+  What that costs is a dry run describing a remote from a materialization that
+  may be old, and it is accepted rather than mitigated (`guidance.md`, "Where the
+  mode is read"). 7.1 owns what to do when there is no materialization at all.
 - **6.7** Fixture: a local bare git repository standing in for a remote, as a
   sibling of `leaf` under `tests/fixtures/` rather than as a growth of it.
 
@@ -267,7 +318,17 @@ No inclusion of remote actions yet.
 
 The hard slice. Everything it composes over is real by now.
 
-- **7.1** Read an included remote's own `batfiles.toml`.
+- **7.1** Read an included remote's own `batfiles.toml`. **This slice owns the
+  complete-versus-partial plan, and it is the only thing that does.** A dry run
+  does not materialize (6.6), so it reads whatever `remotes/<id>/` already holds
+  and lists that remote's actions as its last materialization declares them —
+  possibly out of date, which is the accepted cost. An inclusion with nothing
+  materialized leaves actions the run cannot name at all: an incomplete *action
+  list* rather than an action with unknowable effects, and nothing else in the
+  tool can produce one, which is why slice 2 builds none of this vocabulary
+  (`guidance.md`, "Why there is no effect type"). Promote the remote-inclusion
+  paragraph of `docs/future/cmdline.md`'s dry-run section here — both halves,
+  staleness and partiality — into the `docs/cmdline.md` section 2.4 created.
 - **7.2** Splice its actions into the leaf's single ordered action list, in
   place, preserving order.
 - **7.3** Add the action and group selection filters on the inclusion.
@@ -299,7 +360,14 @@ the late slices need", is the reason none of these require reworking what came
 before.
 
 - **9.1** Dynamic variables: the record, the command runner, timeouts, the
-  cache, and `allow-dynamic-vars`.
+  cache, and `allow-dynamic-vars`. The command runner names
+  `std::process::Command`, so it joins 2.3's allowlist as bookkeeping, and its
+  reason should say that what it runs is arbitrary unsandboxed programs. It reads
+  no `Mode`: a dry run resolves dynamic variables normally and may write
+  `dynamic-vars.toml`. Promote the dynamic-variable paragraph of
+  `docs/future/cmdline.md`'s dry-run section into the `docs/cmdline.md` section
+  2.4 created — it is the one caveat on "a dry run does not do the work", and it
+  has no business being promoted before there is a command to run.
 - **9.2** `vars refresh`, including selective refresh by key. Requires 9.1;
   there is nothing to refresh without it.
 - **9.3** File and archive remotes.
@@ -333,6 +401,21 @@ before.
   documented — `docs/repoformat.md` says plainly that batfiles is not safe
   against a concurrent writer, which is the honest version of the status quo.
   Do not close it for one action and leave the wider ones open.
+
+- **9.6** Report a prospective removal once per run. A dry run does not remove a
+  broken symlink, so anything that inspects the same path again finds it again
+  and says again that it would go. The reachable case is a `-dir` action whose
+  `dest-dir` is a broken link: `for_each_child` reports it, then every child's
+  `create_parents` rediscovers it, so twelve children produce thirteen lines
+  where a real run produces one.
+
+  The fix is a set of already-reported paths on `action::Context`, consulted in
+  `DryRun` only — about ten lines, and not a simulated filesystem, since it
+  changes what is *said* rather than what is *found*. It waits here because the
+  cost is duplicated output in a narrow case, and because a `Context` carrying
+  mutable state is a real change to a value slice 2 wants to keep boring. Do it
+  when the noise is worth ten lines, or when a second reporter needs the same
+  set.
 
 ## Slice 10 — Distribution
 

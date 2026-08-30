@@ -18,6 +18,7 @@ use super::Context;
 use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
+use crate::mode::Verb;
 use crate::paths::{self, Occupant};
 
 #[cfg(not(unix))]
@@ -56,7 +57,7 @@ pub(super) fn link_dir(action: &SymlinkDirAction, context: &Context) -> Result<(
             source_dir: &source_dir,
             dest_dir: &dest_dir,
             dot_prefix: action.dot_prefix,
-            verb: "link",
+            verb: Verb::Link,
         },
         |source, dest| link_one(source, dest, context),
     )
@@ -88,8 +89,12 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 /// indistinguishable from the offending one until it has been told apart. That
 /// is why the check sits in two arms rather than above the match — the third
 /// arm, which writes nothing, is exactly the one it would misjudge.
+///
+/// Those two arms are also where [`RunMode`] is read: under a dry run the link
+/// is withheld and everything else happens as it would.
 fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> {
     let reporter = context.reporter();
+    let mode = context.mode();
     match Occupant::at(dest, context.repository())? {
         // Compared in resolved form on both sides. A link written by an earlier
         // run holds the anchored spelling, which is the same place by a
@@ -103,10 +108,13 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
             // there, and a refusal arriving afterwards has already done the
             // damage it was raised to prevent.
             paths::refuse_destination_inside_source(target, dest)?;
-            remove(dest)?;
-            create(target, dest)?;
+            if mode.writes() {
+                remove(dest)?;
+                create(target, dest)?;
+            }
             reporter.info(&format!(
-                "relinked {} -> {} (was {})",
+                "{} {} -> {} (was {})",
+                Verb::Relink.say(mode),
                 dest.display(),
                 target.display(),
                 written.display()
@@ -115,12 +123,15 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
         Occupant::Vacant => {
             paths::refuse_destination_inside_source(target, dest)?;
             // After that, so a doomed action makes no directories on its way.
-            for link in paths::create_parents(dest)?.removals() {
-                reporter.info(&link.removal_note());
+            for link in paths::create_parents(dest, mode)?.removals() {
+                reporter.info(&link.removal_note(mode));
             }
-            create(target, dest)?;
+            if mode.writes() {
+                create(target, dest)?;
+            }
             reporter.info(&format!(
-                "linked {} -> {}",
+                "{} {} -> {}",
+                Verb::Link.say(mode),
                 dest.display(),
                 target.display()
             ));

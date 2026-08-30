@@ -34,19 +34,14 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
             .or_else(|| selection(&args.selection))
             .or_else(|| bootstrap(&args.bootstrap)),
         Command::Sync(args) => first_given([
-            (args.dry_run, "--dry-run", "2.4"),
             // Not 6.2: a git remote is fetched on every ordinary sync, so this
             // option has nothing to refresh until file and archive remotes land.
             (args.refresh_remotes, "--refresh-remotes", "9.3"),
         ])
         .or_else(|| action(&args.action))
         .or_else(|| selection(&args.selection)),
-        Command::ApplyAction(args) => {
-            first_given([(args.dry_run, "--dry-run", "2.4")]).or_else(|| action(&args.action))
-        }
-        Command::ApplyGroup(args) => {
-            first_given([(args.dry_run, "--dry-run", "2.4")]).or_else(|| action(&args.action))
-        }
+        Command::ApplyAction(args) => action(&args.action),
+        Command::ApplyGroup(args) => action(&args.action),
         Command::Vars(command) => match command {
             VarsCommand::List { no_refresh, .. } => {
                 first_given([(*no_refresh, "--no-refresh", "9.1")])
@@ -119,6 +114,7 @@ mod tests {
             &["batfiles", "disable-action", "vim"],
             &["batfiles", "vars", "list", "--machine-only"],
             &["batfiles", "sync"],
+            &["batfiles", "sync", "--dry-run"],
         ] {
             assert_eq!(withheld(args), None, "{args:?}");
         }
@@ -139,8 +135,8 @@ mod tests {
     #[test]
     fn the_first_listed_option_is_the_one_reported() {
         assert_eq!(
-            withheld(&["batfiles", "sync", "--refresh-vars", "--dry-run"]),
-            Some(("--dry-run", "2.4"))
+            withheld(&["batfiles", "sync", "--refresh-vars", "--refresh-remotes"]),
+            Some(("--refresh-remotes", "9.3"))
         );
     }
 }

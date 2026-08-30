@@ -60,36 +60,38 @@ These run-only selectors are accepted by `sync` and `clone` only:
 
 ## Dry-Run Behavior
 
-Every action computes its effects against the real filesystem as the previous
-action left it, and then either applies them or, under `--dry-run`, does not.
-That is the whole mechanism. A dry run reports the effects of the first action
-exactly, and of each later action as though its predecessors had not run — which
-is accurate for the overwhelmingly common case of actions with distinct
-destinations, and wrong only where one action's output is another's input.
+The mechanism, the tense, and what a dry run promises are specified in
+[`docs/cmdline.md`](../cmdline.md#dry-run-behavior), which describes what runs
+today. What is left here is what the unbuilt half of the tool adds to it: the
+actions that reach the network, the remotes an inclusion composes over, and the
+one thing a dry run does that is not describing.
 
-**Batfiles does not simulate a filesystem to close that gap.** A shadow
-filesystem layered over the real starting state would have to model creation,
-replacement, permissions, symlink traversal, and archive extraction, and every
-divergence between the model and the real implementation is a dry run that lies.
-An action that cannot know its effects reports *unknown, with a reason* instead,
-and the plan is marked **partial** rather than pretending to know the later
-state. A complete plan is one in which no action reported unknown.
+A mismatched digest belongs with the fetching actions in "intent, not success":
+like a permission failure, it surfaces only in the real run.
 
-**A dry run may write to the tool-owned `remotes/` tree, but never to the
-selected home.** Materializing a Git remote is what makes an included remote's
-actions knowable at all; refusing to would make every `include-remote` plan
-partial, which is the same as having no dry run for the composed repositories
-that dry run exists to inspect. `remotes/` is generated data batfiles owns and
-would refresh on the next sync anyway. `$HOME` is the user's, and nothing under
-it is touched.
+**Remote content is described, not retrieved.** `fetch-url`, `git-clone`, and
+`git-clone-list` say what they would fetch and where it would land — and, where a
+clone is already there, that they would update it — without contacting the
+network. Naming that is a complete account of the action, at the same granularity
+a directory copy is reported at; what a dry run cannot say is what an update
+would actually bring.
+
+The same holds for the remotes an `include-remote` composes over, and there it
+costs more. A dry run neither clones nor updates a remote, so an inclusion is
+described from the materialization already on disk, exactly as that
+materialization declares it — which may be out of date, and knowingly so. An
+inclusion with no materialization at all contributes actions that cannot be
+listed, so it is reported with a reason and the plan is marked **partial** rather
+than pretending to be whole. A complete plan is one in which nothing was reported
+that way. To see the rest, refresh the remote — by running `sync`, or by updating
+that checkout by hand — and repeat the dry run.
 
 Dry run still performs normal dynamic-variable resolution. Allowed dynamic
 commands may run, and successful results are written to `dynamic-vars.toml`;
-with `--refresh-vars --dry-run`, fresh entries are recomputed as well.
-Because dynamic commands are arbitrary programs, they may cause their own
-filesystem, network, or other side effects. Dry run therefore describes the
-action plan but does not promise that the `batfiles` process is completely
-side-effect-free.
+with `--refresh-vars --dry-run`, fresh entries are recomputed as well. Those
+commands are arbitrary programs and may have filesystem, network, or other side
+effects of their own, which is the one part of a dry run batfiles does not
+control.
 
 ## Commands
 
@@ -105,10 +107,11 @@ it accepts:
 
 | Option              | Purpose                                                                                                                               |
 |---------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| `--dry-run`         | Report the action plan using the shared [dry-run behavior](#dry-run-behavior).                                                        |
+| `--dry-run`         | Report the action plan using the shared [dry-run behavior](../cmdline.md#dry-run-behavior).                                                        |
 | `--refresh-remotes` | Re-fetch file and archive remotes, replacing their tool-owned materializations. Git remotes are already fetched on every normal sync. |
 
-`--dry-run` and `--refresh-remotes` are mutually exclusive.
+`--dry-run` and `--refresh-remotes` are mutually exclusive: a dry run
+materializes nothing, so there is nothing for it to refresh.
 
 ### Enable and disable actions or groups
 
@@ -140,7 +143,7 @@ using the same action semantics as `sync`.
 | Option      | Purpose                                                                                                                                 |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `--id <id>` | Required action or manifest-entry address. Included actions use qualified addresses. `include-remote` itself is not directly applyable. |
-| `--dry-run` | Report the application plan using the shared [dry-run behavior](#dry-run-behavior).                                                     |
+| `--dry-run` | Report the application plan using the shared [dry-run behavior](../cmdline.md#dry-run-behavior).                                                     |
 
 ### `apply-group`
 
@@ -154,7 +157,7 @@ the same action semantics as `sync`.
 | Option            | Purpose                                                                                   |
 |-------------------|-------------------------------------------------------------------------------------------|
 | `--group <group>` | Required leaf or qualified included group address.                                        |
-| `--dry-run`       | Report the group application plan using the shared [dry-run behavior](#dry-run-behavior). |
+| `--dry-run`       | Report the group application plan using the shared [dry-run behavior](../cmdline.md#dry-run-behavior). |
 
 ### `vars set`
 

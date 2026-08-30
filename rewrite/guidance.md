@@ -339,67 +339,185 @@ repository resembles.
 
 ## Dry-run
 
-Dry-run is not a second code path, and the split is **per action, interleaved** —
-not a global plan phase followed by a global apply phase. A global two-phase
-design is impossible: an action's effects can depend on what an earlier action
-did, and `fetch-url`, `git-clone-list`, and `include-remote` all produce content
-whose shape is not knowable until they run.
+Dry-run is not a second code path, and it is not a planning phase. **Every action
+runs once, in one piece**: it inspects the filesystem as the previous action left
+it, decides, and then either writes or — under `--dry-run` — says what it would
+have written. There is no `effects` phase, no effect type, and nothing forecast
+in either mode.
 
-The loop is:
+**What `--dry-run` promises is that none of the plan is carried out** — nothing
+installed, replaced, fetched, cloned, or materialized. It is not a promise that
+the process writes nothing anywhere: batfiles' own bookkeeping runs in both
+modes. Keep it stated as the work not happening, and never as a claim about a
+directory; "nothing under the home changes" is a weaker promise that is also
+false, since the repository defaults to `<selected-home>/dotfiles`.
 
-```
-for action in plan:
-    let planned = action.effects(&ctx)?;   // inspects the filesystem as earlier actions left it
-    report(planned);
-    if !dry_run { action.apply(planned)?; }
-```
+**A real run is therefore always accurate**, trivially: the inspection and the
+write are one pass, so no decision can go stale between them.
 
-**A real run is therefore always accurate.** `effects()` for action N runs
-immediately before `apply()` for action N, against the real filesystem including
-everything actions 1..N-1 did. Nothing is forecast. `apply` still never
-re-derives a decision — if it needs a fact, that fact is in the effect — but the
-facts it is given are ground truth. This is what `goals.md` already specifies:
-concrete effects are determined as the first phase of *each action's* execution,
-using the state left by earlier successful actions.
+**Dry-run is where the unknowability lives, and it is inherent.** Skipping the
+writes means action N inspects a filesystem missing everything actions 1..N-1
+would have done. That is not fixable, and the fix is not a simulated filesystem
+(rule 7). It is exact for the overwhelmingly common case of actions with distinct
+destinations, and wrong only where one action's output is another's input.
 
-**Dry-run is where the unknowability lives, and it is inherent.** Skipping every
-`apply` means action N inspects a filesystem missing everything earlier actions
-would have done. That is not fixable, and the fix is not a simulated filesystem.
-Three rules make it honest and cheap:
+**Test it as a whole tree, not as a list of destinations.** The likeliest
+dry-run bug is not a written destination — it is a staging node, a parent
+directory created on the way, or a broken symlink cleared at an ancestor, none of
+which any destination-by-destination assertion looks at, and the first of which
+is what 2.1 exists to prevent. So snapshot the whole home root before and after
+and compare. That is cheap because `tests/cli.rs` gives the four roots as
+*siblings* — `home`, `config`, `cache`, `repo` — so nothing batfiles writes for
+itself lands under `home`, and the snapshot needs no exclusions.
 
-1. **`effects()` returns `Known(Vec<Effect>)` or `Unknown(reason)`.** Write this
-   enum at slice 2, when it is five lines and nothing returns the second variant.
-   It is the one concession the fetching slices need in advance, because
-   threading a second return case through nine action types later is exactly the
-   retrofit worth avoiding. Every other part of unknowability can wait.
+### Where the mode is read
 
-2. **A dry run may write to the tool-owned `remotes/` tree; it must not touch
-   `$HOME`.** `goals.md` already treats `remotes/` as tool-owned scratch that
-   never installs anything by itself. This matters because the deepest
-   unknowability is `include-remote`: with an unmaterialized remote you do not
-   merely have unknown effects, you have unknown *actions*. Letting a dry run
-   materialize turns the worst case into a non-case and keeps the plan complete.
+**Not at the top of an action — at the helpers that write.** An action that
+checked a flag before inspecting would have nothing to report, and an action that
+checked it at each `fs` call would have to remember, once per action type
+forever. Every write an action performs sits behind one of these, and each
+already has the branch the check goes in:
 
-3. **After that, the only unknowable actions are those whose outputs are named
-   by remote content** — `fetch-url` unpacking an archive, `git-clone-list`
-   reading a manifest. In practice these are leaves of the dependency graph:
-   nothing installs *into* an oh-my-zsh checkout or a vim bundle directory, it
-   only gets read there. They report "would fetch X into Y" without enumerating,
-   nothing downstream is affected, and the plan stays complete. If a repository
-   ever does install into a fetched action's output, that action returns
-   `Unknown` and the plan is reported partial — which is what the specification
-   already says to do.
+| Helper | The branch it already has | Arrives |
+| --- | --- | --- |
+| `paths::ensure_directory`, reached through `Context::ensure_directory` and `paths::create_parents` | the arm taken when nothing resolves at the path | built |
+| `action::symlink::link_one` | the `Occupant::at` arms that remove and create | built |
+| `install::seed` | the `paths::occupied(dest)` check, ahead of any staging node | built |
+| the git helper that clones and updates a worktree | the clone-or-update decision | 4.3 |
 
-Attributing an `Unknown` to the specific earlier action responsible is better
-output and about fifty lines. Wait until 4.6 has produced real `Unknown`s and
-shown whether the plain reason is good enough — not at slice 2, and not before
-there is an action that can trigger one.
+`Mode` is a field on `action::Context`, beside the anchored roots — the same
+value 9.4's `--refresh-content` becomes a second field on. `fetch-url` and
+archive extraction publish through `install::seed` (4.1, 4.2), so they are
+dry-run correct on the day they are written. **The git helper is the one
+addition, and it is needed because `seed` does not cover it**: an existing clone
+is an occupied destination, which `install::seed` declines by design, so the
+update path reaches the filesystem — and the network — through neither `seed` nor
+`paths`. The helper takes the mode itself and under `DryRun` runs no git at all;
+4.5 says what it reports instead.
 
-Written this way, dry-run costs almost nothing at slice 2 and needs no rework
-when the fetching actions arrive at slice 4. Retrofitted across nine action types
-it is a rewrite, which is why it is not deferred. A tool that writes to `$HOME`
-and cannot say what it is about to do is not trustworthy enough to dogfood, and
-rule 8 depends on it.
+**That holds for materializing a remote too, and it is a deliberate limit rather
+than an oversight.** A dry run does not clone or update `remotes/<id>/`, so an
+inclusion is described from whatever is on disk, which may be stale, and an
+inclusion never materialized cannot be described at all. The alternative — a dry
+run that fetches so its report is current — buys accuracy in one case by making
+`--dry-run` a command that changes things and reaches the network, and the whole
+value of the flag is that it does neither. A user who wants the current picture
+refreshes the remote and runs it again. This is why the helper needs no write
+scope and no caller-supplied exception: `DryRun` means no git, everywhere,
+without a second question.
+
+### Two lists, and why they are not the same one
+
+Which modules may touch the filesystem, and which of them must read `Mode`, are
+different questions with different answers.
+
+**Only the modules that own filesystem access may name `std::fs`**, per
+`CLAUDE.md`'s rule that direct access belongs in the module that owns the
+operation. Today that is `paths.rs`, `install.rs`, `tomlfile.rs`, and
+`action/symlink.rs`, and `tests/hygiene.rs` enforces it at the *import*, not
+against a list of function names (2.3). A denylist of mutators is unbounded and
+therefore fake: `fs::write`, `File::create`, `DirBuilder::create`, and
+`OpenOptions::truncate` are four ways past one that names `create_dir` and
+`rename`. A module that cannot name `fs` can call none of them.
+
+**This list is meant to grow, and each entry says which kind of owner it is.**
+Content producers arrive with slice 4 — `action/copy.rs` takes `copy_file`,
+`copy_children`, and `mirror_permissions` at 4.1, and the fetcher and the archive
+extractor are two more — and 9.1's command runner needs `Command`. A list that
+only ever grew would be worthless, so the entry carries a one-line reason, and
+the reason has to be one of exactly three:
+
+- **A mode reader**, which performs part of an action's work and therefore
+  consults `Mode` itself: the helpers in the table above.
+- **Downstream of a mode reader**, which never sees it and does not need to.
+  Every content producer is here, and the invariant is structural rather than a
+  promise: `install::seed` creates no staging node under `DryRun`, so nothing
+  that fills one is reachable. This is why 2.1 states that prohibition as a rule
+  of its own.
+- **Bookkeeping, which runs in both modes.** State files and caches are not the
+  plan; batfiles writes them for itself, and withholding them would change what
+  the next run does without protecting anything. `tomlfile.rs` is this, and 9.1's
+  dynamic command runner is the awkward member: what it runs is arbitrary
+  unsandboxed programs, so the entry should say so. A dry run does not carry out
+  the plan it prints, and that is the whole of what it promises — not that the
+  process writes nothing anywhere.
+
+An addition that is none of these is the bug the check exists to catch. What the
+check buys is not that the list stays short; it is that growing it takes an edit
+to a test, where saying which kind you are adding is unavoidable. This is the
+answer to the one real objection to a per-action check, and it is the same shape
+as rule 1's: the honor-system version of it loses.
+
+### What a dry run says
+
+The two modes report the same lines in different tenses — `linked X -> Y` against
+`would link X -> Y`. One `Verb`, shared by every action, holds both forms, so the
+tense is decided in one place rather than at each call site (2.2).
+
+**Tense is the only difference for actions with distinct destinations, and that
+is the whole of the promise.** Where one action's output is another's input the
+two runs diverge in substance rather than tense: a `create-dir` followed by a
+seed at the same path says `would create` then `would copy`, where a real run
+says `created` then `kept`, because the second action sees the first one's work.
+That is the inherent gap above, not a defect, and closing it is the simulation
+rule 7 forbids. 2.5 tests parity over actions with distinct destinations, which
+is what makes the test a check on the mode rather than a restatement of the gap.
+
+A dry run predicts **intent, not success**. It stops before the write, so a
+permission failure, a bad digest, or a destination taken by another process
+surfaces only in the real run. What it does get right is every decision resting
+on inspection, which is the part a user is asking about: a seed whose destination
+is already occupied reports that it would keep what is there, and copies nothing.
+
+It still reads what the manifest names. **A `source` that is missing or
+unreadable fails in both modes**, before the destination is considered, including
+where the destination is occupied and a real run would have kept it. That is
+deliberate rather than an artifact of the order `action::copy::copy` happens to
+evaluate its arguments in: a manifest naming a source that is not there is a
+repository bug, and a dry run that stayed quiet about it because the destination
+was occupied would hide the bug until the day it was not.
+
+**Both `-dir` actions still report per child.** `children::for_each_child`
+enumerates the *source* directory, which is in the repository and therefore real
+in either mode; only the destination's creation is skipped. A `symlink-dir` over
+twelve files says twelve things in a dry run, as it would in a real one. One
+consequence is a known divergence rather than a promise: where a `-dir`
+destination is itself a broken symlink, a dry run does not remove it, so every
+child rediscovers it and says again that it would be removed. 9.6 has the fix.
+
+### Why there is no effect type
+
+An earlier version of this plan split every action into an `effects` phase
+returning `Known(Vec<Effect>)` or `Unknown(reason)` and an `apply` phase
+consuming it. It was built, and it worked; it cost far more than the accuracy it
+bought, and this section replaces it. Two things to know, so that it is not
+reintroduced when the fetching actions arrive:
+
+- **`Unknown` was an artifact of the type, not a fact about fetching.** A
+  `Vec<Effect>` has to enumerate, and an archive cannot be enumerated without
+  unpacking it, so the type needed a hole. Reporting needs no enumeration:
+  "would fetch `<url>` and extract into `<dest>`" is complete at the granularity
+  `copy` already reports a whole directory at. `git-clone-list` is better off
+  still — its manifest is a `RepoPath` in the repository, and it reads fine at
+  the moment the action runs, which in a dry run is the moment it prints.
+- **Nothing could have triggered it.** `Unknown` was reserved for a repository
+  that installs *into* a fetched action's output, and `goals.md` declines to look
+  for exactly that: "do not perform cross-action destination conflict detection".
+  By rule 1's standard the variant was unreachable.
+
+One case stays genuinely unknowable, and it is not about effects: an
+`include-remote` with nothing materialized under `remotes/` contributes actions
+the dry run cannot list at all, and since a dry run does not materialize, that is
+an ordinary outcome rather than a failure. It is an incomplete *action list*,
+slice 7 owns it, and the complete-versus-partial vocabulary in
+`docs/future/cmdline.md` waits there with it. **Do not build that vocabulary
+earlier.** Until something can report a partial plan, a run that always says
+"complete" is a line the code cannot get wrong and the reader cannot use.
+
+A tool that installs into `$HOME` and cannot say what it is about to do is not
+trustworthy enough to dogfood, and rule 8 depends on it. That is why slice 2 is
+where it is, even though — written this way — it is no longer expensive to
+retrofit.
 
 ## Variables
 
@@ -465,8 +583,14 @@ nothing today.
    dynamic declarations are local to that remote, so the trust boundary has no
    reach beyond this one place.
 
-2. **`effects()` already returns `Known` or `Unknown`** (step 2.3). Nothing else
-   about unknowability needs to exist before slice 4.
+2. **One place decides whether a write happens** — `Mode` on `action::Context`,
+   read at the helpers listed under "Dry-run" (step 2.1). 9.4's
+   `--refresh-content` is a second field on that same value, and the hygiene
+   check at 2.3 is what keeps that list from growing behind your back. The list
+   is not closed: slice 4 adds the git helper at 4.3, which is the one thing that
+   does an action's work without going through `paths` or `install`. What stays
+   fixed is that the decision is read at a helper and never at the top of an
+   action.
 
 3. **One action-execution loop.** `--refresh-content` (9.4) becomes a flag on the
    context that seed-style actions read. With one loop that is a parameter; with

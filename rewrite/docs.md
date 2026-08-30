@@ -87,9 +87,15 @@ would inherit them, which is the thing rule 9 exists to stop.
 
 - **`cmdline.md`** (376) — **split.** Keep the command overview, global options,
   output streams, and exit statuses; true from slice 0. Move each per-command
-  section to `docs/future/` and promote it at that command's step. Keep "Dry-Run
-  Behavior" in `docs/future/` but read it before starting slice 2 — the
-  complete-versus-partial distinction is the design, not a detail.
+  section to `docs/future/` and promote it at that command's step. "Dry-Run
+  Behavior" is promoted a paragraph at a time, each with the behavior it
+  describes and rewritten to what was built rather than pasted: the mechanism at
+  **2.4**, what the fetching actions report at **4.7**, the dynamic-variable
+  caveat at **9.1**, and the remote-inclusion paragraph — stale materializations
+  and the complete-versus-partial plan — at **7.1**, because until an inclusion
+  exists nothing can report a partial plan. That distinction was once described
+  here as the design; it is not, and `guidance.md`'s "Why there is no effect
+  type" says why.
 
 - **`environment.md`** (387) — **mostly `docs/future/`.** Keep the location
   selection and precedence for the four roots, which 0.3 implements. Everything
@@ -160,9 +166,14 @@ when it is promoted; the list stays here so a reviewer can check they survived.
    namespace dispatch unambiguous.** Without it the resolver needs a precedence
    rule. `repoformat.md` lists the reserved names but not the reason, and the
    reason is what stops someone from trimming the list.
-4. **A dry run may write to `remotes/` but never to `$HOME`.** This is what keeps
-   an `include-remote` plan complete rather than unknowable, and it belongs in
-   `cmdline.md`'s dry-run section when that is promoted at slice 2.
+4. **A dry run does not do the work; it still does its own bookkeeping.**
+   Nothing is created, replaced, fetched, cloned, or materialized, while the
+   dynamic-variable cache is written as usual. State it that way — as the work
+   not happening — rather than as a promise about a directory. "Nothing under the
+   home changes" is both weaker and false: the repository defaults to
+   `<selected-home>/dotfiles`, and a dry run over a repository outside the home
+   is refusing to write outside it. It belongs in `cmdline.md`'s dry-run section
+   when that is promoted at 2.4.
 
 ## Size check
 

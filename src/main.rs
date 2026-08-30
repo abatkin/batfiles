@@ -8,6 +8,7 @@ mod install;
 mod item;
 mod location;
 mod manifest;
+mod mode;
 mod output;
 mod paths;
 mod sync;

@@ -6,12 +6,11 @@
 //! is already *at* one, is [`crate::paths`]': every action asks it the same
 //! questions and they are not asked twice.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
 use crate::location::Roots;
+use crate::mode::{RunMode, Verb};
 use crate::output::Reporter;
 use crate::paths::{self, Directory, Repository};
 
@@ -26,20 +25,22 @@ use crate::paths::{self, Directory, Repository};
 ///
 /// Everything an action needs that is not in its own record reaches it through
 /// here, which is what keeps a run's settings from being threaded past every
-/// action individually: 2.1's dry-run flag and 9.4's `--refresh-content` are
-/// both fields on this value rather than parameters on nine signatures.
+/// action individually: the dry-run mode is a field on this value rather than a
+/// parameter on nine signatures, and 9.4's `--refresh-content` is a second one.
 pub(crate) struct Context<'a> {
     repository: Repository,
     home: PathBuf,
+    mode: RunMode,
     reporter: &'a Reporter,
 }
 
 impl<'a> Context<'a> {
     /// Anchor the resolved roots, once, for every action in a run.
-    pub fn new(roots: &Roots, reporter: &'a Reporter) -> Result<Self, Error> {
+    pub fn new(roots: &Roots, mode: RunMode, reporter: &'a Reporter) -> Result<Self, Error> {
         Ok(Self {
             repository: Repository::at(&roots.batfiles_dir)?,
             home: paths::anchor(&roots.home)?,
+            mode,
             reporter,
         })
     }
@@ -60,15 +61,10 @@ impl<'a> Context<'a> {
 
         // Presence, not reachability: a source that is itself a broken symlink
         // is there, and linking at it is what the repository asked for.
-        match fs::symlink_metadata(&resolved) {
-            Ok(_) => Ok(resolved),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                Err(Error::SourceMissing { path: resolved })
-            }
-            Err(error) => Err(Error::Read {
-                path: resolved,
-                source: error,
-            }),
+        if paths::occupied(&resolved)? {
+            Ok(resolved)
+        } else {
+            Err(Error::SourceMissing { path: resolved })
         }
     }
 
@@ -79,13 +75,7 @@ impl<'a> Context<'a> {
     /// deliberately, and its children are what the action is asking for.
     pub fn source_directory(&self, source_dir: &str) -> Result<PathBuf, Error> {
         let resolved = self.source(source_dir)?;
-        if fs::metadata(&resolved)
-            .map_err(|source| Error::Read {
-                path: resolved.clone(),
-                source,
-            })?
-            .is_dir()
-        {
+        if paths::reaches_directory(&resolved)? {
             Ok(resolved)
         } else {
             Err(Error::SourceNotADirectory { path: resolved })
@@ -107,6 +97,13 @@ impl<'a> Context<'a> {
         self.reporter
     }
 
+    /// Whether this run performs its work or only says what it would do.
+    ///
+    /// For handing to a helper that writes. An action does not branch on it.
+    pub fn mode(&self) -> RunMode {
+        self.mode
+    }
+
     /// [`paths::ensure_directory`], plus the report it has no reporter to make.
     ///
     /// Every caller says the same thing about the same directory, because they
@@ -114,15 +111,19 @@ impl<'a> Context<'a> {
     /// two directory-wide actions need one to install into. A directory that
     /// appeared in the home is worth a line either way.
     pub fn ensure_directory(&self, dir: &Path) -> Result<(), Error> {
-        let outcome = paths::ensure_directory(dir)?;
+        let outcome = paths::ensure_directory(dir, self.mode)?;
         // Ahead of the line about the directory, and at normal verbosity rather
         // than at `-v`: each of these is a removal, and a broken link is still
         // one the user may have been meaning to fix.
         for link in outcome.removals() {
-            self.reporter.info(&link.removal_note());
+            self.reporter.info(&link.removal_note(self.mode));
         }
         match outcome {
-            Directory::Created { .. } => self.reporter.info(&format!("created {}", dir.display())),
+            Directory::Created { .. } => self.reporter.info(&format!(
+                "{} {}",
+                Verb::Create.say(self.mode),
+                dir.display()
+            )),
             Directory::AlreadyThere => self
                 .reporter
                 .detail(1, &format!("unchanged {}", dir.display())),

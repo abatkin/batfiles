@@ -18,6 +18,7 @@ use crate::cli::unsupported::{self, Unsupported};
 use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::error::Error;
 use crate::location::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
 use crate::sync;
 
@@ -91,9 +92,9 @@ fn dispatch(
         }
         // `init` works on the current directory, so it resolves no roots either.
         Command::Init(_) => Ok(unimplemented(reporter, name)),
-        Command::Sync(_) => {
+        Command::Sync(args) => {
             let roots = locate(cli, env, reporter)?;
-            sync::run(&roots, reporter)?;
+            sync::run(&roots, RunMode::new(args.dry_run), reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         _ => {

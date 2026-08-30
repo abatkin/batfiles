@@ -32,7 +32,7 @@ Batfiles runs with the invoking user's permissions and does not elevate
 privileges. It does not sandbox Git, dynamic-variable commands, or filesystem
 access. In particular, a dry run may execute allowed dynamic-variable commands
 and update their cache, as described by the command-line specification's
-[dry-run behavior](cmdline.md#dry-run-behavior).
+[dry-run behavior](../cmdline.md#dry-run-behavior).
 
 ## Destination paths
 
@@ -47,7 +47,8 @@ component beneath the action's `dest`, as defined by the
 [Git clone manifest format](repoformat.md#git-clone-manifest-format).
 
 Before mutation, batfiles should resolve and display the effective destination
-in plans. The diagnostic half of that runs; plans arrive at slice 2.
+in plans. Both halves of that run: a diagnostic names the resolved destination,
+and so does a [dry run](../cmdline.md#dry-run-behavior).
 
 ## Repository source paths
 
@@ -225,9 +226,9 @@ Instead, execution has two levels:
    sources, and the final action order. A `git-clone-list` remains one opaque
    node whose entries are expanded at execution time, per the repository
    format's [deferred manifest expansion](repoformat.md#deferred-manifest-expansion).
-2. Each enabled action inspects the filesystem and determines its concrete
-   effects as the first phase of that action's execution, then performs those
-   effects.
+2. Each enabled action then runs in one pass: it inspects the filesystem as the
+   previous action left it and acts on what it finds, rather than on anything
+   decided for it earlier.
 
 A later action may therefore skip, back up, replace, or otherwise act on output
 from an earlier action according to its ordinary semantics. For example, if an

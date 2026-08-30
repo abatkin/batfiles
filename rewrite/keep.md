@@ -151,7 +151,8 @@ caller. Do not.
   `RemoteState`. Shaped for consumers never written; slices 6 and 7 should define
   their own. One idea in it was earned: `RemoteState` distinguishes materialized,
   present but manifest-less, and not materialized at all, which is exactly the
-  distinction dry-run needs at 6.6. Re-derive it there.
+  distinction a dry run needs at 7.1 to tell an inclusion it can list from one it
+  cannot. Re-derive it there.
 - **`src/repo/load.rs`** (826) — the two-phase walk, entangled with `reach`.
   Slices 0, 6, and 7 each grow their own loading, and it should stay smaller than
   this.

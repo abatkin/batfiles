@@ -152,6 +152,42 @@ fn entries(dir: &Path) -> Vec<String> {
     found
 }
 
+/// Everything under a directory: names, types, symlink targets as written, and
+/// file contents, sorted.
+///
+/// What a dry run is checked against, rather than the destinations a manifest
+/// names — a `.batfiles-incomplete` staging node, a parent directory created on
+/// the way, and a broken symlink cleared at an ancestor are none of them.
+/// `Tree` gives the four roots as siblings, so this needs no exclusions.
+#[cfg(unix)]
+fn snapshot(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    record_into(root, root, &mut found);
+    found.sort();
+    found
+}
+
+#[cfg(unix)]
+fn record_into(root: &Path, dir: &Path, found: &mut Vec<String>) {
+    for entry in fs::read_dir(dir).expect("a readable directory") {
+        let entry = entry.expect("a directory entry");
+        let path = entry.path();
+        let name = display(path.strip_prefix(root).expect("a path under the root"));
+        // Never followed: a symlink is a thing that is there, and what it
+        // reaches is somebody else's part of the tree.
+        let kind = entry.file_type().expect("a file type");
+        if kind.is_symlink() {
+            found.push(format!("{name} -> {}", display(&link_target(&path))));
+        } else if kind.is_dir() {
+            found.push(format!("{name}/"));
+            record_into(root, &path, found);
+        } else {
+            let contents = fs::read(&path).expect("a readable file");
+            found.push(format!("{name} = {}", String::from_utf8_lossy(&contents)));
+        }
+    }
+}
+
 /// A manifest declaring one symlink and nothing else.
 fn one_symlink(source: &str, dest: &str) -> String {
     format!("[[actions]]\ntype = \"symlink\"\nsource = \"{source}\"\ndest = \"{dest}\"\n")
@@ -3000,6 +3036,103 @@ mod linking {
             );
         }
     }
+
+    // A dry run over the whole fixture, in the two halves it promises: it does
+    // none of the work, and it says the same things the real run then says.
+
+    /// A home already holding some of what the fixture installs: a seed's
+    /// destination and a directory an action would otherwise make.
+    ///
+    /// Both dry-run tests start here rather than from an empty home, so the
+    /// comparison has content to be wrong about and the run reports a `kept`
+    /// and an `unchanged` as well as the rest.
+    fn with_existing_content(tree: &Tree) {
+        fs::create_dir_all(tree.home(".config/git")).expect("a config directory");
+        fs::write(tree.home(".config/git/local"), "[user]\n\tname = me\n").expect("a seeded file");
+        fs::create_dir_all(tree.home(".local/bin")).expect("a bin directory");
+    }
+
+    #[test]
+    fn a_dry_run_writes_nothing_at_all_into_the_home() {
+        let tree = Tree::fixture("leaf");
+        with_existing_content(&tree);
+        let before = snapshot(&tree.path("home"));
+
+        tree.batfiles()
+            .args(["sync", "--dry-run"])
+            .assert()
+            .success();
+
+        // Byte for byte: no destination, no parent directory made on the way,
+        // and no `.batfiles-incomplete` staging node, which is the one 2.1's
+        // prohibition exists for.
+        assert_eq!(snapshot(&tree.path("home")), before);
+    }
+
+    /// How many action records the `leaf` fixture declares.
+    ///
+    /// The parity assertion covers all of them, which is sound only because
+    /// their destinations are distinct. An action whose output is another's
+    /// input diverges in substance rather than tense, so it has to be excluded
+    /// from the comparison rather than tolerated by it; this count is what
+    /// makes adding one say so.
+    const PARITY_ACTIONS: usize = 11;
+
+    #[test]
+    fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {
+        let tree = Tree::fixture("leaf");
+        with_existing_content(&tree);
+        let manifest = fs::read_to_string(tree.manifest()).expect("the fixture manifest");
+        assert_eq!(
+            manifest.matches("[[actions]]").count(),
+            PARITY_ACTIONS,
+            "the fixture's actions changed; see `PARITY_ACTIONS`"
+        );
+
+        // `-v` so the lines that only appear at detail — `unchanged`, and the
+        // `kept` a seed reports — are compared too.
+        let dry = stderr_of(
+            &tree
+                .batfiles()
+                .args(["sync", "--dry-run", "-v"])
+                .assert()
+                .success(),
+        );
+        // The same tree, which the dry run has left exactly as it found it.
+        let real = stderr_of(&tree.batfiles().args(["sync", "-v"]).assert().success());
+
+        let said: Vec<String> = dry.lines().map(in_past_tense).collect();
+        assert_eq!(said, real.lines().collect::<Vec<&str>>());
+        // Guards the comparison itself: two runs that both said nothing
+        // prospective would match line for line and prove nothing.
+        for expected in ["would link", "would copy", "would create", "would keep"] {
+            assert!(
+                dry.contains(expected),
+                "the dry run never said `{expected}`:\n{dry}"
+            );
+        }
+    }
+
+    /// One reported line as the real run would have written it.
+    ///
+    /// The inverse of `Verb::say`, and deliberately spelled out here rather
+    /// than imported: a test that shared the table with the code under test
+    /// would agree with it however wrong both were.
+    fn in_past_tense(line: &str) -> String {
+        for (prospective, past) in [
+            ("would relink ", "relinked "),
+            ("would link ", "linked "),
+            ("would copy ", "copied "),
+            ("would create ", "created "),
+            ("would remove ", "removed "),
+            ("would keep ", "kept "),
+        ] {
+            if let Some(rest) = line.strip_prefix(prospective) {
+                return format!("{past}{rest}");
+            }
+        }
+        line.to_owned()
+    }
 }
 
 /// The other side of the gate above: what a `symlink` action does where
@@ -3034,12 +3167,12 @@ fn an_option_sync_does_not_honor_yet_stops_it_before_it_writes() {
     // corrected and retried freely.
     let assertion = tree
         .batfiles()
-        .args(["sync", "--dry-run"])
+        .args(["sync", "--refresh-content"])
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
-    for expected in ["--dry-run", "2.4"] {
+    for expected in ["--refresh-content", "9.4"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
     assert!(
@@ -3056,12 +3189,12 @@ fn an_option_sync_does_not_honor_yet_stops_a_whole_repository() {
 
     let assertion = tree
         .batfiles()
-        .args(["sync", "--dry-run"])
+        .args(["sync", "--refresh-content"])
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
-    for expected in ["--dry-run", "2.4"] {
+    for expected in ["--refresh-content", "9.4"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
     assert!(
@@ -3130,9 +3263,9 @@ fn each_command_withholds_the_options_it_does_not_honor_yet() {
             "8.3",
         ),
         (
-            &["apply-action", "--id", "vim", "--dry-run"],
-            "--dry-run",
-            "2.4",
+            &["apply-action", "--id", "vim", "--no-overwrite"],
+            "--no-overwrite",
+            "9.4",
         ),
         (
             &["apply-group", "--group", "gui", "--var", "profile=work"],

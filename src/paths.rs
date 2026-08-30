@@ -27,6 +27,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::Error;
+use crate::mode::{RunMode, Verb};
 
 /// The repository an action installs from, in both forms it is needed in.
 ///
@@ -233,6 +234,18 @@ pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
     }
 }
 
+/// Whether a path reaches a directory, following a final symlink.
+///
+/// What a path *reaches*, where [`Occupant::at`] asks what one *holds*.
+pub(crate) fn reaches_directory(path: &Path) -> Result<bool, Error> {
+    fs::metadata(path)
+        .map(|found| found.is_dir())
+        .map_err(|source| Error::Read {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
 /// Refuse a destination that lands inside the source it installs from.
 ///
 /// An action that installs *into* the thing it installs *from* has no reading
@@ -359,10 +372,12 @@ pub(crate) struct BrokenLink {
 }
 
 impl BrokenLink {
-    /// The one sentence for a cleared link, wherever it was cleared.
-    pub fn removal_note(&self) -> String {
+    /// The one sentence for a cleared link, wherever it was cleared, in the
+    /// tense the mode calls for.
+    pub fn removal_note(&self, mode: RunMode) -> String {
         format!(
-            "removed a broken symlink to {} to make {}",
+            "{} a broken symlink to {} to make {}",
+            Verb::Remove.say(mode),
             self.written.display(),
             self.path.display()
         )
@@ -382,7 +397,10 @@ impl BrokenLink {
 /// volume is an ordinary arrangement, and the contents belong where it points.
 /// Nothing is replaced either way, which is what makes following it safe.
 /// What is already inside is left alone.
-pub(crate) fn ensure_directory(dir: &Path) -> Result<Directory, Error> {
+///
+/// Under [`RunMode::DryRun`] a [`Directory::Created`] outcome describes the
+/// directory that *would* have been made, and nothing is written.
+pub(crate) fn ensure_directory(dir: &Path, mode: RunMode) -> Result<Directory, Error> {
     match fs::metadata(dir) {
         Ok(existing) if existing.is_dir() => Ok(Directory::AlreadyThere),
         Ok(existing) => Err(Error::DestinationExists {
@@ -391,7 +409,7 @@ pub(crate) fn ensure_directory(dir: &Path) -> Result<Directory, Error> {
         }),
         // Nothing resolves here — either the path is empty or something on the
         // way to it is not a directory, and only making it will say which.
-        Err(error) if reaches_nothing(&error) => make_directory(dir),
+        Err(error) if reaches_nothing(&error) => make_directory(dir, mode),
         Err(error) => Err(Error::Read {
             path: dir.to_path_buf(),
             source: error,
@@ -410,14 +428,18 @@ pub(crate) fn ensure_directory(dir: &Path) -> Result<Directory, Error> {
 /// asked the same question the named directory was, so a link is cleared
 /// wherever on the way it turns up and a *file* in the way is named for what it
 /// is rather than surfacing as a raw write failure.
-fn make_directory(dir: &Path) -> Result<Directory, Error> {
+///
+/// Under [`RunMode::DryRun`] the walk still names the links it found in the way
+/// and leaves them there, so a later inspection of the same path finds one
+/// again.
+fn make_directory(dir: &Path, mode: RunMode) -> Result<Directory, Error> {
     // The ancestors first, so this is only ever creating a directory whose
     // parent is known to be one.
     let mut replaced = match dir.parent() {
         // An empty parent is what a one-component relative path has, and it is
         // not a directory anything should try to make.
         Some(parent) if !parent.as_os_str().is_empty() => {
-            ensure_directory(parent)?.removals().to_vec()
+            ensure_directory(parent, mode)?.removals().to_vec()
         }
         _ => Vec::new(),
     };
@@ -427,21 +449,28 @@ fn make_directory(dir: &Path) -> Result<Directory, Error> {
             path: dir.to_path_buf(),
             written,
         });
+        if mode.writes() {
+            remove_link(dir)?;
+        }
     }
-    fs::create_dir(dir).map_err(|source| Error::Write {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+    if mode.writes() {
+        fs::create_dir(dir).map_err(|source| Error::Write {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+    }
     Ok(Directory::Created { replaced })
 }
 
-/// Clear a broken symlink out of a path nothing resolves at, naming what it
-/// held.
+/// Name the broken symlink sitting where a directory has to go.
 ///
 /// Only ever called where [`fs::metadata`] has already reported that nothing is
 /// reachable, so a symlink found here is broken by construction and needs no
 /// second question asked of it. `None` where the path is simply empty, which is
 /// the ordinary case.
+///
+/// Finding it is separate from [`remove_link`]: a dry run reports the link and
+/// does not clear it.
 fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
     if !fs::symlink_metadata(path).is_ok_and(|node| node.is_symlink()) {
         return Ok(None);
@@ -450,11 +479,16 @@ fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
         path: path.to_path_buf(),
         source,
     })?;
+    Ok(Some(written))
+}
+
+/// Clear a link [`broken_link_at`] found, so the directory can be made where it
+/// was.
+fn remove_link(path: &Path) -> Result<(), Error> {
     fs::remove_file(path).map_err(|source| Error::Write {
         path: path.to_path_buf(),
         source,
-    })?;
-    Ok(Some(written))
+    })
 }
 
 /// Create the directories a destination sits in, if they are not there.
@@ -475,11 +509,11 @@ fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
 /// something, and a caller that says nothing about it would be destroying a node
 /// silently — the one thing rule 13 is unwilling to do even for a node it is
 /// willing to destroy.
-pub(crate) fn create_parents(dest: &Path) -> Result<Directory, Error> {
+pub(crate) fn create_parents(dest: &Path, mode: RunMode) -> Result<Directory, Error> {
     match dest.parent() {
         // An empty parent is what a one-component relative path has; there is
         // no directory to make, and the destination is the working directory's.
-        Some(parent) if !parent.as_os_str().is_empty() => ensure_directory(parent),
+        Some(parent) if !parent.as_os_str().is_empty() => ensure_directory(parent, mode),
         // A path with no parent is a root, which is already there.
         _ => Ok(Directory::AlreadyThere),
     }

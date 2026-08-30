@@ -10,6 +10,7 @@ use crate::action::{self, Context};
 use crate::error::Error;
 use crate::location::Roots;
 use crate::manifest::Manifest;
+use crate::mode::RunMode;
 use crate::output::Reporter;
 
 /// Read the leaf manifest and execute every action in it, in declaration order,
@@ -20,9 +21,12 @@ use crate::output::Reporter;
 /// file named rather than partway through. That is a property of syncing rather
 /// than of dispatch, which is why reading it is here and not something the
 /// caller arranges beforehand.
-pub(crate) fn run(roots: &Roots, reporter: &Reporter) -> Result<(), Error> {
+///
+/// `mode` is carried to the actions rather than consulted here: a dry run is
+/// the same loop over the same list.
+pub(crate) fn run(roots: &Roots, mode: RunMode, reporter: &Reporter) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest())?;
-    let context = Context::new(roots, reporter)?;
+    let context = Context::new(roots, mode, reporter)?;
     for entry in &manifest.actions {
         action::run(entry, &context)?;
     }

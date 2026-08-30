@@ -14,6 +14,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
+use crate::mode::{RunMode, Verb};
 use crate::output::Reporter;
 use crate::paths;
 
@@ -30,10 +31,15 @@ pub(crate) enum Copyable {
 /// once for its `dest`, and `copy-dir` once per child. What occupies a
 /// destination is never examined, because nothing here would replace it
 /// whatever it turned out to be.
+///
+/// **Under [`RunMode::DryRun`] no staging node is created.** The mode is read
+/// ahead of the staging path rather than around it, so everything below is
+/// unreachable in that mode rather than merely unused.
 pub(crate) fn seed(
     source: &Path,
     kind: Copyable,
     dest: &Path,
+    mode: RunMode,
     reporter: &Reporter,
 ) -> Result<(), Error> {
     // Asked before the copy so the ordinary case — everything already seeded —
@@ -50,20 +56,28 @@ pub(crate) fn seed(
         if let Copyable::Directory = kind {
             paths::refuse_destination_inside_source(source, dest)?;
         }
-        for link in paths::create_parents(dest)?.removals() {
-            reporter.info(&link.removal_note());
+        for link in paths::create_parents(dest, mode)?.removals() {
+            reporter.info(&link.removal_note(mode));
         }
-        build_and_publish(source, kind, dest, reporter)?
+        // The destination was free a moment ago, so a real run would copy into
+        // it. Whether it still would be at the end is what only a real run
+        // finds out.
+        if mode.writes() {
+            build_and_publish(source, kind, dest, reporter)?
+        } else {
+            true
+        }
     };
 
     if installed {
         reporter.info(&format!(
-            "copied {} from {}",
+            "{} {} from {}",
+            Verb::Copy.say(mode),
             dest.display(),
             source.display()
         ));
     } else {
-        reporter.detail(1, &format!("kept {}", dest.display()));
+        reporter.detail(1, &format!("{} {}", Verb::Keep.say(mode), dest.display()));
     }
     Ok(())
 }

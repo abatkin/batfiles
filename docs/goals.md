@@ -88,12 +88,13 @@ application uses the same behavior as synchronization.
 - Build the complete knowable structural plan before executing actions.
   Dynamic-variable resolution is part of planning and may execute commands or
   update its cache.
-- Determine concrete filesystem effects as the first phase of each action's
-  execution, using the state left by earlier successful actions.
+- Let each action inspect the filesystem as it begins, using the state left by
+  earlier successful actions, and act on what it finds there — rather than
+  freezing a decision for every action from the state at the start of the run.
 - Provide dry-run output that clearly says what would be created, updated,
-  skipped, backed up, fetched, or cloned, and whether the plan is complete or
-  partial. The command-line specification defines the shared
-  [dry-run behavior](future/cmdline.md#dry-run-behavior).
+  skipped, backed up, fetched, or cloned — while doing none of it — and whether
+  the plan is complete or partial. The command-line specification defines the
+  shared [dry-run behavior](cmdline.md#dry-run-behavior).
 
 ### Adapt declaratively to each machine
 

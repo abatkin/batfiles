@@ -9,6 +9,7 @@ use std::path::Path;
 
 use super::Context;
 use crate::error::Error;
+use crate::mode::Verb;
 use crate::paths;
 
 /// What a `-dir` action installs, and where.
@@ -26,7 +27,7 @@ pub(super) struct ChildInstall<'a> {
     pub dest_dir: &'a Path,
     pub dot_prefix: bool,
     /// How the action says what it did, in the one line both of them report.
-    pub verb: &'a str,
+    pub verb: Verb,
 }
 
 /// Do one action's work once per direct child of its source directory.
@@ -48,7 +49,7 @@ pub(super) fn for_each_child(
             1,
             &format!(
                 "no children to {} in {}",
-                install.verb,
+                install.verb.infinitive(),
                 install.source_dir.display()
             ),
         );
