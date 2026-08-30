@@ -6,6 +6,7 @@
 mod support;
 
 mod actions;
+mod groups;
 mod locations;
 mod manifest;
 mod surface;

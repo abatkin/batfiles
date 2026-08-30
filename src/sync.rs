@@ -27,7 +27,9 @@ use crate::output::Reporter;
 pub(crate) fn run(roots: &Roots, mode: RunMode, reporter: &Reporter) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest())?;
     let context = RunContext::new(roots, mode, reporter)?;
-    for entry in &manifest.actions {
+    for (index, entry) in manifest.actions.iter().enumerate() {
+        // Which record is speaking, ahead of what it says.
+        reporter.detail(1, &entry.describe(index + 1));
         action::run(entry, &context)?;
     }
     Ok(())

@@ -139,8 +139,10 @@ linked /home/you/.inputrc -> /home/you/dotfiles/files/inputrc
 ```
 
 Missing parent directories are created. Run it again and it says nothing at
-all, because nothing changed; `-v` reports what it looked at. And where
-something is already in the way:
+all, because nothing changed; `-v` reports what it looked at, and heads each
+action's lines with the record that produced them and the `group` it names.
+Groups are for talking about several actions at once, and nothing selects by one
+yet. And where something is already in the way:
 
 ```console
 $ batfiles sync
@@ -167,7 +169,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 3     | Groups, enable/disable, `--skip`, `apply-action`, `apply-group`     |
+| 3     | Selecting by action or group: enable/disable, `--skip`, `apply-*`   |
 | 4     | Fetching files and archives, and cloning Git repositories           |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |

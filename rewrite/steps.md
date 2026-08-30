@@ -101,10 +101,8 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 ## Slice 3 — Selection and ordering
 
 - **3.1** ✅ Make declaration order the execution order, explicitly and tested.
-- **3.2** Add groups and group membership. The `group` field has parsed and been
-  validated as an `ItemId` since 0.6; this is the step that reads it, so its
-  `expect(dead_code)` goes — CI will insist — along with the line in
-  `docs/repoformat.md` saying nothing selects by group yet.
+- **3.2** ✅ Add groups and group membership, read by the `-v` heading that names
+  the record each action's lines come from.
 - **3.3** Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and the
   four enable/disable commands. It writes with `rename` and `remove_file` and is
   meant to: `tomlfile.rs` is on 2.3's allowlist as bookkeeping and reads no
@@ -123,6 +121,23 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   `Environment::list` at the tag is the comma-split, trim, drop-empties helper
   they share with 8.3's four bootstrap lists; 0.3 left it there for want of a
   caller.
+
+  **This is the first thing that selects by group**, so it is where 3.2's
+  membership gets a second reader and where `docs/repoformat.md`'s "nothing
+  selects by group yet" comes out. Two answers settled at 3.2, when the question
+  came up and there was nothing yet to write them into:
+
+  - **A skip matching no action warns and the run continues.** `sync` has the
+    manifest loaded, so unlike the enable and disable commands at 3.3 it can tell
+    — and a name that catches nothing is a typo in something typed for one run,
+    which is worth saying and not worth failing over.
+  - **A skipped action is reported at `-v` only**, alongside 3.2's heading rather
+    than among the ordinary lines. The user asked for the skip, so restating it
+    at normal verbosity is noise; `-v` is where the whole account of a run lives.
+
+  A skip value parses as an `ItemId`, not as 3.7's `ItemAddress`: with no remotes
+  yet a qualified address names nothing, and rule 3 says wait. Widening it is
+  6.3's and 7.x's, whichever needs it first.
 - **3.5** Add default-disabled bootstrap entries. Like 5.1 and 6.1, adding the
   section is also un-rejecting it: the closed document turns `[default-disabled]`
   away today.

@@ -400,7 +400,7 @@ required `type` field.
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
 | `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, and `copy-dir` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
-| `group` | `ID`               |    no    | Places the action in one group. Validated as an ID; nothing selects by group yet. |
+| `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 
 Each variant's record is closed independently, so a field belonging to another
 variant is an unknown field rather than one that is quietly ignored. Writing
@@ -416,6 +416,32 @@ child of a directory, into a directory**. The `-dir` suffix says what is done
 with the source's contents — enumerate them — rather than what the source is.
 Choosing between the two members of a pair is the author's, and it is not
 inferred from what happens to be on disk.
+
+### Groups
+
+A group is a name several actions share, so that a later command can talk about
+all of them at once. An action belongs to at most one, named by its `group`
+field.
+
+**Nothing declares a group.** There is no `[groups]` section and no list to
+register a name in: a group exists because some action names it, and it holds
+exactly the actions that do. A name no action uses is therefore not an unknown
+group but no group at all, and a `group` value is checked as an
+[ID](#names-and-ids) rather than resolved against anything.
+
+Membership says nothing about order or adjacency. Actions run in declaration
+order whatever their groups are, so a group's actions may be spread through the
+manifest with others in between, and grouping them together is a convenience for
+whoever reads the file rather than something batfiles requires or arranges.
+
+Group names and action IDs are separate namespaces, so a group may share a name
+with an action without either becoming ambiguous.
+
+What reads the field today is reporting: `sync -v` names the group each action
+belongs to as it reaches it. Selecting *by* group — skipping one for a run,
+disabling one persistently, applying one on its own — is specified in
+[`future/cmdline.md`](future/cmdline.md) and is not built, so a group currently
+changes nothing about what a run does.
 
 ### `symlink`
 

@@ -450,7 +450,7 @@ fn allow_dead_code_is_rejected_however_it_is_spelled() {
 
 #[test]
 fn expect_dead_code_is_accepted_only_with_a_filled_reason() {
-    let live = r#"#[expect(dead_code, reason = "3.2 selects by group")]"#;
+    let live = r#"#[expect(dead_code, reason = "5.6 gates on conditions")]"#;
     assert!(dead_code_violations(live).is_empty(), "{live}");
 
     for source in [

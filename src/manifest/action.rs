@@ -35,6 +35,52 @@ impl Action {
             Self::CopyDir(action) => action.id.as_ref(),
         }
     }
+
+    /// The group the action belongs to, if it was written with one.
+    ///
+    /// A group is nothing but this field: no section declares one, so a group
+    /// exists because some action names it and holds exactly the actions that
+    /// do.
+    pub fn group(&self) -> Option<&ItemId> {
+        match self {
+            Self::Symlink(action) => action.group.as_ref(),
+            Self::SymlinkDir(action) => action.group.as_ref(),
+            Self::CreateDir(action) => action.group.as_ref(),
+            Self::Copy(action) => action.group.as_ref(),
+            Self::CopyDir(action) => action.group.as_ref(),
+        }
+    }
+
+    /// How the action introduces itself in a report: what kind it is, what it is
+    /// called, and the group it is in.
+    ///
+    /// `number` is its one-based position in the list, which is what names a
+    /// record carrying no `id` — the same way a load error names one.
+    pub fn describe(&self, number: usize) -> String {
+        let kind = self.kind();
+        let name = match self.id() {
+            Some(id) => id.to_string(),
+            None => format!("action {number}"),
+        };
+        match self.group() {
+            Some(group) => format!("{kind} {name} (group {group})"),
+            None => format!("{kind} {name}"),
+        }
+    }
+
+    /// The action's `type`, spelled as the manifest spells it.
+    ///
+    /// No wildcard, so a variant added later fails to compile until someone says
+    /// what it is called.
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Symlink(_) => "symlink",
+            Self::SymlinkDir(_) => "symlink-dir",
+            Self::CreateDir(_) => "create-dir",
+            Self::Copy(_) => "copy",
+            Self::CopyDir(_) => "copy-dir",
+        }
+    }
 }
 
 /// `symlink`: one symlink, from a path in the repository to a destination.
@@ -44,7 +90,6 @@ pub(crate) struct SymlinkAction {
     /// Makes the action addressable.
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
-    #[expect(dead_code, reason = "3.2 selects by group")]
     pub group: Option<ItemId>,
     /// The source, relative to the repository root. A plain string until 6.3
     /// makes it a path that may also name a remote.
@@ -69,7 +114,6 @@ pub(crate) struct SymlinkDirAction {
     /// action installs all of them or none.
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
-    #[expect(dead_code, reason = "3.2 selects by group")]
     pub group: Option<ItemId>,
     /// The directory whose direct children are linked, relative to the
     /// repository root.
@@ -95,7 +139,6 @@ pub(crate) struct CreateDirAction {
     /// Makes the action addressable.
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
-    #[expect(dead_code, reason = "3.2 selects by group")]
     pub group: Option<ItemId>,
     /// The directory to create, resolved against the selected home when the
     /// action runs. Missing parents are created with it.
@@ -114,7 +157,6 @@ pub(crate) struct CopyAction {
     /// Makes the action addressable.
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
-    #[expect(dead_code, reason = "3.2 selects by group")]
     pub group: Option<ItemId>,
     /// The file or directory to copy, relative to the repository root.
     pub source: String,
@@ -137,7 +179,6 @@ pub(crate) struct CopyDirAction {
     /// Makes the action addressable. The children never are, individually.
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
-    #[expect(dead_code, reason = "3.2 selects by group")]
     pub group: Option<ItemId>,
     /// The directory whose direct children are copied, relative to the
     /// repository root.
@@ -149,4 +190,79 @@ pub(crate) struct CopyDirAction {
     /// keeps its dotfiles undotted.
     #[serde(default)]
     pub dot_prefix: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn described(record: &str, number: usize) -> String {
+        let action: Action = toml::from_str(record).expect("the record should parse");
+        action.describe(number)
+    }
+
+    /// One complete record per variant, so a swapped or misspelled label fails
+    /// here. The names are written out rather than read back from the tag serde
+    /// matched on, which is the only way this test can disagree with the code it
+    /// covers.
+    #[test]
+    fn every_action_type_is_named_as_the_manifest_spells_it() {
+        for (record, kind) in [
+            (
+                "type = \"symlink\"\nsource = \"a\"\ndest = \"~/b\"\n",
+                "symlink",
+            ),
+            (
+                "type = \"symlink-dir\"\nsource-dir = \"a\"\ndest-dir = \"~/b\"\n",
+                "symlink-dir",
+            ),
+            ("type = \"create-dir\"\ndest = \"~/b\"\n", "create-dir"),
+            ("type = \"copy\"\nsource = \"a\"\ndest = \"~/b\"\n", "copy"),
+            (
+                "type = \"copy-dir\"\nsource-dir = \"a\"\ndest-dir = \"~/b\"\n",
+                "copy-dir",
+            ),
+        ] {
+            assert_eq!(described(record, 1), format!("{kind} action 1"));
+        }
+    }
+
+    #[test]
+    fn a_record_with_an_id_is_named_by_it() {
+        assert_eq!(
+            described(
+                "type = \"copy\"\nid = \"gitconfig\"\nsource = \"a\"\ndest = \"~/b\"\n",
+                3
+            ),
+            "copy gitconfig"
+        );
+    }
+
+    #[test]
+    fn a_record_without_an_id_is_named_by_its_position() {
+        // The same words a load error uses for a record with no `id`, so a line
+        // of output and a diagnostic point at the same one.
+        assert_eq!(
+            described("type = \"copy\"\nsource = \"a\"\ndest = \"~/b\"\n", 3),
+            "copy action 3"
+        );
+    }
+
+    #[test]
+    fn a_grouped_record_says_which_group() {
+        assert_eq!(
+            described(
+                "type = \"create-dir\"\nid = \"cache\"\ngroup = \"shell\"\ndest = \"~/b\"\n",
+                1
+            ),
+            "create-dir cache (group shell)"
+        );
+        assert_eq!(
+            described(
+                "type = \"create-dir\"\ngroup = \"shell\"\ndest = \"~/b\"\n",
+                2
+            ),
+            "create-dir action 2 (group shell)"
+        );
+    }
 }

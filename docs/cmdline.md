@@ -138,6 +138,21 @@ correct says nothing, because a repository that is already installed is the
 ordinary case and forty lines of "unchanged" is how output stops being read;
 `-v` reports those too. `--quiet` suppresses both.
 
+Those lines name paths rather than records, so `-v` also prints a heading before
+each action, saying what kind it is, what it is called, and which
+[group](repoformat.md#groups) it is in:
+
+```text
+symlink zshrc (group shell)
+linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
+symlink-dir action 7 (group shell)
+linked /home/you/.ackrc -> /home/you/dotfiles/files/ackrc
+```
+
+An action with no `id` is named by its one-based position in the manifest, which
+is how a load error names one too, so a heading and a diagnostic point at the
+same record by the same words. An action with no group ends after its name.
+
 | Option      | Purpose                                                                |
 |-------------|--------------------------------------------------------------------------|
 | `--dry-run` | Report the action plan without executing it — see [dry-run behavior](#dry-run-behavior). |
