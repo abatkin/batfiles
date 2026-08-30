@@ -24,12 +24,15 @@ something real contradicts it.
   batfiles reads.
 - [Repository format](repoformat.md) defines where the leaf manifest lives, how
   it is read, and what it may declare.
+- [Local state files](state.md) defines `disabled.toml`, and how every document
+  batfiles owns is rewritten.
 
 ## What is not here yet
 
-`docs/future/` holds the local state files, the safety model, and the unbuilt
-parts of the manifest schema, the command-line surface, and the environment
-inputs. Each is promoted here in pieces, at the step that builds the piece.
+`docs/future/` holds the safety model, the two state files that do not exist
+yet, and the unbuilt parts of the manifest schema, the command-line surface, and
+the environment inputs. Each is promoted here in pieces, at the step that builds
+the piece.
 
 There is no `architecture.md` for the duration of the rewrite.
 [`rewrite/guidance.md`](../rewrite/guidance.md) owns implementation shape, and

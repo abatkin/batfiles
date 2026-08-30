@@ -13,14 +13,17 @@ the commands that use them are built.
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Only `version` and `sync` do any work.** Every other command resolves the
-location roots it needs and then reports that it is not implemented yet, exiting
-2 having written nothing. That message is the answer to "what can batfiles do",
-and it disappears one command at a time.
+**Only `version`, `sync`, and the four enable/disable commands do any work.**
+Every other command resolves the location roots it needs and then reports that it
+is not implemented yet, exiting 2 having written nothing. That message is the
+answer to "what can batfiles do", and it disappears one command at a time.
 
 `sync` is the first command that writes, and the first with an option that is
 honored: it executes the action types that exist, and `--dry-run` reports what
 it would execute without doing any of it.
+
+The enable and disable commands write machine-local state rather than anything in
+the home directory. Nothing reads that state yet — see below.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -76,9 +79,10 @@ one level prints the resolved roots, and the destinations `sync` left alone
 because they were already correct. `--quiet` suppresses the lines saying what
 `sync` did, and nothing else.
 
-Two of the four resolved roots are live, and only for `sync`: it reads the leaf
-repository and writes into the selected home. Nothing reads or writes anything
-under the config and cache directories yet. See
+Three of the four resolved roots are live. `sync` reads the leaf repository and
+writes into the selected home; the enable and disable commands read and rewrite
+[`disabled.toml`](state.md) under the config directory, and touch neither of the
+other two. Nothing reads or writes anything under the cache directory yet. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -159,6 +163,47 @@ same record by the same words. An action with no group ends after its name.
 
 Every other option `sync` accepts is [refused for now](#unimplemented-options);
 that list shrinking to empty is how you know `sync` is finished.
+
+### Enable and disable actions or groups
+
+```text
+batfiles disable-action <id>...
+batfiles enable-action <id>...
+batfiles disable-group <group>...
+batfiles enable-group <group>...
+```
+
+Persistently add one or more action IDs or group names to, or remove them from,
+the machine-local disabled lists. These commands run no synchronization and
+remove no installed content.
+
+> **What is recorded is not read yet.** `sync` does not consult
+> [`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups), so
+> disabling an action today records the decision and does not change what a run
+> installs. The reader arrives with `--skip`.
+
+They read and write `disabled.toml` and nothing else. They do not resolve or load
+the leaf repository, so a `batfiles.toml` that is malformed, or missing
+altogether, cannot fail one — and each supplied name is validated for
+[syntax](repoformat.md#names-and-ids) alone. A name matching nothing in the
+manifest is recorded without complaint: these commands resolve nothing, and
+pre-registering a name a later branch introduces is supported.
+
+One line on standard error reports each name, saying whether the state actually
+moved:
+
+```console
+$ batfiles disable-action p10k zshrc
+disabled action `p10k`
+action `zshrc` was already disabled
+```
+
+`--quiet` suppresses those lines and not the edit. A repeated name warns and is
+applied once. A name that is not a valid ID fails the whole invocation with
+status 1, before the document is opened, so the other names on the command line
+are not applied either. The
+[lifecycle rules](state.md#semantics-and-lifecycle) are specified with the
+document.
 
 ## Dry-Run Behavior
 

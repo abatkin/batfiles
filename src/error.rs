@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use crate::item::ItemIdError;
 use crate::manifest;
 use crate::paths::ExistingNode;
 
@@ -49,6 +50,13 @@ pub(crate) enum Error {
         source: toml::de::Error,
     },
 
+    /// A document that could not be turned back into TOML to be written.
+    #[error("could not serialize {}: {source}", .path.display())]
+    Serialize {
+        path: PathBuf,
+        source: toml::ser::Error,
+    },
+
     /// A manifest that is valid TOML but breaks a rule serde cannot express.
     /// The rules themselves are in [`manifest::Invalid`].
     #[error("invalid configuration in {}: {source}", .path.display())]
@@ -56,6 +64,11 @@ pub(crate) enum Error {
         path: PathBuf,
         source: manifest::Invalid,
     },
+
+    /// A command-line argument that is not a well-formed ID. The rejected value
+    /// travels inside [`ItemIdError`], which already renders the whole message.
+    #[error(transparent)]
+    InvalidId(#[from] ItemIdError),
 
     // Carrying an action out.
     /// An action naming a source the repository does not contain.
@@ -130,4 +143,15 @@ pub(crate) enum Error {
     /// An action type this build of batfiles cannot carry out on this platform.
     #[error("`{action_type}` actions are not supported on this platform")]
     UnsupportedOnPlatform { action_type: &'static str },
+}
+
+impl Error {
+    /// Whether the failure was simply that the file does not exist.
+    ///
+    /// The state files treat that as an empty document; a leaf `batfiles.toml`
+    /// does not. That difference is the whole reason this is asked, and
+    /// [`crate::tomlfile::read_or_default`] is the one place that asks it.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
 }

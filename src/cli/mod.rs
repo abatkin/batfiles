@@ -9,9 +9,9 @@
 //! anything yet.
 
 mod actions;
+mod disabled;
 mod init;
 mod options;
-mod toggles;
 mod vars;
 
 pub(crate) mod color;
@@ -20,8 +20,8 @@ pub(crate) mod unsupported;
 // The argument types appear in `Command`'s variants, so they are re-exported
 // here rather than reached through their submodule paths.
 pub(crate) use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
+pub(crate) use disabled::{ActionAddresses, GroupAddresses};
 pub(crate) use init::InitArgs;
-pub(crate) use toggles::{ActionAddresses, GroupAddresses};
 pub(crate) use vars::VarsCommand;
 
 use std::path::PathBuf;

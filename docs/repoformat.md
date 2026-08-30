@@ -31,12 +31,19 @@ that never opens it cannot be failed by it: a malformed manifest does not stop
 an enable, a disable, or a `vars` lookup, all of which work on machine-local
 state instead.
 
+The rules below are written for the manifest, and every document batfiles reads
+follows them — with one exception, noted where it applies: a missing [state
+file](state.md) is an empty document rather than an error. How a document
+batfiles owns is replaced when it changes is specified alongside that one, under
+[writing](state.md#writing).
+
 - The document is read and checked whole before anything in it is used. A
   command that cannot make sense of its manifest stops before it has done any
   work.
 - A missing manifest is an error. A repository is a repository because it has
   one, so batfiles reports the path rather than proceeding as if the file were
-  empty.
+  empty. This is the one rule a [state file](state.md) does not share: a machine
+  that has disabled nothing has nothing to record, so a missing one is empty.
 - A malformed document is an error, reported with the file and the position
   within it, and the file is left untouched rather than repaired or replaced.
 - A valid TOML file is not automatically a valid manifest: the records below are
@@ -438,10 +445,11 @@ Group names and action IDs are separate namespaces, so a group may share a name
 with an action without either becoming ambiguous.
 
 What reads the field today is reporting: `sync -v` names the group each action
-belongs to as it reaches it. Selecting *by* group — skipping one for a run,
-disabling one persistently, applying one on its own — is specified in
-[`future/cmdline.md`](future/cmdline.md) and is not built, so a group currently
-changes nothing about what a run does.
+belongs to as it reaches it. **A group currently changes nothing about what a run
+does.** `disable-group` records a name in
+[`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups) and nothing
+reads that list yet; skipping a group for one run and applying one on its own are
+specified in [`future/cmdline.md`](future/cmdline.md) and are not built.
 
 ### `symlink`
 

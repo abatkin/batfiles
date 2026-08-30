@@ -105,7 +105,10 @@ Taskfile or the test suite; the one workflow edit any of them needed is 0.12's
   does; expect to lose a third. The `install.sh` template it writes is slice 10,
   not slice 8.
 - **`src/toggle.rs`** (297) and **`src/state/disabled.rs`** (207) — step 3.3. One
-  implementation over four commands is right.
+  implementation over four commands is right. Both landed as one `src/disabled.rs`:
+  the document and its only writer are the same subject, and `toggle` named a
+  mechanism rather than one. `List` and `Direction` came across as `DisabledList`
+  and `Change`.
 - **`src/state/vars.rs`** (158) — step 5.2.
 
 ## Take later, shelve until then
@@ -181,7 +184,9 @@ item.rs  var.rs  manifest/  action/  state/
 Modules are added when implemented behavior needs them. `manifest/` earns its
 directory at 0.6 because the manifest genuinely has sections; `action/` earns one
 when the third action type lands at 1.3. Nothing gets a directory to hold a
-single file, and nothing gets one in anticipation.
+single file, and nothing gets one in anticipation — which is why 3.3 landed
+`disabled.toml` as `src/disabled.rs` at the root, and why `state/` is a shape to
+move into at 5.2, when `vars.toml` gives it a second file.
 
 Two of these are named for what they hold rather than for what the old crate
 called them, because the old names collided. `config` meant three things at once

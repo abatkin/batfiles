@@ -28,10 +28,13 @@ command still reads or acts on only the roots it needs, and a command that needs
 none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
-Only the leaf repository is read so far, by `sync`, which opens the
-`batfiles.toml` it finds there. The other three answer where a command *would*
-work. All four are resolved together anyway, because one set of rules covers
-all four roots and splitting it would mean writing those rules twice.
+Three of the four are live so far. `sync` opens the `batfiles.toml` in the leaf
+repository and installs into the selected home; the enable and disable commands
+read and rewrite [`disabled.toml`](state.md) under the config directory, and
+open nothing else. Only the cache directory is still an answer to where a
+command *would* work. All four are resolved together anyway, because one set of
+rules covers all four roots and splitting it would mean writing those rules
+twice.
 
 ## Location selection
 

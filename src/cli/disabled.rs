@@ -1,6 +1,6 @@
-//! The persistent enable/disable commands. They edit the machine-local
-//! disabled lists only: they run no synchronization and remove no installed
-//! content.
+//! Arguments for the four commands that edit the machine-local disabled lists.
+//! What they do with them is [`crate::disabled`]'s; this is the shape they take
+//! on the command line.
 
 use clap::Args;
 

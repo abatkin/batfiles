@@ -4,6 +4,7 @@ mod action;
 mod app;
 mod cli;
 mod directory;
+mod disabled;
 mod error;
 mod install;
 mod item;

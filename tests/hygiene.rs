@@ -109,7 +109,7 @@ const FILESYSTEM_OWNERS: [Owner; 5] = [
     Owner {
         path: "src/tomlfile.rs",
         kind: Kind::Bookkeeping,
-        reason: "reads the documents batfiles parses; 3.3 adds the writer",
+        reason: "reads and atomically rewrites the documents batfiles owns",
     },
 ];
 

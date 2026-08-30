@@ -105,6 +105,22 @@ impl Tree {
         self.path("home").join(relative)
     }
 
+    /// The machine-local disabled lists, which need not exist.
+    pub(crate) fn disabled(&self) -> PathBuf {
+        self.path("config").join("disabled.toml")
+    }
+
+    /// `disabled.toml` as it stands, which a command must have written.
+    pub(crate) fn disabled_document(&self) -> String {
+        fs::read_to_string(self.disabled()).expect("disabled.toml should exist")
+    }
+
+    /// Put a `disabled.toml` in place verbatim, including shapes batfiles would
+    /// never write itself.
+    pub(crate) fn write_disabled(&self, document: &str) {
+        fs::write(self.disabled(), document).expect("a disabled document");
+    }
+
     /// A command with all four roots selected inside this tree.
     pub(crate) fn batfiles(&self) -> Command {
         let mut command = batfiles();

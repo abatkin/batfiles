@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::disabled::Disabled;
 use crate::error::Error;
 use crate::manifest::Manifest;
 
@@ -121,6 +122,12 @@ impl Roots {
     /// in that remote's materialization rather than under a resolved root.
     pub fn manifest(&self) -> PathBuf {
         self.batfiles_dir.join(Manifest::FILE_NAME)
+    }
+
+    /// The machine-local disabled lists. Under the config root rather than the
+    /// repository, so selecting a different home does not move them.
+    pub fn disabled(&self) -> PathBuf {
+        self.config_dir.join(Disabled::FILE_NAME)
     }
 }
 

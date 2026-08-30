@@ -30,7 +30,9 @@ promoted becomes binding; whatever is left behind stays advisory.
   selection, runtime variable precedence, and bootstrap precedence. The parts
   that are built live in [`docs/environment.md`](../environment.md).
 - [Local state and cache files](state.md) — the schemas and lifecycle of
-  machine-local configuration and cache files.
+  `vars.toml` and the dynamic-variable cache, and the parts of `disabled.toml`
+  that need remotes or bootstrap to mean anything. The parts that are built live
+  in [`docs/state.md`](../state.md).
 - [Safety model](safety.md) — trust boundaries, destination resolution,
   replacement and backup policy, conservative Git updates, archive handling,
   and failure recovery.

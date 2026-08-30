@@ -2,11 +2,11 @@
 //! resolve the roots a command works in, dispatch, and map the result to an
 //! exit status.
 //!
-//! Every command in the surface parses; `version` and `sync` run. The rest
-//! report an option they accept and do not honor yet, or else resolve their
-//! roots and report that they are not implemented yet, which is the honest
-//! thing to do and the reason the whole surface can be committed before the
-//! tool works.
+//! Every command in the surface parses; `version`, `sync`, and the four
+//! enable/disable commands run. The rest report an option they accept and do
+//! not honor yet, or else resolve their roots and report that they are not
+//! implemented yet, which is the honest thing to do and the reason the whole
+//! surface can be committed before the tool works.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -16,6 +16,7 @@ use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::unsupported::{self, Unsupported};
 use crate::cli::{Cli, Command, GlobalOptions, color};
+use crate::disabled::{self, Change, DisabledList};
 use crate::error::Error;
 use crate::location::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::mode::RunMode;
@@ -97,11 +98,64 @@ fn dispatch(
             sync::run(&roots, RunMode::new(args.dry_run), reporter)?;
             Ok(ExitCode::SUCCESS)
         }
+        // The four differ only in which list they edit and which way they move a
+        // name, so they share one implementation and are told apart here rather
+        // than inside it.
+        Command::DisableAction(args) => edit_disabled_list(
+            cli,
+            env,
+            reporter,
+            &args.ids,
+            DisabledList::Actions,
+            Change::Disable,
+        ),
+        Command::EnableAction(args) => edit_disabled_list(
+            cli,
+            env,
+            reporter,
+            &args.ids,
+            DisabledList::Actions,
+            Change::Enable,
+        ),
+        Command::DisableGroup(args) => edit_disabled_list(
+            cli,
+            env,
+            reporter,
+            &args.groups,
+            DisabledList::Groups,
+            Change::Disable,
+        ),
+        Command::EnableGroup(args) => edit_disabled_list(
+            cli,
+            env,
+            reporter,
+            &args.groups,
+            DisabledList::Groups,
+            Change::Enable,
+        ),
         _ => {
             locate(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }
     }
+}
+
+/// Edit one of the machine-local disabled lists.
+///
+/// The roots are resolved as for any other command, though only the config one
+/// is read: these commands never open the leaf repository, so a manifest that is
+/// missing or malformed cannot fail an enable or a disable.
+fn edit_disabled_list(
+    cli: &Cli,
+    env: &Environment,
+    reporter: &Reporter,
+    names: &[String],
+    list: DisabledList,
+    change: Change,
+) -> Result<ExitCode, Error> {
+    let roots = locate(cli, env, reporter)?;
+    disabled::run(names, list, change, &roots, reporter)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Resolve the roots a command works in, and report them at `-v`.

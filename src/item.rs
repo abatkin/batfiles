@@ -2,7 +2,8 @@
 
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// A validated item ID.
 ///
@@ -15,7 +16,9 @@ use serde::Deserialize;
 /// valid IDs and not valid variable names. In particular an ID cannot contain
 /// whitespace, `.`, or `,` — dots compose qualified addresses and commas
 /// delimit environment lists.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+/// Serialized as the bare string it wraps, so a document batfiles writes reads
+/// back the way a hand-written one is spelled.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(try_from = "String")]
 pub(crate) struct ItemId(String);
 
@@ -23,7 +26,11 @@ pub(crate) struct ItemId(String);
 ///
 /// The rejected value travels with the error: serde renders this where the user
 /// cannot see what was written, so the message has to carry it.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error(
+    "`{candidate}` is not a valid ID: an ID starts with a letter or digit, \
+     followed by letters, digits, hyphens, or underscores"
+)]
 pub(crate) struct ItemIdError {
     candidate: String,
 }
@@ -46,17 +53,6 @@ impl TryFrom<String> for ItemId {
 impl fmt::Display for ItemId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl fmt::Display for ItemIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "`{}` is not a valid ID: an ID starts with a letter or digit, \
-             followed by letters, digits, hyphens, or underscores",
-            self.candidate
-        )
     }
 }
 

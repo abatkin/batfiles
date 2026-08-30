@@ -10,11 +10,12 @@ nothing in the repository you cannot read with `cat`.
 
 > **Status: early, and not yet useful as a dotfiles manager.**
 >
-> Batfiles is being rebuilt from scratch. The first of the plan's eleven slices
-> is done and the second is under way. On Unix, `sync` installs symlinks — and
-> that is the whole of it; every other command parses its arguments and then
-> exits saying it is not implemented yet. The plan, and the reason there is a
-> rewrite, are in [`rewrite/README.md`](rewrite/README.md).
+> Batfiles is being rebuilt from scratch. Two of the plan's eleven slices are
+> done and the third is under way. `sync` installs a repository and `--dry-run`
+> says what it would install; the enable/disable commands record decisions that
+> nothing reads yet. Every other command parses its arguments and then exits
+> saying it is not implemented yet. The plan, and the reason there is a rewrite,
+> are in [`rewrite/README.md`](rewrite/README.md).
 
 > [!NOTE]
 > There is a sample repository to read and install:
@@ -63,6 +64,11 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
 - **An option that is not live yet is refused rather than ignored.** `sync
   --refresh-content` exits 2 naming the option, because silently accepting it
   would let you believe your content had been refreshed.
+- **Actions and groups can be disabled — but nothing reads that yet.**
+  `disable-action`, `enable-action`, `disable-group`, and `enable-group` record
+  names in a machine-local `disabled.toml`, atomically and idempotently. `sync`
+  does not consult it, so today this is a decision written down rather than one
+  that takes effect; the reader arrives with `--skip`, next.
 - **`version` prints the version.**
 - **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
@@ -71,8 +77,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   everywhere, so a Windows run can create directories and seed copies but cannot
   install a link.
 
-Everything else — `init`, `clone`, the four enable/disable commands,
-`apply-action`, `apply-group`, and `vars` — parses its arguments and exits 2.
+Everything else — `init`, `clone`, `apply-action`, `apply-group`, and `vars` —
+parses its arguments and exits 2.
 
 ## Example
 
@@ -142,7 +148,8 @@ Missing parent directories are created. Run it again and it says nothing at
 all, because nothing changed; `-v` reports what it looked at, and heads each
 action's lines with the record that produced them and the `group` it names.
 Groups are for talking about several actions at once, and nothing selects by one
-yet. And where something is already in the way:
+yet — `disable-group` records the name and `sync` does not read it. And where
+something is already in the way:
 
 ```console
 $ batfiles sync
@@ -169,7 +176,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 3     | Selecting by action or group: enable/disable, `--skip`, `apply-*`   |
+| 3     | Acting on the disabled lists, plus `--skip` and `apply-*`           |
 | 4     | Fetching files and archives, and cloning Git repositories           |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
@@ -184,6 +191,8 @@ Roughly in the order it is planned, from
   streams, exit statuses.
 - [Repository format](docs/repoformat.md) — the manifest, and what an action
   may declare.
+- [Local state files](docs/state.md) — `disabled.toml`, and how batfiles
+  rewrites the documents it owns.
 - [Environment variables](docs/environment.md) — the inputs batfiles reads.
 
 [`docs/`](docs/README.md) describes behavior that runs, and nothing else.
