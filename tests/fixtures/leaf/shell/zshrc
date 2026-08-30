@@ -1,5 +1,6 @@
 source ~/.zshenv
 source ~/.config/zsh/aliases.zsh
+source ~/.config/zsh/profile.zsh
 
 for local_file in ~/.config/zsh/local/*.zsh(N); do
 	source $local_file

@@ -100,25 +100,7 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 
 ## Slice 3 — Selection and ordering
 
-- **3.1** Make declaration order the execution order, explicitly and tested.
-  0.15 pinned half of it: syncing the fixture over an occupied destination
-  refuses that action and leaves the ones after it undone, so stopping at the
-  first failure is covered. What is still owed is order itself, which needs two
-  actions whose order is observable — one creating what the next depends on —
-  rather than two that merely both happen. 1.4 left a second consumer of
-  declaration order and no coverage of it:
-  `the_actions_that_need_no_symlink_run_where_symlinks_cannot_be_made` reads the
-  `leaf` fixture's portable actions as the ones ahead of the first `symlink`
-  record, and being `#[cfg(not(unix))]` it runs on no CI runner. Reordering that
-  manifest breaks a test nothing here would notice, so the observable pair this
-  step owes belongs in the fixture rather than in a manifest written inline.
-
-  That pair is also the first thing in the tree whose dry run and real run differ
-  by more than tense — one action creating what the next observes is precisely
-  the case parity does not cover — so it breaks 2.5's parity assertion by
-  construction. Expect that, and repair it by excluding the pair rather than by
-  loosening the assertion: the divergence is the inherent gap (`guidance.md`,
-  "What a dry run says"), and a parity test that tolerates it tests nothing.
+- **3.1** ✅ Make declaration order the execution order, explicitly and tested.
 - **3.2** Add groups and group membership. The `group` field has parsed and been
   validated as an `ItemId` since 0.6; this is the step that reads it, so its
   `expect(dead_code)` goes — CI will insist — along with the line in

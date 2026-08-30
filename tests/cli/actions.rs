@@ -817,6 +817,104 @@ fn a_source_the_manifest_named_through_a_link_is_followed() {
     );
 }
 
+/// Declaration order is execution order, in the one place the `leaf` fixture
+/// makes that observable: two seeds name `~/.config/zsh/profile.zsh`, and a
+/// seed does not replace, so the file ends up holding whichever of them the run
+/// reached first.
+///
+/// Every other action in the fixture installs somewhere of its own, so a run
+/// that carried them out in any order at all would leave the same tree behind.
+/// This pair is what turns order into something a test can be wrong about.
+/// `linking::an_occupied_destination_stops_the_run_where_it_stands` covers the
+/// other half of the guarantee, that the first failure stops the list.
+#[test]
+fn the_first_of_two_seeds_naming_one_destination_is_the_one_that_lands() {
+    let (winner, loser, dest) = LEAF_ORDERED_PAIR;
+    let tree = Tree::fixture("leaf");
+    let repo = tree.path("repo");
+    let installed = tree.home(dest);
+
+    // The exit status is not this test's business: where symlinks cannot be
+    // made the run stops at the first `symlink` record, and both seeds are
+    // ahead of it — which is what the test below pins.
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert();
+    let stderr = stderr_of(&assertion);
+
+    let contents = fs::read_to_string(&installed).expect("the seeded file");
+    assert_eq!(
+        contents,
+        fs::read_to_string(repo.join(winner)).expect("the winning source"),
+        "`{dest}` does not hold `{winner}`, so the seeds ran out of order"
+    );
+    // Guards the assertion above: two identical sources would satisfy it
+    // whichever one landed.
+    assert_ne!(
+        contents,
+        fs::read_to_string(repo.join(loser)).expect("the losing source"),
+        "`{winner}` and `{loser}` hold the same bytes, so this proves nothing"
+    );
+
+    // And it says so in that order: the copy that landed, then the one that
+    // found the destination taken and kept what was there.
+    let copied = format!(
+        "copied {} from {}",
+        display(&installed),
+        display(&repo.join(winner))
+    );
+    let kept = format!("kept {}", display(&installed));
+    let said = |line: &str| {
+        stderr
+            .find(line)
+            .unwrap_or_else(|| panic!("no `{line}` in:\n{stderr}"))
+    };
+    assert!(
+        said(&copied) < said(&kept),
+        "the seeds reported out of order:\n{stderr}"
+    );
+}
+
+/// The `leaf` manifest declares every action that needs no symlink ahead of
+/// every action that makes one.
+///
+/// `the_actions_that_need_no_symlink_run_where_symlinks_cannot_be_made` rests
+/// on that order and is `#[cfg(not(unix))]`, so no CI runner executes it:
+/// reordering the manifest would break a test nothing here would notice. This
+/// one runs everywhere, and notices.
+#[test]
+fn the_leaf_manifest_declares_its_portable_actions_before_its_symlinks() {
+    // The closing quote is what keeps `symlink` from matching `symlink-dir`,
+    // and `copy` from matching `copy-dir`.
+    const PORTABLE: [&str; 3] = [
+        "type = \"create-dir\"",
+        "type = \"copy\"",
+        "type = \"copy-dir\"",
+    ];
+    const LINKING: [&str; 2] = ["type = \"symlink\"", "type = \"symlink-dir\""];
+
+    let manifest = fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/leaf/batfiles.toml"),
+    )
+    .expect("the fixture manifest");
+    let boundary = LINKING
+        .iter()
+        .filter_map(|declaration| manifest.find(declaration))
+        .min()
+        .expect("the fixture declares an action that makes symlinks");
+
+    for declaration in PORTABLE {
+        // Found first, so that renaming an action type fails here rather than
+        // leaving the assertion below vacuously true.
+        assert!(
+            manifest.contains(declaration),
+            "the fixture declares no `{declaration}`"
+        );
+        assert!(
+            !manifest[boundary..].contains(declaration),
+            "`{declaration}` is declared after the first action that makes a symlink"
+        );
+    }
+}
+
 /// Syncing the whole fixture where symlinks cannot be made: the actions ahead
 /// of the first `symlink` record are carried out, and the refusal stops the run
 /// there.

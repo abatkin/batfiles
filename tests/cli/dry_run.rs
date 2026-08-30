@@ -38,12 +38,11 @@ fn a_dry_run_writes_nothing_at_all_into_the_home() {
 
 /// How many action records the `leaf` fixture declares.
 ///
-/// The parity assertion covers all of them, which is sound only because
-/// their destinations are distinct. An action whose output is another's
-/// input diverges in substance rather than tense, so it has to be excluded
-/// from the comparison rather than tolerated by it; this count is what
-/// makes adding one say so.
-const PARITY_ACTIONS: usize = 11;
+/// The parity assertion covers all but the two of them that contend for one
+/// destination. An action whose output is another's input diverges in substance
+/// rather than tense, so it has to be excluded from the comparison rather than
+/// tolerated by it; this count is what makes adding one say so.
+const PARITY_ACTIONS: usize = 13;
 
 #[test]
 fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {
@@ -68,8 +67,11 @@ fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {
     // The same tree, which the dry run has left exactly as it found it.
     let real = stderr_of(&tree.batfiles().args(["sync", "-v"]).assert().success());
 
-    let said: Vec<String> = dry.lines().map(in_past_tense).collect();
-    assert_eq!(said, real.lines().collect::<Vec<&str>>());
+    let said: Vec<String> = lines_apart_from_the_contended_pair(&tree, &dry)
+        .iter()
+        .map(|line| in_past_tense(line))
+        .collect();
+    assert_eq!(said, lines_apart_from_the_contended_pair(&tree, &real));
     // Guards the comparison itself: two runs that both said nothing
     // prospective would match line for line and prove nothing.
     for expected in ["would link", "would copy", "would create", "would keep"] {
@@ -78,6 +80,76 @@ fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {
             "the dry run never said `{expected}`:\n{dry}"
         );
     }
+}
+
+/// One run's reported lines, minus everything said about the destination the
+/// fixture's two seeds contend for.
+///
+/// **Not a loosening of the parity assertion.** Parity is a promise about
+/// actions with distinct destinations, and that pair is deliberately not one:
+/// the second seed finds what the first one left, which a dry run has not left,
+/// so the two runs differ in substance rather than tense (`rewrite/guidance.md`,
+/// "What a dry run says"). A comparison written to tolerate that difference
+/// would restate the gap instead of checking the mode. The difference itself is
+/// asserted in `the_runs_diverge_where_one_action_feeds_another`.
+fn lines_apart_from_the_contended_pair(tree: &Tree, output: &str) -> Vec<String> {
+    let contended = display(&tree.home(LEAF_ORDERED_PAIR.2));
+    output
+        .lines()
+        .filter(|line| !line.contains(&contended))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What the excluded pair does in each mode, which is the whole of what parity
+/// gives up by excluding it.
+///
+/// A dry run creates nothing, so the second seed finds the destination as empty
+/// as the first one did and both say they would copy. A real run's second seed
+/// finds the first one's work and keeps it. Nothing else in the tree produces
+/// this, which is why it is worth writing down rather than merely filtering.
+#[test]
+fn the_runs_diverge_where_one_action_feeds_another() {
+    let (winner, loser, dest) = LEAF_ORDERED_PAIR;
+    let tree = Tree::fixture("leaf");
+    let repo = tree.path("repo");
+    let installed = display(&tree.home(dest));
+    let from = |source: &str| format!("{installed} from {}", display(&repo.join(source)));
+
+    let dry = stderr_of(
+        &tree
+            .batfiles()
+            .args(["sync", "--dry-run", "-v"])
+            .assert()
+            .success(),
+    );
+    let real = stderr_of(&tree.batfiles().args(["sync", "-v"]).assert().success());
+
+    assert_eq!(
+        contended_lines(&tree, &dry),
+        [
+            format!("would copy {}", from(winner)),
+            format!("would copy {}", from(loser)),
+        ]
+    );
+    assert_eq!(
+        contended_lines(&tree, &real),
+        [
+            format!("copied {}", from(winner)),
+            format!("kept {installed}")
+        ]
+    );
+}
+
+/// The inverse of [`lines_apart_from_the_contended_pair`]: only what was said
+/// about the contended destination.
+fn contended_lines(tree: &Tree, output: &str) -> Vec<String> {
+    let contended = display(&tree.home(LEAF_ORDERED_PAIR.2));
+    output
+        .lines()
+        .filter(|line| line.contains(&contended))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// One reported line as the real run would have written it.

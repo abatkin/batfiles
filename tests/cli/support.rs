@@ -262,11 +262,30 @@ pub(crate) const LEAF_DIRS: [&str; 1] = [".cache/zsh"];
 /// expectations from the file under test asserts nothing. The last two are the
 /// one `copy-dir` action expanded — one entry per child, in sorted order,
 /// because that is what the run produces.
-pub(crate) const LEAF_SEEDS: [(&str, &str); 3] = [
+///
+/// `profile.zsh` is the one entry whose *source* is an assertion rather than a
+/// restatement. Two actions seed that destination and a seed does not replace,
+/// so the machine-specific file is there only because it was declared first;
+/// naming it here makes every caller of [`assert_leaf_portable_actions`] a check
+/// on declaration order, on every platform. [`LEAF_ORDERED_PAIR`] is the
+/// dedicated version, and says what a failure here means.
+pub(crate) const LEAF_SEEDS: [(&str, &str); 4] = [
     ("templates/gitconfig.local", ".config/git/local"),
+    ("templates/profile.machine.zsh", ".config/zsh/profile.zsh"),
     ("zsh-local/env.zsh", ".config/zsh/local/env.zsh"),
     ("zsh-local/prompt.zsh", ".config/zsh/local/prompt.zsh"),
 ];
+
+/// The two `leaf` actions that name one destination, as `(winner, loser)`
+/// repository paths, and the destination they contend for.
+///
+/// The whole of what declaration order decides in the fixture: the first
+/// declared lands, the second keeps what it finds.
+pub(crate) const LEAF_ORDERED_PAIR: (&str, &str, &str) = (
+    "templates/profile.machine.zsh",
+    "templates/profile.zsh",
+    ".config/zsh/profile.zsh",
+);
 
 /// Assert that every action in [`LEAF_DIRS`] and [`LEAF_SEEDS`] has been
 /// carried out, which every platform can do.

@@ -23,6 +23,31 @@ group = "git"
 source = "templates/gitconfig.local"
 dest = "~/.config/git/local"
 
+# Two seeds naming one destination, the machine-specific one declared first.
+# A seed does not replace, so the first to run is the copy that lands and the
+# second reports that it kept what it found. That makes declaration order
+# observable in the file's contents rather than only in the order two unrelated
+# things happened, which is why the pair is here at all: swap these two records
+# and `~/.config/zsh/profile.zsh` holds the other file.
+#
+# It reads as a repository someone keeps because it is the override idiom
+# without the gate. Do not add the gate here when `when` and `unless` arrive:
+# a condition that can turn the first record off is a condition under which
+# these are two unrelated actions, and the order stops being observable at all.
+[[actions]]
+type = "copy"
+id = "zsh-profile-machine"
+group = "shell"
+source = "templates/profile.machine.zsh"
+dest = "~/.config/zsh/profile.zsh"
+
+[[actions]]
+type = "copy"
+id = "zsh-profile"
+group = "shell"
+source = "templates/profile.zsh"
+dest = "~/.config/zsh/profile.zsh"
+
 # The same bargain once per child: `.zshrc` sources everything in this
 # directory, the repository supplies the starting contents, and what is already
 # there is left alone while the rest is filled in.

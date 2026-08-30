@@ -1143,8 +1143,10 @@ fn syncing_a_real_repository_installs_every_action_and_nothing_else() {
 fn an_occupied_destination_stops_the_run_where_it_stands() {
     // Rule 13 at repository scale. What one action's worth of it cannot
     // show is what happens to the rest of the list: the run stops, so the
-    // actions after the refusal are not attempted. Which of two actions
-    // runs first, where one depends on the other, is 3.1's to pin.
+    // actions after the refusal are not attempted. The other half of the
+    // guarantee — which of two actions runs first, where one depends on the
+    // other — is `actions::the_first_of_two_seeds_naming_one_destination_is_
+    // the_one_that_lands`.
     let tree = Tree::fixture("leaf");
     let occupied = "[user]\n\temail = mine\n";
     fs::write(tree.home(".gitconfig"), occupied).expect("an existing file");
