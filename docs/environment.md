@@ -1,10 +1,10 @@
 # Environment variables
 
 The environment inputs batfiles reads today: the four location variables that
-select where it works, and the color selection. The rest — one-shot variable
-overrides, run-only skips, bootstrap adoption, and the host facts conditions use
-— are in [`future/environment.md`](future/environment.md), along with the table
-naming every variable in the intended set.
+select where it works, the two run-only skip lists, and the color selection. The
+rest — one-shot variable overrides, bootstrap adoption, and the host facts
+conditions use — are in [`future/environment.md`](future/environment.md), along
+with the table naming every variable in the intended set.
 
 The process environment is captured once when batfiles starts, so every lookup
 during a run sees the same values.
@@ -29,12 +29,39 @@ none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
 Three of the four are live so far. `sync` opens the `batfiles.toml` in the leaf
-repository and installs into the selected home; the enable and disable commands
-read and rewrite [`disabled.toml`](state.md) under the config directory, and
-open nothing else. Only the cache directory is still an answer to where a
-command *would* work. All four are resolved together anyway, because one set of
-rules covers all four roots and splitting it would mean writing those rules
-twice.
+repository and the [`disabled.toml`](state.md) under the config directory, and
+installs into the selected home; the enable and disable commands rewrite
+`disabled.toml` and open nothing else. Only the cache directory is still an
+answer to where a command *would* work. All four are resolved together anyway,
+because one set of rules covers all four roots and splitting it would mean
+writing those rules twice.
+
+## Run-only skips
+
+| Variable                | Equivalent option | Effect                                                   |
+|-------------------------|-------------------|----------------------------------------------------------|
+| `BATFILES_SKIP_ACTIONS` | `--skip-action`   | Names actions to leave out of the current run.           |
+| `BATFILES_SKIP_GROUPS`  | `--skip-group`    | Names groups to leave out of the current run.            |
+
+Both are comma-separated lists. Each item is trimmed, empty items are discarded,
+and the remaining items are **unioned** with the values of the matching option
+rather than replacing or being replaced by them — these say what to leave out,
+so anything either source names is left out. This is why the general
+`option > variable` precedence does not apply to them.
+
+```console
+$ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
+```
+
+They are honored by `sync`, the one command that executes actions today, and by
+`clone` when it is built. Skips apply only to the current run and are never
+persisted to [`disabled.toml`](state.md); what a run does with the two together,
+and what it says about a name that matches nothing, is specified in
+[selecting what a run does](cmdline.md#selecting-what-a-run-does).
+
+Each item is an action [ID](repoformat.md#names-and-ids) or a group name. Since
+items are trimmed and split on commas, an ID may contain neither — which is why
+the ID rule excludes both characters.
 
 ## Location selection
 

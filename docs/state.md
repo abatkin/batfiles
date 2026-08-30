@@ -21,9 +21,11 @@ authoritative rules are in [location selection](environment.md#location-selectio
 is maintained by the four enable and disable commands, and it may also be edited
 by hand.
 
-> **Nothing reads it yet.** `sync` does not consult these lists, so disabling an
-> action today records the decision and does not change what a run installs. The
-> reader arrives with `--skip`, which selects the same way for one run.
+`sync` reads it along with the manifest and passes over every action either list
+names, alongside the run-only skips that select the same way for one invocation.
+The rules a run applies are in
+[selecting what a run does](cmdline.md#selecting-what-a-run-does); what is here
+is the document.
 
 ### Schema
 
@@ -61,12 +63,18 @@ The enable and disable commands validate each supplied name for syntax only.
   rather than a mistake to warn about: these commands resolve nothing, so a name
   a later branch change or Git update introduces can be disabled ahead of time.
   Since they never read the manifest, they could not tell a typo from a
-  pre-registration even if they wanted to.
+  pre-registration even if they wanted to. **A `sync` that then finds nothing to
+  match is silent too**, though it has the manifest open and could tell:
+  pre-registration is what the document is for, so a non-match is the expected
+  outcome rather than a complaint. That is the one rule separating these lists
+  from a run-only `--skip`, which warns.
 - **A malformed entry fails the load**, like any other malformed document. It can
   never become live, so carrying it silently would leave a permanently dead
   entry, and dropping it on the next save would make an unrelated `disable-action`
   destructive. Fixing one means editing the file, which is already a supported
-  way to maintain it.
+  way to maintain it. It fails a `sync` for a further reason: a run that
+  installed everything because it could not read the list of what to leave out
+  would be doing the opposite of what the document says.
 - **A repeated name warns and is applied once.** It names one thing however many
   times it was written, so the invocation still has an unambiguous meaning.
 - **An invalid name fails the whole invocation**, before the document is opened.

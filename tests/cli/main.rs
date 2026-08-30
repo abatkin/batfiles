@@ -10,6 +10,7 @@ mod disabled;
 mod groups;
 mod locations;
 mod manifest;
+mod selection;
 mod surface;
 
 #[cfg(unix)]

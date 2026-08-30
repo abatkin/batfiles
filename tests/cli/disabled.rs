@@ -1,8 +1,8 @@
 //! The persistent enable/disable commands.
 //!
-//! They read and write `disabled.toml` and nothing else. What they record is
-//! not read by anything yet — `sync` does not consult the lists until 3.4 —
-//! so what these tests pin down is the document and the account of the edit.
+//! They read and write `disabled.toml` and nothing else, so what these tests
+//! pin down is the document and the account of the edit. What a run then *does*
+//! with the lists belongs to the filter, and is in `selection`.
 
 use crate::support::*;
 
@@ -328,30 +328,4 @@ mod unwritable {
             "nothing should have been written"
         );
     }
-}
-
-#[test]
-fn a_disabled_action_is_still_installed_until_the_lists_are_read() {
-    // Honest rather than desirable: 3.3 writes the lists and 3.4 is their first
-    // reader. Delete this when `sync` starts filtering — it asserts the gap, so
-    // it is what fails loudly at the moment the gap closes.
-    let tree = Tree::new();
-    tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zsh-cache\"\n\
-         group = \"shell\"\n\
-         dest = \"~/.cache/zsh\"\n",
-    );
-    tree.batfiles()
-        .args(["disable-action", "zsh-cache"])
-        .assert()
-        .success();
-    tree.batfiles()
-        .args(["disable-group", "shell"])
-        .assert()
-        .success();
-
-    tree.batfiles().arg("sync").assert().success();
-    assert!(tree.home(".cache/zsh").is_dir());
 }

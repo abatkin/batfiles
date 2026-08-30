@@ -106,54 +106,24 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **3.3** ✅ Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and
   the four enable/disable commands, promoting the write path and the document
   into a new `docs/state.md`.
-- **3.4** Add `--skip` for suppressing an action or group for one run. The
-  environment half belongs here too, or it is silently ignored:
-  `BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS` union with the options.
-  `Environment::list` at the tag is the comma-split, trim, drop-empties helper
-  they share with 8.3's four bootstrap lists; 0.3 left it there for want of a
-  caller.
-
-  **This step also makes `sync` read `disabled.toml`, which 3.3 only writes.**
-  Until it does, `disable-action` prints that it disabled something and the next
-  run installs it anyway, which is the silent-ignore failure rule 12 exists to
-  stop, in a place rule 12 does not reach. Three carriers say so and clear
-  themselves here: a `CARRY(3.4)` on `Disabled`, a CLI test named
-  `a_disabled_action_is_still_installed_until_the_lists_are_read` that fails the
-  moment the filter lands, and a note in `docs/state.md` and `docs/cmdline.md`
-  that nothing reads the lists yet.
-
-  Both sources filter the same ordered list, so build one filter, not two. They
-  differ in exactly one rule, and it is the one to get right:
-
-  - **A skip matching no action warns and the run continues.** `sync` has the
-    manifest loaded, so unlike the enable and disable commands at 3.3 it can tell
-    — and a name that catches nothing is a typo in something typed for one run,
-    which is worth saying and not worth failing over.
-  - **A `disabled.toml` entry matching nothing is silent.** Pre-registering a
-    name a later branch introduces is the point of that file, so the same
-    non-match that warns for `--skip` is expected here. `docs/state.md` says so.
-
-  One more answer settled at 3.2, when the question came up and there was
-  nothing yet to write it into: **a skipped action is reported at `-v` only**,
-  alongside 3.2's heading rather than among the ordinary lines. The user asked
-  for the skip, so restating it at normal verbosity is noise; `-v` is where the
-  whole account of a run lives. The same goes for a disabled one.
-
-  **This is the first thing that selects by group**, so it is where 3.2's
-  membership gets a second reader and where `docs/repoformat.md`'s "a group
-  currently changes nothing about what a run does" comes out.
-
-  A skip value parses as an `ItemId`, not as 3.7's `ItemAddress`: with no remotes
-  yet a qualified address names nothing, and rule 3 says wait. 3.3 settled
-  `disabled.toml` the same way, so both lists are already `ItemId`. Widening them
-  is 6.3's and 7.x's, whichever needs it first.
+- **3.4** ✅ Add `--skip` and its `BATFILES_SKIP_*` half, and make `sync` read
+  the `disabled.toml` 3.3 only wrote, through one filter in `src/selection.rs`.
 - **3.5** Add default-disabled bootstrap entries. Like 5.1 and 6.1, adding the
   section is also un-rejecting it: the closed document turns `[default-disabled]`
   away today.
 - **3.6** Add `apply-action` and `apply-group` over the same filtered plan.
+  `Selection` is that plan's filter, and it takes the two run-only skip lists as
+  slices, so an apply command that accepts neither passes two empty ones. What
+  these commands need on top is the opposite question — which action or group
+  was *asked for* — and 3.4 deliberately did not generalize `Selection` into
+  answering it, there having been one caller (rule 3).
 - **3.7** Port `ItemAddress` and its parsing, which 3.6 is the first caller of.
   It also widens `disabled.toml`'s two lists, which 3.3 built as `ItemId` under
-  rule 3. That is additive — nothing batfiles wrote becomes unreadable — and it
+  rule 3, and 3.4's two run-only skip lists, which parse as `ItemId` for the same
+  reason: with no remotes yet a qualified address names nothing. Widening the
+  skips changes a diagnostic as well as a type — `--skip-action: \`core.zshrc\`
+  is not a valid ID` is a warning today, and an address that parses but resolves
+  to no remote is a different complaint. That is additive — nothing batfiles wrote becomes unreadable — and it
   is where the tag's `an_address_is_recorded_exactly_as_written` finally ports,
   replacing 3.3's test that a dotted name is refused. `docs/state.md` says
   plainly that a qualified address is rejected today, and

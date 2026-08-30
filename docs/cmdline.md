@@ -19,11 +19,13 @@ is not implemented yet, exiting 2 having written nothing. That message is the
 answer to "what can batfiles do", and it disappears one command at a time.
 
 `sync` is the first command that writes, and the first with an option that is
-honored: it executes the action types that exist, and `--dry-run` reports what
-it would execute without doing any of it.
+honored: it executes the action types that exist, `--dry-run` reports what it
+would execute without doing any of it, and `--skip-action`/`--skip-group` leave
+part of it out for one run.
 
 The enable and disable commands write machine-local state rather than anything in
-the home directory. Nothing reads that state yet — see below.
+the home directory, and `sync` acts on it: an action or group recorded in
+[`disabled.toml`](state.md) is passed over.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -80,9 +82,10 @@ because they were already correct. `--quiet` suppresses the lines saying what
 `sync` did, and nothing else.
 
 Three of the four resolved roots are live. `sync` reads the leaf repository and
-writes into the selected home; the enable and disable commands read and rewrite
-[`disabled.toml`](state.md) under the config directory, and touch neither of the
-other two. Nothing reads or writes anything under the cache directory yet. See
+[`disabled.toml`](state.md) and writes into the selected home; the enable and
+disable commands read and rewrite `disabled.toml` under the config directory,
+and touch neither of the other two. Nothing reads or writes anything under the
+cache directory yet. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -128,13 +131,19 @@ command renders the same string clap renders for the flag.
 ### `sync`
 
 ```text
-batfiles sync [--dry-run]
+batfiles sync [--dry-run] [--skip-action <id>]... [--skip-group <group>]...
 ```
 
 Read the leaf repository's [manifest](repoformat.md#reading-the-manifest) and
-execute its actions in declaration order, each one inspecting the filesystem as
-the previous one left it. The first failure stops the run; what earlier actions
-did stays done, and nothing is rolled back.
+execute the actions it selects, in declaration order, each one inspecting the
+filesystem as the previous one left it. The first failure stops the run; what
+earlier actions did stays done, and nothing is rolled back.
+
+Not every action in the manifest is one of them: a run passes over what is
+disabled or skipped — see
+[selecting what a run does](#selecting-what-a-run-does). The
+[`disabled.toml`](state.md) lists are read along with the manifest, before the
+first action, so a malformed one fails the run rather than being passed over.
 
 One line on standard error names each change made — one per link, so an action
 that installs several names each of them. A destination that was already
@@ -157,12 +166,73 @@ An action with no `id` is named by its one-based position in the manifest, which
 is how a load error names one too, so a heading and a diagnostic point at the
 same record by the same words. An action with no group ends after its name.
 
-| Option      | Purpose                                                                |
-|-------------|--------------------------------------------------------------------------|
-| `--dry-run` | Report the action plan without executing it — see [dry-run behavior](#dry-run-behavior). |
+| Option                 | Purpose                                                                |
+|------------------------|--------------------------------------------------------------------------|
+| `--dry-run`            | Report the action plan without executing it — see [dry-run behavior](#dry-run-behavior). |
+| `--skip-action <id>`   | Leave one action out of this run. Repeatable.                            |
+| `--skip-group <group>` | Leave every action in one group out of this run. Repeatable.             |
 
 Every other option `sync` accepts is [refused for now](#unimplemented-options);
 that list shrinking to empty is how you know `sync` is finished.
+
+## Selecting What a Run Does
+
+Two things say an action should be passed over, and a run honors both:
+
+- the machine-local [`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups)
+  lists, which persist until an enable command or a hand edit removes the name;
+  and
+- the run-only skips: `--skip-action` and `--skip-group`, together with
+  [`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`](environment.md#run-only-skips),
+  which apply to one invocation and are never written down.
+
+Both select over the same two namespaces. An action is named by its `id`, and a
+[group](repoformat.md#groups) is named by the `group` field its members carry —
+so an action written with no `id` can be left out only through its group, and an
+action in no group only by its own name. The two namespaces are separate, so
+`--skip-group zshrc` does not reach the action `zshrc`.
+
+The option and the variable **union** rather than one overriding the other, and
+so do the run-only skips and the persistent lists. These are lists of what to
+leave out, so anything any of them names is left out.
+
+**A run-only name that matches nothing warns, and the run continues.** `sync`
+has the manifest loaded, so unlike the [enable and disable
+commands](#enable-and-disable-actions-or-groups) it can tell — and a name that
+catches nothing is a typo in something typed for one run, which is worth saying
+and not worth failing over. A name that is not a valid [ID](repoformat.md#names-and-ids)
+warns the same way and for the same reason: it could never have matched.
+
+```console
+$ batfiles sync --skip-group editor --skip-action core.zshrc
+warning: --skip-action: `core.zshrc` is not a valid ID: an ID starts with a letter or digit, followed by letters, digits, hyphens, or underscores
+warning: --skip-group `editor` matched no group
+```
+
+Both come before the first action, because they are complaints about the
+invocation and a run that fails partway should not swallow them.
+
+**A `disabled.toml` entry that matches nothing is silent.** Pre-registering a
+name that a later branch or Git update introduces is the point of that document,
+so the same non-match that warns above is expected there.
+
+A skipped action is reported at `-v` **only**, as part of the heading naming the
+record. Asking for a skip and then being told about it at normal verbosity is
+noise; `-v` is where the whole account of a run lives.
+
+```text
+create-dir zsh-cache (group shell) - skipped: group `shell` is disabled
+symlink zshrc (group shell) - skipped: `zshrc` from --skip-action
+copy profile
+copied /home/you/.profile
+```
+
+The reason names the source the reader can go and change, which is why it spells
+out the option or the variable rather than saying only that a skip applied. When
+more than one source names the same action, one reason is reported: the disable
+ahead of the run-only skip, because it is the one still in force tomorrow when
+the skip is gone, and the action's own name ahead of its group's, because it is
+the more specific of the two.
 
 ### Enable and disable actions or groups
 
@@ -175,12 +245,9 @@ batfiles enable-group <group>...
 
 Persistently add one or more action IDs or group names to, or remove them from,
 the machine-local disabled lists. These commands run no synchronization and
-remove no installed content.
-
-> **What is recorded is not read yet.** `sync` does not consult
-> [`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups), so
-> disabling an action today records the decision and does not change what a run
-> installs. The reader arrives with `--skip`.
+remove no installed content: what they change is what the *next* `sync` does,
+which is to pass the recorded names over — see
+[selecting what a run does](#selecting-what-a-run-does).
 
 They read and write `disabled.toml` and nothing else. They do not resolve or load
 the leaf repository, so a `batfiles.toml` that is malformed, or missing
@@ -231,7 +298,10 @@ since the repository defaults to `<selected-home>/dotfiles`.
 A dry run's lines are the real run's lines in a different tense: `would link`
 and `would copy` where a real run reports `linked` and `copied`. Order and
 granularity match too — one line per child for the directory-wide actions, and
-one line for a whole tree where a real run installs one.
+one line for a whole tree where a real run installs one. A skipped action is the
+one line that takes no tense at all: it reports a decision rather than an act, so
+it reads the same in both modes, and the two runs pass over exactly the same
+actions.
 
 **Tense is the only difference where actions have distinct destinations.** Where
 one action's output is another's input the runs differ in substance, for the
@@ -275,7 +345,7 @@ the command exists.
 
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                        | `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--skip-action`, `--skip-group` |
+| `sync`                        | `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive` |
 | `clone`                       | `sync`'s list plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`. `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all |
 | `apply-action`, `apply-group` | `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
 | `vars list`                   | `--no-refresh`                                                                                                                             |
@@ -283,7 +353,10 @@ the command exists.
 
 An option that arrives together with the command that takes it is not listed —
 `init`'s `--no-git-init` and `vars list`'s `--machine-only` — because the
-command's own not-implemented message already covers it.
+command's own not-implemented message already covers it. Neither is an option
+that is live elsewhere and is waiting only on the command: `clone
+--skip-group gui` reports `clone`, because `--skip-group` is not the part of
+that invocation batfiles cannot do yet.
 
 ## Exit Statuses
 
@@ -304,7 +377,8 @@ unimplemented command or option joins it rather than reporting a failure it
 never had.
 
 Status 1 covers a command that needs a home directory and cannot determine one,
-a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, and an
+a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
+`disabled.toml` is malformed, and an
 action that could not be carried out — a source the repository does not contain,
 a destination holding something batfiles will not replace, or a write the
 operating system refused. In each case the invocation was well-formed and

@@ -17,8 +17,9 @@ use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 use crate::cli::unsupported::{self, Unsupported};
 use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::disabled::{self, Change, DisabledList};
+use crate::env::Environment;
 use crate::error::Error;
-use crate::location::{Environment, LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::location::{LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
 use crate::sync;
@@ -95,7 +96,14 @@ fn dispatch(
         Command::Init(_) => Ok(unimplemented(reporter, name)),
         Command::Sync(args) => {
             let roots = locate(cli, env, reporter)?;
-            sync::run(&roots, RunMode::new(args.dry_run), reporter)?;
+            sync::run(
+                &roots,
+                RunMode::new(args.dry_run),
+                &args.selection.skip_actions,
+                &args.selection.skip_groups,
+                env,
+                reporter,
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         // The four differ only in which list they edit and which way they move a

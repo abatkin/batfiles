@@ -11,11 +11,11 @@ nothing in the repository you cannot read with `cat`.
 > **Status: early, and not yet useful as a dotfiles manager.**
 >
 > Batfiles is being rebuilt from scratch. Two of the plan's eleven slices are
-> done and the third is under way. `sync` installs a repository and `--dry-run`
-> says what it would install; the enable/disable commands record decisions that
-> nothing reads yet. Every other command parses its arguments and then exits
-> saying it is not implemented yet. The plan, and the reason there is a rewrite,
-> are in [`rewrite/README.md`](rewrite/README.md).
+> done and the third is under way. `sync` installs a repository, `--dry-run`
+> says what it would install, and what you have disabled or asked to skip is
+> left out. Every other command parses its arguments and then exits saying it is
+> not implemented yet. The plan, and the reason there is a rewrite, are in
+> [`rewrite/README.md`](rewrite/README.md).
 
 > [!NOTE]
 > There is a sample repository to read and install:
@@ -64,11 +64,15 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
 - **An option that is not live yet is refused rather than ignored.** `sync
   --refresh-content` exits 2 naming the option, because silently accepting it
   would let you believe your content had been refreshed.
-- **Actions and groups can be disabled — but nothing reads that yet.**
+- **Actions and groups can be turned off, for good or for one run.**
   `disable-action`, `enable-action`, `disable-group`, and `enable-group` record
-  names in a machine-local `disabled.toml`, atomically and idempotently. `sync`
-  does not consult it, so today this is a decision written down rather than one
-  that takes effect; the reader arrives with `--skip`, next.
+  names in a machine-local `disabled.toml`, atomically and idempotently, and
+  every later `sync` passes those actions over. `--skip-action` and
+  `--skip-group` — or `BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS` — do
+  the same for one invocation without writing anything down. A skip that matches
+  nothing warns, since it was typed for this run; a pre-registered
+  `disabled.toml` entry that matches nothing is silent, since naming something a
+  later branch introduces is what that file is for.
 - **`version` prints the version.**
 - **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
@@ -147,9 +151,17 @@ linked /home/you/.inputrc -> /home/you/dotfiles/files/inputrc
 Missing parent directories are created. Run it again and it says nothing at
 all, because nothing changed; `-v` reports what it looked at, and heads each
 action's lines with the record that produced them and the `group` it names.
-Groups are for talking about several actions at once, and nothing selects by one
-yet — `disable-group` records the name and `sync` does not read it. And where
-something is already in the way:
+
+A group is how you talk about several actions at once. `batfiles sync
+--skip-group editor` leaves the `nvim` link out of one run, and `batfiles
+disable-group editor` leaves it out of every run until you enable it again:
+
+```console
+$ batfiles sync -v --skip-group editor
+symlink nvim (group editor) - skipped: `editor` from --skip-group
+```
+
+And where something is already in the way:
 
 ```console
 $ batfiles sync
@@ -176,7 +188,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 3     | Acting on the disabled lists, plus `--skip` and `apply-*`           |
+| 3     | Default-disabled bootstrap entries, and `apply-action`/`apply-group` |
 | 4     | Fetching files and archives, and cloning Git repositories           |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |

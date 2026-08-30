@@ -1,9 +1,12 @@
 //! The option groups shared between several commands.
 //!
-//! None of these options is live yet, so each value stays a `String`: an option
-//! that is rejected wholesale needs no parsed type, and pulling `VarName` or an
-//! address type forward to hold a value nothing reads is how the previous
-//! implementation grew its unreachable half.
+//! Every value here stays a `String`. For the options that are still rejected
+//! wholesale (`guidance.md`, rule 12) that is because a rejected option needs no
+//! parsed type, and pulling `VarName` or an address type forward to hold a value
+//! nothing reads is how the previous implementation grew its unreachable half.
+//! For the two skip lists, which are live, it is because an unusable name warns
+//! and is dropped rather than failing the run — a decision that needs the
+//! reporter, which clap's value parsers do not have.
 
 use clap::Args;
 

@@ -138,15 +138,19 @@ lists above do not:
 
 ### Run-only skips
 
-`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS` are comma-separated lists.
-Each item is trimmed, empty items are discarded, and the remaining items are
-unioned with `--skip-action` or `--skip-group` values. Skips apply only to the
-current run and are never persisted to `disabled.toml`.
+Run-only skips are built. `BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`,
+their comma-separated list rule, and the way they union with `--skip-action` and
+`--skip-group` are specified in
+[`docs/environment.md`](../environment.md#run-only-skips).
+
+What is not built is what they can *name*. A qualified address reaching an
+included remote's action or group is refused today, for want of a remote to
+resolve it against; see the [address forms](cmdline.md) below.
 
 ### Bootstrap enable and disable lists
 
 The following variables are comma-separated lists parsed with the same
-trim-items-and-drop-empties rule:
+trim-items-and-drop-empties rule as the run-only skips:
 
 - `BATFILES_DISABLE_ACTIONS`
 - `BATFILES_ENABLE_ACTIONS`

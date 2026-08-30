@@ -444,12 +444,22 @@ whoever reads the file rather than something batfiles requires or arranges.
 Group names and action IDs are separate namespaces, so a group may share a name
 with an action without either becoming ambiguous.
 
-What reads the field today is reporting: `sync -v` names the group each action
-belongs to as it reaches it. **A group currently changes nothing about what a run
-does.** `disable-group` records a name in
-[`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups) and nothing
-reads that list yet; skipping a group for one run and applying one on its own are
-specified in [`future/cmdline.md`](future/cmdline.md) and are not built.
+**A group is a way of leaving several actions out at once.** `sync --skip-group`
+and `BATFILES_SKIP_GROUPS` pass over every action naming it for one run, and
+`disable-group` records the name in
+[`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups), which
+every later run honors until an `enable-group` removes it. What a run does with
+the two is specified in
+[selecting what a run does](cmdline.md#selecting-what-a-run-does).
+
+Because a group is only the actions that name it, that selection reaches exactly
+those: an action written with no `group` cannot be left out by group, and an
+action written with no `id` can be left out *only* by group. Applying one group
+on its own — `apply-group` — is specified in
+[`future/cmdline.md`](future/cmdline.md) and is not built.
+
+The field is also read by reporting: `sync -v` names the group each action
+belongs to as it reaches it.
 
 ### `symlink`
 

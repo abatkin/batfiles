@@ -712,12 +712,15 @@ fn a_marker_naming_no_step_is_rejected() {
 
 #[test]
 fn an_entry_is_found_however_rustfmt_wrapped_it() {
+    // Copied from a real entry long enough for rustfmt to break it up, and kept
+    // pointing at a step that is still open so that grepping for a done one
+    // does not land here.
     let wrapped = "        (\n\
-                   \x20           !options.skip_actions.is_empty(),\n\
-                   \x20           \"--skip-action\",\n\
-                   \x20           \"3.4\",\n\
+                   \x20           !options.disable_actions.is_empty(),\n\
+                   \x20           \"--disable-action\",\n\
+                   \x20           \"8.3\",\n\
                    \x20       ),\n";
-    assert_eq!(step_literals(wrapped), [(4, "3.4".to_string())]);
+    assert_eq!(step_literals(wrapped), [(4, "8.3".to_string())]);
 }
 
 #[test]

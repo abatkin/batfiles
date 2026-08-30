@@ -6,7 +6,7 @@
 //! not-implemented message. An entry leaves as its step lands — `tests/hygiene.rs`
 //! insists — so the list shrinking to empty is how you know a command is finished.
 
-use super::options::{ActionOptions, BootstrapOptions, SelectionOptions};
+use super::options::{ActionOptions, BootstrapOptions};
 use super::{Command, VarsCommand};
 
 /// An option that parsed but does nothing yet, and the step that makes it live.
@@ -30,16 +30,13 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
         | Command::EnableAction(_)
         | Command::DisableGroup(_)
         | Command::EnableGroup(_) => None,
-        Command::Clone(args) => action(&args.action)
-            .or_else(|| selection(&args.selection))
-            .or_else(|| bootstrap(&args.bootstrap)),
+        Command::Clone(args) => action(&args.action).or_else(|| bootstrap(&args.bootstrap)),
         Command::Sync(args) => first_given([
             // Not 6.2: a git remote is fetched on every ordinary sync, so this
             // option has nothing to refresh until file and archive remotes land.
             (args.refresh_remotes, "--refresh-remotes", "9.3"),
         ])
-        .or_else(|| action(&args.action))
-        .or_else(|| selection(&args.selection)),
+        .or_else(|| action(&args.action)),
         Command::ApplyAction(args) => action(&args.action),
         Command::ApplyGroup(args) => action(&args.action),
         Command::Vars(command) => match command {
@@ -63,14 +60,6 @@ fn action(options: &ActionOptions) -> Option<Unsupported> {
         (options.refresh_content, "--refresh-content", "9.4"),
         (options.no_overwrite, "--no-overwrite", "9.4"),
         (options.interactive, "--interactive", "9.4"),
-    ])
-}
-
-/// The run-only selectors `sync` and `clone` share.
-fn selection(options: &SelectionOptions) -> Option<Unsupported> {
-    first_given([
-        (!options.skip_actions.is_empty(), "--skip-action", "3.4"),
-        (!options.skip_groups.is_empty(), "--skip-group", "3.4"),
     ])
 }
 

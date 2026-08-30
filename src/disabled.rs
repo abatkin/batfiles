@@ -36,9 +36,9 @@ use crate::output::Reporter;
 use crate::tomlfile;
 
 /// The parsed `disabled.toml`.
-// CARRY(3.4): nothing reads these lists yet — the four commands below write them
-// and `sync` ignores them. 3.4 is their first reader, filtering the action list
-// by both of these and by `--skip`.
+///
+/// Read by [`crate::selection`], which filters a run's action list by both
+/// lists and by the run-only skips.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Disabled {

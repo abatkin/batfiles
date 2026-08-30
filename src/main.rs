@@ -5,6 +5,7 @@ mod app;
 mod cli;
 mod directory;
 mod disabled;
+mod env;
 mod error;
 mod install;
 mod item;
@@ -13,6 +14,7 @@ mod manifest;
 mod mode;
 mod output;
 mod paths;
+mod selection;
 mod sync;
 mod tomlfile;
 
