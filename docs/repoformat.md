@@ -60,16 +60,20 @@ batfiles owns is replaced when it changes is specified alongside that one, under
 
 ## Top-level schema
 
-There is no format-version field, and every top-level section is optional. One
-section exists:
+There is no format-version field, and every top-level section is optional. Two
+sections exist:
 
 ```toml
 [[actions]]                # ordered list<Action>
+
+[default-disabled]         # leaf bootstrap policy
+[[default-disabled.actions]]
+[[default-disabled.groups]]
 ```
 
 Known records are closed: an unknown key, in the document or in an action, is
 invalid. That is what a section from an unbuilt part of the format runs into.
-`[remotes]`, `[vars]`, and `[default-disabled]` are specified in
+`[remotes]` and `[vars]` are specified in
 [`future/repoformat.md`](future/repoformat.md) and are rejected until the code
 that reads them exists, so a manifest declaring one fails rather than appearing
 to have been understood.
@@ -758,3 +762,61 @@ is not a directory is an error.
 Filtering the children — `include` and `exclude` — is specified in
 [`future/repoformat.md`](future/repoformat.md#copy) for both `copy` and
 `copy-dir` and is not built on either. A manifest that writes one is rejected.
+
+## Default-disabled bootstrap entries
+
+`[default-disabled]` is where a leaf repository says what a fresh machine should
+start with switched off — a plugin that takes a long time to install, a group
+that only belongs on a work machine. It holds two arrays of closed records:
+
+```toml
+[[default-disabled.actions]]
+id = "p10k"
+
+[[default-disabled.groups]]
+group = "gui"
+```
+
+### Action entry
+
+| Field | Type | Required | Description                            |
+|-------|------|:--------:|----------------------------------------|
+| `id`  | `ID` |   yes    | The action to start out disabled.      |
+
+### Group entry
+
+| Field   | Type | Required | Description                         |
+|---------|------|:--------:|-------------------------------------|
+| `group` | `ID` |   yes    | The group to start out disabled.    |
+
+**These are candidates offered once, not a standing setting.** A repository
+saying an action is default-disabled is describing where a machine starts, and
+nothing more: the moment a machine has an opinion of its own, recorded in
+[`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups), that
+opinion is the one that counts. Nothing in the section can switch an action off
+again on a machine that has already enabled it.
+
+**Nothing reads the section yet, so declaring it changes no run.** Batfiles
+accepts it and checks it as the manifest is read; adopting the candidates
+belongs to the bootstrap that sets a machine up for the first time, and is
+specified in [`future/repoformat.md`](future/repoformat.md) along with the
+enable and disable options that take precedence over them. Until that arrives,
+a `sync` over a manifest declaring candidates installs exactly what it would
+have installed without them, and creates no `disabled.toml`.
+
+What is checked is the record's own syntax. Each entry names an
+[ID](#names-and-ids), the records are closed like every other, and an entry
+missing the field that names it is an error — so a candidate that could never
+mean anything is caught on the machine that writes it rather than on the one
+that finally bootstraps.
+
+What an entry *names* is never looked up, which is the same rule
+`disabled.toml` follows: a candidate may legitimately refer to an action a
+later branch change or Git update introduces, so there is nothing to resolve it
+against and no complaint to make about a name nothing answers to yet.
+
+Two fields the full format gives these records are not built. `when` and
+`unless` arrive with [conditions](future/repoformat.md#condition), and a
+qualified address such as `core.p10k` naming an included remote's action
+arrives with the remotes that give a dotted name something to refer to. Both
+are rejected meanwhile, by the records being closed and by an ID being an ID.

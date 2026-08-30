@@ -108,9 +108,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   into a new `docs/state.md`.
 - **3.4** ✅ Add `--skip` and its `BATFILES_SKIP_*` half, and make `sync` read
   the `disabled.toml` 3.3 only wrote, through one filter in `src/selection.rs`.
-- **3.5** Add default-disabled bootstrap entries. Like 5.1 and 6.1, adding the
-  section is also un-rejecting it: the closed document turns `[default-disabled]`
-  away today.
+- **3.5** ✅ Add default-disabled bootstrap entries, which — like 5.1 and 6.1 —
+  is also un-rejecting the section the closed document turned away. Parsed and
+  checked as the manifest is read; adoption is 8.3's.
 - **3.6** Add `apply-action` and `apply-group` over the same filtered plan.
   `Selection` is that plan's filter, and it takes the two run-only skip lists as
   slices, so an apply command that accepts neither passes two empty ones. What
@@ -119,8 +119,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   answering it, there having been one caller (rule 3).
 - **3.7** Port `ItemAddress` and its parsing, which 3.6 is the first caller of.
   It also widens `disabled.toml`'s two lists, which 3.3 built as `ItemId` under
-  rule 3, and 3.4's two run-only skip lists, which parse as `ItemId` for the same
-  reason: with no remotes yet a qualified address names nothing. Widening the
+  rule 3, 3.4's two run-only skip lists, and 3.5's `[default-disabled]` entry
+  fields, all of which parse as `ItemId` for the same reason: with no remotes yet
+  a qualified address names nothing. Widening the
   skips changes a diagnostic as well as a type — `--skip-action: \`core.zshrc\`
   is not a valid ID` is a warning today, and an address that parses but resolves
   to no remote is a different complaint. That is additive — nothing batfiles wrote becomes unreadable — and it
@@ -257,7 +258,13 @@ fetching.
   every `Action` variant, after `id` at 0.6 and `group` at 3.2, so this is the
   step 1.5 defers the collapse to: replace the per-field accessors with one `fn
   common(&self) -> Common<'_>` returning a borrowed view of the shared fields,
-  so there is one exhaustive match rather than one per field.
+  so there is one exhaustive match rather than one per field. The same two fields
+  also go on 3.5's two `[default-disabled]` entry records, whose closedness is
+  what refuses them today — and since the both-set rule is the kind serde cannot
+  express, checking it walks those two lists, which is the first thing to read
+  them. That is why `Manifest::default_disabled` and the two `Vec` fields under
+  it expect their dead code until *this* step and not until 8.3; only each
+  entry's `id` and `group` stay unread until adoption.
 - **5.7** Make an unevaluable condition close the gate and warn, in both
   spellings.
 - **5.8** Add `vars list`.
@@ -330,7 +337,14 @@ The hard slice. Everything it composes over is real by now.
 - **8.1** Port `init`, trimmed.
 - **8.2** Add `clone`: a `git clone` followed by a `sync`, and little else.
 - **8.3** Add bootstrap precedence and its interaction with default-disabled
-  entries.
+  entries. 3.5 landed the section parsed and unread, so this is the step that
+  first reads it, and the list of fields waiting on it is held by the compiler
+  rather than by prose: every one carries `#[expect(dead_code, reason = "adopted
+  at 8.3, …")]`, which becomes an unfulfilled expectation — and under `-D
+  warnings` a failure — the moment adoption reads it (rule 1). Two assertions in
+  `tests/cli/manifest.rs` are this step's to change on purpose: that a candidate
+  disables nothing, and that a `sync` over a manifest declaring candidates
+  creates no `disabled.toml`.
 - **8.4** Add a Docker-based test that clones into a pristine machine image, as
   a `task test:docker` that `task ci` runs and `task test` does not.
 

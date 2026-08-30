@@ -52,8 +52,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   Until there is a backup policy to give it back with, batfiles does not
   destroy what it did not create.
 - **The manifest is read strictly.** An unknown key, an unknown action type, a
-  section belonging to an unbuilt part of the format, or a `source` or `dest`
-  that cannot mean what it says is an error — never a setting that looks
+  section from a part of the format that does not parse yet, or a `source` or
+  `dest` that cannot mean what it says is an error — never a setting that looks
   accepted and does nothing. All of it is caught while the file is read, so a
   manifest batfiles will not honor stops the run before it installs half of it.
 - **A run can be asked what it would do.** `sync --dry-run` reports the whole
@@ -73,6 +73,13 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   nothing warns, since it was typed for this run; a pre-registered
   `disabled.toml` entry that matches nothing is silent, since naming something a
   later branch introduces is what that file is for.
+- **A repository can name what a fresh machine starts with switched off, and
+  nothing acts on it yet.** `[default-disabled]` lists candidate actions and
+  groups; batfiles checks them as it reads the manifest and does no more. The
+  bootstrap that adopts them into `disabled.toml` arrives with `clone`, so
+  declaring them changes no run today. It is the one section that is accepted
+  without being acted on, and it is named here rather than left to be
+  discovered.
 - **`version` prints the version.**
 - **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
@@ -188,11 +195,11 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 3     | Default-disabled bootstrap entries, and `apply-action`/`apply-group` |
+| 3     | `apply-action` and `apply-group`, for one action or group alone    |
 | 4     | Fetching files and archives, and cloning Git repositories           |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
-| 8     | `init` and `clone` for setting up a new machine                     |
+| 8     | `init` and `clone` for new machines, with default-disabled adoption |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 

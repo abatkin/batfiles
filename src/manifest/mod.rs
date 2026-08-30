@@ -6,6 +6,7 @@
 //! cannot be honored is refused before any of it is acted on.
 
 pub(crate) mod action;
+pub(crate) mod default_disabled;
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
@@ -16,6 +17,7 @@ use thiserror::Error;
 use crate::error::Error as CrateError;
 use crate::item::ItemId;
 use crate::manifest::action::Action;
+use crate::manifest::default_disabled::DefaultDisabled;
 use crate::tomlfile;
 
 /// A parsed `batfiles.toml`.
@@ -32,6 +34,15 @@ pub(crate) struct Manifest {
     /// section that is a sequence rather than a map.
     #[serde(default)]
     pub actions: Vec<Action>,
+
+    /// What a fresh machine starts with switched off. Accepted and checked as
+    /// the document is read; nothing acts on it.
+    #[expect(
+        dead_code,
+        reason = "walked at 5.6, to reject an entry setting both conditions"
+    )]
+    #[serde(default)]
+    pub default_disabled: DefaultDisabled,
 }
 
 impl Manifest {

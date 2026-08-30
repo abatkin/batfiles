@@ -128,7 +128,12 @@ caller. Do not.
   undeclared bare identifier is an error, and `vars.x` is total.
 - **`src/repo/remote.rs`** (210) — the git variant at 6.1, file and archive at
   9.3.
-- **`src/repo/default_disabled.rs`** (143) — step 3.5.
+- **`src/repo/default_disabled.rs`** (143) — step 3.5, in two halves. The two
+  record shapes landed as `src/manifest/default_disabled.rs`, cut to their `id`
+  and `group` fields and renamed `ActionEntry` and `GroupEntry`, the old names
+  having repeated the module. What is still shelved is what those fields carried:
+  the `Condition` pair on each record waits for 5.6, and `ItemAddress` in place
+  of `ItemId` for 3.7.
 - **`src/repo/duration.rs`** (264) — step 9.1. `FriendlyDuration` has no other
   caller; `cache` and `command-timeout` are its only two fields.
 - **`src/repo/var_decl.rs`** (305) and **`src/state/dynamic_vars.rs`** (237) —

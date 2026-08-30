@@ -76,6 +76,118 @@ fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
     );
 }
 
+// `[default-disabled]`: candidates a later bootstrap adopts. The section is
+// accepted and checked as the manifest is read, and nothing reads it yet, so
+// every test below is about what the document will and will not take.
+
+/// The two lists, written the way the format spells them.
+const CANDIDATES: &str = "[[default-disabled.actions]]\n\
+                          id = \"p10k\"\n\
+                          \n\
+                          [[default-disabled.groups]]\n\
+                          group = \"gui\"\n";
+
+#[test]
+fn a_default_disabled_section_is_accepted_and_changes_nothing() {
+    // What 3.5 buys: the closed document takes the section. Nothing adopts the
+    // candidates until 8.3, so the run installs what it would have installed
+    // and leaves the machine-local lists alone — including by not creating the
+    // `disabled.toml` that adoption would have to write.
+    let tree = Tree::new();
+    tree.write_manifest(&format!("{CANDIDATES}\n{}", one_create_dir("~/.config")));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert!(
+        tree.home(".config").is_dir(),
+        "the run did not install what the manifest asked for"
+    );
+    assert!(
+        !tree.disabled().exists(),
+        "the candidates were adopted, which is 8.3's job"
+    );
+}
+
+#[test]
+fn a_default_disabled_candidate_does_not_disable_anything_yet() {
+    // The candidate names the action, and the action still runs. A section that
+    // quietly took effect would be the worse of the two failures, and this is
+    // the assertion 8.3 has to change on purpose.
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[[default-disabled.actions]]\n\
+         id = \"config\"\n\
+         \n\
+         [[actions]]\n\
+         type = \"create-dir\"\n\
+         id = \"config\"\n\
+         dest = \"~/.config\"\n",
+    );
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert!(
+        tree.home(".config").is_dir(),
+        "the candidate disabled the action it names"
+    );
+}
+
+#[test]
+fn a_condition_a_candidate_does_not_have_yet_is_rejected() {
+    // `when` and `unless` arrive at 5.6. The entry record is closed, so one is
+    // an error now rather than a gate that looks as though it were consulted.
+    for field in ["when", "unless"] {
+        let stderr = rejected(&format!(
+            "[[default-disabled.actions]]\nid = \"p10k\"\n{field} = \"work\"\n"
+        ));
+        assert!(stderr.contains(field), "`{field}` was not named:\n{stderr}");
+    }
+}
+
+#[test]
+fn a_candidate_naming_a_qualified_address_is_rejected() {
+    // Both lists hold bare IDs until 3.7 widens them, along with
+    // `disabled.toml`'s lists and the run-only skips. With no remote to resolve
+    // one against, a dotted name could never match.
+    for entry in [
+        "[[default-disabled.actions]]\nid = \"core.p10k\"\n",
+        "[[default-disabled.groups]]\ngroup = \"core.gui\"\n",
+    ] {
+        let stderr = rejected(entry);
+        assert!(
+            stderr.contains("not a valid ID"),
+            "the address was accepted:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_candidate_without_the_field_that_names_it_is_rejected() {
+    // An entry that names nothing is a mistake rather than a candidate, and it
+    // is one the format can catch on the machine that writes it.
+    for (entry, field) in [
+        ("[[default-disabled.actions]]\ngroup = \"gui\"\n", "id"),
+        ("[[default-disabled.groups]]\nid = \"p10k\"\n", "group"),
+    ] {
+        let stderr = rejected(entry);
+        assert!(stderr.contains(field), "`{field}` was not named:\n{stderr}");
+    }
+}
+
+#[test]
+fn the_default_disabled_records_are_closed_like_every_other() {
+    for (document, field) in [
+        ("[default-disabled]\nremotes = []\n", "remotes"),
+        (
+            "[[default-disabled.actions]]\nid = \"p10k\"\nreason = \"slow\"\n",
+            "reason",
+        ),
+    ] {
+        let stderr = rejected(document);
+        assert!(stderr.contains(field), "`{field}` was not named:\n{stderr}");
+    }
+}
+
 #[test]
 fn the_two_symlink_types_do_not_share_a_field_set() {
     // `symlink` links one path and `symlink-dir` links a directory's children.

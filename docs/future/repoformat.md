@@ -44,9 +44,9 @@ single materialization at that path.
 
 The part of this section that runs — every section optional, no format-version
 field, and known records closed — is specified in
-[`docs/repoformat.md`](../repoformat.md), along with `[[actions]]`. The other
-three sections below parse in no repository yet: declaring one is an error until
-the code that reads it exists.
+[`docs/repoformat.md`](../repoformat.md), along with `[[actions]]` and
+`[default-disabled]`. The other two sections below parse in no repository yet:
+declaring one is an error until the code that reads it exists.
 
 All top-level sections are optional:
 
@@ -421,13 +421,23 @@ guaranteed to fail, so `command-timeout` must be greater than zero.
 
 ## Default-Disabled Bootstrap Entries
 
-The leaf repository may provide initial disabled action and group addresses.
-These are arrays of closed records nested below `[default-disabled]`.
+The part of this section that runs — the two arrays of closed records, their
+required `id` and `group` fields, and what is checked as the manifest is read —
+is specified in [`docs/repoformat.md`](../repoformat.md#default-disabled-bootstrap-entries).
+Three things about it are not built.
+
+**Adoption**, which is the whole point of the section. Nothing reads the
+candidates today. A bootstrap command resolves them against its own enable and
+disable options and writes the outcome to `disabled.toml`, following the
+environment specification's [bootstrap adoption
+precedence](environment.md#bootstrap-enable-and-disable-lists); until that
+command exists, a manifest declaring candidates is accepted and has no effect.
+
+**Conditions.** Each entry also takes `when` and `unless`, so that a candidate
+is adopted only on the machines it suits. Both are rejected today, by the entry
+records being closed.
 
 ```toml
-[[default-disabled.actions]]
-id = "p10k"
-
 [[default-disabled.actions]]
 id = "core.work-tools"
 when = "work"
@@ -437,19 +447,11 @@ group = "gui"
 unless = "facts.os == 'macos'"
 ```
 
-### Action entry
-
-| Field    | Type        | Required | Description                                                        |
-|----------|-------------|:--------:|--------------------------------------------------------------------|
-| `id`     | string      |   yes    | Addressable remote, action, included action, or manifest-entry ID. |
-| `when`   | `Condition` |    no    | Conditional bootstrap adoption.                                    |
-
-### Group entry
-
-| Field    | Type        | Required | Description                                   |
-|----------|-------------|:--------:|-----------------------------------------------|
-| `group`  | string      |   yes    | Leaf or qualified included group address.     |
-| `when`   | `Condition` |    no    | Conditional bootstrap adoption.               |
+**Qualified addresses.** Both fields widen from an
+[ID](../repoformat.md#names-and-ids) to an address, so that a candidate can name
+an included remote's action or group — `id = "core.work-tools"` above. They
+widen along with `disabled.toml`'s two lists and the run-only skips, when
+included remotes give a dotted name something to refer to.
 
 `[default-disabled]` in an included remote is structurally valid but ignored;
 bootstrap policy belongs to the leaf repository.
