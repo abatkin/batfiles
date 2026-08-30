@@ -3,6 +3,7 @@
 mod action;
 mod app;
 mod cli;
+mod directory;
 mod error;
 mod install;
 mod item;

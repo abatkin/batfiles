@@ -1,7 +1,7 @@
 //! Carrying one `[[actions]]` record out.
 //!
 //! One file per action type, plus the two things every action needs: the
-//! [`Context`] it runs against, and — for the two `-dir` types — the
+//! [`RunContext`] it runs against, and — for the two `-dir` types — the
 //! [`children`] loop they share. Nothing else lives here, so which file holds an
 //! action is answered by its name.
 
@@ -11,13 +11,13 @@ mod copy;
 mod create_dir;
 mod symlink;
 
-pub(crate) use context::Context;
+pub(crate) use context::RunContext;
 
 use crate::error::Error;
 use crate::manifest::action::Action;
 
 /// Carry out one action, whichever kind it is.
-pub(crate) fn run(action: &Action, context: &Context) -> Result<(), Error> {
+pub(crate) fn run(action: &Action, context: &RunContext) -> Result<(), Error> {
     match action {
         Action::Symlink(action) => symlink::link(action, context),
         Action::SymlinkDir(action) => symlink::link_dir(action, context),

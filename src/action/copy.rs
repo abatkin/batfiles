@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use super::Context;
+use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::install;
@@ -19,7 +19,7 @@ use crate::paths;
 ///
 /// A seed, so the destination decides everything: something there means the
 /// action is done, and a directory source is installed whole or not at all.
-pub(super) fn copy(action: &CopyAction, context: &Context) -> Result<(), Error> {
+pub(super) fn copy(action: &CopyAction, context: &RunContext) -> Result<(), Error> {
     let source = context.source(&action.source)?;
     let dest = context.destination(&action.dest);
     install::seed(
@@ -38,7 +38,7 @@ pub(super) fn copy(action: &CopyAction, context: &Context) -> Result<(), Error> 
 /// nothing is there and untouched where something is. Nothing decides entry by
 /// entry inside a child, so a directory the user already has is never seeded
 /// into.
-pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), Error> {
+pub(super) fn copy_dir(action: &CopyDirAction, context: &RunContext) -> Result<(), Error> {
     let source_dir = context.source_directory(&action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     // Before the destination is created, because creating it inside the source
@@ -63,7 +63,7 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &Context) -> Result<(), 
 ///
 /// Classified without following anything, because a child is a node found
 /// rather than a path the manifest wrote.
-fn seed_child(source: &Path, dest: &Path, context: &Context) -> Result<(), Error> {
+fn seed_child(source: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
     install::seed(
         source,
         install::kind_of_found_node(source)?,

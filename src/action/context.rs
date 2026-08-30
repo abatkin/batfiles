@@ -8,11 +8,12 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::directory::{self, DirectoryOutcome};
 use crate::error::Error;
 use crate::location::Roots;
 use crate::mode::{RunMode, Verb};
 use crate::output::Reporter;
-use crate::paths::{self, Directory, Repository};
+use crate::paths::{self, Repository};
 
 /// What every action is carried out against: the two roots it can reach, and
 /// somewhere to say what it did.
@@ -27,14 +28,14 @@ use crate::paths::{self, Directory, Repository};
 /// here, which is what keeps a run's settings from being threaded past every
 /// action individually: the dry-run mode is a field on this value rather than a
 /// parameter on nine signatures, and 9.4's `--refresh-content` is a second one.
-pub(crate) struct Context<'a> {
+pub(crate) struct RunContext<'a> {
     repository: Repository,
     home: PathBuf,
     mode: RunMode,
     reporter: &'a Reporter,
 }
 
-impl<'a> Context<'a> {
+impl<'a> RunContext<'a> {
     /// Anchor the resolved roots, once, for every action in a run.
     pub fn new(roots: &Roots, mode: RunMode, reporter: &'a Reporter) -> Result<Self, Error> {
         Ok(Self {
@@ -104,14 +105,14 @@ impl<'a> Context<'a> {
         self.mode
     }
 
-    /// [`paths::ensure_directory`], plus the report it has no reporter to make.
+    /// [`directory::ensure_directory`], plus the report it has no reporter to make.
     ///
     /// Every caller says the same thing about the same directory, because they
     /// are all the same operation: `create-dir` asks for one outright, and the
     /// two directory-wide actions need one to install into. A directory that
     /// appeared in the home is worth a line either way.
     pub fn ensure_directory(&self, dir: &Path) -> Result<(), Error> {
-        let outcome = paths::ensure_directory(dir, self.mode)?;
+        let outcome = directory::ensure_directory(dir, self.mode)?;
         // Ahead of the line about the directory, and at normal verbosity rather
         // than at `-v`: each of these is a removal, and a broken link is still
         // one the user may have been meaning to fix.
@@ -119,12 +120,12 @@ impl<'a> Context<'a> {
             self.reporter.info(&link.removal_note(self.mode));
         }
         match outcome {
-            Directory::Created { .. } => self.reporter.info(&format!(
+            DirectoryOutcome::Created { .. } => self.reporter.info(&format!(
                 "{} {}",
                 Verb::Create.say(self.mode),
                 dir.display()
             )),
-            Directory::AlreadyThere => self
+            DirectoryOutcome::AlreadyThere => self
                 .reporter
                 .detail(1, &format!("unchanged {}", dir.display())),
         }

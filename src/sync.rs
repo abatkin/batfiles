@@ -6,7 +6,7 @@
 //! is the list, and the one place anything iterates it (`guidance.md`, "Seams
 //! the late slices need").
 
-use crate::action::{self, Context};
+use crate::action::{self, RunContext};
 use crate::error::Error;
 use crate::location::Roots;
 use crate::manifest::Manifest;
@@ -26,7 +26,7 @@ use crate::output::Reporter;
 /// the same loop over the same list.
 pub(crate) fn run(roots: &Roots, mode: RunMode, reporter: &Reporter) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest())?;
-    let context = Context::new(roots, mode, reporter)?;
+    let context = RunContext::new(roots, mode, reporter)?;
     for entry in &manifest.actions {
         action::run(entry, &context)?;
     }

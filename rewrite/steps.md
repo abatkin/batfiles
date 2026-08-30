@@ -1,6 +1,6 @@
 # Rewrite Steps
 
-Eleven vertical slices. Each ends with a working binary and a `tests/cli.rs`
+Eleven vertical slices. Each ends with a working binary and a `tests/cli/`
 test. Steps are numbered so other documents can reference them. Read
 `guidance.md` first — several steps below are short because the reasoning lives
 there.
@@ -84,7 +84,7 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 
 ## Slice 2 — Dry-run
 
-- **2.1** ✅ Add `RunMode { Perform, DryRun }` to `action::Context` and read it
+- **2.1** ✅ Add `RunMode { Perform, DryRun }` to `action::RunContext` and read it
   at the three helpers that carry out an action's work. Under `DryRun`
   `install::seed` creates no staging node.
 - **2.2** ✅ Report in the tense the mode dictates, through one `Verb` shared by
@@ -126,7 +126,7 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **3.3** Port the atomic-write half of `tomlfile.rs`, `disabled.toml`, and the
   four enable/disable commands. It writes with `rename` and `remove_file` and is
   meant to: `tomlfile.rs` is on 2.3's allowlist as bookkeeping and reads no
-  `Mode`, because a state file is not part of the plan an action carries out
+  `RunMode`, because a state file is not part of the plan an action carries out
   (`guidance.md`, "Two lists, and why they are not the same one").
   Three things 0.4 left are finished here.
   `read_or_default` and `Error::is_not_found` are still at the tag: together
@@ -194,7 +194,7 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   that escapes is caught before anything reaches `$HOME`, and the whole
   extraction is abandoned by discarding one path.
 - **4.3** Add `git-clone` for one repository, and the shared helper that shells
-  out to `git`. **That helper is the fourth thing that reads `Mode`, and the only
+  out to `git`. **That helper is the fourth thing that reads `RunMode`, and the only
   one slice 4 adds** (`guidance.md`, "Where the mode is read"). It is not covered
   by anything slice 2 built: a clone destination that already exists is an
   occupied destination, which `install::seed` declines by design, so the update
@@ -363,7 +363,7 @@ before.
   cache, and `allow-dynamic-vars`. The command runner names
   `std::process::Command`, so it joins 2.3's allowlist as bookkeeping, and its
   reason should say that what it runs is arbitrary unsandboxed programs. It reads
-  no `Mode`: a dry run resolves dynamic variables normally and may write
+  no `RunMode`: a dry run resolves dynamic variables normally and may write
   `dynamic-vars.toml`. Promote the dynamic-variable paragraph of
   `docs/future/cmdline.md`'s dry-run section into the `docs/cmdline.md` section
   2.4 created — it is the one caveat on "a dry run does not do the work", and it
@@ -409,7 +409,7 @@ before.
   `create_parents` rediscovers it, so twelve children produce thirteen lines
   where a real run produces one.
 
-  The fix is a set of already-reported paths on `action::Context`, consulted in
+  The fix is a set of already-reported paths on `action::RunContext`, consulted in
   `DryRun` only — about ten lines, and not a simulated filesystem, since it
   changes what is *said* rather than what is *found*. It waits here because the
   cost is duplicated output in a narrow case, and because a `Context` carrying

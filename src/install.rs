@@ -13,6 +13,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::directory;
 use crate::error::Error;
 use crate::mode::{RunMode, Verb};
 use crate::output::Reporter;
@@ -20,7 +21,7 @@ use crate::paths;
 
 /// What `copy` reproduces. Nothing else is installed by copying it.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Copyable {
+pub(crate) enum FileOrDirectory {
     File,
     Directory,
 }
@@ -37,7 +38,7 @@ pub(crate) enum Copyable {
 /// unreachable in that mode rather than merely unused.
 pub(crate) fn seed(
     source: &Path,
-    kind: Copyable,
+    kind: FileOrDirectory,
     dest: &Path,
     mode: RunMode,
     reporter: &Reporter,
@@ -53,10 +54,10 @@ pub(crate) fn seed(
         // copy. Asked first, it turns a destination that is merely *occupied*
         // — by a link of the user's own resolving into the source, say — into
         // an error, and a seed does not fail on an occupied destination.
-        if let Copyable::Directory = kind {
+        if let FileOrDirectory::Directory = kind {
             paths::refuse_destination_inside_source(source, dest)?;
         }
-        for link in paths::create_parents(dest, mode)?.removals() {
+        for link in directory::create_parents(dest, mode)?.removals() {
             reporter.info(&link.removal_note(mode));
         }
         // The destination was free a moment ago, so a real run would copy into
@@ -103,7 +104,7 @@ pub(crate) fn seed(
 /// made is left alone, like one that was taken before it started.
 fn build_and_publish(
     source: &Path,
-    kind: Copyable,
+    kind: FileOrDirectory,
     dest: &Path,
     reporter: &Reporter,
 ) -> Result<bool, Error> {
@@ -133,7 +134,7 @@ fn build_and_publish(
 /// earlier run of batfiles, but that is a guess, and acting on it would mean
 /// deleting a path this run did not create. So it is named and the action
 /// stops.
-fn create_staging(kind: Copyable, staging: &Path) -> Result<Staged, Error> {
+fn create_staging(kind: FileOrDirectory, staging: &Path) -> Result<Staged, Error> {
     create_closed(kind, staging).map_err(|error| {
         if error.kind() == io::ErrorKind::AlreadyExists {
             Error::StagingPathTaken {
@@ -168,17 +169,17 @@ enum Staged {
 /// tree: everything written under a staging directory is reached through it, so
 /// one restrictive mode on the root is enough while the copy is in progress.
 #[cfg(unix)]
-fn create_closed(kind: Copyable, staging: &Path) -> io::Result<Staged> {
+fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
     match kind {
-        Copyable::File => fs::OpenOptions::new()
+        FileOrDirectory::File => fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(staging)
             .map(Staged::File),
-        Copyable::Directory => fs::DirBuilder::new()
+        FileOrDirectory::Directory => fs::DirBuilder::new()
             .mode(0o700)
             .create(staging)
             .map(|()| Staged::Directory),
@@ -189,10 +190,10 @@ fn create_closed(kind: Copyable, staging: &Path) -> io::Result<Staged> {
 /// exclusive creation: the permissions batfiles carries across are the unix
 /// ones, and there is nothing here to narrow.
 #[cfg(not(unix))]
-fn create_closed(kind: Copyable, staging: &Path) -> io::Result<Staged> {
+fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
     match kind {
-        Copyable::File => create_new(staging).map(Staged::File),
-        Copyable::Directory => fs::create_dir(staging).map(|()| Staged::Directory),
+        FileOrDirectory::File => create_new(staging).map(Staged::File),
+        FileOrDirectory::Directory => fs::create_dir(staging).map(|()| Staged::Directory),
     }
 }
 
@@ -220,8 +221,8 @@ fn fill(source: &Path, staged: Staged, staging: &Path) -> Result<(), Error> {
 /// replaced to a directory created between two adjacent calls, and a rename
 /// only replaces an *empty* directory — anything holding content fails the
 /// rename instead. No content is at risk either way.
-fn publish(staging: &Path, kind: Copyable, dest: &Path) -> Result<bool, Error> {
-    if let Copyable::File = kind {
+fn publish(staging: &Path, kind: FileOrDirectory, dest: &Path) -> Result<bool, Error> {
+    if let FileOrDirectory::File = kind {
         match fs::hard_link(staging, dest) {
             Ok(()) => return Ok(true),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
@@ -244,10 +245,10 @@ fn publish(staging: &Path, kind: Copyable, dest: &Path) -> Result<bool, Error> {
 ///
 /// Only ever called on a path [`create_staging`] made, which is what makes it
 /// safe. A path that is already gone is the ordinary case after a rename.
-fn discard(staging: &Path, kind: Copyable, reporter: &Reporter) {
+fn discard(staging: &Path, kind: FileOrDirectory, reporter: &Reporter) {
     let removed = match kind {
-        Copyable::File => fs::remove_file(staging),
-        Copyable::Directory => fs::remove_dir_all(staging),
+        FileOrDirectory::File => fs::remove_file(staging),
+        FileOrDirectory::Directory => fs::remove_dir_all(staging),
     };
     match removed {
         Ok(()) => {}
@@ -298,7 +299,7 @@ fn staging_path(dest: &Path) -> PathBuf {
 /// Naming a thing and reproducing one are different questions, and every
 /// action's source resolves through a link — that is how a repository points at
 /// something it stores under another name.
-pub(crate) fn kind_of_named_source(source: &Path) -> Result<Copyable, Error> {
+pub(crate) fn kind_of_named_source(source: &Path) -> Result<FileOrDirectory, Error> {
     let found = fs::metadata(source).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             // Reachability, not presence: the source has already been resolved
@@ -324,7 +325,7 @@ pub(crate) fn kind_of_named_source(source: &Path) -> Result<Copyable, Error> {
 /// re-reads a relative target from a directory it is no longer in. Refusing is
 /// the answer that can be changed later without changing what a working
 /// manifest does today.
-pub(crate) fn kind_of_found_node(source: &Path) -> Result<Copyable, Error> {
+pub(crate) fn kind_of_found_node(source: &Path) -> Result<FileOrDirectory, Error> {
     let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
@@ -337,11 +338,11 @@ pub(crate) fn kind_of_found_node(source: &Path) -> Result<Copyable, Error> {
     kind_of(&found, source)
 }
 
-fn kind_of(found: &fs::Metadata, source: &Path) -> Result<Copyable, Error> {
+fn kind_of(found: &fs::Metadata, source: &Path) -> Result<FileOrDirectory, Error> {
     if found.is_file() {
-        Ok(Copyable::File)
+        Ok(FileOrDirectory::File)
     } else if found.is_dir() {
-        Ok(Copyable::Directory)
+        Ok(FileOrDirectory::Directory)
     } else {
         Err(Error::SourceNotCopyable {
             path: source.to_path_buf(),
@@ -384,10 +385,10 @@ fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
         let from = source.join(&child);
         let to = built_at.join(&child);
         match kind_of_found_node(&from)? {
-            Copyable::File => {
+            FileOrDirectory::File => {
                 copy_file(&from, create_new_file(&to)?, &to)?;
             }
-            Copyable::Directory => {
+            FileOrDirectory::Directory => {
                 fs::create_dir(&to).map_err(|error| Error::Write {
                     path: to.clone(),
                     source: error,

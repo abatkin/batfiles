@@ -46,7 +46,7 @@ proof that the honor-system version of it loses.
 
 **2. Vertical slices, never horizontal layers.** Every slice ends with a
 `batfiles` binary that does something a user can run, and a test in
-`tests/cli.rs` that runs it. Do not build "all the serde types" or "all the
+`tests/cli/` that runs it. Do not build "all the serde types" or "all the
 validation"; build the one type the current slice needs.
 
 **3. A later slice may reshape an earlier one.** That is the point of the
@@ -117,8 +117,10 @@ slice 4 is a harder slice than slice 5 but comes first.
 **9. Docs are promoted, not inherited.** Nothing in `docs/` describes behavior
 that does not run. See `docs.md`.
 
-**10. `tests/cli.rs` is the primary safety net.** It survives internal
-restructuring, which is what the next several slices consist of. Unit tests are
+**10. `tests/cli/` is the primary safety net.** One test target split into
+files: `support` holds the fixtures every group is written against, and the rest
+are grouped by what they exercise. It survives internal restructuring, which is
+what the next several slices consist of. Unit tests are
 for logic that is pure and genuinely tricky: the truthiness table, variable
 precedence, destination path safety. The old crate's roughly 1:1 inline
 test-to-code ratio is a large part of what made its internals expensive to
@@ -258,7 +260,7 @@ Nothing merges back from the tag that holds the old crate — see `keep.md`.
 Every slice, without exception:
 
 - `task ci` passes, including the source-hygiene checks in `tests/hygiene.rs`.
-- A `tests/cli.rs` test drives the new behavior through the binary.
+- A `tests/cli/` test drives the new behavior through the binary.
 - Any `docs/future/` section the slice implemented has been promoted into
   `docs/`, re-read against what was actually built rather than pasted.
 - The project `README.md` still describes what the binary does. It is the only
@@ -325,9 +327,9 @@ Use the cheapest environment that still exercises the real thing.
 network, is a suite that gets skipped.
 
 **Platform gating is one place, not scattered.** The execution tests that need a
-working `symlink` are a single `#[cfg(unix)] mod linking` in `tests/cli.rs`, with
-a `#[cfg(not(unix))]` test covering the refusal; an action type that is not
-platform-specific does not belong in that module. CI is ubuntu-only, so nothing
+working `symlink` are a single `#[cfg(unix)] mod linking;` in
+`tests/cli/main.rs`, with a `#[cfg(not(unix))]` test covering the refusal; an
+action type that is not platform-specific does not belong in that module. CI is ubuntu-only, so nothing
 there runs the Windows side; `task lint` checks it instead, running clippy
 against `x86_64-pc-windows-msvc` as well, and that is what catches a gate that
 has rotted. The target is pinned in `rust-toolchain.toml` and needs no linker.
@@ -366,7 +368,7 @@ dry-run bug is not a written destination — it is a staging node, a parent
 directory created on the way, or a broken symlink cleared at an ancestor, none of
 which any destination-by-destination assertion looks at, and the first of which
 is what 2.1 exists to prevent. So snapshot the whole home root before and after
-and compare. That is cheap because `tests/cli.rs` gives the four roots as
+and compare. That is cheap because the `Tree` fixture gives the four roots as
 *siblings* — `home`, `config`, `cache`, `repo` — so nothing batfiles writes for
 itself lands under `home`, and the snapshot needs no exclusions.
 
@@ -380,12 +382,12 @@ already has the branch the check goes in:
 
 | Helper | The branch it already has | Arrives |
 | --- | --- | --- |
-| `paths::ensure_directory`, reached through `Context::ensure_directory` and `paths::create_parents` | the arm taken when nothing resolves at the path | built |
-| `action::symlink::link_one` | the `Occupant::at` arms that remove and create | built |
+| `directory::ensure_directory`, reached through `RunContext::ensure_directory` and `directory::create_parents` | the arm taken when nothing resolves at the path | built |
+| `action::symlink::link_one` | the `Occupancy::at` arms that remove and create | built |
 | `install::seed` | the `paths::occupied(dest)` check, ahead of any staging node | built |
 | the git helper that clones and updates a worktree | the clone-or-update decision | 4.3 |
 
-`Mode` is a field on `action::Context`, beside the anchored roots — the same
+`RunMode` is a field on `action::RunContext`, beside the anchored roots — the same
 value 9.4's `--refresh-content` becomes a second field on. `fetch-url` and
 archive extraction publish through `install::seed` (4.1, 4.2), so they are
 dry-run correct on the day they are written. **The git helper is the one
@@ -408,13 +410,14 @@ without a second question.
 
 ### Two lists, and why they are not the same one
 
-Which modules may touch the filesystem, and which of them must read `Mode`, are
+Which modules may touch the filesystem, and which of them must read `RunMode`, are
 different questions with different answers.
 
 **Only the modules that own filesystem access may name `std::fs`**, per
 `CLAUDE.md`'s rule that direct access belongs in the module that owns the
-operation. Today that is `paths.rs`, `install.rs`, `tomlfile.rs`, and
-`action/symlink.rs`, and `tests/hygiene.rs` enforces it at the *import*, not
+operation. Today that is `paths.rs`, `directory.rs`, `install.rs`,
+`tomlfile.rs`, and `action/symlink.rs`, and `tests/hygiene.rs` enforces it at
+the *import*, not
 against a list of function names (2.3). A denylist of mutators is unbounded and
 therefore fake: `fs::write`, `File::create`, `DirBuilder::create`, and
 `OpenOptions::truncate` are four ways past one that names `create_dir` and
@@ -425,10 +428,15 @@ Content producers arrive with slice 4 — `action/copy.rs` takes `copy_file`,
 `copy_children`, and `mirror_permissions` at 4.1, and the fetcher and the archive
 extractor are two more — and 9.1's command runner needs `Command`. A list that
 only ever grew would be worthless, so the entry carries a one-line reason, and
-the reason has to be one of exactly three:
+the reason has to be one of exactly four:
 
+- **Read-only**, which inspects and never writes, so there is no work for a mode
+  to withhold and nothing a dry run has to be told about. `paths.rs` is this:
+  what a path means and what is already at one are both questions. It is the
+  safest kind and the one to reach for first — a module that cannot write cannot
+  write in the wrong mode.
 - **A mode reader**, which performs part of an action's work and therefore
-  consults `Mode` itself: the helpers in the table above.
+  consults `RunMode` itself: the helpers in the table above.
 - **Downstream of a mode reader**, which never sees it and does not need to.
   Every content producer is here, and the invariant is structural rather than a
   promise: `install::seed` creates no staging node under `DryRun`, so nothing
@@ -583,7 +591,7 @@ nothing today.
    dynamic declarations are local to that remote, so the trust boundary has no
    reach beyond this one place.
 
-2. **One place decides whether a write happens** — `Mode` on `action::Context`,
+2. **One place decides whether a write happens** — `RunMode` on `action::RunContext`,
    read at the helpers listed under "Dry-run" (step 2.1). 9.4's
    `--refresh-content` is a second field on that same value, and the hygiene
    check at 2.3 is what keeps that list from growing behind your back. The list

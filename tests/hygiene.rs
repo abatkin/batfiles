@@ -43,6 +43,9 @@ const CHECKER: &str = "tests/hygiene.rs";
 /// the bug this check exists to catch.
 #[derive(Debug, Clone, Copy)]
 enum Kind {
+    /// Inspects and never writes, so there is no work for a mode to withhold.
+    /// The safest kind, and the one to reach for first.
+    ReadOnly,
     /// Performs part of an action's work, and therefore consults `RunMode` itself.
     ModeReader,
     /// Produces content that only ever lands inside something a mode reader
@@ -60,6 +63,7 @@ enum Kind {
 impl Kind {
     fn label(self) -> &'static str {
         match self {
+            Self::ReadOnly => "read-only, so it never writes",
             Self::ModeReader => "a mode reader",
             Self::Downstream => "downstream of a mode reader",
             Self::Bookkeeping => "bookkeeping, which runs in both modes",
@@ -81,11 +85,16 @@ struct Owner {
 ///
 /// The list is meant to grow. Growing it means editing this file, which is what
 /// makes saying which [`Kind`] you are adding unavoidable.
-const FILESYSTEM_OWNERS: [Owner; 4] = [
+const FILESYSTEM_OWNERS: [Owner; 5] = [
     Owner {
         path: "src/paths.rs",
+        kind: Kind::ReadOnly,
+        reason: "what a path means, and what is already at one",
+    },
+    Owner {
+        path: "src/directory.rs",
         kind: Kind::ModeReader,
-        reason: "what a path means and what is at one, plus the directories an action makes",
+        reason: "the only place a directory is made",
     },
     Owner {
         path: "src/install.rs",

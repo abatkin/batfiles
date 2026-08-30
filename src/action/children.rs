@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::Context;
+use super::RunContext;
 use crate::error::Error;
 use crate::mode::Verb;
 use crate::paths;
@@ -37,7 +37,7 @@ pub(super) struct ChildInstall<'a> {
 /// child that is itself a directory is one thing installed, and what is inside
 /// it is reached through what was installed rather than decided entry by entry.
 pub(super) fn for_each_child(
-    context: &Context,
+    context: &RunContext,
     install: &ChildInstall,
     install_one: impl Fn(&Path, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {

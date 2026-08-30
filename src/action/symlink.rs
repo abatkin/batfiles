@@ -14,12 +14,13 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-use super::Context;
+use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
+use crate::directory;
 use crate::error::Error;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
 use crate::mode::Verb;
-use crate::paths::{self, Occupant};
+use crate::paths::{self, Occupancy};
 
 #[cfg(not(unix))]
 fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
@@ -27,7 +28,7 @@ fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
 }
 
 /// Carry out one `symlink` action: the whole of it is one link.
-pub(super) fn link(action: &SymlinkAction, context: &Context) -> Result<(), Error> {
+pub(super) fn link(action: &SymlinkAction, context: &RunContext) -> Result<(), Error> {
     require_symlink_support("symlink")?;
 
     let target = context.source(&action.source)?;
@@ -41,7 +42,7 @@ pub(super) fn link(action: &SymlinkAction, context: &Context) -> Result<(), Erro
 /// A child that is itself a directory becomes one link like any other, so what
 /// is under it is reached through that link and a file added there later needs
 /// no further sync.
-pub(super) fn link_dir(action: &SymlinkDirAction, context: &Context) -> Result<(), Error> {
+pub(super) fn link_dir(action: &SymlinkDirAction, context: &RunContext) -> Result<(), Error> {
     require_symlink_support("symlink-dir")?;
 
     let source_dir = context.source_directory(&action.source_dir)?;
@@ -79,7 +80,7 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 /// Create one symlink, repair it, or leave it alone.
 ///
 /// What is at the destination, and whether it is batfiles' to replace, is
-/// [`Occupant::at`]'s answer — see that module for why the question cannot be
+/// [`Occupancy::at`]'s answer — see that module for why the question cannot be
 /// asked of the written path. This decides only what a `symlink` does with each
 /// answer.
 ///
@@ -90,20 +91,20 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 /// is why the check sits in two arms rather than above the match — the third
 /// arm, which writes nothing, is exactly the one it would misjudge.
 ///
-/// Those two arms are also where [`RunMode`] is read: under a dry run the link
+/// Those two arms are also where [`crate::mode::RunMode`] is read: under a dry run the link
 /// is withheld and everything else happens as it would.
-fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> {
+fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
     let reporter = context.reporter();
     let mode = context.mode();
-    match Occupant::at(dest, context.repository())? {
+    match Occupancy::at(dest, context.repository())? {
         // Compared in resolved form on both sides. A link written by an earlier
         // run holds the anchored spelling, which is the same place by a
         // different name wherever a root contains a symlink — and calling that
         // stale would relink it, and every link like it, on every run.
-        Occupant::Replaceable { points_at, .. } if points_at == paths::resolved(target) => {
+        Occupancy::Replaceable { points_at, .. } if points_at == paths::resolved(target) => {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
         }
-        Occupant::Replaceable { written, .. } => {
+        Occupancy::Replaceable { written, .. } => {
             // Before the removal, not after: this arm destroys the link that is
             // there, and a refusal arriving afterwards has already done the
             // damage it was raised to prevent.
@@ -120,10 +121,10 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
                 written.display()
             ));
         }
-        Occupant::Vacant => {
+        Occupancy::Vacant => {
             paths::refuse_destination_inside_source(target, dest)?;
             // After that, so a doomed action makes no directories on its way.
-            for link in paths::create_parents(dest, mode)?.removals() {
+            for link in directory::create_parents(dest, mode)?.removals() {
                 reporter.info(&link.removal_note(mode));
             }
             if mode.writes() {
@@ -136,7 +137,7 @@ fn link_one(target: &Path, dest: &Path, context: &Context) -> Result<(), Error> 
                 target.display()
             ));
         }
-        Occupant::Unmanaged(found) => {
+        Occupancy::Unmanaged(found) => {
             return Err(Error::DestinationExists {
                 path: dest.to_path_buf(),
                 found,
