@@ -38,13 +38,7 @@ pub(crate) struct ActionOptions {
     pub interactive: bool,
 }
 
-/// Run-only selectors accepted by `sync` and `clone`.
-///
-/// The two halves are separate types because `apply-group` takes the first and
-/// not the second: it is already restricted to one group, so naming a group to
-/// leave out has nothing to say. Splitting the struct is what keeps the option
-/// spelled once — a second `#[arg]` for `--skip-action` on that command is a
-/// help string and a value name free to drift.
+/// Both run-only selectors, accepted by `sync` and `clone`.
 #[derive(Debug, Args)]
 pub(crate) struct SelectionOptions {
     #[command(flatten)]

@@ -59,9 +59,7 @@ pub(crate) struct ApplyActionArgs {
     pub action: ActionOptions,
 }
 
-/// Takes the action half of the run-only selectors and not the group half: it
-/// is already restricted to one group, so `--skip-group` has nothing to say,
-/// while leaving one member of that group out is an ordinary thing to want.
+/// Takes the action half of the run-only selectors and not the group half.
 #[derive(Debug, Args)]
 pub(crate) struct ApplyGroupArgs {
     /// Leaf or qualified included group address
