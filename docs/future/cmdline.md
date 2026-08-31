@@ -53,10 +53,11 @@ recomputed even when their cached values are fresh.
 
 `sync` and `clone` accept both run-only selectors; `apply-group` accepts
 `--skip-action` alone, and `apply-action` neither. Which command takes which, and
-why, is in [`docs/cmdline.md`](../cmdline.md#selecting-what-a-run-does). What is
-not built is the reach of a name:
+why, is in [`docs/cmdline.md`](../cmdline.md#selecting-what-a-run-does). Both
+already take an [address](../cmdline.md#addresses); what is not built is the
+reach of one, since nothing yet contributes what a qualified name asks for:
 
-| Option                 | Widens to name                                                                    |
+| Option                 | Comes to reach                                                                    |
 |------------------------|-------------------------------------------------------------------------------------|
 | `--skip-action <id>`   | An addressable remote, included action, or manifest entry, as well as a leaf action. |
 | `--skip-group <group>` | A qualified included group, as well as a leaf one.                                   |
@@ -122,9 +123,9 @@ Both are built, and are specified in
 [`docs/cmdline.md`](../cmdline.md#apply-action). What is not built is the half
 that needs something to refer to:
 
-- `--id` and `--group` take a leaf [ID](repoformat.md#names-and-ids) today. Each
-  widens to an [address](#address-forms), so that an action or a group spliced in
-  from an included remote can be named with a qualified one.
+- `--id` and `--group` take an [address](../cmdline.md#addresses), so a
+  qualified one already parses and is already reported as naming nothing. What
+  arrives with `include-remote` is a spliced action or group for it to find.
 - An addressable entry inside a `git-clone-list` becomes applyable by
   `<action-id>.<entry-id>` when that action exists.
 - `include-remote` is never directly applyable, whatever its address.
@@ -265,29 +266,19 @@ requested data, so `--quiet` leaves only warnings and errors.
 
 ## Address Forms
 
-Options that accept action IDs or group names may use these forms:
+Address syntax, and the two forms that resolve against a leaf repository, are
+built and specified in [`docs/cmdline.md`](../cmdline.md#addresses). These are
+the forms that need something batfiles cannot yet contribute:
 
 | Form                                  | Meaning                                               |
 |---------------------------------------|-------------------------------------------------------|
-| `<action-id>`                         | Top-level action in the leaf repository.              |
-| `<group>`                             | Group in the leaf repository.                         |
 | `<action-id>.<entry-id>`              | Addressable entry in a leaf `git-clone-list`.         |
 | `<remote>.<action-id>`                | Action spliced from an addressable included remote.   |
 | `<remote>.<group>`                    | Group spliced from an addressable included remote.    |
 | `<remote>.<action-id>.<entry-id>`     | Manifest entry inside an addressable included action. |
 
-Every placeholder between dots must match the repository format's [shared ID
-syntax](repoformat.md#names-and-ids). Dots are address separators and are not
-part of an individual ID.
-
-Address *syntax* is just that rule: an address is a nonempty dot-separated list
-of valid IDs, with no upper bound on the number of segments. The table above
-lists the shapes the current repository model can *resolve*, which is a separate
-question. A syntactically valid address with more segments than any of those
-forms — `a.b.c.d.e` — is well formed and simply names nothing, so a command that
-resolves it reports that it was not found rather than that it was malformed.
-Commands that record an address without resolving it, such as the persistent
-enable and disable commands, accept any syntactically valid address.
+Each of these parses today and resolves to nothing, so what arrives with the
+`git-clone-list` action and with `include-remote` is the *lookup*, not the name.
 
 An unqualified action or group always refers to the leaf repository; batfiles
 does not search included remotes for a matching unqualified name. In a qualified

@@ -7,12 +7,13 @@
 //! as the manifest is read.
 //!
 //! What an entry names is never looked up. A candidate may legitimately refer to
-//! an action a branch change or a Git update introduces later, which is the same
+//! an action a branch change or a Git update introduces later, and a qualified
+//! address may name one an included remote will contribute, which is the same
 //! rule `disabled.toml` follows.
 
 use serde::Deserialize;
 
-use crate::item::ItemId;
+use crate::item::ItemAddress;
 
 /// The two candidate lists.
 #[derive(Debug, Default, Deserialize)]
@@ -38,7 +39,7 @@ pub(crate) struct DefaultDisabled {
 pub(crate) struct ActionEntry {
     /// The action to start out disabled.
     #[expect(dead_code, reason = "adopted at 8.3, by the bootstrap that reads it")]
-    pub id: ItemId,
+    pub id: ItemAddress,
 }
 
 /// One `[[default-disabled.groups]]` entry.
@@ -47,5 +48,5 @@ pub(crate) struct ActionEntry {
 pub(crate) struct GroupEntry {
     /// The group to start out disabled.
     #[expect(dead_code, reason = "adopted at 8.3, by the bootstrap that reads it")]
-    pub group: ItemId,
+    pub group: ItemAddress,
 }

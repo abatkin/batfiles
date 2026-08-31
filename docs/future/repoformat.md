@@ -447,12 +447,6 @@ group = "gui"
 unless = "facts.os == 'macos'"
 ```
 
-**Qualified addresses.** Both fields widen from an
-[ID](../repoformat.md#names-and-ids) to an address, so that a candidate can name
-an included remote's action or group — `id = "core.work-tools"` above. They
-widen along with `disabled.toml`'s two lists and the run-only skips, when
-included remotes give a dotted name something to refer to.
-
 `[default-disabled]` in an included remote is structurally valid but ignored;
 bootstrap policy belongs to the leaf repository.
 

@@ -6,11 +6,14 @@
 //! all four commands, differing in nothing but which list it edits and which
 //! way it moves a name.
 //!
-//! A closed record with two lists of IDs. The file validates ID *syntax* as it
-//! loads and never resolves a name against a repository, precisely so a name can
-//! be recorded before the action or group it names exists: a pre-registered
-//! entry matches nothing today and may match after a branch change or a Git
-//! update. The commands validate the same way and for the same reason — they do
+//! A closed record with two lists of addresses. The file validates address
+//! *syntax* as it loads and never resolves a name against a repository,
+//! precisely so a name can be recorded before the action or group it names
+//! exists: a pre-registered entry matches nothing today and may match after a
+//! branch change or a Git update. That is also what lets a qualified address be
+//! written down before any remote can answer to it — recording is all these
+//! commands do, so there is nothing for the extra segments to resolve against
+//! either way. The commands validate the same way and for the same reason — they do
 //! not load the leaf repository, so an unreadable or invalid `batfiles.toml`
 //! cannot fail one. They run no synchronization and remove no installed content.
 //!
@@ -30,7 +33,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
-use crate::item::ItemId;
+use crate::item::ItemAddress;
 use crate::location::Roots;
 use crate::output::Reporter;
 use crate::tomlfile;
@@ -42,13 +45,12 @@ use crate::tomlfile;
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Disabled {
-    /// Disabled action IDs. A qualified address naming an included remote's
-    /// action is 3.7's, and is refused until then.
+    /// Disabled action addresses.
     #[serde(default)]
-    pub actions: BTreeSet<ItemId>,
-    /// Disabled group names.
+    pub actions: BTreeSet<ItemAddress>,
+    /// Disabled group addresses.
     #[serde(default)]
-    pub groups: BTreeSet<ItemId>,
+    pub groups: BTreeSet<ItemAddress>,
 }
 
 impl Disabled {
@@ -138,10 +140,10 @@ pub(crate) fn run(
 /// A repeated name warns rather than failing: it names one thing however many
 /// times it was written, so the invocation still has an unambiguous meaning.
 /// Order is preserved so the output follows the command line.
-fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemId>, Error> {
-    let mut parsed: Vec<ItemId> = Vec::with_capacity(names.len());
+fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemAddress>, Error> {
+    let mut parsed: Vec<ItemAddress> = Vec::with_capacity(names.len());
     for name in names {
-        let name = ItemId::try_from(name.clone())?;
+        let name = ItemAddress::try_from(name.clone())?;
         if parsed.contains(&name) {
             reporter.warn(&format!("`{name}` was given more than once"));
         } else {
@@ -155,7 +157,7 @@ fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemId>, Error
 ///
 /// `BTreeSet` answers that directly, and the answer is what keeps an idempotent
 /// mutation from rewriting the file.
-fn apply(set: &mut BTreeSet<ItemId>, change: Change, name: &ItemId) -> bool {
+fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) -> bool {
     match change {
         Change::Disable => set.insert(name.clone()),
         Change::Enable => set.remove(name),
@@ -166,7 +168,7 @@ fn apply(set: &mut BTreeSet<ItemId>, change: Change, name: &ItemId) -> bool {
 ///
 /// A real state change is spelled out — re-enabling something that was actually
 /// off is the outcome that must never be silent or ambiguous.
-fn outcome(list: DisabledList, change: Change, name: &ItemId, changed: bool) -> String {
+fn outcome(list: DisabledList, change: Change, name: &ItemAddress, changed: bool) -> String {
     let noun = list.noun();
     match (change, changed) {
         (Change::Disable, true) => format!("disabled {noun} `{name}`"),
@@ -178,7 +180,7 @@ fn outcome(list: DisabledList, change: Change, name: &ItemId, changed: bool) -> 
 
 impl DisabledList {
     /// The set this command edits.
-    fn set_in(self, disabled: &mut Disabled) -> &mut BTreeSet<ItemId> {
+    fn set_in(self, disabled: &mut Disabled) -> &mut BTreeSet<ItemAddress> {
         match self {
             Self::Actions => &mut disabled.actions,
             Self::Groups => &mut disabled.groups,
@@ -202,11 +204,11 @@ mod tests {
         toml::from_str(document)
     }
 
-    fn id(id: &str) -> ItemId {
-        ItemId::try_from(id.to_owned()).expect("valid ID")
+    fn id(id: &str) -> ItemAddress {
+        ItemAddress::try_from(id.to_owned()).expect("valid address")
     }
 
-    fn set<const N: usize>(items: [&str; N]) -> BTreeSet<ItemId> {
+    fn set<const N: usize>(items: [&str; N]) -> BTreeSet<ItemAddress> {
         items.into_iter().map(id).collect()
     }
 
@@ -256,12 +258,12 @@ mod tests {
     }
 
     #[test]
-    fn a_qualified_address_is_not_an_id_yet() {
-        // 3.7 widens these lists to addresses. Until a remote exists there is
-        // nothing for a dotted name to resolve against, so it is refused rather
-        // than stored as a name that can never match.
-        let error = parse("actions = ['core.zshrc']\n").expect_err("dots are not IDs");
-        assert!(error.to_string().contains("`core.zshrc`"), "{error}");
+    fn a_qualified_address_is_recorded_without_being_resolved() {
+        // These lists validate syntax and resolve nothing, so an address naming
+        // an included remote's action is stored the way any other name is —
+        // which is what lets one be written down before the remote exists.
+        let disabled = parse("actions = ['core.zshrc', 'a.b.c.d.e']\n").expect("parse");
+        assert_eq!(disabled.actions, set(["a.b.c.d.e", "core.zshrc"]));
     }
 
     /// A path in a fresh directory, named the way the config directory would
@@ -413,8 +415,8 @@ mod tests {
     fn one_invalid_name_rejects_the_whole_invocation() {
         // Syntax is the only rule here, and `src/item.rs` already tests it; what
         // matters is that a bad argument stops the command before it writes.
-        let names = ["p10k".to_owned(), "core.p10k".to_owned()];
-        let error = parse_all(&names, &quiet()).expect_err("a dot is not an ID");
-        assert!(error.to_string().contains("`core.p10k`"), "{error}");
+        let names = ["p10k".to_owned(), "core..p10k".to_owned()];
+        let error = parse_all(&names, &quiet()).expect_err("an empty segment is not an address");
+        assert!(error.to_string().contains("`core..p10k`"), "{error}");
     }
 }

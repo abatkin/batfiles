@@ -32,29 +32,31 @@ is the document.
 The document is a closed TOML record:
 
 ```toml
-actions = ["p10k", "zshrc"]
-groups = ["shell", "gui"]
+actions = ["p10k", "core.zshrc"]
+groups = ["shell", "core.gui"]
 ```
 
-- `actions` is an array of action [IDs](repoformat.md#names-and-ids).
-- `groups` is an array of group names, which follow the same rule.
+- `actions` is an array of action [addresses](cmdline.md#addresses).
+- `groups` is an array of group addresses, which follow the same rule.
 - These are the only allowed top-level fields. An unknown field is invalid
   configuration.
-- Batfiles writes the logical sets without duplicates and in stable order.
+- Batfiles writes the logical sets without duplicates and in stable order. That
+  order is the address's dotted text, so `a-c` sorts ahead of `a.b`.
 - A missing file is treated as an empty disabled set, so a machine that has
   never disabled anything needs no file.
 - If a mutation leaves both sets empty, batfiles keeps a canonical empty
   `disabled.toml` rather than deleting it.
 
-A dotted, qualified address such as `core.zshrc` is **not** an ID and is
-rejected. Qualified addresses name an action spliced in from an included remote,
-and no remote exists yet; they are specified in
-[`future/cmdline.md`](future/cmdline.md) and arrive with the remotes that give
-them something to refer to.
+A syntactically valid address is persisted as given, whatever its segment count.
+These commands resolve nothing, so an address with more segments than any
+resolvable [form](cmdline.md#addresses) — `a.b.c.d.e` — is accepted and recorded.
+A qualified address names an action or a group spliced in from an included
+remote; no remote exists yet, so one recorded today matches nothing, which is the
+same outcome as any other name a manifest does not answer to.
 
 ### Semantics and lifecycle
 
-The enable and disable commands validate each supplied name for syntax only.
+The enable and disable commands validate each supplied address for syntax only.
 
 - **They never load the leaf repository.** An unreadable or invalid
   `batfiles.toml` therefore cannot fail an enable or a disable, and neither can a

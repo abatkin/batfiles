@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::item::{ItemId, ItemIdError};
+use crate::item::{ItemAddress, ItemAddressError};
 use crate::manifest;
 use crate::paths::ExistingNode;
 
@@ -65,23 +65,24 @@ pub(crate) enum Error {
         source: manifest::Invalid,
     },
 
-    /// A command-line argument that is not a well-formed ID. The rejected value
-    /// travels inside [`ItemIdError`], which already renders the whole message.
+    /// A command-line argument that is not a well-formed address. The rejected
+    /// value travels inside [`ItemAddressError`], which already renders the
+    /// whole message.
     #[error(transparent)]
-    InvalidId(#[from] ItemIdError),
+    InvalidAddress(#[from] ItemAddressError),
 
     // Naming what to apply.
-    /// An `apply-action` naming an ID no record in the manifest carries. The
-    /// manifest is named because which repository was read is half the answer
-    /// when a command resolves nothing.
+    /// An `apply-action` naming an address no record in the manifest answers
+    /// to. The manifest is named because which repository was read is half the
+    /// answer when a command resolves nothing.
     #[error("no action in {} has the id `{id}`", .path.display())]
-    UnknownAction { path: PathBuf, id: ItemId },
+    UnknownAction { path: PathBuf, id: ItemAddress },
 
     /// An `apply-group` naming a group no record in the manifest belongs to. A
     /// group exists because some action names it, so an empty one and an absent
     /// one are the same thing.
     #[error("no action in {} is in the group `{group}`", .path.display())]
-    UnknownGroup { path: PathBuf, group: ItemId },
+    UnknownGroup { path: PathBuf, group: ItemAddress },
 
     // Carrying an action out.
     /// An action naming a source the repository does not contain.

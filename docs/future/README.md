@@ -24,8 +24,8 @@ promoted becomes binding; whatever is left behind stays advisory.
   shared names, IDs, and value types.
 - [Command-line surface](cmdline.md) — the per-command specifications, the
   shared action and selection options, what the unbuilt actions add to dry-run
-  behavior, and address forms. The parts that are built live in
-  [`docs/cmdline.md`](../cmdline.md).
+  behavior, and the address forms nothing can resolve yet. The parts that are
+  built live in [`docs/cmdline.md`](../cmdline.md).
 - [Environment variables](environment.md) — environment inputs, location
   selection, runtime variable precedence, and bootstrap precedence. The parts
   that are built live in [`docs/environment.md`](../environment.md).

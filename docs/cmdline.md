@@ -4,9 +4,10 @@ The parts of the command-line interface that run today: the set of commands, the
 options every command accepts, where output goes, and what the exit status
 means.
 
-The per-command specifications, the shared action-execution and selection
-options, and address forms are in [`future/cmdline.md`](future/cmdline.md) until
-the commands that use them are built.
+The per-command specifications and the shared action-execution and selection
+options are in [`future/cmdline.md`](future/cmdline.md) until the commands that
+use them are built, as are the [address forms](future/cmdline.md#address-forms)
+that nothing can resolve yet.
 
 ## What runs today
 
@@ -199,14 +200,15 @@ command accepts neither `--skip-action` nor `--skip-group` and ignores
 an action is not part of an ordinary `sync`; asking for it by name is the way to
 say otherwise for one invocation, without editing what the next `sync` does.
 
-An `--id` that no action carries is a failure: the command resolved nothing, so
-it exits 1 naming the ID and the manifest, and writes nothing. A value that is
-not a valid [ID](repoformat.md#names-and-ids) fails the same way, before the
-repository is opened.
+An `--id` that no action answers to is a failure: the command resolved nothing,
+so it exits 1 naming the address and the manifest, and writes nothing. That
+covers a well-formed [address](#addresses) no action carries, qualified or not.
+A value that is not a valid address fails the same way, before the repository is
+opened.
 
 | Option      | Purpose                                                                    |
 |-------------|------------------------------------------------------------------------------|
-| `--id <id>` | Required. The `id` of the action to carry out.                               |
+| `--id <id>` | Required. The [address](#addresses) of the action to carry out.              |
 | `--dry-run` | Report what it would do — see [dry-run behavior](#dry-run-behavior).         |
 
 ### `apply-group`
@@ -286,12 +288,12 @@ leave out, so anything any of them names is left out.
 has the manifest loaded, so unlike the [enable and disable
 commands](#enable-and-disable-actions-or-groups) it can tell — and a name that
 catches nothing is a typo in something typed for one run, which is worth saying
-and not worth failing over. A name that is not a valid [ID](repoformat.md#names-and-ids)
+and not worth failing over. A name that is not a valid [address](#addresses)
 warns the same way and for the same reason: it could never have matched.
 
 ```console
-$ batfiles sync --skip-group editor --skip-action core.zshrc
-warning: --skip-action: `core.zshrc` is not a valid ID: an ID starts with a letter or digit, followed by letters, digits, hyphens, or underscores
+$ batfiles sync --skip-group editor --skip-action core..zshrc
+warning: --skip-action: `core..zshrc` is not a valid address: every dot-separated segment must be an ID starting with a letter or digit, followed by letters, digits, hyphens, or underscores
 warning: --skip-group `editor` matched no group
 ```
 
@@ -301,6 +303,40 @@ invocation and a run that fails partway should not swallow them.
 **A `disabled.toml` entry that matches nothing is silent.** Pre-registering a
 name that a later branch or Git update introduces is the point of that document,
 so the same non-match that warns above is expected there.
+
+### Addresses
+
+Everywhere an action or a group is named — `--skip-action`, `--skip-group`,
+`apply-action --id`, `apply-group --group`, the four enable and disable
+commands, `disabled.toml`, and `[default-disabled]` — the value is an *address*:
+a nonempty list of [IDs](repoformat.md#names-and-ids) joined by `.`, with no
+upper bound on the number of segments. Dots are the separators and are not part
+of an individual ID.
+
+Two forms resolve today:
+
+| Form            | Meaning                                  |
+|-----------------|------------------------------------------|
+| `<action-id>`   | Top-level action in the leaf repository. |
+| `<group>`       | Group in the leaf repository.            |
+
+The remaining forms — an addressable entry inside a `git-clone-list`, and
+anything qualified by the remote that contributed it — are in
+[`future/cmdline.md`](future/cmdline.md#address-forms) with the slices that give
+a dotted name something to refer to.
+
+**Syntax and resolution are separate questions**, which is why a qualified
+address is accepted now rather than waiting for remotes. A well-formed address
+that no form above can resolve — `core.zshrc`, `a.b.c.d.e` — simply names
+nothing, so a command reports that it was **not found** rather than that it was
+malformed. Only a malformed address, one with an empty or non-ID segment, is
+refused as a name. Commands that record an address without resolving it accept
+any well-formed one.
+
+```console
+$ batfiles apply-action --id core.zshrc
+error: no action in /home/you/dotfiles/batfiles.toml has the id `core.zshrc`
+```
 
 A skipped action is reported at `-v` **only**, as part of the heading naming the
 record. Asking for a skip and then being told about it at normal verbosity is

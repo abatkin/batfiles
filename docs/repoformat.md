@@ -85,8 +85,8 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ```
 
 - IDs and group names match that rule. In particular an ID cannot contain
-  whitespace, `.`, or `,`: dots are reserved for composing qualified addresses,
-  and commas delimit environment lists.
+  whitespace, `.`, or `,`: dots compose
+  [addresses](cmdline.md#addresses), and commas delimit environment lists.
 - Action IDs are unique within a repository. A repeated one is a load error
   naming both actions, because an address matching two of them could not say
   which was meant.
@@ -810,18 +810,20 @@ a `sync` over a manifest declaring candidates installs exactly what it would
 have installed without them, and creates no `disabled.toml`.
 
 What is checked is the record's own syntax. Each entry names an
-[ID](#names-and-ids), the records are closed like every other, and an entry
-missing the field that names it is an error — so a candidate that could never
-mean anything is caught on the machine that writes it rather than on the one
-that finally bootstraps.
+[address](cmdline.md#addresses), the records are closed like every other, and an
+entry missing the field that names it is an error — so a candidate that could
+never mean anything is caught on the machine that writes it rather than on the
+one that finally bootstraps.
 
 What an entry *names* is never looked up, which is the same rule
 `disabled.toml` follows: a candidate may legitimately refer to an action a
 later branch change or Git update introduces, so there is nothing to resolve it
 against and no complaint to make about a name nothing answers to yet.
 
-Two fields the full format gives these records are not built. `when` and
-`unless` arrive with [conditions](future/repoformat.md#condition), and a
-qualified address such as `core.p10k` naming an included remote's action
-arrives with the remotes that give a dotted name something to refer to. Both
-are rejected meanwhile, by the records being closed and by an ID being an ID.
+Both fields hold an [address](cmdline.md#addresses), so a candidate may name
+what an included remote will contribute — `core.p10k` — for the same reason it
+may name what a later branch will introduce: there is nothing to resolve it
+against either way. Two fields the full format gives these records are not
+built: `when` and `unless` arrive with
+[conditions](future/repoformat.md#condition), and are rejected meanwhile by the
+records being closed.

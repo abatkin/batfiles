@@ -25,7 +25,7 @@ use std::fmt;
 
 use crate::disabled::Disabled;
 use crate::env::Environment;
-use crate::item::ItemId;
+use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
 
@@ -101,20 +101,20 @@ impl fmt::Display for Skipped<'_> {
 /// attribution where both named the same thing.
 #[derive(Debug, Default)]
 struct Skips {
-    names: BTreeMap<ItemId, &'static str>,
+    names: BTreeMap<ItemAddress, &'static str>,
 }
 
 impl Skips {
     /// Validate and add every name one source supplied.
     ///
-    /// A name that is not an ID cannot match anything, which is the outcome a
-    /// non-match already has, so it warns and is dropped rather than failing the
-    /// run. That is deliberately not the rule for `disable-action`, which fails:
-    /// recording the name is all that command does, so a rejected one leaves it
-    /// with nothing to do.
+    /// A name that is not an address cannot match anything, which is the outcome
+    /// a non-match already has, so it warns and is dropped rather than failing
+    /// the run. That is deliberately not the rule for `disable-action`, which
+    /// fails: recording the name is all that command does, so a rejected one
+    /// leaves it with nothing to do.
     fn extend(&mut self, values: &[String], origin: &'static str, reporter: &Reporter) {
         for value in values {
-            match ItemId::try_from(value.clone()) {
+            match ItemAddress::try_from(value.clone()) {
                 // First writer wins, so the caller adds the option's names ahead
                 // of the environment's.
                 Ok(name) => {
@@ -127,13 +127,15 @@ impl Skips {
 
     /// The source that named `candidate`, if any did.
     fn origin(&self, candidate: &ItemId) -> Option<&'static str> {
-        self.names.get(candidate).copied()
+        self.names
+            .iter()
+            .find_map(|(name, origin)| name.names(candidate).then_some(*origin))
     }
 
     /// Warn once per name that nothing in the manifest answers to.
     fn warn_unmatched(&self, present: &BTreeSet<&ItemId>, noun: &str, reporter: &Reporter) {
         for (name, origin) in &self.names {
-            if !present.contains(name) {
+            if !present.iter().any(|id| name.names(id)) {
                 reporter.warn(&format!("{origin} `{name}` matched no {noun}"));
             }
         }
@@ -237,13 +239,17 @@ impl Selection {
         let id = action.id().filter(|_| self.named.honors_actions());
         let group = action.group().filter(|_| self.named.honors_groups());
 
-        if let Some(name) = id.filter(|id| self.disabled.actions.contains(id)) {
+        let listed = |list: &BTreeSet<ItemAddress>, id: &ItemId| {
+            list.iter().any(|address| address.names(id))
+        };
+
+        if let Some(name) = id.filter(|id| listed(&self.disabled.actions, id)) {
             return Some(Skipped::Disabled {
                 noun: "action",
                 name,
             });
         }
-        if let Some(name) = group.filter(|group| self.disabled.groups.contains(group)) {
+        if let Some(name) = group.filter(|group| listed(&self.disabled.groups, group)) {
             return Some(Skipped::Disabled {
                 noun: "group",
                 name,
@@ -270,8 +276,8 @@ mod tests {
         reporter
     }
 
-    fn id(id: &str) -> ItemId {
-        ItemId::try_from(id.to_owned()).expect("valid ID")
+    fn address(address: &str) -> ItemAddress {
+        ItemAddress::try_from(address.to_owned()).expect("valid address")
     }
 
     /// One `create-dir` naming both an action and a group, which is the record
@@ -285,8 +291,8 @@ mod tests {
 
     fn disabled(actions: &[&str], groups: &[&str]) -> Disabled {
         Disabled {
-            actions: actions.iter().map(|name| id(name)).collect(),
-            groups: groups.iter().map(|name| id(name)).collect(),
+            actions: actions.iter().map(|name| address(name)).collect(),
+            groups: groups.iter().map(|name| address(name)).collect(),
         }
     }
 
@@ -465,16 +471,28 @@ mod tests {
     }
 
     #[test]
-    fn a_name_that_is_not_an_id_is_dropped_rather_than_kept() {
+    fn a_name_that_is_not_an_address_is_dropped_rather_than_kept() {
         // It could never match, so it is warned about at the point it is read
         // and takes no part in the filtering.
         let mut skips = Skips::default();
-        skips.extend(
-            &names_of(&["core.zshrc", "zshrc"]),
-            "--skip-action",
-            &quiet(),
+        skips.extend(&names_of(&["a..b", "zshrc"]), "--skip-action", &quiet());
+        assert_eq!(
+            skips.origin(&ItemId::try_from("zshrc".to_owned()).expect("valid ID")),
+            Some("--skip-action")
         );
-        assert_eq!(skips.origin(&id("zshrc")), Some("--skip-action"));
         assert_eq!(skips.names.len(), 1);
+    }
+
+    #[test]
+    fn a_qualified_skip_is_kept_and_names_no_leaf_record() {
+        // It is well formed, so it is not dropped; it names an action an
+        // included remote would have contributed, and there are none, so it
+        // selects nothing and is left to `warn_unmatched` to complain about.
+        let by_skip = selection(&["core.zshrc"], &["core.shell"], &[], Disabled::default());
+        assert_eq!(reason(&by_skip, &action("zshrc", "shell")), None);
+
+        // Same shape in the persistent lists, which are silent about it.
+        let by_disable = selection(&[], &[], &[], disabled(&["core.zshrc"], &["core.shell"]));
+        assert_eq!(reason(&by_disable, &action("zshrc", "shell")), None);
     }
 }

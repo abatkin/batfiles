@@ -145,18 +145,32 @@ fn a_condition_a_candidate_does_not_have_yet_is_rejected() {
 }
 
 #[test]
-fn a_candidate_naming_a_qualified_address_is_rejected() {
-    // Both lists hold bare IDs until 3.7 widens them, along with
-    // `disabled.toml`'s lists and the run-only skips. With no remote to resolve
-    // one against, a dotted name could never match.
+fn a_candidate_may_name_a_qualified_address() {
+    // What an entry names is never looked up, so a candidate can name an action
+    // an included remote will contribute for the same reason it can name one a
+    // later branch will introduce: there is nothing to resolve it against
+    // either way.
+    let tree = Tree::new();
+    fs::write(
+        tree.manifest(),
+        "[[default-disabled.actions]]\nid = \"core.p10k\"\n\n\
+         [[default-disabled.groups]]\ngroup = \"core.gui\"\n",
+    )
+    .expect("a manifest");
+
+    tree.batfiles().arg("sync").assert().success();
+}
+
+#[test]
+fn a_candidate_naming_a_malformed_address_is_rejected() {
     for entry in [
-        "[[default-disabled.actions]]\nid = \"core.p10k\"\n",
-        "[[default-disabled.groups]]\ngroup = \"core.gui\"\n",
+        "[[default-disabled.actions]]\nid = \"core..p10k\"\n",
+        "[[default-disabled.groups]]\ngroup = \"my group\"\n",
     ] {
         let stderr = rejected(entry);
         assert!(
-            stderr.contains("not a valid ID"),
-            "the address was accepted:\n{stderr}"
+            stderr.contains("not a valid address"),
+            "the name was accepted:\n{stderr}"
         );
     }
 }

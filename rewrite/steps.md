@@ -113,25 +113,9 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
   checked as the manifest is read; adoption is 8.3's.
 - **3.6** ✅ Add `apply-action` and `apply-group` over the same filtered plan,
   each waiving the exclusions that name what it asked for.
-- **3.7** Port `ItemAddress` and its parsing, whose first callers 3.6 built:
-  `execute::apply_action` and `apply_group` parse their `--id` and `--group` as
-  `ItemId` today, and `execute::Target` holds one per arm. Widening those two
-  arms is what lets either command name something an included remote
-  contributed, and it widens `Error::UnknownAction` and `Error::UnknownGroup`
-  with them — the two failures 3.6 added for a name that resolves to nothing,
-  which is exactly the outcome `future/cmdline.md` promises for an address that
-  parses and names nothing.
-  It also widens `disabled.toml`'s two lists, which 3.3 built as `ItemId` under
-  rule 3, 3.4's two run-only skip lists, and 3.5's `[default-disabled]` entry
-  fields, all of which parse as `ItemId` for the same reason: with no remotes yet
-  a qualified address names nothing. Widening the
-  skips changes a diagnostic as well as a type — `--skip-action: \`core.zshrc\`
-  is not a valid ID` is a warning today, and an address that parses but resolves
-  to no remote is a different complaint. That is additive — nothing batfiles wrote becomes unreadable — and it
-  is where the tag's `an_address_is_recorded_exactly_as_written` finally ports,
-  replacing 3.3's test that a dotted name is refused. `docs/state.md` says
-  plainly that a qualified address is rejected today, and
-  `docs/future/state.md` holds the widened schema; move it up here.
+- **3.7** ✅ Port `ItemAddress`, widening both apply targets, `disabled.toml`'s
+  two lists, the run-only skips, and `[default-disabled]`'s entry fields, so that
+  a name reaching into a not-yet-included remote is recorded rather than refused.
 - **3.8** Start managing the parts of your personal dotfiles that need only
   local actions, leaving the fetching parts to the existing script.
 
@@ -322,7 +306,14 @@ The hard slice. Everything it composes over is real by now.
   paragraph of `docs/future/cmdline.md`'s dry-run section here — both halves,
   staleness and partiality — into the `docs/cmdline.md` section 2.4 created.
 - **7.2** Splice its actions into the leaf's single ordered action list, in
-  place, preserving order.
+  place, preserving order. **This is where `ItemAddress::names` stops being
+  string equality.** 3.7 widened every list that holds a name to an address, so
+  a qualified one already parses, is already recorded, and already reports that
+  it matched nothing; what that one method says is the whole of why. A spliced
+  action answers to `<inclusion>.<id>`, so giving it one is what makes the
+  entries `disabled.toml` and `--skip-action` have been accepting since 3.7 do
+  anything — and it is one function rather than a sweep, which is what widening
+  them early bought.
 - **7.3** Add the action and group selection filters on the inclusion.
 - **7.4** Add per-inclusion variable overrides.
 - **7.5** Introduce one scope per inclusion — the first point at which layered

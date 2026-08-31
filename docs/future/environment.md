@@ -143,9 +143,10 @@ their comma-separated list rule, and the way they union with `--skip-action` and
 `--skip-group` are specified in
 [`docs/environment.md`](../environment.md#run-only-skips).
 
-What is not built is what they can *name*. A qualified address reaching an
-included remote's action or group is refused today, for want of a remote to
-resolve it against; see the [address forms](cmdline.md) below.
+What is not built is what they can *reach*. A qualified address naming an
+included remote's action or group parses and matches nothing today, for want of
+a remote to resolve it against; see the [address forms](cmdline.md#address-forms)
+below.
 
 ### Bootstrap enable and disable lists
 

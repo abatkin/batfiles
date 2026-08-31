@@ -73,6 +73,40 @@ fn a_name_matching_nothing_is_recorded_without_complaint() {
 }
 
 #[test]
+fn an_address_is_recorded_exactly_as_written() {
+    // Qualified and deeper-than-resolvable addresses alike: these commands
+    // validate syntax and resolve nothing, so `a.b.c.d.e` is simply an address
+    // that names nothing yet. The order is the dotted text's, which puts
+    // `a.b.c.d.e` ahead of `core.zshrc` and the shorter `core.zshrc` ahead of
+    // the name extending it.
+    let tree = Tree::new();
+    tree.batfiles()
+        .args([
+            "disable-action",
+            "core.zshrc",
+            "core.zshrc.plugin",
+            "a.b.c.d.e",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        tree.disabled_document(),
+        "actions = [\"a.b.c.d.e\", \"core.zshrc\", \"core.zshrc.plugin\"]\ngroups = []\n"
+    );
+
+    // And an address comes back out the way any other name does.
+    tree.batfiles()
+        .args(["enable-action", "core.zshrc"])
+        .assert()
+        .success();
+    assert_eq!(
+        tree.disabled_document(),
+        "actions = [\"a.b.c.d.e\", \"core.zshrc.plugin\"]\ngroups = []\n"
+    );
+}
+
+#[test]
 fn enabling_removes_a_name_and_keeps_an_empty_document() {
     let tree = Tree::new();
     // Given out of order, so the document that lands is the sorted one.
@@ -187,14 +221,14 @@ fn an_invalid_name_fails_before_anything_is_written() {
     // applies in full or changes nothing.
     let assertion = tree
         .batfiles()
-        .args(["disable-action", "vim", "core.p10k"])
+        .args(["disable-action", "vim", "core..p10k"])
         .assert()
         .failure()
         .code(1);
 
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("`core.p10k`"),
+        stderr.contains("`core..p10k`"),
         "the error should name the offending value:\n{stderr}"
     );
     assert_eq!(tree.disabled_document(), original);

@@ -73,7 +73,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   the same for one invocation without writing anything down. A skip that matches
   nothing warns, since it was typed for this run; a pre-registered
   `disabled.toml` entry that matches nothing is silent, since naming something a
-  later branch introduces is what that file is for.
+  later branch introduces is what that file is for. Names are dotted addresses,
+  so a name reaching into a repository this one will later include — `core.zshrc`
+  — can be written down before there is anything for it to reach.
 - **A repository can name what a fresh machine starts with switched off, and
   nothing acts on it yet.** `[default-disabled]` lists candidate actions and
   groups; batfiles checks them as it reads the manifest and does no more. The

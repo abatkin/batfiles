@@ -65,9 +65,9 @@ persisted to [`disabled.toml`](state.md); what a run does with the two together,
 and what it says about a name that matches nothing, is specified in
 [selecting what a run does](cmdline.md#selecting-what-a-run-does).
 
-Each item is an action [ID](repoformat.md#names-and-ids) or a group name. Since
-items are trimmed and split on commas, an ID may contain neither — which is why
-the ID rule excludes both characters.
+Each item is an action or group [address](cmdline.md#addresses). Since items are
+trimmed and split on commas, an address may contain neither — which is why the
+ID rule excludes both characters.
 
 ## Location selection
 

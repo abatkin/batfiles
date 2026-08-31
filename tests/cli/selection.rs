@@ -307,7 +307,7 @@ fn a_skip_naming_the_other_namespace_matches_nothing() {
 }
 
 #[test]
-fn a_skip_that_is_not_an_id_warns_and_the_run_continues() {
+fn a_skip_that_is_not_an_address_warns_and_the_run_continues() {
     // It can never match, which is the outcome a non-match already has, so it
     // is warned about where it is read rather than failing the run.
     let tree = Tree::new();
@@ -315,17 +315,42 @@ fn a_skip_that_is_not_an_id_warns_and_the_run_continues() {
 
     let assertion = tree
         .batfiles()
-        .args(["sync", "--skip-action", "core.zshrc"])
+        .args(["sync", "--skip-action", "core..zshrc"])
         .env("BATFILES_SKIP_GROUPS", "my group")
         .assert()
         .success();
     let stderr = stderr_of(&assertion);
     for expected in [
-        "--skip-action: `core.zshrc` is not a valid ID",
-        "BATFILES_SKIP_GROUPS: `my group` is not a valid ID",
+        "--skip-action: `core..zshrc` is not a valid address",
+        "BATFILES_SKIP_GROUPS: `my group` is not a valid address",
     ] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
+    assert_eq!(entries(&tree.path("home")), ["gtkrc", "zshenv", "zshrc"]);
+}
+
+#[test]
+fn a_qualified_skip_is_a_name_that_matched_nothing() {
+    // It parses, so it is not the malformed name above; it names an action an
+    // included remote would have contributed, and none is included, so it gets
+    // the warning any other name catching nothing gets.
+    let tree = Tree::new();
+    three_actions(&tree);
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--skip-action", "core.zshrc"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("--skip-action `core.zshrc` matched no action"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("valid address"),
+        "a well-formed address should not be reported as malformed:\n{stderr}"
+    );
     assert_eq!(entries(&tree.path("home")), ["gtkrc", "zshenv", "zshrc"]);
 }
 

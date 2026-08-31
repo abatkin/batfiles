@@ -23,7 +23,7 @@ use crate::action::{self, RunContext};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::item::ItemId;
+use crate::item::ItemAddress;
 use crate::location::Roots;
 use crate::manifest::Manifest;
 use crate::manifest::action::Action;
@@ -35,16 +35,15 @@ use crate::selection::{Named, Selection};
 ///
 /// Holds the borrowed name rather than resolving to an index, because a group
 /// names any number of records and an action's position is what the report
-/// calls it. Widened to an address at 3.7, which is what lets either arm name
-/// something an included remote contributed.
+/// calls it.
 #[derive(Debug)]
 enum Target<'a> {
     /// Every record, which is `sync`.
     Everything,
-    /// The one record carrying this `id`.
-    Action(&'a ItemId),
+    /// The one record answering to this address.
+    Action(&'a ItemAddress),
     /// Every record naming this group.
-    Group(&'a ItemId),
+    Group(&'a ItemAddress),
 }
 
 impl Target<'_> {
@@ -52,8 +51,8 @@ impl Target<'_> {
     fn wants(&self, action: &Action) -> bool {
         match self {
             Self::Everything => true,
-            Self::Action(id) => action.id() == Some(id),
-            Self::Group(group) => action.group() == Some(group),
+            Self::Action(id) => action.id().is_some_and(|declared| id.names(declared)),
+            Self::Group(group) => action.group().is_some_and(|declared| group.names(declared)),
         }
     }
 
@@ -126,8 +125,8 @@ pub(crate) fn apply_action(
 ) -> Result<(), Error> {
     // Checked before the repository is opened, so a name that could never have
     // matched is reported as the malformed name it is rather than as a
-    // resolution failure. 3.7 widens this to an address.
-    let id = ItemId::try_from(id.to_owned())?;
+    // resolution failure.
+    let id = ItemAddress::try_from(id.to_owned())?;
     let (manifest, disabled) = load(roots)?;
     let target = Target::Action(&id);
     // The command accepts neither run-only option, and naming one action waives
@@ -149,7 +148,7 @@ pub(crate) fn apply_group(
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    let group = ItemId::try_from(group.to_owned())?;
+    let group = ItemAddress::try_from(group.to_owned())?;
     let (manifest, disabled) = load(roots)?;
     let target = Target::Group(&group);
     // `--skip-group` is not accepted, so there is no group-shaped run-only list

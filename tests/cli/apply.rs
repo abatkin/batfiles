@@ -173,23 +173,47 @@ fn applying_a_group_no_record_names_fails_without_writing() {
 }
 
 #[test]
-fn a_name_that_is_not_an_id_fails_before_the_repository_is_opened() {
-    // A qualified address is 3.7's; today it could never match, and it is
-    // reported as the malformed name it is rather than as a lookup that missed.
+fn a_name_that_is_not_an_address_fails_before_the_repository_is_opened() {
+    // Reported as the malformed name it is rather than as a lookup that missed.
     // The repository is missing altogether, so a run that got as far as opening
     // it would fail with a different message.
     let tree = Tree::roots();
     for args in [
-        &["apply-action", "--id", "core.zshrc"][..],
-        &["apply-group", "--group", "core.shell"],
+        &["apply-action", "--id", "core..zshrc"][..],
+        &["apply-group", "--group", "core..shell"],
     ] {
         let assertion = tree.batfiles().args(args).assert().failure().code(1);
         let stderr = stderr_of(&assertion);
         assert!(
-            stderr.contains("is not a valid ID"),
-            "expected the ID rule for `{args:?}`:\n{stderr}"
+            stderr.contains("is not a valid address"),
+            "expected the address rule for `{args:?}`:\n{stderr}"
         );
     }
+}
+
+#[test]
+fn a_qualified_address_resolves_to_nothing_rather_than_being_refused() {
+    // It is well formed, so it reaches the manifest; nothing there answers to
+    // it, because only an included remote could contribute an action a dotted
+    // name reaches, and none is included. That is the ordinary unresolved
+    // failure rather than a complaint about the name.
+    let tree = Tree::new();
+    four_actions(&tree);
+    for (args, expected) in [
+        (&["apply-action", "--id", "core.zshrc"][..], "core.zshrc"),
+        (&["apply-group", "--group", "core.shell"], "core.shell"),
+    ] {
+        let assertion = tree.batfiles().args(args).assert().failure().code(1);
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains(expected) && stderr.contains("no action in"),
+            "expected an unresolved failure for `{args:?}`:\n{stderr}"
+        );
+    }
+    assert!(
+        entries(&tree.path("home")).is_empty(),
+        "nothing should have been installed"
+    );
 }
 
 // Waiving what the machine turned off.

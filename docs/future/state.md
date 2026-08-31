@@ -80,34 +80,20 @@ otherwise alter installed home-directory content.
 ## `disabled.toml`: the parts that are not built
 
 The document, its schema, and the four commands that maintain it are specified
-in [`docs/state.md`](../state.md). Three things about it are still unbuilt.
+in [`docs/state.md`](../state.md), including the addresses both lists hold and
+the rules a `sync` applies to them. Three things about it are still unbuilt.
 
-**Qualified addresses.** Both lists hold bare
-[IDs](../repoformat.md#names-and-ids) today. They widen to addresses when
-included remotes give a dotted name something to refer to:
+**Resolving a qualified address.** An address naming an included remote's action
+or group is recorded today and matches nothing, since no remote can contribute
+one. What arrives with `include-remote` is the lookup that makes such an entry
+live; see the [address forms](cmdline.md#address-forms) that need it.
 
-```toml
-actions = ["p10k", "core.zshrc"]
-groups = ["work", "core.shell"]
-```
-
-Each dot-separated segment must match the shared ID syntax, and the CLI
-specification defines the available [address forms](cmdline.md#address-forms).
-A syntactically valid address is persisted as given.
-
-Syntax here means only that the address is a nonempty dot-separated list of
-valid IDs; the segment count is not constrained. The address forms are the
-shapes the current repository model can resolve, and these commands resolve
-nothing, so an address with more segments than any listed form is accepted and
-recorded.
-
-**Anything reading the lists.** `sync` does not consult them yet, so the
-selection rules — what a disabled group does to its members, and how a disabled
-`include-remote` interacts with materialization — belong to the steps that build
-them. One is settled here already: `disabled.toml` decides which actions are
-*planned* and never what is reachable, fetched, or resolved, so disabling an
-`include-remote` does not stop that remote being materialized or its variables
-resolved. See [reachability](#reachability).
+**What a disable does to a remote.** How a disabled `include-remote` interacts
+with materialization belongs to the step that builds it. One part is settled
+here already: `disabled.toml` decides which actions are *planned* and never what
+is reachable, fetched, or resolved, so disabling an `include-remote` does not
+stop that remote being materialized or its variables resolved. See
+[reachability](#reachability).
 
 **Bootstrap adoption**, the other writer of this file. It is decided during
 `clone` planning and persisted as part of the command, following the environment
