@@ -10,10 +10,10 @@ nothing in the repository you cannot read with `cat`.
 
 > **Status: early, and not yet useful as a dotfiles manager.**
 >
-> Batfiles is being rebuilt from scratch. Two of the plan's eleven slices are
-> done and the third is under way. `sync` installs a repository, `--dry-run`
-> says what it would install, what you have disabled or asked to skip is left
-> out, and `apply-action` and `apply-group` install one piece of it on its own.
+> Batfiles is being rebuilt from scratch. Three of the plan's eleven slices are
+> done. `sync` installs a repository, `--dry-run` says what it would install,
+> what you have disabled or asked to skip is left out, and `apply-action` and
+> `apply-group` install one piece of it on its own.
 > Every other command parses its arguments and then exits saying it is not
 > implemented yet. The plan, and the reason there is a rewrite, are in
 > [`rewrite/README.md`](rewrite/README.md).

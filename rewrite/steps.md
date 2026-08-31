@@ -116,8 +116,11 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **3.7** ✅ Port `ItemAddress`, widening both apply targets, `disabled.toml`'s
   two lists, the run-only skips, and `[default-disabled]`'s entry fields, so that
   a name reaching into a not-yet-included remote is recorded rather than refused.
-- **3.8** Start managing the parts of your personal dotfiles that need only
-  local actions, leaving the fetching parts to the existing script.
+- **3.8** ✅ Write the manifest for the local half of the personal repository —
+  every installer step but the four that reach the network — and verify it
+  against a scratch home. Landed on a branch rather than in use: running it
+  beside the script it half-replaces buys nothing, so adoption waits for 4.8,
+  which retires that script. What it found is the two Enhancements below.
 
 ## Slice 4 — Fetching actions
 
@@ -417,3 +420,62 @@ Its own project. Do not start it before slice 8 is in real use.
   `PATH` or downloads it to `~/.local/bin`.
 - **10.3** A Docker test that runs the one-liner end to end against a local
   release server, so the suite still never reaches the network.
+
+## Enhancements
+
+Wanted, but not scheduled and not part of any slice's acceptance. An entry here
+is an idea with a reason attached, which is the least that stops it from being
+re-derived; a slice claims one by moving it into a numbered step, and until then
+nothing above depends on it.
+
+**Deliberately unnumbered.** `tests/hygiene.rs` reads this file for `- **x.y**`
+step numbers, so an entry written that way would become an open step that a
+`CARRY` marker or a withheld option could name. These are not that.
+
+- **Keep going past the first failure.** `sync` stops at the first action that
+  fails (`docs/cmdline.md`, "Exit Statuses"), and `symlink-dir` stops at the
+  first child (`docs/repoformat.md`, `symlink-dir`). Either as an option or as
+  how it works, a run would attempt what it can and report every failure at the
+  end.
+
+  Step 3.8 is where this stopped being hypothetical. Adopting batfiles on a
+  machine that already has hand-written dotfiles means one refusal, one `mv`,
+  and another whole run, for as many conflicts as there are — and the run
+  reports one of them per attempt while knowing about none of the rest, because
+  it never got there. Ten conflicts is ten runs.
+
+  Two things it has to settle. **Which failures are worth continuing after**: an
+  occupied destination is independent of everything else in the manifest, but a
+  `dest-dir` that could not be created makes each of its children fail for the
+  same reason, and thirteen lines restating one cause is worse than stopping.
+  **What the exit status and the report look like** when a run both did work and
+  failed, which is a state nothing in the tool produces today.
+
+  Note that 9.4's backup policy removes the most common reason to want this,
+  since an unmanaged destination stops being a failure at all. That makes the
+  two worth reading together, and it is an argument for order rather than
+  against the enhancement: what is left afterwards is a genuinely broken run
+  wanting to say everything it found.
+
+- **Address individual `git-clone-list` entries.** `<action-id>.<entry-id>`, the
+  same shape a remote-qualified address has, resolving against a list's manifest
+  rather than an inclusion. **This one is specified and unbuilt rather than
+  undecided**: the form is in `docs/future/cmdline.md`'s address table, what
+  `apply-action` does with it is in the bullet above that table, and how the
+  lookup reaches execution time is `docs/future/repoformat.md`'s "Deferred
+  manifest expansion" — the plan carries the requested, disabled, and skipped
+  entry addresses into an opaque node, and the manifest is read when the action
+  runs.
+
+  It has no step because nothing in slice 4 or slice 7 gives an entry a name.
+  4.4 and 4.5 build the list format and the action; 7.2 makes a qualified
+  address resolve to a *spliced action*, which is the other row of the same
+  table. 3.7 already did the part that is easy to forget: a dotted address
+  parses today, `disabled.toml` and `--skip-action` already record one, and both
+  already report that it matched nothing. What is missing is only the lookup.
+
+  The personal repository is the acceptance. `BLACKLIST_VIM_MODULES`, read from
+  a sourced `~/.dotfiles-local`, is per-machine skipping of individual vim
+  bundles — which is `disable-action vim-bundles.YouCompleteMe` and nothing
+  else. Until then the shell variable has no equivalent, and 4.8 retires the
+  script that reads it.

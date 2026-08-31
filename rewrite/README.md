@@ -56,7 +56,9 @@ alive. Retire `rewrite/` at slice 8 in three moves:
 1. The durable rules in `guidance.md` move into `AGENTS.md`; the spent
    scaffolding does not. `docs.md` names both lists.
 2. Steps 9.1 through 10.3 move to `docs/future/roadmap.md`, or to issues if you
-   would rather track them there.
+   would rather track them there, and the "Enhancements" section below them goes
+   wherever they go. It is unscheduled work rather than spent scaffolding, so it
+   outlives this directory the same way they do.
 3. The directory is deleted. It stays reachable at the tag.
 
 The project `README.md` links here twice — at the status note and at the
