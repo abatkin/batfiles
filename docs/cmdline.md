@@ -13,15 +13,20 @@ the commands that use them are built.
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Only `version`, `sync`, and the four enable/disable commands do any work.**
-Every other command resolves the location roots it needs and then reports that it
-is not implemented yet, exiting 2 having written nothing. That message is the
-answer to "what can batfiles do", and it disappears one command at a time.
+**Only `version`, `sync`, `apply-action`, `apply-group`, and the four
+enable/disable commands do any work.** Every other command resolves the location
+roots it needs and then reports that it is not implemented yet, exiting 2 having
+written nothing. That message is the answer to "what can batfiles do", and it
+disappears one command at a time.
 
 `sync` is the first command that writes, and the first with an option that is
 honored: it executes the action types that exist, `--dry-run` reports what it
 would execute without doing any of it, and `--skip-action`/`--skip-group` leave
 part of it out for one run.
+
+`apply-action` and `apply-group` carry out part of the same manifest, named
+rather than filtered — the same actions, in the same order, with the same
+semantics and the same `--dry-run`.
 
 The enable and disable commands write machine-local state rather than anything in
 the home directory, and `sync` acts on it: an action or group recorded in
@@ -81,8 +86,9 @@ one level prints the resolved roots, and the destinations `sync` left alone
 because they were already correct. `--quiet` suppresses the lines saying what
 `sync` did, and nothing else.
 
-Three of the four resolved roots are live. `sync` reads the leaf repository and
-[`disabled.toml`](state.md) and writes into the selected home; the enable and
+Three of the four resolved roots are live. `sync` and the two apply commands
+read the leaf repository and
+[`disabled.toml`](state.md) and write into the selected home; the enable and
 disable commands read and rewrite `disabled.toml` under the config directory,
 and touch neither of the other two. Nothing reads or writes anything under the
 cache directory yet. See
@@ -175,7 +181,87 @@ same record by the same words. An action with no group ends after its name.
 Every other option `sync` accepts is [refused for now](#unimplemented-options);
 that list shrinking to empty is how you know `sync` is finished.
 
+### `apply-action`
+
+```text
+batfiles apply-action --id <id> [--dry-run]
+```
+
+Carry out the one action carrying `--id`, with the same semantics `sync` gives
+it: the same inspection, the same decision at the destination, the same reported
+lines. An action written with no `id` cannot be named, and is reachable only
+through its [group](repoformat.md#groups).
+
+**Naming one action waives every reason it would otherwise be passed over** —
+both [`disabled.toml`](state.md) lists, and the run-only skips, which is why the
+command accepts neither `--skip-action` nor `--skip-group` and ignores
+`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`. `disable-action` records that
+an action is not part of an ordinary `sync`; asking for it by name is the way to
+say otherwise for one invocation, without editing what the next `sync` does.
+
+An `--id` that no action carries is a failure: the command resolved nothing, so
+it exits 1 naming the ID and the manifest, and writes nothing. A value that is
+not a valid [ID](repoformat.md#names-and-ids) fails the same way, before the
+repository is opened.
+
+| Option      | Purpose                                                                    |
+|-------------|------------------------------------------------------------------------------|
+| `--id <id>` | Required. The `id` of the action to carry out.                               |
+| `--dry-run` | Report what it would do — see [dry-run behavior](#dry-run-behavior).         |
+
+### `apply-group`
+
+```text
+batfiles apply-group --group <group> [--skip-action <id>]... [--dry-run]
+```
+
+Carry out the actions naming `--group`, in declaration order, with the same
+semantics `sync` gives them. A [group](repoformat.md#groups) is nothing but the
+actions naming it, so a group no action names does not exist: it exits 1 naming
+the group, exactly as `apply-action` does for an unknown ID, and there is no
+separate empty-group case to succeed quietly over.
+
+**Naming the group waives the group's own disable and nothing else.** A
+`disable-group` that would have kept these actions out of a `sync` does not keep
+them out here, while an action disabled by its own `id` is still passed over, and
+so is one named by `--skip-action` or `BATFILES_SKIP_ACTIONS`. The rule is that
+an explicit request waives the exclusions naming *what was asked for*; an
+exclusion naming something more specific still applies.
+
+`--skip-group` is not accepted and `BATFILES_SKIP_GROUPS` is ignored: the command
+has already named the group it is applying, and a group skip could only
+contradict that.
+
+Where every action in the group is passed over, the run says so in one line and
+exits 0 — the group exists and the command did what was asked. Which record was
+passed over, and why, is `-v` detail as it is in a `sync`.
+
+```console
+$ batfiles apply-group --group shell --skip-action aliases
+nothing to apply: every action in the group is disabled or skipped
+```
+
+| Option                 | Purpose                                                             |
+|------------------------|-----------------------------------------------------------------------|
+| `--group <group>`      | Required. The group whose actions are carried out.                    |
+| `--skip-action <id>`   | Leave one action of that group out of this run. Repeatable.           |
+| `--dry-run`            | Report what it would do — see [dry-run behavior](#dry-run-behavior).  |
+
+Both commands read the leaf manifest and `disabled.toml` before carrying
+anything out, the way `sync` does, so a document that is missing, malformed, or
+invalid fails the command with the file named rather than partway through. That
+holds for `apply-action` too, which waives both lists and reads them anyway: a
+state file that cannot be read fails any command that executes actions.
+
+Every other option they accept is [refused for now](#unimplemented-options).
+
 ## Selecting What a Run Does
+
+This is what a `sync` selects over, and it is the whole of it: a `sync` asks for
+the manifest, so it honors everything either source names. The apply commands
+run the same filter over the same list, minus the exclusions naming what they
+were asked for — see [`apply-action`](#apply-action) and
+[`apply-group`](#apply-group).
 
 Two things say an action should be passed over, and a run honors both:
 

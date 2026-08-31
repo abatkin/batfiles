@@ -458,9 +458,14 @@ the two is specified in
 
 Because a group is only the actions that name it, that selection reaches exactly
 those: an action written with no `group` cannot be left out by group, and an
-action written with no `id` can be left out *only* by group. Applying one group
-on its own — `apply-group` — is specified in
-[`future/cmdline.md`](future/cmdline.md) and is not built.
+action written with no `id` can be left out *only* by group — and reached, by
+anything naming a single record, only through its group.
+
+**A group is also a way of applying several actions at once.**
+[`apply-group`](cmdline.md#apply-group) carries out the actions naming it and no
+others, in declaration order. Since a group is only its members, one no action
+names does not exist, and applying it is a failure rather than a run with nothing
+to do.
 
 The field is also read by reporting: `sync -v` names the group each action
 belongs to as it reaches it.

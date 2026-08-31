@@ -57,7 +57,10 @@ fn applied(tree: &Tree, args: &[&str]) -> Vec<String> {
 fn applying_an_action_carries_out_that_record_and_no_other() {
     let tree = Tree::new();
     four_actions(&tree);
-    assert_eq!(applied(&tree, &["apply-action", "--id", "zshrc"]), ["zshrc"]);
+    assert_eq!(
+        applied(&tree, &["apply-action", "--id", "zshrc"]),
+        ["zshrc"]
+    );
 }
 
 #[test]
@@ -198,7 +201,10 @@ fn applying_an_action_waives_every_exclusion_naming_it() {
     let tree = Tree::new();
     four_actions(&tree);
     tree.write_disabled("actions = [\"zshrc\"]\ngroups = [\"shell\"]\n");
-    assert_eq!(applied(&tree, &["apply-action", "--id", "zshrc"]), ["zshrc"]);
+    assert_eq!(
+        applied(&tree, &["apply-action", "--id", "zshrc"]),
+        ["zshrc"]
+    );
 }
 
 #[test]

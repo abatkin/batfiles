@@ -86,7 +86,14 @@ pub(crate) fn sync(
     selection.warn_unmatched(&manifest.actions, reporter);
     // An empty manifest, and one whose every action is disabled, are both
     // ordinary successful runs that did nothing, so neither count is consulted.
-    run(&manifest, &Target::Everything, &selection, roots, mode, reporter)?;
+    run(
+        &manifest,
+        &Target::Everything,
+        &selection,
+        roots,
+        mode,
+        reporter,
+    )?;
     Ok(())
 }
 

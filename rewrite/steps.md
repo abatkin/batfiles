@@ -111,13 +111,16 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **3.5** ✅ Add default-disabled bootstrap entries, which — like 5.1 and 6.1 —
   is also un-rejecting the section the closed document turned away. Parsed and
   checked as the manifest is read; adoption is 8.3's.
-- **3.6** Add `apply-action` and `apply-group` over the same filtered plan.
-  `Selection` is that plan's filter, and it takes the two run-only skip lists as
-  slices, so an apply command that accepts neither passes two empty ones. What
-  these commands need on top is the opposite question — which action or group
-  was *asked for* — and 3.4 deliberately did not generalize `Selection` into
-  answering it, there having been one caller (rule 3).
-- **3.7** Port `ItemAddress` and its parsing, which 3.6 is the first caller of.
+- **3.6** ✅ Add `apply-action` and `apply-group` over the same filtered plan,
+  each waiving the exclusions that name what it asked for.
+- **3.7** Port `ItemAddress` and its parsing, whose first callers 3.6 built:
+  `execute::apply_action` and `apply_group` parse their `--id` and `--group` as
+  `ItemId` today, and `execute::Target` holds one per arm. Widening those two
+  arms is what lets either command name something an included remote
+  contributed, and it widens `Error::UnknownAction` and `Error::UnknownGroup`
+  with them — the two failures 3.6 added for a name that resolves to nothing,
+  which is exactly the outcome `future/cmdline.md` promises for an address that
+  parses and names nothing.
   It also widens `disabled.toml`'s two lists, which 3.3 built as `ItemId` under
   rule 3, 3.4's two run-only skip lists, and 3.5's `[default-disabled]` entry
   fields, all of which parse as `ItemId` for the same reason: with no remotes yet

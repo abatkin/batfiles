@@ -53,8 +53,14 @@ so anything either source names is left out. This is why the general
 $ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
 ```
 
-They are honored by `sync`, the one command that executes actions today, and by
-`clone` when it is built. Skips apply only to the current run and are never
+`sync` honors both, and `clone` will when it is built.
+[`apply-group`](cmdline.md#apply-group) honors `BATFILES_SKIP_ACTIONS` and
+ignores `BATFILES_SKIP_GROUPS`, matching the options it accepts: it has already
+named the group it is applying, so a group skip could only contradict that.
+[`apply-action`](cmdline.md#apply-action) ignores both, naming one action being
+what waives every reason to pass it over.
+
+Skips apply only to the current run and are never
 persisted to [`disabled.toml`](state.md); what a run does with the two together,
 and what it says about a name that matches nothing, is specified in
 [selecting what a run does](cmdline.md#selecting-what-a-run-does).

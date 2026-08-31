@@ -12,9 +12,10 @@ nothing in the repository you cannot read with `cat`.
 >
 > Batfiles is being rebuilt from scratch. Two of the plan's eleven slices are
 > done and the third is under way. `sync` installs a repository, `--dry-run`
-> says what it would install, and what you have disabled or asked to skip is
-> left out. Every other command parses its arguments and then exits saying it is
-> not implemented yet. The plan, and the reason there is a rewrite, are in
+> says what it would install, what you have disabled or asked to skip is left
+> out, and `apply-action` and `apply-group` install one piece of it on its own.
+> Every other command parses its arguments and then exits saying it is not
+> implemented yet. The plan, and the reason there is a rewrite, are in
 > [`rewrite/README.md`](rewrite/README.md).
 
 > [!NOTE]
@@ -80,6 +81,14 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   declaring them changes no run today. It is the one section that is accepted
   without being acted on, and it is named here rather than left to be
   discovered.
+- **One action or one group can be applied on its own.** `apply-action --id
+  zshrc` and `apply-group --group shell` carry out part of the same manifest,
+  named rather than filtered — the same actions in the same order, with the same
+  `--dry-run`. Naming a thing waives the reasons it would otherwise be passed
+  over: `apply-action` runs the action whatever `disabled.toml` says about it or
+  its group, and `apply-group` waives the group's own disable while still
+  passing over a member disabled by its own `id`. A name nothing answers to is a
+  failure rather than a run with nothing to do.
 - **`version` prints the version.**
 - **Unix only, mostly.** Windows compiles and every command runs there, but
   either symlink action is refused by name rather than performed — the platform
@@ -88,8 +97,7 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`.
   everywhere, so a Windows run can create directories and seed copies but cannot
   install a link.
 
-Everything else — `init`, `clone`, `apply-action`, `apply-group`, and `vars` —
-parses its arguments and exits 2.
+Everything else — `init`, `clone`, and `vars` — parses its arguments and exits 2.
 
 ## Example
 
@@ -168,6 +176,18 @@ $ batfiles sync -v --skip-group editor
 symlink nvim (group editor) - skipped: `editor` from --skip-group
 ```
 
+It is also how you install several actions on their own. `batfiles apply-group
+--group editor` runs that group and nothing else, and `batfiles apply-action
+--id nvim` runs the one action — including when you have disabled it, since
+asking for something by name is how you say so for one invocation:
+
+```console
+$ batfiles disable-group editor
+disabled group `editor`
+$ batfiles apply-action --id nvim
+linked /home/you/.config/nvim -> /home/you/dotfiles/editor/nvim
+```
+
 And where something is already in the way:
 
 ```console
@@ -195,7 +215,6 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 3     | `apply-action` and `apply-group`, for one action or group alone    |
 | 4     | Fetching files and archives, and cloning Git repositories           |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |

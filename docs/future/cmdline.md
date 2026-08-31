@@ -49,14 +49,17 @@ variables use fresh cached values and automatically resolve stale or missing
 values; `--refresh-vars` instead forces allowed dynamic variables to be
 recomputed even when their cached values are fresh.
 
-## Shared Sync and Clone Selection Options
+## Shared Selection Options
 
-These run-only selectors are accepted by `sync` and `clone` only:
+`sync` and `clone` accept both run-only selectors; `apply-group` accepts
+`--skip-action` alone, and `apply-action` neither. Which command takes which, and
+why, is in [`docs/cmdline.md`](../cmdline.md#selecting-what-a-run-does). What is
+not built is the reach of a name:
 
-| Option                 | Purpose                                                                                          |
-|------------------------|--------------------------------------------------------------------------------------------------|
-| `--skip-action <id>`   | Skip an addressable remote, action, included action, or manifest entry for this run. Repeatable. |
-| `--skip-group <group>` | Skip a leaf or qualified included group for this run. Repeatable.                                |
+| Option                 | Widens to name                                                                    |
+|------------------------|-------------------------------------------------------------------------------------|
+| `--skip-action <id>`   | An addressable remote, included action, or manifest entry, as well as a leaf action. |
+| `--skip-group <group>` | A qualified included group, as well as a leaf one.                                   |
 
 ## Dry-Run Behavior
 
@@ -113,33 +116,18 @@ it accepts:
 `--dry-run` and `--refresh-remotes` are mutually exclusive: a dry run
 materializes nothing, so there is nothing for it to refresh.
 
-### `apply-action`
+### `apply-action` and `apply-group`
 
-```text
-batfiles apply-action --id <id> [action-options] [--dry-run]
-```
+Both are built, and are specified in
+[`docs/cmdline.md`](../cmdline.md#apply-action). What is not built is the half
+that needs something to refer to:
 
-Explicitly apply one directly executable action or addressable manifest entry
-using the same action semantics as `sync`.
-
-| Option      | Purpose                                                                                                                                 |
-|-------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `--id <id>` | Required action or manifest-entry address. Included actions use qualified addresses. `include-remote` itself is not directly applyable. |
-| `--dry-run` | Report the application plan using the shared [dry-run behavior](../cmdline.md#dry-run-behavior).                                                     |
-
-### `apply-group`
-
-```text
-batfiles apply-group --group <group> [action-options] [--dry-run]
-```
-
-Explicitly apply the enabled, directly executable actions in one group using
-the same action semantics as `sync`.
-
-| Option            | Purpose                                                                                   |
-|-------------------|-------------------------------------------------------------------------------------------|
-| `--group <group>` | Required leaf or qualified included group address.                                        |
-| `--dry-run`       | Report the group application plan using the shared [dry-run behavior](../cmdline.md#dry-run-behavior). |
+- `--id` and `--group` take a leaf [ID](repoformat.md#names-and-ids) today. Each
+  widens to an [address](#address-forms), so that an action or a group spliced in
+  from an included remote can be named with a qualified one.
+- An addressable entry inside a `git-clone-list` becomes applyable by
+  `<action-id>.<entry-id>` when that action exists.
+- `include-remote` is never directly applyable, whatever its address.
 
 ### `vars set`
 
