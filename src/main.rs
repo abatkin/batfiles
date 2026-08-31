@@ -7,6 +7,7 @@ mod directory;
 mod disabled;
 mod env;
 mod error;
+mod execute;
 mod install;
 mod item;
 mod location;
@@ -15,7 +16,6 @@ mod mode;
 mod output;
 mod paths;
 mod selection;
-mod sync;
 mod tomlfile;
 
 use std::process::ExitCode;

@@ -10,6 +10,12 @@
 //! it was typed for this run, and `sync` has the manifest loaded, so it can
 //! tell. A `disabled.toml` entry that matches nothing is silent, because
 //! pre-registering a name a later branch introduces is what that file is for.
+//!
+//! This is the negative half of the question. Which entries a run *asks* for is
+//! [`crate::execute::Target`]'s, and the two meet at one rule: an explicit
+//! request waives the exclusions naming what it asked for, so the three
+//! constructors below differ in which lists they are built from rather than in
+//! how they filter.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -111,7 +117,8 @@ pub(crate) struct Selection {
 }
 
 impl Selection {
-    /// Combine the run-only skips with the machine-local lists.
+    /// The filter a `sync` applies: everything either source names, in both
+    /// namespaces.
     ///
     /// The options are read before the variables so that a name given both ways
     /// is attributed to the option.
@@ -134,6 +141,50 @@ impl Selection {
             actions,
             groups,
             disabled,
+        }
+    }
+
+    /// The filter an `apply-group` applies: the action skips, and the action
+    /// half of the machine-local lists.
+    ///
+    /// Both group-shaped exclusions are dropped rather than consulted, because
+    /// the command names one group and every action it reaches is in it. A
+    /// disable or a skip naming that group is therefore naming exactly what was
+    /// asked for, which an explicit request waives; and no *other* group name
+    /// can match an action this run will look at, so dropping the whole list
+    /// and waiving the one group are the same thing here.
+    pub fn for_one_group(
+        skip_actions: &[String],
+        env: &Environment,
+        disabled: Disabled,
+        reporter: &Reporter,
+    ) -> Self {
+        let mut actions = Skips::default();
+        actions.extend(skip_actions, "--skip-action", reporter);
+        actions.extend(&env.list(SKIP_ACTIONS), SKIP_ACTIONS, reporter);
+
+        Self {
+            actions,
+            groups: Skips::default(),
+            disabled: Disabled {
+                actions: disabled.actions,
+                groups: BTreeSet::new(),
+            },
+        }
+    }
+
+    /// The filter an `apply-action` applies: none.
+    ///
+    /// Naming one action is as explicit as an invocation gets, so every
+    /// exclusion is waived — the persistent lists and the run-only skips alike,
+    /// which is also why the command accepts neither `--skip-action` nor
+    /// `--skip-group`. The empty filter exists so that the one execution loop
+    /// takes a `Selection` from all three of its callers.
+    pub fn waiving_everything() -> Self {
+        Self {
+            actions: Skips::default(),
+            groups: Skips::default(),
+            disabled: Disabled::default(),
         }
     }
 

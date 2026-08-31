@@ -2,11 +2,11 @@
 //! resolve the roots a command works in, dispatch, and map the result to an
 //! exit status.
 //!
-//! Every command in the surface parses; `version`, `sync`, and the four
-//! enable/disable commands run. The rest report an option they accept and do
-//! not honor yet, or else resolve their roots and report that they are not
-//! implemented yet, which is the honest thing to do and the reason the whole
-//! surface can be committed before the tool works.
+//! Every command in the surface parses; `version`, `sync`, the two apply
+//! commands, and the four enable/disable commands run. The rest report an
+//! option they accept and do not honor yet, or else resolve their roots and
+//! report that they are not implemented yet, which is the honest thing to do
+//! and the reason the whole surface can be committed before the tool works.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -19,10 +19,10 @@ use crate::cli::{Cli, Command, GlobalOptions, color};
 use crate::disabled::{self, Change, DisabledList};
 use crate::env::Environment;
 use crate::error::Error;
+use crate::execute;
 use crate::location::{LocationInputs, Roots, detect_os_home, resolve_roots};
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
-use crate::sync;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -96,11 +96,33 @@ fn dispatch(
         Command::Init(_) => Ok(unimplemented(reporter, name)),
         Command::Sync(args) => {
             let roots = locate(cli, env, reporter)?;
-            sync::run(
+            execute::sync(
                 &roots,
                 RunMode::new(args.dry_run),
+                &args.selection.actions.skip_actions,
+                &args.selection.groups.skip_groups,
+                env,
+                reporter,
+            )?;
+            Ok(ExitCode::SUCCESS)
+        }
+        // The two apply commands run the same loop over the same list as
+        // `sync`, restricted to what they name. `apply-action` reads no
+        // environment because it honors neither run-only skip list: naming one
+        // action waives every exclusion, which is why it accepts neither option
+        // either.
+        Command::ApplyAction(args) => {
+            let roots = locate(cli, env, reporter)?;
+            execute::apply_action(&roots, RunMode::new(args.dry_run), &args.id, reporter)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::ApplyGroup(args) => {
+            let roots = locate(cli, env, reporter)?;
+            execute::apply_group(
+                &roots,
+                RunMode::new(args.dry_run),
+                &args.group,
                 &args.selection.skip_actions,
-                &args.selection.skip_groups,
                 env,
                 reporter,
             )?;

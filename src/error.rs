@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::item::ItemIdError;
+use crate::item::{ItemId, ItemIdError};
 use crate::manifest;
 use crate::paths::ExistingNode;
 
@@ -69,6 +69,19 @@ pub(crate) enum Error {
     /// travels inside [`ItemIdError`], which already renders the whole message.
     #[error(transparent)]
     InvalidId(#[from] ItemIdError),
+
+    // Naming what to apply.
+    /// An `apply-action` naming an ID no record in the manifest carries. The
+    /// manifest is named because which repository was read is half the answer
+    /// when a command resolves nothing.
+    #[error("no action in {} has the id `{id}`", .path.display())]
+    UnknownAction { path: PathBuf, id: ItemId },
+
+    /// An `apply-group` naming a group no record in the manifest belongs to. A
+    /// group exists because some action names it, so an empty one and an absent
+    /// one are the same thing.
+    #[error("no action in {} is in the group `{group}`", .path.display())]
+    UnknownGroup { path: PathBuf, group: ItemId },
 
     // Carrying an action out.
     /// An action naming a source the repository does not contain.

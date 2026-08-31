@@ -39,13 +39,34 @@ pub(crate) struct ActionOptions {
 }
 
 /// Run-only selectors accepted by `sync` and `clone`.
+///
+/// The two halves are separate types because `apply-group` takes the first and
+/// not the second: it is already restricted to one group, so naming a group to
+/// leave out has nothing to say. Splitting the struct is what keeps the option
+/// spelled once — a second `#[arg]` for `--skip-action` on that command is a
+/// help string and a value name free to drift.
+#[derive(Debug, Args)]
+pub(crate) struct SelectionOptions {
+    #[command(flatten)]
+    pub actions: SkipActionOptions,
+
+    #[command(flatten)]
+    pub groups: SkipGroupOptions,
+}
+
+/// The action half, accepted by `sync`, `clone`, and `apply-group`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Selection Options")]
-pub(crate) struct SelectionOptions {
+pub(crate) struct SkipActionOptions {
     /// Skip an action or addressable child for this run; repeatable
     #[arg(long = "skip-action", value_name = "ID")]
     pub skip_actions: Vec<String>,
+}
 
+/// The group half, accepted by `sync` and `clone`.
+#[derive(Debug, Args)]
+#[command(next_help_heading = "Selection Options")]
+pub(crate) struct SkipGroupOptions {
     /// Skip a group for this run; repeatable
     #[arg(long = "skip-group", value_name = "GROUP")]
     pub skip_groups: Vec<String>,

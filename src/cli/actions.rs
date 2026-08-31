@@ -4,7 +4,7 @@
 
 use clap::Args;
 
-use super::options::{ActionOptions, BootstrapOptions, SelectionOptions};
+use super::options::{ActionOptions, BootstrapOptions, SelectionOptions, SkipActionOptions};
 
 /// `clone` intentionally accepts neither `--dry-run` nor `--refresh-remotes`: a
 /// fresh clone materializes its remotes during the follow-up sync.
@@ -59,6 +59,9 @@ pub(crate) struct ApplyActionArgs {
     pub action: ActionOptions,
 }
 
+/// Takes the action half of the run-only selectors and not the group half: it
+/// is already restricted to one group, so `--skip-group` has nothing to say,
+/// while leaving one member of that group out is an ordinary thing to want.
 #[derive(Debug, Args)]
 pub(crate) struct ApplyGroupArgs {
     /// Leaf or qualified included group address
@@ -71,6 +74,9 @@ pub(crate) struct ApplyGroupArgs {
 
     #[command(flatten)]
     pub action: ActionOptions,
+
+    #[command(flatten)]
+    pub selection: SkipActionOptions,
 }
 
 #[cfg(test)]
@@ -108,18 +114,33 @@ mod tests {
     }
 
     #[test]
-    fn apply_commands_reject_the_run_only_selectors() {
-        assert_eq!(
-            error_kind(&[
-                "batfiles",
-                "apply-action",
-                "--id",
-                "a",
-                "--skip-action",
-                "b"
-            ]),
-            ErrorKind::UnknownArgument
-        );
+    fn apply_action_rejects_both_run_only_selectors() {
+        // One action is named exactly, so neither namespace has anything left
+        // to select over.
+        for selector in ["--skip-action", "--skip-group"] {
+            assert_eq!(
+                error_kind(&["batfiles", "apply-action", "--id", "a", selector, "b"]),
+                ErrorKind::UnknownArgument,
+                "{selector}"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_group_takes_the_action_selector_and_not_the_group_one() {
+        let cli = parse(&[
+            "batfiles",
+            "apply-group",
+            "--group",
+            "shell",
+            "--skip-action",
+            "zshrc",
+        ]);
+        let Command::ApplyGroup(args) = cli.command else {
+            panic!("expected apply-group");
+        };
+        assert_eq!(args.selection.skip_actions, vec!["zshrc".to_owned()]);
+
         assert_eq!(
             error_kind(&[
                 "batfiles",
@@ -183,7 +204,7 @@ mod tests {
         };
         assert_eq!(args.url, "https://example.invalid/dotfiles.git");
         assert!(args.action.refresh_vars);
-        assert_eq!(args.selection.skip_groups, vec!["fonts".to_owned()]);
+        assert_eq!(args.selection.groups.skip_groups, vec!["fonts".to_owned()]);
         assert_eq!(args.bootstrap.disable_groups, vec!["gui".to_owned()]);
         assert_eq!(args.bootstrap.enable_actions, vec!["shell".to_owned()]);
     }
