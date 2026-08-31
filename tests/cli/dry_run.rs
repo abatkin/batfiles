@@ -152,6 +152,80 @@ fn contended_lines(tree: &Tree, output: &str) -> Vec<String> {
         .collect()
 }
 
+/// The apply commands take `--dry-run` for the same reason `sync` does, and get
+/// it from the same place: one loop, one mode, one set of helpers reading it.
+/// What is worth checking is that naming a target did not route around any of
+/// that — so this is the whole promise in miniature, over one group.
+#[test]
+fn applying_a_group_under_dry_run_reports_and_writes_nothing() {
+    let tree = Tree::fixture("leaf");
+    with_existing_content(&tree);
+    let before = snapshot(&tree.path("home"));
+
+    let dry = stderr_of(
+        &tree
+            .batfiles()
+            .args(["apply-group", "--group", "git", "--dry-run", "-v"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(snapshot(&tree.path("home")), before);
+
+    let real = stderr_of(
+        &tree
+            .batfiles()
+            .args(["apply-group", "--group", "git", "-v"])
+            .assert()
+            .success(),
+    );
+    // `git` holds no pair contending for one destination, so every line of it
+    // is subject to parity and none has to be excluded.
+    let said: Vec<String> = dry.lines().map(in_past_tense).collect();
+    assert_eq!(said, real.lines().collect::<Vec<_>>());
+    // Guards the comparison itself: two runs that both said nothing
+    // prospective would match line for line and prove nothing. `would keep` is
+    // there because `with_existing_content` occupies the seed's destination, so
+    // the group covers a decision resting on inspection as well as a write.
+    for expected in ["would link", "would keep"] {
+        assert!(
+            dry.contains(expected),
+            "the dry run never said `{expected}`:\n{dry}"
+        );
+    }
+}
+
+#[test]
+fn applying_one_action_under_dry_run_writes_nothing() {
+    let tree = Tree::fixture("leaf");
+    with_existing_content(&tree);
+    let before = snapshot(&tree.path("home"));
+
+    let dry = stderr_of(
+        &tree
+            .batfiles()
+            .args(["apply-action", "--id", "nvim", "--dry-run"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(snapshot(&tree.path("home")), before);
+
+    let real = stderr_of(
+        &tree
+            .batfiles()
+            .args(["apply-action", "--id", "nvim"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(
+        dry.lines().map(in_past_tense).collect::<Vec<_>>(),
+        real.lines().collect::<Vec<_>>()
+    );
+    assert!(
+        dry.contains("would link"),
+        "the dry run never said what it would do:\n{dry}"
+    );
+}
+
 /// One reported line as the real run would have written it.
 ///
 /// The inverse of `Verb::say`, and deliberately spelled out here rather

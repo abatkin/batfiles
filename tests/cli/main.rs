@@ -6,6 +6,7 @@
 mod support;
 
 mod actions;
+mod apply;
 mod disabled;
 mod groups;
 mod locations;
