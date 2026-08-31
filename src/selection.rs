@@ -12,10 +12,13 @@
 //! pre-registering a name a later branch introduces is what that file is for.
 //!
 //! This is the negative half of the question. Which entries a run *asks* for is
-//! [`crate::execute::Target`]'s, and the two meet at one rule: an explicit
-//! request waives the exclusions naming what it asked for, so the three
-//! constructors below differ in which lists they are built from rather than in
-//! how they filter.
+//! [`crate::execute::Target`]'s, and the two meet at one rule: **an exclusion no
+//! finer-grained than what the command named is waived.** `sync` names nothing,
+//! so every exclusion outranks it and none is waived; `apply-group` names a
+//! group, which waives a disable or a skip on that group and leaves one naming a
+//! member standing; nothing is finer-grained than the one action `apply-action`
+//! names, so it waives all four lists. That granularity is [`Named`], and it is
+//! the only thing the three commands' filters differ in.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -31,6 +34,35 @@ const SKIP_ACTIONS: &str = "BATFILES_SKIP_ACTIONS";
 
 /// The environment variable unioned with `--skip-group`.
 const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
+
+/// How specifically a command named what it asked for.
+///
+/// The one thing the three commands' filters differ in: an exclusion no
+/// finer-grained than this is waived. The variants are declared coarse to fine,
+/// which is the comparison [`Named::honors_actions`] and [`Named::honors_groups`]
+/// make.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Named {
+    /// `sync`, which asks for the whole manifest. Every exclusion names
+    /// something more specific than that, so none is waived.
+    Nothing,
+    /// `apply-group`, which names one group.
+    Group,
+    /// `apply-action`, which names one action.
+    Action,
+}
+
+impl Named {
+    /// Whether an exclusion naming an action's own ID still applies.
+    fn honors_actions(self) -> bool {
+        self < Self::Action
+    }
+
+    /// Whether an exclusion naming an action's group still applies.
+    fn honors_groups(self) -> bool {
+        self < Self::Group
+    }
+}
 
 /// Why an action is not being run.
 ///
@@ -108,83 +140,69 @@ impl Skips {
     }
 }
 
-/// The two sources, combined into the one filter a run applies.
+/// One namespace's run-only skips: the option's names unioned with the
+/// variable's, or nothing at all where this run waives them.
+///
+/// The option is read first, so a name given both ways is attributed to it.
+fn run_only(
+    consulted: bool,
+    values: &[String],
+    option: &'static str,
+    variable: &'static str,
+    env: &Environment,
+    reporter: &Reporter,
+) -> Skips {
+    let mut skips = Skips::default();
+    if consulted {
+        skips.extend(values, option, reporter);
+        skips.extend(&env.list(variable), variable, reporter);
+    }
+    skips
+}
+
+/// The two sources and the waiver, combined into the one filter a run applies.
 #[derive(Debug)]
 pub(crate) struct Selection {
+    named: Named,
     actions: Skips,
     groups: Skips,
     disabled: Disabled,
 }
 
 impl Selection {
-    /// The filter a `sync` applies: everything either source names, in both
-    /// namespaces.
+    /// The filter one run applies: everything either source names, less
+    /// whatever `named` waives.
     ///
-    /// The options are read before the variables so that a name given both ways
-    /// is attributed to the option.
+    /// A waived namespace's run-only list is not read at all, so no name in it
+    /// warns about its syntax or its failure to match. The machine-local lists
+    /// are taken whole and waived in [`Selection::skipped`].
     pub fn new(
+        named: Named,
         skip_actions: &[String],
         skip_groups: &[String],
         env: &Environment,
         disabled: Disabled,
         reporter: &Reporter,
     ) -> Self {
-        let mut actions = Skips::default();
-        actions.extend(skip_actions, "--skip-action", reporter);
-        actions.extend(&env.list(SKIP_ACTIONS), SKIP_ACTIONS, reporter);
-
-        let mut groups = Skips::default();
-        groups.extend(skip_groups, "--skip-group", reporter);
-        groups.extend(&env.list(SKIP_GROUPS), SKIP_GROUPS, reporter);
-
         Self {
-            actions,
-            groups,
+            actions: run_only(
+                named.honors_actions(),
+                skip_actions,
+                "--skip-action",
+                SKIP_ACTIONS,
+                env,
+                reporter,
+            ),
+            groups: run_only(
+                named.honors_groups(),
+                skip_groups,
+                "--skip-group",
+                SKIP_GROUPS,
+                env,
+                reporter,
+            ),
+            named,
             disabled,
-        }
-    }
-
-    /// The filter an `apply-group` applies: the action skips, and the action
-    /// half of the machine-local lists.
-    ///
-    /// Both group-shaped exclusions are dropped rather than consulted, because
-    /// the command names one group and every action it reaches is in it. A
-    /// disable or a skip naming that group is therefore naming exactly what was
-    /// asked for, which an explicit request waives; and no *other* group name
-    /// can match an action this run will look at, so dropping the whole list
-    /// and waiving the one group are the same thing here.
-    pub fn for_one_group(
-        skip_actions: &[String],
-        env: &Environment,
-        disabled: Disabled,
-        reporter: &Reporter,
-    ) -> Self {
-        let mut actions = Skips::default();
-        actions.extend(skip_actions, "--skip-action", reporter);
-        actions.extend(&env.list(SKIP_ACTIONS), SKIP_ACTIONS, reporter);
-
-        Self {
-            actions,
-            groups: Skips::default(),
-            disabled: Disabled {
-                actions: disabled.actions,
-                groups: BTreeSet::new(),
-            },
-        }
-    }
-
-    /// The filter an `apply-action` applies: none.
-    ///
-    /// Naming one action is as explicit as an invocation gets, so every
-    /// exclusion is waived — the persistent lists and the run-only skips alike,
-    /// which is also why the command accepts neither `--skip-action` nor
-    /// `--skip-group`. The empty filter exists so that the one execution loop
-    /// takes a `Selection` from all three of its callers.
-    pub fn waiving_everything() -> Self {
-        Self {
-            actions: Skips::default(),
-            groups: Skips::default(),
-            disabled: Disabled::default(),
         }
     }
 
@@ -192,7 +210,8 @@ impl Selection {
     ///
     /// Reported ahead of the first action rather than at the end, because it is
     /// a complaint about the invocation and a run that fails partway should not
-    /// swallow it.
+    /// swallow it. A waived namespace says nothing here, its list never having
+    /// been read.
     pub fn warn_unmatched(&self, actions: &[Action], reporter: &Reporter) {
         let ids: BTreeSet<&ItemId> = actions.iter().filter_map(Action::id).collect();
         let groups: BTreeSet<&ItemId> = actions.iter().filter_map(Action::group).collect();
@@ -202,16 +221,21 @@ impl Selection {
 
     /// Why this action is being passed over, or `None` to carry it out.
     ///
-    /// A disable is reported ahead of a skip because it is the reason that will
-    /// still be there tomorrow, when the skip that was typed for one run is
-    /// gone. An action's own name is reported ahead of its group's for the same
-    /// kind of reason: it is the more specific of the two.
+    /// The waiver is applied first, by taking the waived name away: in a
+    /// namespace the request already outranks, the record presents nothing for
+    /// either list — persistent or run-only — to match.
+    ///
+    /// Among the reasons that remain, a disable is reported ahead of a skip
+    /// because it is the reason that will still be there tomorrow, when the skip
+    /// that was typed for one run is gone. An action's own name is reported
+    /// ahead of its group's for the same kind of reason: it is the more specific
+    /// of the two.
     ///
     /// Every name reported is the record's own, so a reason borrows the action
     /// rather than the list that matched it.
     pub fn skipped<'a>(&self, action: &'a Action) -> Option<Skipped<'a>> {
-        let id = action.id();
-        let group = action.group();
+        let id = action.id().filter(|_| self.named.honors_actions());
+        let group = action.group().filter(|_| self.named.honors_groups());
 
         if let Some(name) = id.filter(|id| self.disabled.actions.contains(id)) {
             return Some(Skipped::Disabled {
@@ -266,13 +290,25 @@ mod tests {
         }
     }
 
+    /// A `sync`'s filter: it names nothing, so it waives nothing.
     fn selection(
         skip_actions: &[&str],
         skip_groups: &[&str],
         env: &[(&str, &str)],
         disabled: Disabled,
     ) -> Selection {
+        filter(Named::Nothing, skip_actions, skip_groups, env, disabled)
+    }
+
+    fn filter(
+        named: Named,
+        skip_actions: &[&str],
+        skip_groups: &[&str],
+        env: &[(&str, &str)],
+        disabled: Disabled,
+    ) -> Selection {
         Selection::new(
+            named,
             &names_of(skip_actions),
             &names_of(skip_groups),
             &Environment::from_pairs(env.iter().copied()),
@@ -378,6 +414,54 @@ mod tests {
             reason(&selection, &action("zshrc", "shell")).as_deref(),
             Some("`zshrc` from --skip-action")
         );
+    }
+
+    // The waiver: an exclusion no finer-grained than what the command named
+    // does not apply. Each case names the record every list above names.
+
+    #[test]
+    fn naming_a_group_waives_the_group_level_exclusions_only() {
+        // `apply-group`. The disable and the skip naming the group go; the ones
+        // naming the action itself are more specific than what was asked for
+        // and stay, in the order a `sync` reports them.
+        let by_skip = filter(
+            Named::Group,
+            &["zshrc"],
+            &["shell"],
+            &[(SKIP_GROUPS, "shell")],
+            disabled(&[], &["shell"]),
+        );
+        assert_eq!(reason(&by_skip, &action("other", "shell")), None);
+        assert_eq!(
+            reason(&by_skip, &action("zshrc", "shell")).as_deref(),
+            Some("`zshrc` from --skip-action")
+        );
+
+        let by_disable = filter(
+            Named::Group,
+            &[],
+            &[],
+            &[],
+            disabled(&["zshrc"], &["shell"]),
+        );
+        assert_eq!(
+            reason(&by_disable, &action("zshrc", "shell")).as_deref(),
+            Some("action `zshrc` is disabled")
+        );
+    }
+
+    #[test]
+    fn naming_an_action_waives_every_exclusion() {
+        // `apply-action`. Nothing is finer-grained than the one action named,
+        // so all four lists are waived.
+        let selection = filter(
+            Named::Action,
+            &["zshrc"],
+            &["shell"],
+            &[(SKIP_ACTIONS, "zshrc"), (SKIP_GROUPS, "shell")],
+            disabled(&["zshrc"], &["shell"]),
+        );
+        assert_eq!(reason(&selection, &action("zshrc", "shell")), None);
     }
 
     #[test]

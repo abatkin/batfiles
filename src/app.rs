@@ -107,13 +107,12 @@ fn dispatch(
             Ok(ExitCode::SUCCESS)
         }
         // The two apply commands run the same loop over the same list as
-        // `sync`, restricted to what they name. `apply-action` reads no
-        // environment because it honors neither run-only skip list: naming one
-        // action waives every exclusion, which is why it accepts neither option
-        // either.
+        // `sync`, restricted to what they name. Naming one action waives every
+        // exclusion, which is why `apply-action` accepts neither run-only
+        // option and why neither variable that is their other half reaches it.
         Command::ApplyAction(args) => {
             let roots = locate(cli, env, reporter)?;
-            execute::apply_action(&roots, RunMode::new(args.dry_run), &args.id, reporter)?;
+            execute::apply_action(&roots, RunMode::new(args.dry_run), &args.id, env, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::ApplyGroup(args) => {
