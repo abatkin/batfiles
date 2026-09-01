@@ -38,5 +38,12 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
+      # The Windows cross-lint compiles the C in the TLS stack, so it needs a
+      # compiler and headers targeting MSVC. `cargo xwin` fetches the Windows
+      # SDK on first use and caches it; `task lint` accepts the Microsoft
+      # license on the command it runs.
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --locked
+
       - name: task ci
         run: task ci

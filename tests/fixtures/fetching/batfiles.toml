@@ -1,0 +1,26 @@
+# A leaf repository whose actions reach the network, kept apart from `leaf`
+# rather than grown into it: every test here needs a server running, and the
+# tests that drive `leaf` should not.
+#
+# `{server}` is replaced with the address of the local HTTP server the test
+# started, because a fixture cannot know which port one binds.
+
+# The action step 4.8 retires a `curl -Sso` for: a single file from a branch,
+# with no digest, because the URL is a moving target and a pinned digest would
+# fail on every upstream change.
+[[actions]]
+type = "fetch-url"
+id = "pathogen"
+group = "editor"
+source = "{server}/pathogen.vim"
+dest = "~/.vim/autoload/pathogen.vim"
+
+# The other half of the bargain: a file whose bytes are pinned, so a server
+# that answers with something else is refused rather than installed.
+[[actions]]
+type = "fetch-url"
+id = "starship"
+group = "shell"
+source = "{server}/starship.toml"
+sha256 = "0fbf196b3612d0bafdaaa79b45efb1d03c813bedc53bbe3e6e0f5550ec14683f"
+dest = "~/.config/starship.toml"

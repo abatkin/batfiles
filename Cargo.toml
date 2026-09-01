@@ -21,9 +21,28 @@ toml = "1"
 # sits next to the variant instead of in a match arm a screen away.
 thiserror = "2"
 
+# What `fetch-url` downloads with. Blocking, so a fetch is an ordinary call in
+# the middle of an action. The default features are off because a download of
+# one file needs none of them: without `gzip` and `brotli` batfiles asks for no
+# transfer encoding and servers send none, which is two fewer dependencies for
+# a saving that matters to an API client rather than to this.
+ureq = { version = "3.4", default-features = false, features = [
+    "rustls",
+    # Roots from the OS rather than the bundled Mozilla set, so a corporate CA
+    # works where the work repository lives.
+    "platform-verifier",
+] }
+
+# Verifies a `fetch-url` `sha256` against the bytes as they arrive.
+sha2 = "0.11"
+
 [dev-dependencies]
 # Locates and runs the Cargo-built binary in the end-to-end CLI tests.
 assert_cmd = "2"
 
 # Throwaway repositories and home directories for those tests.
 tempfile = "3"
+
+# The local HTTP server the fetching tests run against, so no test reaches the
+# network (`guidance.md`, "Test environments").
+tiny_http = "0.12"

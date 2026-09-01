@@ -135,37 +135,27 @@ step that made them report unknown effects went with the effect type it was an
 artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
 4.6.
 
-- **4.1** Add `fetch-url` for a single file, seeded only when missing — the same
-  words as `copy`, and it should be the same code path. A download is the worst
-  case rule 15 is about: it is slow, so the window in which the destination
-  holds something unfinished is wide, and a network that drops mid-transfer is
-  ordinary rather than exceptional. Publish through `install.rs`'s `build_and_publish`, and
-  take the digest check from `future/safety.md` with it — verifying content is a
-  step between building and publishing, which is exactly the shape that path
-  already has. Slice 1 spent four rounds of review getting this right for
-  `copy`; none of it is worth deriving a second time.
-
-  **This is the step that parameterizes `fill`.** 1.5 moved `install.rs` out
-  whole but deliberately left it naming its one content producer directly,
-  because `copy` was the only caller and rule 3 says wait. A download is the
-  second, so `fill` becomes the argument — what to write into the staging node
-  this run created — and `copy_file`, `copy_children`, and `mirror_permissions`
-  go to `action/copy.rs` with it. What must **not** move is anything between
-  the staging node and the destination: `create_staging`, `publish`, and
-  `discard` are the rule-15 property itself, and a download reaches them by the
-  same route a copy does.
-
-  Moving the fillers puts `std::fs` in `action/copy.rs`, so add it to 2.3's
-  allowlist here, as a downstream entry rather than a mode reader — nothing it
-  contains is reachable under `DryRun`, because `install::seed` creates no
-  staging node to fill. The fetcher is the same kind of entry for the same
-  reason.
+- **4.1** ✅ Add `fetch-url` for a single file, seeded only when missing, through
+  the same `install.rs` path `copy` uses. `fill` is now a parameter carried on an
+  `install::Seed` descriptor, and the fetcher joined 2.3's allowlist beside
+  `action/copy.rs` as a downstream entry.
 - **4.2** Add archive extraction, rejecting absolute paths, `..` traversal, and
   symlinks escaping the destination root. A directory seed, so rule 15 again:
   extract into the staging tree and publish once, rather than into the
   destination. That also makes the entry rejections cheap to enforce — an entry
   that escapes is caught before anything reaches `$HOME`, and the whole
   extraction is abandoned by discarding one path.
+
+  **Widen the record rather than adding an action.** 4.1 left `FetchUrlAction`
+  closed against `extract`, `archive-root`, `include`, and `exclude`, with a CLI
+  test asserting that a manifest writing one is refused; this step adds those
+  fields and deletes that test. It is also the second `install::Seed` whose
+  `kind` is a directory, and therefore the first caller to fill
+  `Staged::Directory` — which is what makes `Staged::into_file`'s panic arm
+  unreachable by construction rather than by convention.
+
+  Its fixture is `tests/fixtures/fetching`, whose `{server}` placeholder 4.1
+  built the substitution for.
 - **4.3** Add `git-clone` for one repository, and the shared helper that shells
   out to `git`. **That helper is the fourth thing that reads `RunMode`, and the only
   one slice 4 adds** (`guidance.md`, "Where the mode is read"). It is not covered
@@ -195,16 +185,21 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   boundary rather than a partial plan (`guidance.md`, "Why there is no effect
   type"). The conservative update rules 6.2 reuses are about what a real run
   does; a dry run stops before all of them.
-- **4.7** Test against a local HTTP server and local bare git repositories; no
-  step in the suite may reach the network. A dry run is part of what is tested
-  here: `fetch-url` says what it would fetch and where, and `git-clone-list`
+- **4.7** Test against local bare git repositories; no step in the suite may
+  reach the network. A dry run is part of what is tested here: `git-clone-list`
   reads its manifest — a repository file, readable at the moment the action runs
-  — and says one line per entry. Neither reaches the network in that mode, and an
-  existing clone is left exactly as it was, unfetched.
+  — and says one line per entry, without reaching the network, and an existing
+  clone is left exactly as it was, unfetched.
 
-  Promote `docs/future/cmdline.md`'s "Remote content is described, not retrieved"
-  paragraph into the section 2.4 created, minus its second half about inclusions,
-  which waits for 7.1.
+  The HTTP half landed at 4.1: `tests/cli/support.rs` has a `tiny_http` `Server`
+  that counts requests, which is what lets a dry-run test assert that *nothing
+  was asked of the network* rather than only that the tree is unchanged. Write
+  the git tests to assert the same way where they can.
+
+  Promote what is left of `docs/future/cmdline.md`'s "Remote content is
+  described, not retrieved" paragraph into the section 2.4 created — 4.1 took
+  `fetch-url`'s share of it and the digest sentence beside it — minus its second
+  half about inclusions, which waits for 7.1.
 - **4.8** **Acceptance: your personal dotfiles are fully managed by `sync`, and
   the personal shell script is retired.**
 

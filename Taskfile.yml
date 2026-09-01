@@ -14,10 +14,13 @@ tasks:
     cmds:
       - cargo clippy --all-targets -- -D warnings
       # CI is ubuntu-only, so a `#[cfg(unix)]` gate that has rotted is caught
-      # here or nowhere. Checking needs the target's std, not a linker;
-      # rust-toolchain.toml asks for it, so `rustup target add
-      # x86_64-pc-windows-msvc` is only needed by a toolchain predating that.
-      - cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+      # here or nowhere. This needs the target's std, which
+      # rust-toolchain.toml asks for, and — since the TLS stack under
+      # `fetch-url` compiles C — a compiler and headers targeting MSVC, which
+      # `cargo xwin` supplies by fetching the Windows SDK. Nothing is linked;
+      # the C is compiled. `cargo install cargo-xwin` is the one tool this
+      # repository needs beyond the pinned toolchain, `cargo-deny`, and go-task.
+      - XWIN_ACCEPT_LICENSE=1 cargo xwin clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 
   test:
     desc: Run the project test suite

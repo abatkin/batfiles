@@ -1,7 +1,7 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, and the five kinds of action it can declare. The rest of the
+it is read, and the six kinds of action it can declare. The rest of the
 schema — remotes, variables, conditions, and the other action types — is in
 [`future/repoformat.md`](future/repoformat.md) until those records parse.
 
@@ -322,8 +322,8 @@ named like any other node batfiles cannot account for.
 
 ### Seeds do not replace, and so do not refuse
 
-`copy` and `copy-dir` install content the user then owns, and they install it
-**only where nothing is**. That makes an occupied destination their ordinary
+`copy`, `copy-dir`, and `fetch-url` install content the user then owns, and
+they install it **only where nothing is**. That makes an occupied destination their ordinary
 steady state rather than an obstruction, so they do not apply the four steps
 above at all. A seed asks one question — is anything there? — and where the
 answer is yes it keeps what it found and reports it at `-v`.
@@ -409,7 +409,7 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, and `copy-dir` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, and `fetch-url` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 
@@ -767,6 +767,73 @@ is not a directory is an error.
 Filtering the children — `include` and `exclude` — is specified in
 [`future/repoformat.md`](future/repoformat.md#copy) for both `copy` and
 `copy-dir` and is not built on either. A manifest that writes one is rejected.
+
+### `fetch-url`
+
+Declares one file downloaded to a destination where nothing is.
+
+```toml
+[[actions]]
+type = "fetch-url"
+id = "pathogen"
+source = "https://raw.githubusercontent.com/tpope/vim-pathogen/master/autoload/pathogen.vim"
+dest = "~/.vim/autoload/pathogen.vim"
+```
+
+| Field    | Type   | Required | Description                                                          |
+|----------|--------|:--------:|----------------------------------------------------------------------|
+| `source` | string |   yes    | An `http://` or `https://` URL. Not a repository path.               |
+| `dest`   | string |   yes    | Where the file goes, exactly. Never empty; `~` is the home.          |
+| `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.       |
+
+**The same bargain as [`copy`](#copy)**, with the content coming from a URL
+rather than from the repository: the destination decides, missing parents are
+created, and what lands is the user's from then on. Anything at all at `dest`
+means the action is done — and the check comes first, so a destination that is
+occupied costs no transfer.
+
+`source` is the one path-shaped field in the format that is not a path. It is
+never resolved against a root and follows none of [Sources and
+destinations](#sources-and-destinations); `dest` follows all of it.
+
+**A `sha256` is optional because a URL is often a moving target.** The example
+above names a file on a branch, where a pinned digest would fail on every
+upstream change. Where a repository does pin one, the bytes are hashed as they
+arrive and a mismatch installs nothing, naming both digests so the manifest can
+be corrected when the change upstream was the expected one.
+
+**Nothing incomplete is ever installed.** The download is written beside its
+destination and moved there in one step once it is whole, so a transfer that
+stops early, a server that answers with something other than the file, and a
+digest that does not match all leave the destination as they found it —
+untouched, rather than holding a half-file a later run would mistake for
+finished work.
+
+**A fetched file arrives readable** — mode `0644` on unix — rather than with the
+private mode it is written under. It is built closed and widened once complete,
+so an interrupted run leaves nothing readable behind, and there is no source on
+this machine whose permissions it could carry instead.
+
+**Only a `200 OK` is a file.** Batfiles asks for neither a byte range nor a
+conditional response, so an answer that is neither a file nor a refusal — a
+`204` with nothing in it, a `206` holding one range, a `304` naming a cache
+batfiles does not keep — is an error rather than content to install. Installing
+one would occupy the destination with something that is not the file, which
+every later run would then find and call done.
+
+Batfiles follows up to five redirects, sends no `Accept-Encoding`, and honors
+the usual proxy environment variables. Certificates are checked against the
+operating system's trust store, so a corporate CA that the machine already
+trusts is trusted here. A server that takes the connection and then says
+nothing is given 30 seconds, and a body that stalls is given ten minutes in
+total — enough that a large download on a slow link is never the thing that
+runs out.
+
+Extraction — `extract`, `archive-root`, and the entry filters — is specified in
+[`future/repoformat.md`](future/repoformat.md#fetch-url) and is not built. The
+record is closed, so a manifest that writes one of those fields is rejected
+rather than fetching an archive it would not unpack. A `file://` source is
+rejected on the same terms.
 
 ## Default-disabled bootstrap entries
 

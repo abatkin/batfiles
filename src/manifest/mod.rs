@@ -147,6 +147,25 @@ pub(crate) enum Invalid {
          `~` expands only to the selected home"
     )]
     DestinationOtherHome { action: usize, value: String },
+
+    // A `fetch-url` source names somewhere off this machine, and its digest
+    // names what should arrive from there.
+    #[error("action {action}: source `{value}` is not an http:// or https:// URL")]
+    SourceNotAUrl { action: usize, value: String },
+
+    /// A `file://` source, which the format reserves but nothing fetches yet.
+    /// Named apart from any other unusable scheme because it is the one a
+    /// reader of `docs/future/repoformat.md` has reason to expect to work.
+    // CARRY(9.3): file and archive remotes are where a `file://` source starts
+    // being fetched; delete this variant and its check then.
+    #[error(
+        "action {action}: source `{value}` is a `file://` URL, which arrives with \
+         file remotes at step 9.3; use a `copy` action for a path on this machine"
+    )]
+    SourceIsFileUrl { action: usize, value: String },
+
+    #[error("action {action}: sha256 `{value}` is not 64 hexadecimal digits")]
+    DigestNotSha256 { action: usize, value: String },
 }
 
 /// The rules a `source` satisfies as written.
@@ -225,6 +244,53 @@ fn check_dest(dest: &str, action: usize) -> Result<(), Invalid> {
             Err(Invalid::DestinationOtherHome {
                 action,
                 value: dest.to_owned(),
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The rules a `fetch-url` `source` satisfies as written.
+///
+/// Only the scheme is checked. What the rest of a URL may say is the server's
+/// business, and a client that will parse it properly is already a dependency —
+/// so this refuses what batfiles knows it cannot fetch and leaves the rest to
+/// fail at the fetch, where the diagnostic can say what the network said.
+fn check_url(source: &str, action: usize) -> Result<(), Invalid> {
+    // Compared as bytes, not by slicing the string: a `source` is whatever the
+    // author typed, so an offset inside a scheme-length prefix can land in the
+    // middle of a character, and slicing there panics. A scheme is ASCII, so
+    // the bytes answer the question exactly.
+    let scheme = |prefix: &str| {
+        let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
+        source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
+    };
+    if scheme("http://") || scheme("https://") {
+        return Ok(());
+    }
+    if scheme("file://") {
+        return Err(Invalid::SourceIsFileUrl {
+            action,
+            value: source.to_owned(),
+        });
+    }
+    Err(Invalid::SourceNotAUrl {
+        action,
+        value: source.to_owned(),
+    })
+}
+
+/// The shape a `sha256` has to have to be one.
+///
+/// Checked here rather than at the fetch so that a typo fails before anything
+/// is downloaded: a digest that cannot match is a repository bug, and finding
+/// out after the transfer wastes the transfer and reports the wrong thing.
+fn check_digest(sha256: Option<&str>, action: usize) -> Result<(), Invalid> {
+    match sha256 {
+        Some(value) if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            Err(Invalid::DigestNotSha256 {
+                action,
+                value: value.to_owned(),
             })
         }
         _ => Ok(()),
@@ -327,6 +393,79 @@ mod tests {
             check_dest("", 1).expect_err("expected an empty dest to be refused"),
             Invalid::DestinationEmpty { .. }
         ));
+    }
+
+    #[test]
+    fn a_fetched_source_names_a_scheme_batfiles_can_fetch() {
+        for accepted in [
+            "http://example.com/a",
+            "https://example.com/a",
+            "HTTPS://EXAMPLE.COM/A",
+            // Everything after the scheme is the server's business, including
+            // what looks like nonsense from here.
+            "https://example.com/a b?c=d#e",
+        ] {
+            assert!(check_url(accepted, 1).is_ok(), "`{accepted}` was refused");
+        }
+    }
+
+    #[test]
+    fn a_fetched_source_that_is_not_a_url_is_refused_as_written() {
+        // A repository path is the mistake worth catching: it would otherwise
+        // reach the fetcher and fail as a network error, naming DNS rather than
+        // the manifest. The last three are multibyte: a scheme-length offset
+        // into one lands mid-character, and deciding this by slicing there
+        // panics on a manifest someone wrote by hand.
+        for refused in [
+            "files/ackrc",
+            "example.com/a",
+            "",
+            "https://",
+            "ftp://a/b",
+            "💥💥x",
+            "日本語のパス",
+            "ht💥p://example.com/a",
+        ] {
+            assert!(
+                matches!(
+                    check_url(refused, 1).expect_err("expected the source to be refused"),
+                    Invalid::SourceNotAUrl { .. }
+                ),
+                "`{refused}` was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_url_says_which_step_makes_it_work() {
+        // `docs/future/repoformat.md` lists `file://` among the schemes, so
+        // someone will write one; it gets its own diagnostic rather than being
+        // called malformed.
+        assert!(matches!(
+            check_url("file:///etc/hosts", 1).expect_err("expected a file URL to be refused"),
+            Invalid::SourceIsFileUrl { .. }
+        ));
+    }
+
+    #[test]
+    fn a_digest_is_sixty_four_hexadecimal_digits_or_absent() {
+        let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(check_digest(None, 1).is_ok());
+        assert!(check_digest(Some(sha), 1).is_ok());
+        assert!(
+            check_digest(Some(&sha.to_uppercase()), 1).is_ok(),
+            "a digest written in capitals is the same digest"
+        );
+        // Too short, too long, and the right length with a non-digit in it.
+        for refused in [&sha[..63], &format!("{sha}0")[..], &sha.replace('e', "g")] {
+            assert!(
+                matches!(
+                    check_digest(Some(refused), 1).expect_err("expected the digest to be refused"),
+                    Invalid::DigestNotSha256 { .. }
+                ),
+                "`{refused}` was accepted"
+            );
+        }
     }
 
     #[test]

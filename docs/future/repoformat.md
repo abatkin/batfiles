@@ -611,22 +611,16 @@ ref = "refs/heads/master"
 
 ### `fetch-url`
 
-Missing-only seed action that fetches a file to one destination or extracts an
-archive into one destination directory. A non-extracting fetch is skipped when
-its exact `dest` exists. For extraction, an existing `dest` is a merge root
-rather than a reason to skip the action; the missing-only check applies
-separately to each selected mapped archive entry. A prior `create-dir` for that
-`dest` therefore does not suppress extraction. See
+The non-extracting half of this action is built and is specified in
+[`docs/repoformat.md`](../repoformat.md#fetch-url). What is left here is
+extraction: an archive unpacked into one destination directory, where an
+existing `dest` is a merge root rather than a reason to skip the action and the
+missing-only check applies separately to each selected mapped archive entry. A
+prior `create-dir` for that `dest` therefore does not suppress extraction. See
 [Seed actions and deletion](safety.md#seed-actions-and-deletion).
 
-```toml
-[[actions]]
-id = "pathogen"
-type = "fetch-url"
-source = "https://example.com/pathogen.vim"
-sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-dest = "~/.vim/autoload/pathogen.vim"
-```
+`file://` is listed below and is not fetched yet either; it arrives with file
+remotes at step 9.3.
 
 ```toml
 [[actions]]

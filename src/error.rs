@@ -157,6 +157,31 @@ pub(crate) enum Error {
     /// An action type this build of batfiles cannot carry out on this platform.
     #[error("`{action_type}` actions are not supported on this platform")]
     UnsupportedOnPlatform { action_type: &'static str },
+
+    // Fetching over the network. Flat for now: 4.5 is where a caller first has
+    // to tell one of these apart from another, and nesting waits for that
+    // (`guidance.md`, rule 5).
+    /// A URL that could not be fetched at all: the name did not resolve, the
+    /// connection was refused or interrupted, TLS was not established, or the
+    /// redirects did not end.
+    #[error("could not fetch {url}: {source}")]
+    Fetch { url: String, source: ureq::Error },
+
+    /// A server that answered, with something other than the file. Kept apart
+    /// from [`Self::Fetch`] because it is a manifest problem rather than a
+    /// machine one: a 404 means the URL names something that is not there.
+    #[error("could not fetch {url}: the server answered {status}")]
+    FetchStatus { url: String, status: u16 },
+
+    /// Bytes that arrived whole but are not the ones the manifest named.
+    #[error(
+        "{url} does not match the declared sha256:\n  declared {expected}\n  received {actual}"
+    )]
+    DigestMismatch {
+        url: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl Error {

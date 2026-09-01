@@ -439,9 +439,12 @@ child, where a real run says it once.
 
 **A dry run describes intent, not success.** It stops before the write, so a
 permission failure or a destination another process takes first appears only in
-the real run. Every decision resting on inspection is still exact: a `copy`
-whose destination is already occupied reports that it would keep what is there,
-and copies nothing.
+the real run. A mismatched digest belongs with them: `fetch-url` says what it
+would fetch and where it would land without contacting the network, so whether
+the bytes are the ones the manifest names is not something it can know. Every
+decision resting on inspection is still exact: a `copy` whose destination is
+already occupied reports that it would keep what is there, and copies nothing,
+and so does a `fetch-url`, which asks nothing of the server either.
 
 What the manifest names is still read. A `source` that is missing or unreadable
 fails in either mode, before the destination is considered — including where the

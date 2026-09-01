@@ -30,6 +30,10 @@ allow = [
     "Unlicense",
     "CC0-1.0",
     "0BSD",
+    # Mozilla's root certificate bundle, which arrives with any rustls TLS
+    # stack. It licenses certificate *data* rather than code, and permissively;
+    # batfiles links the bundle but asks the platform verifier for roots.
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]

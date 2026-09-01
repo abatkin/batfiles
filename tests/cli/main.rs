@@ -8,6 +8,7 @@ mod support;
 mod actions;
 mod apply;
 mod disabled;
+mod fetching;
 mod groups;
 mod locations;
 mod manifest;

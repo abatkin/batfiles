@@ -70,13 +70,11 @@ today. What is left here is what the unbuilt half of the tool adds to it: the
 actions that reach the network, the remotes an inclusion composes over, and the
 one thing a dry run does that is not describing.
 
-A mismatched digest belongs with the fetching actions in "intent, not success":
-like a permission failure, it surfaces only in the real run.
-
-**Remote content is described, not retrieved.** `fetch-url`, `git-clone`, and
+**Remote content is described, not retrieved.** `git-clone` and
 `git-clone-list` say what they would fetch and where it would land — and, where a
 clone is already there, that they would update it — without contacting the
-network. Naming that is a complete account of the action, at the same granularity
+network. `fetch-url` already does; see
+[`docs/cmdline.md`](../cmdline.md#dry-run-behavior). Naming that is a complete account of the action, at the same granularity
 a directory copy is reported at; what a dry run cannot say is what an update
 would actually bring.
 

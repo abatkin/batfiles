@@ -29,10 +29,15 @@ const ACTION_TYPE_DOCS: [&str; 2] = ["README.md", "docs/goals.md"];
 /// What that line starts with, in both documents.
 const IMPLEMENTED: &str = "Implemented so far:";
 
-/// The fixture the dry-run tests drive over a whole repository. One test covers
-/// every action type through it, which holds only as long as it declares every
-/// action type.
-const LEAF_MANIFEST: &str = "tests/fixtures/leaf/batfiles.toml";
+/// The fixture repositories the CLI tests drive whole. Between them they
+/// declare every action type, which is what makes "the suite covers them all"
+/// true rather than apparent.
+///
+/// Several fixtures rather than one, because an action type can need an
+/// environment the others must not pay for: everything in `fetching` wants an
+/// HTTP server running, and the tests that drive `leaf` want none
+/// (`guidance.md`, "Test environments").
+const FIXTURES: &str = "tests/fixtures";
 
 /// This file, which the marker scan skips: its fixtures spell out the forms the
 /// check rejects, so scanning it would report its own examples.
@@ -50,10 +55,6 @@ enum Kind {
     ModeReader,
     /// Produces content that only ever lands inside something a mode reader
     /// created, so it never sees `RunMode` and does not need to.
-    #[expect(
-        dead_code,
-        reason = "4.1 adds the first: action/copy.rs takes install.rs's fillers"
-    )]
     Downstream,
     /// Batfiles' own bookkeeping, which runs in both modes: a state file is not
     /// part of the plan an action carries out.
@@ -85,11 +86,21 @@ struct Owner {
 ///
 /// The list is meant to grow. Growing it means editing this file, which is what
 /// makes saying which [`Kind`] you are adding unavoidable.
-const FILESYSTEM_OWNERS: [Owner; 5] = [
+const FILESYSTEM_OWNERS: [Owner; 7] = [
     Owner {
         path: "src/paths.rs",
         kind: Kind::ReadOnly,
         reason: "what a path means, and what is already at one",
+    },
+    Owner {
+        path: "src/action/copy.rs",
+        kind: Kind::Downstream,
+        reason: "reproduces a repository node into a staging tree install.rs made",
+    },
+    Owner {
+        path: "src/fetch.rs",
+        kind: Kind::Downstream,
+        reason: "writes a download into a staging file install.rs opened, and widens its mode",
     },
     Owner {
         path: "src/directory.rs",
@@ -604,17 +615,41 @@ fn the_documents_name_every_action_type_that_exists() {
 }
 
 #[test]
-fn the_leaf_fixture_declares_every_action_type_that_exists() {
+fn the_fixture_repositories_declare_every_action_type_that_exists() {
     let source = fs::read_to_string(crate_dir().join(ACTIONS))
         .unwrap_or_else(|error| panic!("{ACTIONS} declares the action types: {error}"));
-    let manifest = fs::read_to_string(crate_dir().join(LEAF_MANIFEST))
-        .unwrap_or_else(|error| panic!("{LEAF_MANIFEST} is the fixture that covers them: {error}"));
+
+    let mut declared: Vec<String> = Vec::new();
+    for manifest in fixture_manifests() {
+        let document = fs::read_to_string(&manifest).unwrap_or_else(|error| {
+            panic!("{} is a fixture manifest: {error}", display(&manifest))
+        });
+        declared.extend(declared_action_types(&document));
+    }
+    declared.sort();
+    declared.dedup();
+
     assert_eq!(
-        declared_action_types(&manifest),
+        declared,
         implemented_action_types(&source),
-        "{LEAF_MANIFEST} does not declare every action type in {ACTIONS}, so the dry-run \
-         tests cover fewer of them than they appear to"
+        "the fixtures under {FIXTURES} do not declare every action type in {ACTIONS} between \
+         them, so the CLI tests cover fewer of them than they appear to"
     );
+}
+
+/// Every fixture repository's manifest, sorted.
+fn fixture_manifests() -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(crate_dir().join(FIXTURES))
+        .expect("the fixture directory")
+        .map(|entry| entry.expect("a fixture entry").path().join("batfiles.toml"))
+        .filter(|manifest| manifest.is_file())
+        .collect();
+    assert!(
+        !found.is_empty(),
+        "no fixture repository under {FIXTURES} has a manifest, so this check reads nothing"
+    );
+    found.sort();
+    found
 }
 
 #[test]

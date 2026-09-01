@@ -1,9 +1,15 @@
 //! The fixtures every group of tests is written against: a throwaway tree
-//! standing in for the four location roots, the manifests that declare one
-//! action, and the assertions that read a tree back.
+//! standing in for the four location roots, the local HTTP server the fetching
+//! tests answer from, the manifests that declare one action, and the assertions
+//! that read a tree back.
 
 use std::fs;
+use std::io::{Cursor, Read as _, Write as _};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::JoinHandle;
 
 use assert_cmd::Command;
 use tempfile::TempDir;
@@ -18,6 +24,20 @@ pub(crate) fn batfiles() -> Command {
     let mut command = Command::cargo_bin("batfiles").expect("the batfiles binary should be built");
     // The tests must not inherit the developer's own color environment.
     command.env_remove("BATFILES_COLOR").env_remove("NO_COLOR");
+    // Nor their proxy. `fetch-url` honors these, so a developer or a runner
+    // that sets one would send the fetching tests' loopback requests to it —
+    // reaching a network the suite promises never to reach, and failing with
+    // the fixture server untouched (`guidance.md`, "Test environments").
+    for proxy in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        command.env_remove(proxy);
+    }
     command
 }
 
@@ -92,6 +112,20 @@ impl Tree {
         fs::write(self.manifest(), contents).expect("a manifest");
     }
 
+    /// Point a copied fixture's `{server}` placeholders at a running server.
+    ///
+    /// A fixture cannot know which port one binds, and rewriting the manifest
+    /// after the copy keeps the URL in the repository — where a reader of the
+    /// fixture sees it — rather than in the test that drives it.
+    pub(crate) fn point_at(&self, server: &Server) {
+        let manifest = fs::read_to_string(self.manifest()).expect("the fixture manifest");
+        assert!(
+            manifest.contains("{server}"),
+            "the fixture has no `{{server}}` to point at a server"
+        );
+        self.write_manifest(&manifest.replace("{server}", server.address()));
+    }
+
     /// Put a file in the leaf repository, and return where it landed.
     pub(crate) fn repo_file(&self, relative: &str, contents: &str) -> PathBuf {
         let path = self.path("repo").join(relative);
@@ -133,6 +167,130 @@ impl Tree {
             .env_remove("XDG_CACHE_HOME");
         command
     }
+}
+
+/// What the local server answers one path with.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Reply {
+    /// The file itself.
+    Body(&'static str),
+    /// A path the server does not have, answered 404.
+    Missing,
+    /// An answer that is not a refusal and not a whole file either: a 204 with
+    /// nothing in it, or a 206 holding one range of one.
+    NotAWholeFile { status: u16, body: &'static str },
+    /// A permanent move to another path on the same server, which is what a
+    /// release URL does before it hands over a file.
+    RedirectTo(&'static str),
+}
+
+/// A local HTTP server, so no test reaches the network (`guidance.md`, "Test
+/// environments").
+///
+/// It binds an ephemeral port and counts what it was asked for, which is how a
+/// dry-run test asserts the stronger thing: not that the tree is unchanged, but
+/// that nothing was requested at all.
+pub(crate) struct Server {
+    server: Arc<tiny_http::Server>,
+    address: String,
+    requests: Arc<AtomicUsize>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Server {
+    /// Start a server answering each named path with the reply beside it.
+    ///
+    /// The routes are copied rather than borrowed, so a test can build one from
+    /// a value it is looping over.
+    pub(crate) fn new(routes: &[(&'static str, Reply)]) -> Self {
+        let routes = routes.to_vec();
+        let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("a local HTTP server"));
+        let address = format!("http://{}", server.server_addr());
+        let requests = Arc::new(AtomicUsize::new(0));
+
+        let worker = {
+            let server = Arc::clone(&server);
+            let requests = Arc::clone(&requests);
+            std::thread::spawn(move || {
+                // Ends when `unblock` is called from `drop`, which is what
+                // stops the thread outliving the test that started it.
+                for request in server.incoming_requests() {
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    let reply = routes
+                        .iter()
+                        .find(|(path, _)| *path == request.url())
+                        .map_or(Reply::Missing, |(_, reply)| *reply);
+                    let _ = request.respond(response(reply));
+                }
+            })
+        };
+
+        Self {
+            server,
+            address,
+            requests,
+            worker: Some(worker),
+        }
+    }
+
+    /// Where the server is, as a manifest writes it: `http://127.0.0.1:<port>`.
+    pub(crate) fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// How many requests have reached it.
+    pub(crate) fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.server.unblock();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// One reply, as tiny_http sends it.
+fn response(reply: Reply) -> tiny_http::Response<Cursor<Vec<u8>>> {
+    match reply {
+        Reply::Body(body) => tiny_http::Response::from_string(body),
+        Reply::Missing => tiny_http::Response::from_string("no such file\n").with_status_code(404),
+        Reply::NotAWholeFile { status, body } => {
+            tiny_http::Response::from_string(body).with_status_code(status)
+        }
+        Reply::RedirectTo(path) => tiny_http::Response::from_string("moved\n")
+            .with_status_code(301)
+            .with_header(
+                tiny_http::Header::from_bytes("Location", path).expect("a location header"),
+            ),
+    }
+}
+
+/// A server that promises a length, sends less than it, and hangs up, for the
+/// one test about a transfer that does not finish.
+///
+/// Raw rather than a [`Server`] route: the length a `tiny_http` response sends
+/// is the length it declares, and the connection outlives the response, so
+/// neither half of a cut-short transfer can be expressed through it. Answers
+/// exactly one request and then ends, which is all the test makes.
+pub(crate) fn server_that_hangs_up(body: &'static str, promised: usize) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a local socket");
+    let address = format!("http://{}", listener.local_addr().expect("its address"));
+    std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("a connection");
+        // Enough of the request to have read it; what it asks for does not
+        // change the answer.
+        let _ = socket.read(&mut [0u8; 1024]);
+        let _ = write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: {promised}\r\nConnection: close\r\n\r\n{body}"
+        );
+        let _ = socket.flush();
+    });
+    address
 }
 
 pub(crate) fn display(path: &Path) -> String {
@@ -177,7 +335,9 @@ pub(crate) fn entries(dir: &Path) -> Vec<String> {
 /// names — a `.batfiles-incomplete` staging node, a parent directory created on
 /// the way, and a broken symlink cleared at an ancestor are none of them.
 /// `Tree` gives the four roots as siblings, so this needs no exclusions.
-#[cfg(unix)]
+///
+/// Not gated: reading a tree back is portable, and only the dry-run tests that
+/// drive symlink actions are not.
 pub(crate) fn snapshot(root: &Path) -> Vec<String> {
     let mut found = Vec::new();
     record_into(root, root, &mut found);
@@ -185,7 +345,6 @@ pub(crate) fn snapshot(root: &Path) -> Vec<String> {
     found
 }
 
-#[cfg(unix)]
 fn record_into(root: &Path, dir: &Path, found: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("a readable directory") {
         let entry = entry.expect("a directory entry");
@@ -244,7 +403,6 @@ pub(crate) fn one_copy_dir(source_dir: &str, dest_dir: &str, dot_prefix: bool) -
 }
 
 /// Where a symlink points, without following it.
-#[cfg(unix)]
 pub(crate) fn link_target(path: &Path) -> PathBuf {
     fs::read_link(path)
         .unwrap_or_else(|error| panic!("{} is not a symlink: {error}", path.display()))

@@ -2,12 +2,12 @@
 //!
 //! A thing is built beside its destination and moved in with one call, so the
 //! destination never holds half of it. Every seed-style action ends here —
-//! `copy` today, `fetch-url` and archive extraction at 4.1 and 4.2 — which is
-//! why this is a peer of the actions rather than a part of one.
+//! `copy` and `fetch-url` today, archive extraction at 4.2 — which is why this
+//! is a peer of the actions rather than a part of one.
 //!
-//! Producing the content is the half that is still `copy`'s. There is one
-//! producer, so [`fill`] names it directly; 4.1 is the second caller and the
-//! step that makes it a parameter.
+//! Producing the content is the caller's half: what fills the staging node this
+//! module created arrives as a closure, so a copy and a download reach the
+//! destination by the same route and neither is named here.
 
 use std::fs;
 use std::io;
@@ -26,26 +26,63 @@ pub(crate) enum FileOrDirectory {
     Directory,
 }
 
+/// One thing to install where nothing is, described by the action installing it.
+///
+/// Everything that differs between a copy and a download, and nothing that does
+/// not: how it is built, what it is called in the report, and the one check that
+/// only applies when the content comes from a directory on this machine. The
+/// route to the destination is the same for both and is not described here.
+pub(crate) struct Seed<'a, F> {
+    /// Whether a file or a directory is being installed, which decides how the
+    /// staging node is made and how it is published.
+    pub kind: FileOrDirectory,
+
+    /// How the report names what happened: `Verb::Copy` for a copy,
+    /// `Verb::Fetch` for a download.
+    pub verb: Verb,
+
+    /// Where the content comes from, as the report writes it — a repository
+    /// path or a URL.
+    pub origin: String,
+
+    /// A source directory the destination must not be inside of, checked once
+    /// the destination is known to be free.
+    ///
+    /// `Some` only for a directory copy, which would otherwise descend into
+    /// what it was writing. A download has nothing on this machine for a
+    /// destination to be inside of.
+    pub not_inside: Option<&'a Path>,
+
+    /// What writes the content into the staging node this run created.
+    ///
+    /// Reached only when the mode allows a write, so nothing behind it has to
+    /// ask about the mode. It is handed the node and the path the node is at;
+    /// the destination is not its to know.
+    pub fill: F,
+}
+
 /// Install one thing where nothing is, or keep what is there, and say which.
 ///
-/// The whole of the missing-only rule as a user sees it: `copy` reaches this
-/// once for its `dest`, and `copy-dir` once per child. What occupies a
-/// destination is never examined, because nothing here would replace it
-/// whatever it turned out to be.
+/// The whole of the missing-only rule as a user sees it: `copy` and `fetch-url`
+/// reach this once for their `dest`, and `copy-dir` once per child. What
+/// occupies a destination is never examined, because nothing here would replace
+/// it whatever it turned out to be.
 ///
 /// **Under [`RunMode::DryRun`] no staging node is created.** The mode is read
-/// ahead of the staging path rather than around it, so everything below is
-/// unreachable in that mode rather than merely unused.
-pub(crate) fn seed(
-    source: &Path,
-    kind: FileOrDirectory,
+/// ahead of the staging path rather than around it, so everything below — the
+/// fillers included — is unreachable in that mode rather than merely unused.
+pub(crate) fn seed<F>(
+    what: Seed<'_, F>,
     dest: &Path,
     mode: RunMode,
     reporter: &Reporter,
-) -> Result<(), Error> {
-    // Asked before the copy so the ordinary case — everything already seeded —
-    // costs one call and copies nothing. The answer that decides is the one
-    // taken when the copy is published.
+) -> Result<(), Error>
+where
+    F: FnOnce(Staged, &Path) -> Result<(), Error>,
+{
+    // Asked before anything is built so the ordinary case — everything already
+    // seeded — costs one call and installs nothing. The answer that decides is
+    // the one taken when the finished thing is published.
     let installed = if paths::occupied(dest)? {
         false
     } else {
@@ -54,17 +91,17 @@ pub(crate) fn seed(
         // copy. Asked first, it turns a destination that is merely *occupied*
         // — by a link of the user's own resolving into the source, say — into
         // an error, and a seed does not fail on an occupied destination.
-        if let FileOrDirectory::Directory = kind {
+        if let Some(source) = what.not_inside {
             paths::refuse_destination_inside_source(source, dest)?;
         }
         for link in directory::create_parents(dest, mode)?.removals() {
             reporter.info(&link.removal_note(mode));
         }
-        // The destination was free a moment ago, so a real run would copy into
-        // it. Whether it still would be at the end is what only a real run
+        // The destination was free a moment ago, so a real run would install
+        // into it. Whether it still would be at the end is what only a real run
         // finds out.
         if mode.writes() {
-            build_and_publish(source, kind, dest, reporter)?
+            build_and_publish(what.kind, dest, reporter, what.fill)?
         } else {
             true
         }
@@ -73,9 +110,9 @@ pub(crate) fn seed(
     if installed {
         reporter.info(&format!(
             "{} {} from {}",
-            Verb::Copy.say(mode),
+            what.verb.say(mode),
             dest.display(),
-            source.display()
+            what.origin
         ));
     } else {
         reporter.detail(1, &format!("{} {}", Verb::Keep.say(mode), dest.display()));
@@ -97,10 +134,10 @@ pub(crate) fn seed(
 /// Reports whether it installed: a destination taken while the copy was being
 /// made is left alone, like one that was taken before it started.
 fn build_and_publish(
-    source: &Path,
     kind: FileOrDirectory,
     dest: &Path,
     reporter: &Reporter,
+    fill: impl FnOnce(Staged, &Path) -> Result<(), Error>,
 ) -> Result<bool, Error> {
     let staging = staging_path(dest);
     // Created before anything else can fail, so that everything after it is
@@ -110,7 +147,7 @@ fn build_and_publish(
     // takes the tree with it.
     let staged = create_staging(kind, &staging)?;
 
-    let installed = fill(source, staged, &staging).and_then(|()| publish(&staging, kind, dest));
+    let installed = fill(staged, &staging).and_then(|()| publish(&staging, kind, dest));
 
     // Whatever happened, the staging path is not wanted: a successful rename
     // has already consumed it, a successful link has left a second name for it,
@@ -143,10 +180,30 @@ fn create_staging(kind: FileOrDirectory, staging: &Path) -> Result<Staged, Error
     })
 }
 
-/// The staging node this run created, ready to receive the copy.
-enum Staged {
+/// The staging node this run created, ready to receive what is being installed.
+///
+/// Handed to a filler, which is the only thing that writes into it. A filler
+/// holding one is proof that the mode allowed the write and that the node is
+/// this run's own: nothing else can construct one.
+pub(crate) enum Staged {
     File(fs::File),
     Directory,
+}
+
+impl Staged {
+    /// The open handle, for a filler that only installs files.
+    ///
+    /// Which node was created is decided from the same [`Seed::kind`] the filler
+    /// was written beside, so one declaring [`FileOrDirectory::File`] is handed
+    /// a file. The panic states that agreement rather than defending against it
+    /// — it is one struct literal apart — the way [`crate::location`] states its
+    /// own resolved-root invariant. 4.2 fills a directory and uses both arms.
+    pub fn into_file(self) -> fs::File {
+        match self {
+            Self::File(file) => file,
+            Self::Directory => panic!("a seed declaring a file is handed a file"),
+        }
+    }
 }
 
 /// Create a staging node no one but its owner can reach into.
@@ -183,14 +240,6 @@ fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
     match kind {
         FileOrDirectory::File => create_new(staging).map(Staged::File),
         FileOrDirectory::Directory => fs::create_dir(staging).map(|()| Staged::Directory),
-    }
-}
-
-/// Make the copy itself, at the path it is built on the way to its destination.
-fn fill(source: &Path, staged: Staged, staging: &Path) -> Result<(), Error> {
-    match staged {
-        Staged::File(into) => copy_file(source, into, staging),
-        Staged::Directory => copy_children(source, staging),
     }
 }
 
@@ -246,23 +295,12 @@ fn discard(staging: &Path, kind: FileOrDirectory, reporter: &Reporter) {
 }
 
 /// Create a file, failing rather than truncating if the path is taken.
+#[cfg(not(unix))]
 fn create_new(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
-}
-
-/// [`create_new`], for the paths inside a copy being built.
-///
-/// Those are all under the staging node this run just made, so a name already
-/// taken there is a failure rather than something to keep — keeping one would
-/// publish an incomplete copy as a finished one.
-fn create_new_file(path: &Path) -> Result<fs::File, Error> {
-    create_new(path).map_err(|error| Error::Write {
-        path: path.to_path_buf(),
-        source: error,
-    })
 }
 
 /// Where a copy is built while it is still incomplete.
@@ -277,130 +315,4 @@ fn staging_path(dest: &Path) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
     name.push(".batfiles-incomplete");
     dest.with_file_name(name)
-}
-
-/// Classify a source the manifest named, following a final symlink.
-///
-/// Naming a thing and reproducing one are different questions, and every
-/// action's source resolves through a link — that is how a repository points at
-/// something it stores under another name.
-pub(crate) fn kind_of_source(source: &Path) -> Result<FileOrDirectory, Error> {
-    let found = fs::metadata(source).map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            // Reachability, not presence: the source has already been resolved
-            // and found, so this is a link whose target is gone.
-            Error::SourceMissing {
-                path: source.to_path_buf(),
-            }
-        } else {
-            Error::Read {
-                path: source.to_path_buf(),
-                source: error,
-            }
-        }
-    })?;
-    classify(&found, source)
-}
-
-/// Classify a node found inside a directory being copied, following nothing.
-///
-/// A symlink here is refused rather than followed. `copy` reproduces nodes, and
-/// a symlink is not one it will reproduce: copying what it reaches silently
-/// turns a link the repository chose into a detached file, and recreating it
-/// re-reads a relative target from a directory it is no longer in. Refusing is
-/// the answer that can be changed later without changing what a working
-/// manifest does today.
-pub(crate) fn kind_of_child(source: &Path) -> Result<FileOrDirectory, Error> {
-    let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
-    if found.is_symlink() {
-        return Err(Error::SourceIsSymlink {
-            path: source.to_path_buf(),
-        });
-    }
-    classify(&found, source)
-}
-
-/// The tail both of the above share, once each has decided what to inspect.
-fn classify(found: &fs::Metadata, source: &Path) -> Result<FileOrDirectory, Error> {
-    if found.is_file() {
-        Ok(FileOrDirectory::File)
-    } else if found.is_dir() {
-        Ok(FileOrDirectory::Directory)
-    } else {
-        Err(Error::SourceNotCopyable {
-            path: source.to_path_buf(),
-        })
-    }
-}
-
-/// Write a source file's contents into the file already opened for it.
-///
-/// Not [`fs::copy`], which opens the destination itself and would truncate
-/// whatever it found. The file is handed in already created exclusively, so the
-/// only thing this can write into is one that did not exist a moment ago. The
-/// permissions [`fs::copy`] would have carried are set here instead, which is
-/// also where a directory gets them.
-///
-/// `built_at` is where `into` lives, which is never the action's destination:
-/// everything this writes is inside the staging tree, and reaches the
-/// destination only when [`publish`] moves it there whole.
-fn copy_file(source: &Path, mut into: fs::File, built_at: &Path) -> Result<(), Error> {
-    let mut from = fs::File::open(source).map_err(|error| Error::Read {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
-    io::copy(&mut from, &mut into).map_err(|error| Error::Write {
-        path: built_at.to_path_buf(),
-        source: error,
-    })?;
-    mirror_permissions(source, built_at)
-}
-
-/// Copy everything under a source directory into a directory being built.
-///
-/// What it walks, it reproduces, and every node is new: `built_at` is inside the
-/// staging directory, which nothing else knows about, so a path already taken is
-/// a failure rather than a thing to keep. Keeping one here would publish an
-/// incomplete copy as a finished one, which is the opposite of what staging is
-/// for.
-fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
-    for child in paths::children_of(source)? {
-        let from = source.join(&child);
-        let to = built_at.join(&child);
-        match kind_of_child(&from)? {
-            FileOrDirectory::File => {
-                copy_file(&from, create_new_file(&to)?, &to)?;
-            }
-            FileOrDirectory::Directory => {
-                fs::create_dir(&to).map_err(|error| Error::Write {
-                    path: to.clone(),
-                    source: error,
-                })?;
-                copy_children(&from, &to)?;
-            }
-        }
-    }
-    // Last, and not at creation: a source directory its owner cannot write into
-    // would otherwise lock batfiles out of the copy it is still filling.
-    mirror_permissions(source, built_at)
-}
-
-/// Give a copied file or directory the permissions of what it was copied from,
-/// so an executable arrives executable and a private directory arrives private.
-///
-/// Ownership is not copied; the copy belongs to whoever ran the command.
-/// Directories batfiles creates only to *reach* a destination are not these,
-/// and keep the platform default: they correspond to nothing in the repository.
-fn mirror_permissions(source: &Path, built_at: &Path) -> Result<(), Error> {
-    let found = fs::metadata(source).map_err(|error| Error::Read {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
-    fs::set_permissions(built_at, found.permissions()).map_err(|error| Error::Write {
-        path: built_at.to_path_buf(),
-        source: error,
-    })
 }

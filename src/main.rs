@@ -8,6 +8,7 @@ mod disabled;
 mod env;
 mod error;
 mod execute;
+mod fetch;
 mod install;
 mod item;
 mod location;

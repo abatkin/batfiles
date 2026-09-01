@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 
-use super::{Invalid, check_dest, check_source};
+use super::{Invalid, check_dest, check_digest, check_source, check_url};
 use crate::item::ItemId;
 
 /// One entry of `[[actions]]`.
@@ -19,6 +19,7 @@ pub(crate) enum Action {
     CreateDir(CreateDirAction),
     Copy(CopyAction),
     CopyDir(CopyDirAction),
+    FetchUrl(FetchUrlAction),
 }
 
 impl Action {
@@ -35,6 +36,7 @@ impl Action {
             Self::CreateDir(action) => ("create-dir", &action.id, &action.group),
             Self::Copy(action) => ("copy", &action.id, &action.group),
             Self::CopyDir(action) => ("copy-dir", &action.id, &action.group),
+            Self::FetchUrl(action) => ("fetch-url", &action.id, &action.group),
         };
         Common {
             kind,
@@ -76,6 +78,13 @@ impl Action {
             Self::CopyDir(action) => {
                 check_source(&action.source_dir, number)?;
                 check_dest(&action.dest_dir, number)
+            }
+            // The one action type whose `source` names something off this
+            // machine, so it answers to neither path rule.
+            Self::FetchUrl(action) => {
+                check_url(&action.source, number)?;
+                check_digest(action.sha256.as_deref(), number)?;
+                check_dest(&action.dest, number)
             }
         }
     }
@@ -233,6 +242,34 @@ pub(crate) struct CopyDirAction {
     /// keeps its dotfiles undotted.
     #[serde(default)]
     pub dot_prefix: bool,
+}
+
+/// `fetch-url`: one file downloaded to a destination where nothing is.
+///
+/// The same bargain as [`CopyAction`], with the content coming from a URL rather
+/// than from the repository: something at the destination means the action is
+/// done, and what lands is the user's from then on. Extraction — `extract`,
+/// `archive-root`, and the entry filters — is 4.2's, and the record is closed
+/// until then, so a manifest asking for it is refused rather than quietly
+/// fetching an archive it does not unpack.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct FetchUrlAction {
+    /// Makes the action addressable.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    pub group: Option<ItemId>,
+    /// The URL to fetch, as written. Not a `RepoPath` and never resolved
+    /// against a root: what it names is not on this machine.
+    pub source: String,
+    /// Where the file goes, exactly. Resolved against the selected home when
+    /// the action runs, with missing parents created on the way.
+    pub dest: String,
+    /// The digest the fetched bytes must have, if the repository pins one.
+    ///
+    /// Optional because the URL a repository names is often a moving target —
+    /// a file on a branch — where a digest would fail on every upstream change.
+    pub sha256: Option<String>,
 }
 
 #[cfg(test)]
