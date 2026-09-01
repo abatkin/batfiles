@@ -19,7 +19,7 @@ use super::children::{ChildInstall, for_each_child};
 use crate::directory;
 use crate::error::Error;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
-use crate::mode::Verb;
+use crate::output::Verb;
 use crate::paths::{self, Occupancy};
 
 #[cfg(not(unix))]
@@ -80,19 +80,14 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 /// Create one symlink, repair it, or leave it alone.
 ///
 /// What is at the destination, and whether it is batfiles' to replace, is
-/// [`Occupancy::at`]'s answer — see that module for why the question cannot be
-/// asked of the written path. This decides only what a `symlink` does with each
-/// answer.
+/// [`Occupancy::at`]'s answer. This decides only what a `symlink` does with it.
 ///
-/// Both arms that write a link first refuse a destination inside the target, and
-/// neither can ask that before the destination has been inspected: a link that
-/// is already correct *resolves into* its own target, so the converged case is
-/// indistinguishable from the offending one until it has been told apart. That
-/// is why the check sits in two arms rather than above the match — the third
-/// arm, which writes nothing, is exactly the one it would misjudge.
-///
-/// Those two arms are also where [`crate::mode::RunMode`] is read: under a dry run the link
-/// is withheld and everything else happens as it would.
+/// **The destination-inside-target check belongs in the two writing arms, not
+/// above the match.** A link that is already correct resolves *into* its own
+/// target, so the converged case cannot be told from the offending one until
+/// the destination has been inspected — and hoisting the check would refuse
+/// exactly the arm that writes nothing. Those two arms are also where
+/// [`crate::mode::RunMode`] is read.
 fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
     let reporter = context.reporter();
     let mode = context.mode();

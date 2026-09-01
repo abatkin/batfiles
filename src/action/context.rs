@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use crate::directory::{self, DirectoryOutcome};
 use crate::error::Error;
 use crate::location::Roots;
-use crate::mode::{RunMode, Verb};
-use crate::output::Reporter;
+use crate::mode::RunMode;
+use crate::output::{Reporter, Verb};
 use crate::paths::{self, Repository};
 
 /// What every action is carried out against: the two roots it can reach, and
@@ -25,9 +25,9 @@ use crate::paths::{self, Repository};
 /// and a next run that calls it correct.
 ///
 /// Everything an action needs that is not in its own record reaches it through
-/// here, which is what keeps a run's settings from being threaded past every
-/// action individually: the dry-run mode is a field on this value rather than a
-/// parameter on nine signatures, and 9.4's `--refresh-content` is a second one.
+/// here, so a run's settings are fields on one value rather than parameters on
+/// every action. `RunMode` is the first; 9.4's `--refresh-content` is the
+/// second (`guidance.md`, "Seams the late slices need").
 pub(crate) struct RunContext<'a> {
     repository: Repository,
     home: PathBuf,

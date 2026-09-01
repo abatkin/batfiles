@@ -6,26 +6,13 @@
 //! all four commands, differing in nothing but which list it edits and which
 //! way it moves a name.
 //!
-//! A closed record with two lists of addresses. The file validates address
-//! *syntax* as it loads and never resolves a name against a repository,
-//! precisely so a name can be recorded before the action or group it names
-//! exists: a pre-registered entry matches nothing today and may match after a
-//! branch change or a Git update. That is also what lets a qualified address be
-//! written down before any remote can answer to it — recording is all these
-//! commands do, so there is nothing for the extra segments to resolve against
-//! either way. The commands validate the same way and for the same reason — they do
-//! not load the leaf repository, so an unreadable or invalid `batfiles.toml`
-//! cannot fail one. They run no synchronization and remove no installed content.
-//!
-//! A malformed entry is a different thing, and it fails the load like any other
-//! malformed TOML. It can never become live, so tolerating it would carry a
-//! permanently dead entry silently, and dropping it on the next save would make
-//! an unrelated `disable-action` destructive.
-//!
-//! Both lists are sets. The file promises no duplicates and a stable order, and
-//! a mutation that changes nothing must not rewrite the document merely to sort
-//! it — a [`BTreeSet`] gives both, and its `insert`/`remove` return whether the
-//! set actually changed.
+//! Two properties the code here rests on, both specified in `docs/state.md`.
+//! Addresses are validated for *syntax* and never resolved, so a name can be
+//! recorded before anything answers to it — which is why nothing in this module
+//! opens the leaf repository, and why an unreadable `batfiles.toml` cannot fail
+//! one of these commands. And both lists are [`BTreeSet`]s, whose
+//! `insert`/`remove` report whether the set actually changed: that answer is
+//! what keeps a mutation changing nothing from rewriting the document.
 
 use std::collections::BTreeSet;
 use std::path::Path;

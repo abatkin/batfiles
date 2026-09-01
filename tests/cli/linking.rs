@@ -1,4 +1,4 @@
-//! Executing symlink actions, and the dry run over the whole fixture.
+//! Executing symlink actions.
 //!
 //! Gated as a whole by its declaration in `main.rs`: where batfiles cannot make
 //! a symlink it refuses the action before resolving anything, so none of these

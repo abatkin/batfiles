@@ -2,22 +2,11 @@
 //! `apply-group`.
 //!
 //! One loop over one ordered list, each action inspecting the filesystem as the
-//! previous one left it. Everything an action does is [`crate::action`]'s; this
-//! is the list, and the one place anything iterates it (`guidance.md`, "Seams
-//! the late slices need"). The three commands differ only in what they hand
-//! that loop: a [`Target`] saying which entries were asked for, and a
-//! [`Selection`] saying which of those are passed over anyway.
-//!
-//! Those two are the same question from opposite sides, and one rule joins
-//! them: **an exclusion no finer-grained than what the command named is
-//! waived.** `apply-action` names one action and nothing is finer than that, so
-//! nothing excludes it; `apply-group` names one group, so a disable on that
-//! group is waived while a disable on one of its members is not; `sync` asks for
-//! everything, so every exclusion outranks it and none is waived. A target says
-//! which of the three it is ([`Target::named`]), so the two sides cannot
-//! disagree about what the command named.
-
-use std::path::PathBuf;
+//! previous one left it. Everything an action does is [`crate::action`]'s, and
+//! which actions a run touches — the records it asked for, less the ones it
+//! passes over — is [`crate::selection`]'s. What is left here is the list, and
+//! the one place anything iterates it (`guidance.md`, "Seams the late slices
+//! need"). The three commands differ only in the [`Selection`] they hand it.
 
 use crate::action::{self, RunContext};
 use crate::disabled::Disabled;
@@ -26,68 +15,9 @@ use crate::error::Error;
 use crate::item::ItemAddress;
 use crate::location::Roots;
 use crate::manifest::Manifest;
-use crate::manifest::action::Action;
 use crate::mode::RunMode;
 use crate::output::Reporter;
-use crate::selection::{Named, Selection};
-
-/// Which of the manifest's entries a command asked for.
-///
-/// Holds the borrowed name rather than resolving to an index, because a group
-/// names any number of records and an action's position is what the report
-/// calls it.
-#[derive(Debug)]
-enum Target<'a> {
-    /// Every record, which is `sync`.
-    Everything,
-    /// The one record answering to this address.
-    Action(&'a ItemAddress),
-    /// Every record naming this group.
-    Group(&'a ItemAddress),
-}
-
-impl Target<'_> {
-    /// Whether this record is one of the ones asked for.
-    fn wants(&self, action: &Action) -> bool {
-        match self {
-            Self::Everything => true,
-            Self::Action(id) => action.id().is_some_and(|declared| id.names(declared)),
-            Self::Group(group) => action.group().is_some_and(|declared| group.names(declared)),
-        }
-    }
-
-    /// How specifically this target names what it asked for, which is what
-    /// decides the exclusions the run waives.
-    fn named(&self) -> Named {
-        match self {
-            Self::Everything => Named::Nothing,
-            Self::Action(_) => Named::Action,
-            Self::Group(_) => Named::Group,
-        }
-    }
-
-    /// What it means for this target to have matched no record at all, which
-    /// only the arm that asked can say.
-    ///
-    /// Naming an action or a group that nothing in the manifest answers to is a
-    /// command resolving nothing, and each gets its own failure. A group is
-    /// nothing but the actions naming it, so an empty one and an absent one are
-    /// the same failure. `sync` names nothing to resolve: an empty manifest is
-    /// an ordinary successful run that did nothing.
-    fn unresolved(&self, manifest: PathBuf) -> Option<Error> {
-        match self {
-            Self::Everything => None,
-            Self::Action(id) => Some(Error::UnknownAction {
-                path: manifest,
-                id: (*id).clone(),
-            }),
-            Self::Group(group) => Some(Error::UnknownGroup {
-                path: manifest,
-                group: (*group).clone(),
-            }),
-        }
-    }
-}
+use crate::selection::{Selection, Target};
 
 /// `sync`: bring the home directory to the state the whole manifest describes.
 pub(crate) fn sync(
@@ -99,9 +29,8 @@ pub(crate) fn sync(
     reporter: &Reporter,
 ) -> Result<(), Error> {
     let (manifest, disabled) = load(roots)?;
-    let target = Target::Everything;
     let selection = Selection::new(
-        target.named(),
+        Target::Everything,
         skip_actions,
         skip_groups,
         env,
@@ -110,7 +39,7 @@ pub(crate) fn sync(
     );
     // An empty manifest, and one whose every action is disabled, are both
     // ordinary successful runs that did nothing, so the count is not consulted.
-    run(&manifest, &target, &selection, roots, mode, reporter)?;
+    run(&manifest, &selection, roots, mode, reporter)?;
     Ok(())
 }
 
@@ -128,13 +57,12 @@ pub(crate) fn apply_action(
     // resolution failure.
     let id = ItemAddress::try_from(id.to_owned())?;
     let (manifest, disabled) = load(roots)?;
-    let target = Target::Action(&id);
     // The command accepts neither run-only option, and naming one action waives
     // every exclusion either document holds.
-    let selection = Selection::new(target.named(), &[], &[], env, disabled, reporter);
+    let selection = Selection::new(Target::Action(&id), &[], &[], env, disabled, reporter);
     // Nothing filters this command, so a record it named was carried out, and a
     // name no record carries has already failed as unresolved.
-    run(&manifest, &target, &selection, roots, mode, reporter)?;
+    run(&manifest, &selection, roots, mode, reporter)?;
     Ok(())
 }
 
@@ -150,11 +78,17 @@ pub(crate) fn apply_group(
 ) -> Result<(), Error> {
     let group = ItemAddress::try_from(group.to_owned())?;
     let (manifest, disabled) = load(roots)?;
-    let target = Target::Group(&group);
     // `--skip-group` is not accepted, so there is no group-shaped run-only list
     // to hand over; naming the group waives the one there would have been.
-    let selection = Selection::new(target.named(), skip_actions, &[], env, disabled, reporter);
-    let carried_out = run(&manifest, &target, &selection, roots, mode, reporter)?;
+    let selection = Selection::new(
+        Target::Group(&group),
+        skip_actions,
+        &[],
+        env,
+        disabled,
+        reporter,
+    );
+    let carried_out = run(&manifest, &selection, roots, mode, reporter)?;
 
     // The group exists — a name no record names has already failed as
     // unresolved — and every member of it was passed over, which at normal
@@ -198,8 +132,7 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
 /// the same loop over the same list, and it passes over the same entries.
 fn run(
     manifest: &Manifest,
-    target: &Target<'_>,
-    selection: &Selection,
+    selection: &Selection<'_>,
     roots: &Roots,
     mode: RunMode,
     reporter: &Reporter,
@@ -215,7 +148,7 @@ fn run(
     let mut carried_out = 0;
 
     for (index, entry) in manifest.actions.iter().enumerate() {
-        if !target.wants(entry) {
+        if !selection.wants(entry) {
             continue;
         }
         wanted += 1;
@@ -236,7 +169,7 @@ fn run(
     }
 
     if wanted == 0
-        && let Some(error) = target.unresolved(roots.manifest())
+        && let Some(error) = selection.unresolved(roots.manifest())
     {
         return Err(error);
     }

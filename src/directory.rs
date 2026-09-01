@@ -11,8 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
-use crate::mode::{RunMode, Verb};
-use crate::paths::{kind_of, reaches_nothing};
+use crate::mode::RunMode;
+use crate::output::Verb;
+use crate::paths::{ExistingNode, reaches_nothing};
 
 /// What [`ensure_directory`] found, for a caller that reports what it did.
 ///
@@ -88,7 +89,7 @@ pub(crate) fn ensure_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOut
         Ok(existing) if existing.is_dir() => Ok(DirectoryOutcome::AlreadyThere),
         Ok(existing) => Err(Error::DestinationExists {
             path: dir.to_path_buf(),
-            found: kind_of(&existing),
+            found: ExistingNode::of(&existing),
         }),
         // Nothing resolves here — either the path is empty or something on the
         // way to it is not a directory, and only making it will say which.
@@ -103,18 +104,15 @@ pub(crate) fn ensure_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOut
 /// Make one directory and every missing ancestor, clearing a broken symlink at
 /// any level that has to become one.
 ///
-/// A level at a time, rather than one [`fs::create_dir_all`]. The bulk call
-/// cannot be told about the broken links this is here to clear, and where one
-/// is partway up it fails with an `EEXIST` reported against the path that was
-/// asked for — a path which, being the one that does not exist, is the least
-/// informative name the failure could carry. Walking down means each level is
-/// asked the same question the named directory was, so a link is cleared
-/// wherever on the way it turns up and a *file* in the way is named for what it
-/// is rather than surfacing as a raw write failure.
+/// A level at a time, rather than one [`fs::create_dir_all`]: the bulk call
+/// cannot be told about those links, and reports one partway up as an `EEXIST`
+/// against the path that was asked for — the one path in the chain known not to
+/// exist. Walking down asks each level the question the named directory was
+/// asked, so a link is cleared wherever it turns up and a *file* in the way is
+/// named for what it is.
 ///
-/// Under [`RunMode::DryRun`] the walk still names the links it found in the way
-/// and leaves them there, so a later inspection of the same path finds one
-/// again.
+/// Under [`RunMode::DryRun`] the walk names the links it found and leaves them
+/// there, so a later inspection of the same path finds one again.
 fn make_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> {
     // The ancestors first, so this is only ever creating a directory whose
     // parent is known to be one.
@@ -181,17 +179,13 @@ fn remove_link(path: &Path) -> Result<(), Error> {
 /// permissions.
 ///
 /// A parent is a container in exactly the sense [`ensure_directory`] means, so
-/// it is one. Two things change by saying so. A broken symlink in the way is
-/// cleared and reported, where a bare [`fs::create_dir_all`] fails on it with an
-/// `EEXIST` that names nothing. And an ordinary *file* in the way is named for
-/// what it is — the caller reached here because the destination under that file
-/// reads as vacant ([`crate::paths::Occupancy::at`]), and this is the step that can say which
-/// component is the problem rather than reporting the path below it.
+/// it is one, and it inherits that function's handling of whatever is in the
+/// way — including naming the *component* that is a file, where the caller only
+/// knows that the destination under it read as vacant.
 ///
 /// The outcome is returned rather than discarded because clearing a link removed
-/// something, and a caller that says nothing about it would be destroying a node
-/// silently — the one thing rule 13 is unwilling to do even for a node it is
-/// willing to destroy.
+/// something, and a caller that said nothing about it would be destroying a node
+/// silently — which rule 13 declines even for a node it is willing to destroy.
 pub(crate) fn create_parents(dest: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> {
     match dest.parent() {
         // An empty parent is what a one-component relative path has; there is

@@ -1,8 +1,62 @@
-//! Diagnostic output.
+//! How batfiles words what it did, and where it says it.
 //!
 //! Standard error carries diagnostics; standard output is reserved for data a
 //! command was asked for. Nothing here writes to standard output, so a label
 //! and a color can never contaminate a value a script is reading.
+//!
+//! [`Verb`] is the vocabulary half: one act, in whichever tense the run's
+//! [`RunMode`] calls for, so the tense is decided here rather than at each call
+//! site.
+
+use crate::mode::RunMode;
+
+/// One act an action reports, in whichever tense the mode calls for.
+///
+/// Not `unchanged`: that is a state a destination is already in rather than an
+/// act, so it reads the same in both modes and takes no "would".
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Verb {
+    Link,
+    Relink,
+    Copy,
+    Create,
+    Remove,
+    Keep,
+}
+
+impl Verb {
+    /// The bare verb, for a sentence that names an act rather than reporting
+    /// one: "no children to link in …".
+    pub fn infinitive(self) -> &'static str {
+        match self {
+            Self::Link => "link",
+            Self::Relink => "relink",
+            Self::Copy => "copy",
+            Self::Create => "create",
+            Self::Remove => "remove",
+            Self::Keep => "keep",
+        }
+    }
+
+    /// What an action did, or — under [`RunMode::DryRun`] — would do.
+    pub fn say(self, mode: RunMode) -> String {
+        match mode {
+            RunMode::Perform => self.past().to_string(),
+            RunMode::DryRun => format!("would {}", self.infinitive()),
+        }
+    }
+
+    fn past(self) -> &'static str {
+        match self {
+            Self::Link => "linked",
+            Self::Relink => "relinked",
+            Self::Copy => "copied",
+            Self::Create => "created",
+            Self::Remove => "removed",
+            Self::Keep => "kept",
+        }
+    }
+}
 
 /// Verbosity derived from `--quiet` and repeated `--verbose`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +178,16 @@ impl Label {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_verb_is_reported_in_the_tense_the_mode_calls_for() {
+        assert_eq!(Verb::Link.say(RunMode::Perform), "linked");
+        assert_eq!(Verb::Link.say(RunMode::DryRun), "would link");
+        // The irregular ones, which is why `past` is a table rather than a
+        // suffix.
+        assert_eq!(Verb::Copy.say(RunMode::Perform), "copied");
+        assert_eq!(Verb::Keep.say(RunMode::Perform), "kept");
+    }
 
     #[test]
     fn quiet_wins_over_verbose_when_both_somehow_arrive() {

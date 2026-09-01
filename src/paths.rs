@@ -6,23 +6,16 @@
 //! Making the directory when the answer is "nothing is there" belongs to
 //! [`crate::directory`].
 //!
-//! Two rules meet here, which is why they share a module.
+//! **Paths are built lexically; existing nodes are classified physically.** A
+//! `dest` means its components joined to the selected home, symlinked parents
+//! followed as ordinary path resolution follows them. A symlink already sitting
+//! at that path is the other question, and the operating system reads its target
+//! from the directory the link is *physically* in — answer that one lexically
+//! and a link pointing outside the repository looks like one batfiles owns.
 //!
-//! Rule 13 — never destroy what you did not create — is one decision, and every
-//! action that installs something has to make it. It is made here so that every
-//! action reaches the same answer without restating the rule.
-//!
-//! Rule 14 is the reason that decision is not a lexical comparison. A *path* is
-//! composed lexically, which is deliberate and specified: `~/.config/nvim` means
-//! those components joined to the selected home, and a parent that is a symlink
-//! is followed by ordinary path resolution rather than being resolved away. But
-//! a symlink already sitting at that path is a different question: the operating
-//! system reads its target from the directory the link is *physically* in, so
-//! composing the answer lexically classifies it against a directory it is not
-//! in. That is how a link pointing outside the repository comes to look like one
-//! batfiles owns.
-//!
-//! So: paths are built lexically, and existing nodes are classified physically.
+//! That distinction is rule 14, and it is what makes rule 13 — never destroy
+//! what you did not create — decidable. Both are settled here, once, so that no
+//! action restates either (`guidance.md`).
 
 use std::ffi::OsString;
 use std::fmt;
@@ -34,18 +27,13 @@ use crate::error::Error;
 
 /// The repository an action installs from, in both forms it is needed in.
 ///
-/// Two forms because they answer different questions and are not
-/// interchangeable. The **anchored** path is absolute and lexically clean, and
-/// is what gets written into a symlink: it is the spelling the user chose, and
-/// rewriting `~/dotfiles` as `/usr/home/you/dotfiles` because `/home` happens
-/// to be a symlink would be a surprise in every `ls -l` from then on. The
+/// The **anchored** path is absolute and lexically clean, and is what gets
+/// written into a symlink: it keeps the spelling the user chose. The
 /// **canonical** path is what containment is decided against, because the paths
-/// it is compared with have been resolved by the operating system.
-///
-/// Holding both in one value is what stops the two being crossed. Comparing an
-/// anchored root against a resolved path is precisely the mistake rule 14
-/// exists to prevent, and it is invisible on any machine whose home contains no
-/// symlink.
+/// it is compared with have been resolved by the operating system. Holding both
+/// in one value is what stops a caller crossing them — the mistake rule 14
+/// exists to prevent, and one that is invisible on a machine whose home
+/// contains no symlink.
 #[derive(Debug)]
 pub(crate) struct Repository {
     anchored: PathBuf,
@@ -130,7 +118,7 @@ impl Occupancy {
                     Self::Unmanaged(ExistingNode::Link { written, points_at })
                 })
             }
-            Ok(existing) => Ok(Self::Unmanaged(kind_of(&existing))),
+            Ok(existing) => Ok(Self::Unmanaged(ExistingNode::of(&existing))),
             // Vacant covers both ways of reaching nothing. A destination under
             // a component that is not a directory holds nothing either, and
             // saying so hands the refusal to whoever creates the parents, which
@@ -198,6 +186,23 @@ pub(crate) enum ExistingNode {
     Other,
 }
 
+impl ExistingNode {
+    /// Name what is sitting at a destination, so a refusal can say which kind
+    /// it found rather than only that it found one.
+    ///
+    /// The symlink cases are not here: they need the link's target, which the
+    /// caller has already read.
+    pub fn of(existing: &fs::Metadata) -> Self {
+        if existing.is_file() {
+            Self::File
+        } else if existing.is_dir() {
+            Self::Directory
+        } else {
+            Self::Other
+        }
+    }
+}
+
 impl fmt::Display for ExistingNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -220,10 +225,8 @@ impl fmt::Display for ExistingNode {
 /// Whether anything at all is at a path, without following a final symlink.
 ///
 /// The question a seed asks, and the only one it asks: an action that never
-/// replaces anything does not need to know what it found — a file, a directory,
-/// or a link, broken or not, all mean the same thing to it, and mean it
-/// whoever put them there. Telling them apart is [`Occupancy::at`]'s job, and
-/// that exists because an action which *replaces* has to decide whether it may.
+/// replaces anything does not need to know what it found. Telling the kinds
+/// apart is [`Occupancy::at`]'s, for the actions that do replace.
 pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -354,21 +357,6 @@ pub(crate) fn children_of(dir: &Path) -> Result<Vec<OsString>, Error> {
     }
     names.sort();
     Ok(names)
-}
-
-/// Name what is sitting at a destination, so a refusal can say which kind it
-/// found rather than only that it found one.
-///
-/// The symlink cases are not here: they need the link's target, which the
-/// caller has already read.
-pub(crate) fn kind_of(existing: &fs::Metadata) -> ExistingNode {
-    if existing.is_file() {
-        ExistingNode::File
-    } else if existing.is_dir() {
-        ExistingNode::Directory
-    } else {
-        ExistingNode::Other
-    }
 }
 
 /// Make a path absolute and lexically clean, so that what is compared,

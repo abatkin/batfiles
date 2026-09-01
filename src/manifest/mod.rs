@@ -68,12 +68,15 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// The rules serde cannot express: action IDs being unique across records,
-    /// and the shape of values whose type does not constrain them.
+    /// The rules serde cannot express, checked as the document is read.
     ///
-    /// A rule belongs here when it is decidable from the document alone. One
-    /// needing a resolved root or the filesystem — whether a `source` exists —
-    /// is not, and stays with the action.
+    /// One of them is the manifest's own: IDs are unique across records, which
+    /// no single record can check. The rest belong to the records, and
+    /// [`Action::check_paths`] is where one answers for its own fields.
+    ///
+    /// A rule belongs here at all when it is decidable from the document alone.
+    /// One needing a resolved root or the filesystem — whether a `source`
+    /// exists — is not, and stays with the action as it runs.
     ///
     /// **One problem at a time.** The first offense returns, so a manifest with
     /// two faults reports the earlier one and the next run reports the rest.
@@ -94,34 +97,9 @@ impl Manifest {
                 });
             }
 
-            // Each variant names the paths it declares; `source` is not a field
-            // all of them have. No wildcard, so one added later fails to compile
-            // until someone says which of its fields are paths.
-            match action {
-                Action::Symlink(symlink) => {
-                    check_source(&symlink.source, action_number)?;
-                    check_dest(&symlink.dest, action_number)?;
-                }
-                Action::SymlinkDir(symlink_dir) => {
-                    // The same two rules: a `source-dir` is a source and a
-                    // `dest-dir` is a destination. Refusing the repository root
-                    // matters more here — it would link `batfiles.toml` and
-                    // `.git` into the home rather than install one of them.
-                    check_source(&symlink_dir.source_dir, action_number)?;
-                    check_dest(&symlink_dir.dest_dir, action_number)?;
-                }
-                // The one action with nothing to install, so the only one whose
-                // paths are all destination and no source.
-                Action::CreateDir(create_dir) => check_dest(&create_dir.dest, action_number)?,
-                Action::Copy(copy) => {
-                    check_source(&copy.source, action_number)?;
-                    check_dest(&copy.dest, action_number)?;
-                }
-                Action::CopyDir(copy_dir) => {
-                    check_source(&copy_dir.source_dir, action_number)?;
-                    check_dest(&copy_dir.dest_dir, action_number)?;
-                }
-            }
+            // Which of a record's fields are paths, and which rule each one
+            // follows, is the record's own answer.
+            action.check_paths(action_number)?;
         }
         Ok(())
     }

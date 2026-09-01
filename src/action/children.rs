@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::RunContext;
 use crate::error::Error;
-use crate::mode::Verb;
+use crate::output::Verb;
 use crate::paths;
 
 /// What a `-dir` action installs, and where.

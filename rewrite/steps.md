@@ -244,11 +244,10 @@ fetching.
   read-only `env` namespace exposes — is the last piece of the environment 0.3
   left at the tag.
 - **5.6** Gate leaf actions and groups on `when` and `unless`, rejecting a
-  record that sets both. The conditions are the third accessor to match over
-  every `Action` variant, after `id` at 0.6 and `group` at 3.2, so this is the
-  step 1.5 defers the collapse to: replace the per-field accessors with one `fn
-  common(&self) -> Common<'_>` returning a borrowed view of the shared fields,
-  so there is one exhaustive match rather than one per field. The same two fields
+  record that sets both. The collapse this step was once going to perform has
+  already happened: `Action::common` is the one exhaustive match over the shared
+  fields, so the two conditions are two fields added to `Common` rather than a
+  fourth accessor with a match of its own. The same two fields
   also go on 3.5's two `[default-disabled]` entry records, whose closedness is
   what refuses them today — and since the both-set rule is the kind serde cannot
   express, checking it walks those two lists, which is the first thing to read

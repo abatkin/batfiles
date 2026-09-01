@@ -12,7 +12,7 @@ use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::install;
 use crate::manifest::action::{CopyAction, CopyDirAction};
-use crate::mode::Verb;
+use crate::output::Verb;
 use crate::paths;
 
 /// Carry out one `copy` action: one file or one directory, at one destination.
@@ -24,7 +24,7 @@ pub(super) fn copy(action: &CopyAction, context: &RunContext) -> Result<(), Erro
     let dest = context.destination(&action.dest);
     install::seed(
         &source,
-        install::kind_of_named_source(&source)?,
+        install::kind_of_source(&source)?,
         &dest,
         context.mode(),
         context.reporter(),
@@ -66,7 +66,7 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &RunContext) -> Result<(
 fn seed_child(source: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
     install::seed(
         source,
-        install::kind_of_found_node(source)?,
+        install::kind_of_child(source)?,
         dest,
         context.mode(),
         context.reporter(),

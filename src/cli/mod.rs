@@ -5,8 +5,8 @@
 //! input is deliberately not read here.
 //!
 //! The whole surface parses from the first slice, so the product is visible
-//! before it works. `version` and `sync` are the only commands that do
-//! anything yet.
+//! before it works. Which of the commands here actually run is
+//! [`crate::app`]'s to say, and it says it in one place.
 
 mod actions;
 mod disabled;

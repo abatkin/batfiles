@@ -7,6 +7,7 @@
 
 use serde::Deserialize;
 
+use super::{Invalid, check_dest, check_source};
 use crate::item::ItemId;
 
 /// One entry of `[[actions]]`.
@@ -21,19 +22,71 @@ pub(crate) enum Action {
 }
 
 impl Action {
+    /// What every record carries, whichever variant it is.
+    ///
+    /// One exhaustive match, so asking for a shared field costs no match of its
+    /// own: `id`, `group`, and `describe` all read it, and `when` and `unless`
+    /// join it at 5.6. No wildcard, so a variant added later fails to compile
+    /// until someone says what it is called and where its shared fields are.
+    pub fn common(&self) -> Common<'_> {
+        let (kind, id, group) = match self {
+            Self::Symlink(action) => ("symlink", &action.id, &action.group),
+            Self::SymlinkDir(action) => ("symlink-dir", &action.id, &action.group),
+            Self::CreateDir(action) => ("create-dir", &action.id, &action.group),
+            Self::Copy(action) => ("copy", &action.id, &action.group),
+            Self::CopyDir(action) => ("copy-dir", &action.id, &action.group),
+        };
+        Common {
+            kind,
+            id: id.as_ref(),
+            group: group.as_ref(),
+        }
+    }
+
+    /// Check the paths this record declares, each by the rule its own field
+    /// follows.
+    ///
+    /// Which fields hold paths, and which rule each one answers to, is a
+    /// question only the variant can answer — a `source-dir` is a repository
+    /// source and a `dest-dir` is a destination, and the fetching action types
+    /// name a URL, which is neither and must not be checked as either. So the
+    /// arms name their fields rather than a shared shape naming them, and there
+    /// is no wildcard: a variant added later fails to compile until it says
+    /// which rules its own fields follow.
+    ///
+    /// `number` is the record's one-based position, which is how a diagnostic
+    /// names one carrying no `id`.
+    pub fn check_paths(&self, number: usize) -> Result<(), Invalid> {
+        match self {
+            Self::Symlink(action) => {
+                check_source(&action.source, number)?;
+                check_dest(&action.dest, number)
+            }
+            Self::SymlinkDir(action) => {
+                check_source(&action.source_dir, number)?;
+                check_dest(&action.dest_dir, number)
+            }
+            // The one action type with nothing to install, so the only one whose
+            // paths are all destination and no source.
+            Self::CreateDir(action) => check_dest(&action.dest, number),
+            Self::Copy(action) => {
+                check_source(&action.source, number)?;
+                check_dest(&action.dest, number)
+            }
+            Self::CopyDir(action) => {
+                check_source(&action.source_dir, number)?;
+                check_dest(&action.dest_dir, number)
+            }
+        }
+    }
+
     /// The action's `id`, if it was written with one.
     ///
     /// IDs share one namespace across a repository, so uniqueness is checked
     /// over the list as a whole — by a caller that does not know, and should
     /// not have to ask, which variant it is holding.
     pub fn id(&self) -> Option<&ItemId> {
-        match self {
-            Self::Symlink(action) => action.id.as_ref(),
-            Self::SymlinkDir(action) => action.id.as_ref(),
-            Self::CreateDir(action) => action.id.as_ref(),
-            Self::Copy(action) => action.id.as_ref(),
-            Self::CopyDir(action) => action.id.as_ref(),
-        }
+        self.common().id
     }
 
     /// The group the action belongs to, if it was written with one.
@@ -42,13 +95,7 @@ impl Action {
     /// exists because some action names it and holds exactly the actions that
     /// do.
     pub fn group(&self) -> Option<&ItemId> {
-        match self {
-            Self::Symlink(action) => action.group.as_ref(),
-            Self::SymlinkDir(action) => action.group.as_ref(),
-            Self::CreateDir(action) => action.group.as_ref(),
-            Self::Copy(action) => action.group.as_ref(),
-            Self::CopyDir(action) => action.group.as_ref(),
-        }
+        self.common().group
     }
 
     /// How the action introduces itself in a report: what kind it is, what it is
@@ -57,30 +104,26 @@ impl Action {
     /// `number` is its one-based position in the list, which is what names a
     /// record carrying no `id` — the same way a load error names one.
     pub fn describe(&self, number: usize) -> String {
-        let kind = self.kind();
-        let name = match self.id() {
+        let Common { kind, id, group } = self.common();
+        let name = match id {
             Some(id) => id.to_string(),
             None => format!("action {number}"),
         };
-        match self.group() {
+        match group {
             Some(group) => format!("{kind} {name} (group {group})"),
             None => format!("{kind} {name}"),
         }
     }
+}
 
+/// The `type` tag and the two fields every `[[actions]]` record carries,
+/// borrowed from one.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Common<'a> {
     /// The action's `type`, spelled as the manifest spells it.
-    ///
-    /// No wildcard, so a variant added later fails to compile until someone says
-    /// what it is called.
-    fn kind(&self) -> &'static str {
-        match self {
-            Self::Symlink(_) => "symlink",
-            Self::SymlinkDir(_) => "symlink-dir",
-            Self::CreateDir(_) => "create-dir",
-            Self::Copy(_) => "copy",
-            Self::CopyDir(_) => "copy-dir",
-        }
-    }
+    pub kind: &'static str,
+    pub id: Option<&'a ItemId>,
+    pub group: Option<&'a ItemId>,
 }
 
 /// `symlink`: one symlink, from a path in the repository to a destination.

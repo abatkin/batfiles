@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 use crate::directory;
 use crate::error::Error;
-use crate::mode::{RunMode, Verb};
-use crate::output::Reporter;
+use crate::mode::RunMode;
+use crate::output::{Reporter, Verb};
 use crate::paths;
 
 /// What `copy` reproduces. Nothing else is installed by copying it.
@@ -90,15 +90,9 @@ pub(crate) fn seed(
 /// stays absent, and the last thing this does is one rename that puts a
 /// finished copy there.
 ///
-/// That is the only arrangement an *interrupted* run survives. A run that fails
-/// returns an error and can tidy up after itself; a run that is killed returns
-/// nothing and tidies nothing, and whatever it had put at the destination is
-/// still there afterwards — a truncated file or an empty placeholder, either of
-/// which the next run finds, keeps, and reports success over. Cleanup cannot be
-/// what correctness rests on, and not only because it may not run: taking back
-/// a copied tree needs write permission on every directory in it, and the copy
-/// carries the source's permissions, so one read-only directory is enough to
-/// make a copy batfiles can no longer remove.
+/// That property has to hold with no cleanup at all, because a run that is
+/// killed runs none (`guidance.md`, rule 15). So it is the arrangement that
+/// buys it, not [`discard`].
 ///
 /// Reports whether it installed: a destination taken while the copy was being
 /// made is left alone, like one that was taken before it started.
@@ -157,17 +151,12 @@ enum Staged {
 
 /// Create a staging node no one but its owner can reach into.
 ///
-/// The copy's real permissions are the source's, and they are set once it is
-/// whole rather than up front — a source directory its owner cannot write into
-/// would otherwise lock batfiles out of the copy it is still filling
-/// ([`mirror_permissions`]). Creating with the default in the meantime is what
-/// that used to mean: a copy of a `0600` file readable by anyone for as long as
-/// the copy ran, and, since an interrupted run leaves its staging node behind
-/// deliberately, for as long after it as nobody noticed.
-///
-/// Starting closed and widening at the end costs nothing and covers the whole
-/// tree: everything written under a staging directory is reached through it, so
-/// one restrictive mode on the root is enough while the copy is in progress.
+/// Created closed and widened at the end, so a copy of a private file is never
+/// briefly a public one (`guidance.md`, rule 15). The real permissions arrive
+/// with [`mirror_permissions`] once the copy is whole; that ordering is what
+/// keeps a source directory its owner cannot write into from locking batfiles
+/// out of the copy it is still filling. One restrictive mode on the root covers
+/// a whole staging tree, since everything under it is reached through it.
 #[cfg(unix)]
 fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -208,19 +197,15 @@ fn fill(source: &Path, staged: Staged, staging: &Path) -> Result<(), Error> {
 /// Move a finished copy to its destination, or report that the destination was
 /// taken while it was being made.
 ///
-/// A file is published by linking it, which is the one operation the standard
-/// library offers that *refuses* to replace: it fails if the destination
-/// exists. Renaming has no such promise, so a destination that appeared during
-/// a long copy would be overwritten by one — which is content batfiles did not
-/// create, and rule 13 does not stop applying because another process was
-/// quick.
+/// A file is published by linking it, the one operation the standard library
+/// offers that *refuses* to replace. Rename makes no such promise, so a
+/// destination that appeared during a long copy would be overwritten by one,
+/// and rule 13 does not stop applying because another process was quick.
 ///
-/// A directory has no linkable equivalent and no portable no-replace rename
-/// (`renameat2` on Linux, `renamex_np` on macOS, neither on Windows), so it is
-/// checked again immediately before the rename. That narrows what can be
-/// replaced to a directory created between two adjacent calls, and a rename
-/// only replaces an *empty* directory — anything holding content fails the
-/// rename instead. No content is at risk either way.
+/// A directory has neither a linkable equivalent nor a portable no-replace
+/// rename, so it is checked again immediately before the rename. That leaves a
+/// window of two adjacent calls, and a rename replaces only an *empty*
+/// directory, so no content is at risk either way. Step 9.5 owns closing it.
 fn publish(staging: &Path, kind: FileOrDirectory, dest: &Path) -> Result<bool, Error> {
     if let FileOrDirectory::File = kind {
         match fs::hard_link(staging, dest) {
@@ -299,7 +284,7 @@ fn staging_path(dest: &Path) -> PathBuf {
 /// Naming a thing and reproducing one are different questions, and every
 /// action's source resolves through a link — that is how a repository points at
 /// something it stores under another name.
-pub(crate) fn kind_of_named_source(source: &Path) -> Result<FileOrDirectory, Error> {
+pub(crate) fn kind_of_source(source: &Path) -> Result<FileOrDirectory, Error> {
     let found = fs::metadata(source).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             // Reachability, not presence: the source has already been resolved
@@ -314,7 +299,7 @@ pub(crate) fn kind_of_named_source(source: &Path) -> Result<FileOrDirectory, Err
             }
         }
     })?;
-    kind_of(&found, source)
+    classify(&found, source)
 }
 
 /// Classify a node found inside a directory being copied, following nothing.
@@ -325,7 +310,7 @@ pub(crate) fn kind_of_named_source(source: &Path) -> Result<FileOrDirectory, Err
 /// re-reads a relative target from a directory it is no longer in. Refusing is
 /// the answer that can be changed later without changing what a working
 /// manifest does today.
-pub(crate) fn kind_of_found_node(source: &Path) -> Result<FileOrDirectory, Error> {
+pub(crate) fn kind_of_child(source: &Path) -> Result<FileOrDirectory, Error> {
     let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
@@ -335,10 +320,11 @@ pub(crate) fn kind_of_found_node(source: &Path) -> Result<FileOrDirectory, Error
             path: source.to_path_buf(),
         });
     }
-    kind_of(&found, source)
+    classify(&found, source)
 }
 
-fn kind_of(found: &fs::Metadata, source: &Path) -> Result<FileOrDirectory, Error> {
+/// The tail both of the above share, once each has decided what to inspect.
+fn classify(found: &fs::Metadata, source: &Path) -> Result<FileOrDirectory, Error> {
     if found.is_file() {
         Ok(FileOrDirectory::File)
     } else if found.is_dir() {
@@ -384,7 +370,7 @@ fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
     for child in paths::children_of(source)? {
         let from = source.join(&child);
         let to = built_at.join(&child);
-        match kind_of_found_node(&from)? {
+        match kind_of_child(&from)? {
             FileOrDirectory::File => {
                 copy_file(&from, create_new_file(&to)?, &to)?;
             }
