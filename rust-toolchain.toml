@@ -2,7 +2,9 @@
 # breaks first, so it does the heavy lifting. Bump deliberately.
 [toolchain]
 channel = "1.94.1"
-components = ["rustfmt", "clippy"]
+# `llvm-tools` supplies `llvm-ar`, which `cargo xwin` symlinks to `llvm-lib`
+# to archive the assembly objects the Windows cross-lint compiles below.
+components = ["rustfmt", "clippy", "llvm-tools"]
 # `task lint` also checks this target, which is how an ubuntu-only CI catches a
 # rotted platform gate. Checking it needs its standard library, not a linker.
 targets = ["x86_64-pc-windows-msvc"]
