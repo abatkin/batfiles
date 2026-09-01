@@ -1,4 +1,4 @@
-//! Downloading one file, for `fetch-url`.
+//! Downloading one file, for `fetch-file`.
 //!
 //! What arrives is written straight into the staging node [`crate::install`]
 //! created, hashed on the way, so nothing partial and nothing unverified is ever

@@ -1,4 +1,4 @@
-//! `fetch-url`: one file downloaded to a destination where nothing is.
+//! `fetch-file`: one file downloaded to a destination where nothing is.
 //!
 //! The same seed `copy` makes, filled from a URL instead of from the
 //! repository. Everything that makes an install safe — the missing-only check,
@@ -12,15 +12,15 @@ use super::RunContext;
 use crate::error::Error;
 use crate::fetch;
 use crate::install::{self, FileOrDirectory};
-use crate::manifest::action::FetchUrlAction;
+use crate::manifest::action::FetchFileAction;
 use crate::output::Verb;
 
-/// Carry out one `fetch-url` action.
+/// Carry out one `fetch-file` action.
 ///
 /// Nothing here asks about the mode. Under `--dry-run` `seed` reports what it
 /// would fetch and creates no staging node, so the download is not merely
 /// skipped — it is unreachable, and no request is made.
-pub(super) fn fetch_url(action: &FetchUrlAction, context: &RunContext) -> Result<(), Error> {
+pub(super) fn fetch_file(action: &FetchFileAction, context: &RunContext) -> Result<(), Error> {
     let dest = context.destination(&action.dest);
     install::seed(
         install::Seed {

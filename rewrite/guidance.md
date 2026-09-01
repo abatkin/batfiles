@@ -130,7 +130,7 @@ losing work.
 **11. The manager serves the configuration, not the reverse.** A vim setup that
 expects its plugins cloned into `~/.vim/bundle` is a requirement, not a
 misconfiguration to argue with. Where an action type looks awkward, the
-awkwardness is batfiles' to absorb. This is why `git-clone-list` and `fetch-url`
+awkwardness is batfiles' to absorb. This is why `git-clone-list` and `fetch-file`
 are slice 4 rather than "use a plugin manager instead", and it is the test to
 apply whenever a feature looks easier to decline than to build.
 
@@ -214,8 +214,8 @@ created**, never on one that was already there: "it is probably ours" in front o
 a recursive delete is how a tool destroys data it was written to protect.
 
 `copy` at 1.3 is the worked example, and `src/install.rs` is where it lives —
-`build_and_publish`, `publish`, and `discard` in particular. Slice 4 inherits all of it — `fetch-url` and
-archive extraction are seeds with the same destinations and the same failure —
+`build_and_publish`, `publish`, and `discard` in particular. Slice 4 inherits all of it — `fetch-file` and
+`fetch-archive` are seeds with the same destinations and the same failure —
 so reuse that path rather than deriving it again.
 
 ## Budgets
@@ -319,7 +319,7 @@ Use the cheapest environment that still exercises the real thing.
 
 - Temporary directories for `$HOME` and for repositories — slices 0–3.
 - A local bare git repository for anything that clones — slices 4, 6, 7.
-- A local HTTP server for `fetch-url` — slice 4.
+- A local HTTP server for the fetching actions — slice 4.
 - Docker only where a pristine machine is the thing under test: `clone` at 8.4
   and `install.sh` at 10.3. Keep it a separate CI task, not part of `task test`.
 
@@ -388,8 +388,8 @@ already has the branch the check goes in:
 | the git helper that clones and updates a worktree | the clone-or-update decision | 4.3 |
 
 `RunMode` is a field on `action::RunContext`, beside the anchored roots — the same
-value 9.4's `--refresh-content` becomes a second field on. `fetch-url` and
-archive extraction publish through `install::seed` (4.1, 4.2), so they are
+value 9.4's `--refresh-content` becomes a second field on. `fetch-file` and
+`fetch-archive` publish through `install::seed` (4.1, 4.2), so they are
 dry-run correct on the day they are written. **The git helper is the one
 addition, and it is needed because `seed` does not cover it**: an existing clone
 is an occupied destination, which `install::seed` declines by design, so the

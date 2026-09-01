@@ -609,25 +609,30 @@ ref = "refs/heads/master"
 | `dest`   | string |   yes    | Exact clone directory.                        |
 | `ref`    | string |    no    | Branch, tag, or commit selector.              |
 
-### `fetch-url`
+### `fetch-archive`
 
-The non-extracting half of this action is built and is specified in
-[`docs/repoformat.md`](../repoformat.md#fetch-url). What is left here is
-extraction: an archive unpacked into one destination directory, where an
-existing `dest` is a merge root rather than a reason to skip the action and the
-missing-only check applies separately to each selected mapped archive entry. A
-prior `create-dir` for that `dest` therefore does not suppress extraction. See
-[Seed actions and deletion](safety.md#seed-actions-and-deletion).
+Declares one archive downloaded and unpacked at a destination where nothing is.
+Arrives at step 4.2. Its sibling
+[`fetch-file`](../repoformat.md#fetch-file) is built, and the two share
+everything about the transfer — the accepted schemes, the optional digest, the
+redirect and timeout rules, the `200 OK` rule — and differ only in what is done
+with the response body.
 
-`file://` is listed below and is not fetched yet either; it arrives with file
-remotes at step 9.3.
+**Two action types rather than one with an `extract` flag.** The fields below
+that select archive entries mean nothing to a plain download, and a record that
+accepts a field it ignores is what
+[the closed-record rule](../repoformat.md#actions) exists to prevent. Which one
+a repository wants is a fact about the URL that the author already knows, so it
+is written down rather than inferred.
+
+`file://` is listed below and is not fetched yet; it arrives with file remotes
+at step 9.3.
 
 ```toml
 [[actions]]
-type = "fetch-url"
+type = "fetch-archive"
 source = "https://example.com/tool.tar.gz"
 dest = "~/.local/tool"
-extract = true
 archive-root = "*"
 include = ["bin/*"]
 exclude = ["*.md"]
@@ -635,15 +640,31 @@ exclude = ["*.md"]
 
 | Field          | Type         | Required | Default     | Description                                                            |
 |----------------|--------------|:--------:|-------------|------------------------------------------------------------------------|
-| `source`       | string       |   yes    | —           | `https://`, `http://`, or `file://` URL.                               |
-| `dest`         | string       |   yes    | —           | File destination, or directory destination when extracting.            |
-| `extract`      | boolean      |    no    | `false`     | Whether the response is an archive to extract.                         |
-| `sha256`       | string       |    no    | —           | 64-digit hexadecimal digest of the response/archive bytes.             |
+| `source`       | string       |   yes    | —           | `https://`, `http://`, or `file://` archive URL.                       |
+| `dest`         | string       |   yes    | —           | Where the unpacked directory goes, exactly.                            |
+| `sha256`       | string       |    no    | —           | 64-digit hexadecimal digest of the archive bytes.                      |
 | `archive-root` | string       |    no    | archive top | Archive prefix to strip, or `"*"` for automatic single-root detection. |
 | `include`      | `GlobFilter` |    no    | all entries | Entries to include while extracting.                                   |
 | `exclude`      | `GlobFilter` |    no    | none        | Entries to exclude while extracting.                                   |
 
-The archive-selection fields are meaningful only when `extract = true`.
+**`dest` is one name, not a merge root.** The action installs the unpacked tree
+as a single thing, exactly the way [`copy`](../repoformat.md#copy) installs a
+directory, so anything at all at `dest` means the action is done and no request
+is made — including a directory a prior `create-dir` left there. An earlier
+draft of this section had extraction merge into an existing `dest` and apply the
+missing-only check per archive entry instead; that is not what is being built,
+because it gives up the one property that makes a seed safe. The archive is
+unpacked beside its destination and moved there once, so a transfer that stops
+early, an entry that fails to write, and an entry that tries to escape all leave
+the destination exactly as they found it, and the whole extraction is abandoned
+by discarding one path. A per-entry merge has no such path to discard: it writes
+into `$HOME` as it goes, and an extraction that stops halfway leaves a
+destination that every later run finds occupied and calls finished. See
+[Seed actions and deletion](safety.md#seed-actions-and-deletion).
+
+Refreshing what an occupied `dest` holds is
+[`--refresh-content`](safety.md#seed-actions-and-deletion)'s at step 9.4, on the
+same terms as every other seed.
 
 ### `include-remote`
 

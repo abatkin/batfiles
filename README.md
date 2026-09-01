@@ -24,7 +24,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-url`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -48,12 +48,14 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   and install it *only* where nothing is. Editing it afterwards is the point, so
   a later `sync` finds it occupied and leaves it alone rather than putting the
   original back. Permissions come across, including the executable bit.
-- **A file can come from the network.** `fetch-url` downloads one to a
+- **A file can come from the network.** `fetch-file` downloads one to a
   destination, on the same missing-only terms, optionally checking it against a
   declared `sha256`. Nothing incomplete is ever installed: the download is
   built beside its destination and moved there once it is whole, so a transfer
   that stops early or a digest that does not match leaves the destination as it
-  found it.
+  found it. What arrives is installed as a file, whatever it holds; unpacking a
+  downloaded archive is `fetch-archive`, which is a separate action type and is
+  not built.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
@@ -223,7 +225,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 4     | Extracting fetched archives, and cloning Git repositories           |
+| 4     | `fetch-archive`, and cloning Git repositories                       |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
 | 8     | `init` and `clone` for new machines, with default-disabled adoption |
@@ -260,7 +262,7 @@ task build   # debug build
 
 Two cargo subcommands are needed beyond the pinned toolchain: `cargo install
 cargo-deny cargo-xwin --locked`. The second is what lets an ubuntu machine run
-clippy against Windows — the TLS stack under `fetch-url` compiles C, so that
+clippy against Windows — the TLS stack under `fetch-file` compiles C, so that
 check needs headers targeting MSVC, which `cargo xwin` fetches and caches.
 
 Without `task` installed, the underlying commands are `cargo fmt --all`,

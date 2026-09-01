@@ -148,8 +148,8 @@ pub(crate) enum Invalid {
     )]
     DestinationOtherHome { action: usize, value: String },
 
-    // A `fetch-url` source names somewhere off this machine, and its digest
-    // names what should arrive from there.
+    // A fetching action's source names somewhere off this machine, and its
+    // digest names what should arrive from there.
     #[error("action {action}: source `{value}` is not an http:// or https:// URL")]
     SourceNotAUrl { action: usize, value: String },
 
@@ -250,7 +250,7 @@ fn check_dest(dest: &str, action: usize) -> Result<(), Invalid> {
     }
 }
 
-/// The rules a `fetch-url` `source` satisfies as written.
+/// The rules a fetching action's `source` satisfies as written.
 ///
 /// Only the scheme is checked. What the rest of a URL may say is the server's
 /// business, and a client that will parse it properly is already a dependency —

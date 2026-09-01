@@ -133,23 +133,25 @@ afterwards could not.
 
 What remains here has no code yet.
 
-`fetch-url` actions are missing-only seeds during `sync` and `apply-*`. For a
-fetch without extraction, the existence check applies to the exact `dest`: if
-any filesystem node already occupies that path, the action skips it.
+`fetch-file` and `fetch-archive` are missing-only seeds during `sync` and
+`apply-*`, and both apply the existence check to the exact `dest`: if any
+filesystem node already occupies that path, the action skips it. An earlier
+`create-dir` for an extraction root therefore does disable a later
+`fetch-archive` at the same path — which is the ordinary consequence of a seed,
+and a manifest that declares both is asking for the directory twice.
 
-For an extracting fetch, `dest` is instead a merge root. Its existence does not
-skip the action. The existence check applies to each selected entry at its
-mapped path below that root. A selected file or symlink is installed only when
-its mapped path is absent; any existing node at that path is left unchanged. A
-selected directory, including an empty one, is created when absent; an existing
-directory at that path is traversed as a merge point. If a non-directory node
-occupies a path where a selected directory is required, batfiles leaves that
-node and the selected directory subtree unchanged and reports the skip. Whether
-that survives contact with an implementation the way the `copy` version did not
-is for slice 4 to find out.
+An earlier draft had `dest` be a merge root for an extracting fetch, with the
+existence check applied per selected entry at its mapped path below that root,
+so that an extraction could seed the entries it was missing. Slice 4 was left to
+find out whether that survived contact with an implementation, and the answer is
+that it does not: a per-entry merge writes into `$HOME` as it goes, so an
+extraction that stops halfway leaves a destination every later run finds
+occupied and reports as finished. That is the failure
+[Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse)
+is written against, and no cleanup step fixes it, because a run that is killed runs no
+cleanup. Unpacking beside the destination and moving it in once gives the
+property up front, and it is worth more than the merge.
 
-Thus an earlier `create-dir` for an extraction root does not disable a later
-extracting fetch; the later action can still seed its missing selected entries.
 Seed actions do not modify an existing entry merely because the source has
 changed. The user must pass `--refresh-content` to force seed actions to run
 again, following the replacement and backup rules above.
@@ -192,7 +194,7 @@ failed download or digest check must not replace existing content.
 
 Archives require stricter handling than user-authored destination paths.
 Batfiles should inspect and stage a complete selected archive tree before
-merging it into the destination. It must reject entries that would escape the
+moving it into the destination in one step. It must reject entries that would escape the
 staging root, including absolute names, lexical `..` traversal, and unsafe
 symlink or hard-link targets. Device nodes and other special archive entries
 should be rejected rather than created.
@@ -273,8 +275,8 @@ unfinished one leaves the destination untouched; see
 [Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse).
 It is stated as a rule rather than a preference because the failure it prevents
 is a run that reports success over a half-installed destination forever. The
-actions that do not exist yet inherit it — `fetch-url` and archive extraction
-most of all, being seeds over the same destinations. As the first phase of a directory action's execution, batfiles
+actions that do not exist yet inherit it — `fetch-archive` most of all, being a
+seed over the same destinations. As the first phase of a directory action's execution, batfiles
 performs a best-effort inspection of the intended overlay. It then applies the
 overlay in a deterministic order, leaving adjacent backups for every
 destination node it replaces. On failure, it stops, reports what completed,

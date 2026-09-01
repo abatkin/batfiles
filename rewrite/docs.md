@@ -119,8 +119,8 @@ would inherit them, which is the thing rule 9 exists to stop.
     0.10 lifts them to general statements before `create-dir` and `copy` arrive.
   - Seed semantics and installed permissions at **1.3**, into
     `docs/repoformat.md` alongside the two `copy` actions. Not in the original
-    list because seeds were assumed to arrive with `fetch-url`; `copy` needs
-    both rules first. The `fetch-url` half of the seed section stays in
+    list because seeds were assumed to arrive with the fetching actions; `copy`
+    needs both rules first. The `fetch-archive` half of the seed section stays in
     `docs/future/`, and both promotions record where the build disagreed rather
     than pasting what was written.
   - Archive handling — absolute paths, `..` traversal, symlinks escaping the

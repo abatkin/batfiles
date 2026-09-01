@@ -1,4 +1,4 @@
-//! `fetch-url`: what a download installs, what it refuses to install, and what
+//! `fetch-file`: what a download installs, what it refuses to install, and what
 //! a dry run does instead of one.
 //!
 //! Every test answers from a local server (`guidance.md`, "Test environments").
@@ -137,7 +137,7 @@ fn a_transfer_that_stops_early_installs_nothing() {
     let address = server_that_hangs_up("half a file\n", 4096);
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[[actions]]\ntype = \"fetch-url\"\nsource = \"{address}/a\"\ndest = \"~/.vimrc\"\n"
+        "[[actions]]\ntype = \"fetch-file\"\nsource = \"{address}/a\"\ndest = \"~/.vimrc\"\n"
     ));
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -168,7 +168,7 @@ fn a_transfer_that_stops_early_installs_nothing() {
 /// from an endpoint or a proxy doing something it was not asked to. Installing
 /// one would put a fragment, or nothing at all, where the file goes — and a
 /// destination that is occupied is one every later run calls done, which for a
-/// `fetch-url` without a digest is a truncated file that never gets noticed.
+/// `fetch-file` without a digest is a truncated file that never gets noticed.
 #[test]
 fn an_answer_that_is_not_a_whole_file_installs_nothing() {
     for reply in [
@@ -191,7 +191,7 @@ fn an_answer_that_is_not_a_whole_file_installs_nothing() {
         let server = Server::new(&[("/pathogen.vim", reply)]);
         let tree = Tree::new();
         tree.write_manifest(&format!(
-            "[[actions]]\ntype = \"fetch-url\"\nsource = \"{}/pathogen.vim\"\ndest = \"~/.vimrc\"\n",
+            "[[actions]]\ntype = \"fetch-file\"\nsource = \"{}/pathogen.vim\"\ndest = \"~/.vimrc\"\n",
             server.address()
         ));
 
@@ -272,7 +272,7 @@ fn a_fetched_file_arrives_readable_rather_than_staying_private() {
 fn a_source_that_is_not_a_url_is_refused_before_anything_runs() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\ntype = \"fetch-url\"\nsource = \"files/ackrc\"\ndest = \"~/.ackrc\"\n",
+        "[[actions]]\ntype = \"fetch-file\"\nsource = \"files/ackrc\"\ndest = \"~/.ackrc\"\n",
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -288,7 +288,7 @@ fn a_source_that_is_not_a_url_is_refused_before_anything_runs() {
 fn a_file_url_names_the_step_that_makes_it_work() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\ntype = \"fetch-url\"\nsource = \"file:///etc/hosts\"\ndest = \"~/.hosts\"\n",
+        "[[actions]]\ntype = \"fetch-file\"\nsource = \"file:///etc/hosts\"\ndest = \"~/.hosts\"\n",
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -305,7 +305,7 @@ fn a_digest_that_is_not_one_is_refused_before_anything_is_fetched() {
     let tree = Tree::new();
     tree.write_manifest(
         "[[actions]]\n\
-         type = \"fetch-url\"\n\
+         type = \"fetch-file\"\n\
          source = \"https://example.com/a\"\n\
          sha256 = \"abc123\"\n\
          dest = \"~/.a\"\n",
@@ -320,18 +320,45 @@ fn a_digest_that_is_not_one_is_refused_before_anything_is_fetched() {
     );
 }
 
+/// The archive fields belong to `fetch-archive`, so they are unknown here for
+/// good rather than until a step.
+///
+/// Nothing about `fetch-file` is provisional: it fetches a response body and
+/// installs it as a file, and a repository that wants an archive unpacked asks
+/// for it by `type`. Accepting `archive-root` and ignoring it would install the
+/// tarball itself at a destination every later run then finds occupied and
+/// calls done.
 #[test]
-fn the_archive_fields_are_refused_until_the_step_that_extracts() {
+fn the_archive_fields_are_not_fields_of_this_action() {
+    let tree = Tree::new();
+    for field in [
+        "archive-root = \"*\"",
+        "include = [\"bin/*\"]",
+        "extract = true",
+    ] {
+        tree.write_manifest(&format!(
+            "[[actions]]\n\
+             type = \"fetch-file\"\n\
+             source = \"https://example.com/a.tar.gz\"\n\
+             dest = \"~/.local/tool\"\n\
+             {field}\n",
+        ));
+
+        tree.batfiles().arg("sync").assert().failure();
+    }
+}
+
+/// `fetch-archive` is named by the documents and built at 4.2, so until then it
+/// is an unknown action type rather than one that half works.
+#[test]
+fn fetch_archive_is_not_built_yet() {
     let tree = Tree::new();
     tree.write_manifest(
         "[[actions]]\n\
-         type = \"fetch-url\"\n\
+         type = \"fetch-archive\"\n\
          source = \"https://example.com/a.tar.gz\"\n\
-         dest = \"~/.local/tool\"\n\
-         extract = true\n",
+         dest = \"~/.local/tool\"\n",
     );
 
-    // Silently ignoring `extract` would fetch the tarball and install it as a
-    // file, which is the failure rule 12 is written about.
     tree.batfiles().arg("sync").assert().failure();
 }

@@ -24,7 +24,7 @@ pub(crate) fn batfiles() -> Command {
     let mut command = Command::cargo_bin("batfiles").expect("the batfiles binary should be built");
     // The tests must not inherit the developer's own color environment.
     command.env_remove("BATFILES_COLOR").env_remove("NO_COLOR");
-    // Nor their proxy. `fetch-url` honors these, so a developer or a runner
+    // Nor their proxy. `fetch-file` honors these, so a developer or a runner
     // that sets one would send the fetching tests' loopback requests to it —
     // reaching a network the suite promises never to reach, and failing with
     // the fixture server untouched (`guidance.md`, "Test environments").

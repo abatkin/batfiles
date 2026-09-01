@@ -73,7 +73,7 @@ one thing a dry run does that is not describing.
 **Remote content is described, not retrieved.** `git-clone` and
 `git-clone-list` say what they would fetch and where it would land — and, where a
 clone is already there, that they would update it — without contacting the
-network. `fetch-url` already does; see
+network. `fetch-file` already does; see
 [`docs/cmdline.md`](../cmdline.md#dry-run-behavior). Naming that is a complete account of the action, at the same granularity
 a directory copy is reported at; what a dry run cannot say is what an update
 would actually bring.

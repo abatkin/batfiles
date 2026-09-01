@@ -169,7 +169,8 @@ caller. Do not.
 
 ## Nothing exists yet for slice 4
 
-The old crate has serde records for `fetch-url`, `git-clone`, and
+The old crate has serde records for `fetch-url` — since split and renamed into
+`fetch-file` and `fetch-archive` — `git-clone`, and
 `git-clone-list`, and **no implementation of any of them**. `Cargo.toml` has no
 HTTP client and no archive reader. Slice 4 is therefore the first genuinely new
 code in the rewrite and the first new dependencies — expect to add one HTTP

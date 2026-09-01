@@ -6,7 +6,7 @@ test. Steps are numbered so other documents can reference them. Read
 there.
 
 The order is driven by one thing: **how soon the tool can manage real
-dotfiles.** Slice 4 exists because the personal repository needs `fetch-url` and
+dotfiles.** Slice 4 exists because the personal repository needs `fetch-file` and
 `git-clone-list` and nothing else exotic, so those come before variables,
 conditions, and remotes even though they are individually harder.
 
@@ -135,24 +135,43 @@ step that made them report unknown effects went with the effect type it was an
 artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
 4.6.
 
-- **4.1** ✅ Add `fetch-url` for a single file, seeded only when missing, through
+- **4.1** ✅ Add `fetch-file` for a single file, seeded only when missing, through
   the same `install.rs` path `copy` uses. `fill` is now a parameter carried on an
   `install::Seed` descriptor, and the fetcher joined 2.3's allowlist beside
-  `action/copy.rs` as a downstream entry.
-- **4.2** Add archive extraction, rejecting absolute paths, `..` traversal, and
+  `action/copy.rs` as a downstream entry. Landed as `fetch-url` and renamed
+  before 4.2: the transport is what the two fetching actions share, so naming the
+  built one after it left the ambiguous name on the specific member of the pair.
+- **4.2** Add `fetch-archive`, rejecting absolute paths, `..` traversal, and
   symlinks escaping the destination root. A directory seed, so rule 15 again:
   extract into the staging tree and publish once, rather than into the
   destination. That also makes the entry rejections cheap to enforce — an entry
   that escapes is caught before anything reaches `$HOME`, and the whole
   extraction is abandoned by discarding one path.
 
-  **Widen the record rather than adding an action.** 4.1 left `FetchUrlAction`
-  closed against `extract`, `archive-root`, `include`, and `exclude`, with a CLI
-  test asserting that a manifest writing one is refused; this step adds those
-  fields and deletes that test. It is also the second `install::Seed` whose
-  `kind` is a directory, and therefore the first caller to fill
-  `Staged::Directory` — which is what makes `Staged::into_file`'s panic arm
-  unreachable by construction rather than by convention.
+  **Add an action; do not widen `FetchFileAction`.** The archive-selection
+  fields mean nothing to a plain download, and a record accepting a field it
+  ignores is what `docs/repoformat.md`'s closed-record rule forbids — stated
+  there as "a choice between two shapes is a `type`, never a boolean", which is
+  4.1's other renaming. So `extract` does not exist in the format at all: the
+  four fields it would have gated are `fetch-archive`'s, they are permanently
+  unknown on `fetch-file`, and `tests/cli/fetching.rs` already asserts both that
+  and that `fetch-archive` is an unknown type until this step lands. The section
+  to promote is `docs/future/repoformat.md`'s `fetch-archive`, which is written
+  against this decision rather than the merge-root one it replaced.
+
+  It is also the second `install::Seed` whose `kind` is a directory, and
+  therefore the first caller to fill `Staged::Directory` — which is what makes
+  `Staged::into_file`'s panic arm unreachable by construction rather than by
+  convention.
+
+  **Its `dest` is one name, not a merge root**, so an occupied `dest` — a
+  directory an earlier `create-dir` made included — means the action is done and
+  nothing is fetched. `docs/future/safety.md` used to specify the opposite, with
+  the missing-only check applied per archive entry, and left it to this slice to
+  find out whether that survived an implementation. It does not: a per-entry
+  merge writes into `$HOME` as it goes, so a half-finished extraction converges
+  on success forever. Both future documents have been rewritten against the seed;
+  promote them, do not re-derive the merge.
 
   Its fixture is `tests/fixtures/fetching`, whose `{server}` placeholder 4.1
   built the substitution for.
@@ -198,7 +217,7 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
 
   Promote what is left of `docs/future/cmdline.md`'s "Remote content is
   described, not retrieved" paragraph into the section 2.4 created — 4.1 took
-  `fetch-url`'s share of it and the digest sentence beside it — minus its second
+  `fetch-file`'s share of it and the digest sentence beside it — minus its second
   half about inclusions, which waits for 7.1.
 - **4.8** **Acceptance: your personal dotfiles are fully managed by `sync`, and
   the personal shell script is retired.**

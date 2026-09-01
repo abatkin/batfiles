@@ -2,7 +2,7 @@
 //!
 //! A thing is built beside its destination and moved in with one call, so the
 //! destination never holds half of it. Every seed-style action ends here —
-//! `copy` and `fetch-url` today, archive extraction at 4.2 — which is why this
+//! `copy` and `fetch-file` today, `fetch-archive` at 4.2 — which is why this
 //! is a peer of the actions rather than a part of one.
 //!
 //! Producing the content is the caller's half: what fills the staging node this
@@ -63,7 +63,7 @@ pub(crate) struct Seed<'a, F> {
 
 /// Install one thing where nothing is, or keep what is there, and say which.
 ///
-/// The whole of the missing-only rule as a user sees it: `copy` and `fetch-url`
+/// The whole of the missing-only rule as a user sees it: `copy` and `fetch-file`
 /// reach this once for their `dest`, and `copy-dir` once per child. What
 /// occupies a destination is never examined, because nothing here would replace
 /// it whatever it turned out to be.
@@ -197,7 +197,8 @@ impl Staged {
     /// was written beside, so one declaring [`FileOrDirectory::File`] is handed
     /// a file. The panic states that agreement rather than defending against it
     /// — it is one struct literal apart — the way [`crate::location`] states its
-    /// own resolved-root invariant. 4.2 fills a directory and uses both arms.
+    /// own resolved-root invariant. `fetch-archive` at 4.2 fills a directory and
+    /// uses both arms.
     pub fn into_file(self) -> fs::File {
         match self {
             Self::File(file) => file,

@@ -19,7 +19,7 @@ pub(crate) enum Action {
     CreateDir(CreateDirAction),
     Copy(CopyAction),
     CopyDir(CopyDirAction),
-    FetchUrl(FetchUrlAction),
+    FetchFile(FetchFileAction),
 }
 
 impl Action {
@@ -36,7 +36,7 @@ impl Action {
             Self::CreateDir(action) => ("create-dir", &action.id, &action.group),
             Self::Copy(action) => ("copy", &action.id, &action.group),
             Self::CopyDir(action) => ("copy-dir", &action.id, &action.group),
-            Self::FetchUrl(action) => ("fetch-url", &action.id, &action.group),
+            Self::FetchFile(action) => ("fetch-file", &action.id, &action.group),
         };
         Common {
             kind,
@@ -81,7 +81,7 @@ impl Action {
             }
             // The one action type whose `source` names something off this
             // machine, so it answers to neither path rule.
-            Self::FetchUrl(action) => {
+            Self::FetchFile(action) => {
                 check_url(&action.source, number)?;
                 check_digest(action.sha256.as_deref(), number)?;
                 check_dest(&action.dest, number)
@@ -244,17 +244,18 @@ pub(crate) struct CopyDirAction {
     pub dot_prefix: bool,
 }
 
-/// `fetch-url`: one file downloaded to a destination where nothing is.
+/// `fetch-file`: one file downloaded to a destination where nothing is.
 ///
 /// The same bargain as [`CopyAction`], with the content coming from a URL rather
 /// than from the repository: something at the destination means the action is
-/// done, and what lands is the user's from then on. Extraction — `extract`,
-/// `archive-root`, and the entry filters — is 4.2's, and the record is closed
-/// until then, so a manifest asking for it is refused rather than quietly
-/// fetching an archive it does not unpack.
+/// done, and what lands is the user's from then on. The response body is the
+/// file, whatever it holds; unpacking one that turns out to be an archive is
+/// `fetch-archive`'s, which 4.2 adds as a record of its own, so `archive-root`
+/// and the entry filters are permanently unknown fields here rather than ones
+/// waiting for a step.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct FetchUrlAction {
+pub(crate) struct FetchFileAction {
     /// Makes the action addressable.
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
@@ -301,6 +302,10 @@ mod tests {
             (
                 "type = \"copy-dir\"\nsource-dir = \"a\"\ndest-dir = \"~/b\"\n",
                 "copy-dir",
+            ),
+            (
+                "type = \"fetch-file\"\nsource = \"https://e.example/a\"\ndest = \"~/b\"\n",
+                "fetch-file",
             ),
         ] {
             assert_eq!(described(record, 1), format!("{kind} action 1"));

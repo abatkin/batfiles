@@ -322,7 +322,7 @@ named like any other node batfiles cannot account for.
 
 ### Seeds do not replace, and so do not refuse
 
-`copy`, `copy-dir`, and `fetch-url` install content the user then owns, and
+`copy`, `copy-dir`, and `fetch-file` install content the user then owns, and
 they install it **only where nothing is**. That makes an occupied destination their ordinary
 steady state rather than an obstruction, so they do not apply the four steps
 above at all. A seed asks one question — is anything there? — and where the
@@ -409,7 +409,7 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, and `fetch-url` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, and `fetch-file` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 
@@ -427,6 +427,20 @@ child of a directory, into a directory**. The `-dir` suffix says what is done
 with the source's contents — enumerate them — rather than what the source is.
 Choosing between the two members of a pair is the author's, and it is not
 inferred from what happens to be on disk.
+
+**A choice between two shapes is a `type`, never a boolean.** No action record
+carries a field whose value decides which of its other fields mean anything.
+That is what makes each record closed in the way the paragraph above promises:
+a field that is meaningful only in one of two modes is accepted and ignored in
+the other, which is precisely the silent misreading the format is written to
+avoid. So `symlink-dir` is an action type rather than `symlink` with a
+`children` flag, and unpacking a downloaded archive is
+[`fetch-archive`](future/repoformat.md#fetch-archive) rather than `fetch-file`
+with an `extract` flag — a repository asking for the wrong one gets an error
+naming the field, at the moment the manifest is read.
+
+`dot-prefix` is the format's only boolean and is not an exception: it changes
+what an installed child is called, and no other field's meaning turns on it.
 
 ### Groups
 
@@ -768,13 +782,13 @@ Filtering the children — `include` and `exclude` — is specified in
 [`future/repoformat.md`](future/repoformat.md#copy) for both `copy` and
 `copy-dir` and is not built on either. A manifest that writes one is rejected.
 
-### `fetch-url`
+### `fetch-file`
 
 Declares one file downloaded to a destination where nothing is.
 
 ```toml
 [[actions]]
-type = "fetch-url"
+type = "fetch-file"
 id = "pathogen"
 source = "https://raw.githubusercontent.com/tpope/vim-pathogen/master/autoload/pathogen.vim"
 dest = "~/.vim/autoload/pathogen.vim"
@@ -829,11 +843,13 @@ nothing is given 30 seconds, and a body that stalls is given ten minutes in
 total — enough that a large download on a slow link is never the thing that
 runs out.
 
-Extraction — `extract`, `archive-root`, and the entry filters — is specified in
-[`future/repoformat.md`](future/repoformat.md#fetch-url) and is not built. The
-record is closed, so a manifest that writes one of those fields is rejected
-rather than fetching an archive it would not unpack. A `file://` source is
-rejected on the same terms.
+**What arrives is installed as a file, whatever it holds.** A `fetch-file` whose
+URL names a tarball installs the tarball. Unpacking one is
+[`fetch-archive`](future/repoformat.md#fetch-archive), a separate action type
+that is specified and not built; `archive-root` and the entry filters are its
+fields and are unknown here, so a manifest that writes one on a `fetch-file` is
+rejected rather than fetching an archive it would not unpack. A `file://`
+source is rejected on the same terms.
 
 ## Default-disabled bootstrap entries
 

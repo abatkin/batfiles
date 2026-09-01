@@ -9,7 +9,7 @@
 # with no digest, because the URL is a moving target and a pinned digest would
 # fail on every upstream change.
 [[actions]]
-type = "fetch-url"
+type = "fetch-file"
 id = "pathogen"
 group = "editor"
 source = "{server}/pathogen.vim"
@@ -18,7 +18,7 @@ dest = "~/.vim/autoload/pathogen.vim"
 # The other half of the bargain: a file whose bytes are pinned, so a server
 # that answers with something else is refused rather than installed.
 [[actions]]
-type = "fetch-url"
+type = "fetch-file"
 id = "starship"
 group = "shell"
 source = "{server}/starship.toml"

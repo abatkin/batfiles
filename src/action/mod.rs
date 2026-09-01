@@ -9,7 +9,7 @@ mod children;
 mod context;
 mod copy;
 mod create_dir;
-mod fetch_url;
+mod fetch_file;
 mod symlink;
 
 pub(crate) use context::RunContext;
@@ -25,6 +25,6 @@ pub(crate) fn run(action: &Action, context: &RunContext) -> Result<(), Error> {
         Action::CreateDir(action) => create_dir::create_dir(action, context),
         Action::Copy(action) => copy::copy(action, context),
         Action::CopyDir(action) => copy::copy_dir(action, context),
-        Action::FetchUrl(action) => fetch_url::fetch_url(action, context),
+        Action::FetchFile(action) => fetch_file::fetch_file(action, context),
     }
 }
