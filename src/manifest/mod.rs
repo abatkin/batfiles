@@ -166,6 +166,16 @@ pub(crate) enum Invalid {
 
     #[error("action {action}: sha256 `{value}` is not 64 hexadecimal digits")]
     DigestNotSha256 { action: usize, value: String },
+
+    /// An `archive-root` no entry batfiles would unpack could ever match. An
+    /// escaping entry is refused as the archive is read, so a prefix that only
+    /// selects escaping entries selects nothing, and saying so here is better
+    /// than downloading the archive to find out.
+    #[error(
+        "action {action}: archive-root `{value}` is not a path inside the archive; \
+         write a prefix such as `tool-1.0`, or `*` for the archive's single top-level directory"
+    )]
+    ArchiveRootNotInside { action: usize, value: String },
 }
 
 /// The rules a `source` satisfies as written.
@@ -182,7 +192,7 @@ fn check_source(source: &str, action: usize) -> Result<(), Invalid> {
             value: source.to_owned(),
         });
     }
-    match depth_within_repository(source) {
+    match depth_within_tree(source) {
         None => Err(Invalid::SourceOutsideRepository {
             action,
             value: source.to_owned(),
@@ -215,7 +225,7 @@ fn is_anchored(source: &Path) -> bool {
 ///
 /// No wildcard arm: counting a root or a prefix as ordinary depth is what a
 /// wildcard here does, and it is wrong in the direction that lets a path out.
-fn depth_within_repository(source: &str) -> Option<usize> {
+fn depth_within_tree(source: &str) -> Option<usize> {
     let mut depth: usize = 0;
     for component in Path::new(source).components() {
         match component {
@@ -297,6 +307,53 @@ fn check_digest(sha256: Option<&str>, action: usize) -> Result<(), Invalid> {
     }
 }
 
+/// The shape an `archive-root` has to have to name something inside an archive.
+///
+/// `*` is the one value that is not a path: it asks batfiles to find the single
+/// top-level directory rather than naming it. Everything else is a prefix of an
+/// entry path, so it answers to the same rule an entry path does — ordinary
+/// components, and nothing else. That is stricter than a `source`, which may
+/// climb with `..` as long as it lands back inside: an archive entry may not,
+/// because cancelling a `..` on paper is only right when the component before it
+/// is a real directory and an archive is free to declare a symlink there. A root
+/// spelled with one would be matched against entries that carry no such
+/// spelling, and would select nothing at all.
+///
+/// Refused here rather than at the extraction so that the diagnostic arrives
+/// before anything is fetched, and so that the two rules cannot drift: this is
+/// what lets `archive::root_prefix` clean the value without a second check.
+fn check_archive_root(archive_root: Option<&str>, action: usize) -> Result<(), Invalid> {
+    let Some(value) = archive_root else {
+        return Ok(());
+    };
+    if value == "*" {
+        return Ok(());
+    }
+    if names_a_path_inside_an_archive(value) {
+        Ok(())
+    } else {
+        Err(Invalid::ArchiveRootNotInside {
+            action,
+            value: value.to_owned(),
+        })
+    }
+}
+
+/// Whether a value is spelled the way a path inside an archive is: ordinary
+/// components and `.`, with at least one of the former.
+fn names_a_path_inside_an_archive(value: &str) -> bool {
+    let mut named = 0;
+    for component in Path::new(value).components() {
+        match component {
+            // Dropped rather than counted, the way an entry path drops it.
+            Component::CurDir => {}
+            Component::Normal(_) => named += 1,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    named > 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,8 +389,8 @@ mod tests {
     fn a_component_that_starts_a_path_over_is_never_ordinary_depth() {
         // Which spellings produce a root or a prefix is platform-specific — see
         // the test below — so this covers the handling, not the parsing.
-        assert_eq!(depth_within_repository("/etc/hosts"), None);
-        assert_eq!(depth_within_repository("shell/zshrc"), Some(2));
+        assert_eq!(depth_within_tree("/etc/hosts"), None);
+        assert_eq!(depth_within_tree("shell/zshrc"), Some(2));
     }
 
     /// The spellings that reach that arm on Windows and nowhere else: on Unix
@@ -462,6 +519,43 @@ mod tests {
                 matches!(
                     check_digest(Some(refused), 1).expect_err("expected the digest to be refused"),
                     Invalid::DigestNotSha256 { .. }
+                ),
+                "`{refused}` was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn an_archive_root_names_a_prefix_or_asks_for_the_only_one() {
+        for accepted in [
+            None,
+            Some("*"),
+            Some("tool-1.0"),
+            Some("tool-1.0/bin"),
+            // The spelling `tar czf x.tgz .` gives every entry, dropped here as
+            // it is dropped there.
+            Some("./tool-1.0"),
+        ] {
+            assert!(
+                check_archive_root(accepted, 1).is_ok(),
+                "`{accepted:?}` was refused"
+            );
+        }
+    }
+
+    #[test]
+    fn an_archive_root_that_could_match_no_entry_is_refused_as_written() {
+        // Each of these is spelled in a way no archive entry path is, so it
+        // would be matched against entries carrying no such spelling and would
+        // select nothing however the archive is built. `..` is refused even
+        // where it lands back inside, because an entry path may not hold one:
+        // cancelling it is only right when what it cancels is a real directory.
+        for refused in ["", "/tool", "../tool", ".", "tool/..", "releases/../tool"] {
+            assert!(
+                matches!(
+                    check_archive_root(Some(refused), 1)
+                        .expect_err("expected the archive root to be refused"),
+                    Invalid::ArchiveRootNotInside { .. }
                 ),
                 "`{refused}` was accepted"
             );

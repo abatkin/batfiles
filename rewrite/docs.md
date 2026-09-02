@@ -120,9 +120,10 @@ would inherit them, which is the thing rule 9 exists to stop.
   - Seed semantics and installed permissions at **1.3**, into
     `docs/repoformat.md` alongside the two `copy` actions. Not in the original
     list because seeds were assumed to arrive with the fetching actions; `copy`
-    needs both rules first. The `fetch-archive` half of the seed section stays in
-    `docs/future/`, and both promotions record where the build disagreed rather
-    than pasting what was written.
+    needs both rules first. The `fetch-archive` half of the seed section
+    followed at 4.2, and every promotion here records where the build disagreed
+    rather than pasting what was written — that section is the clearest case,
+    the merge root it specified having lost to the seed.
   - Archive handling — absolute paths, `..` traversal, symlinks escaping the
     destination root — at **4.2**. This is no longer a late concern; slice 4 is
     the first code that unpacks untrusted content.

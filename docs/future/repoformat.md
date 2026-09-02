@@ -609,24 +609,16 @@ ref = "refs/heads/master"
 | `dest`   | string |   yes    | Exact clone directory.                        |
 | `ref`    | string |    no    | Branch, tag, or commit selector.              |
 
-### `fetch-archive`
+### `fetch-archive` entry filters
 
-Declares one archive downloaded and unpacked at a destination where nothing is.
-Arrives at step 4.2. Its sibling
-[`fetch-file`](../repoformat.md#fetch-file) is built, and the two share
-everything about the transfer — the accepted schemes, the optional digest, the
-redirect and timeout rules, the `200 OK` rule — and differ only in what is done
-with the response body.
+[`fetch-archive`](../repoformat.md#fetch-archive) is built. Two of the fields
+specified for it are not: `include` and `exclude`, which select which of an
+archive's entries are unpacked.
 
-**Two action types rather than one with an `extract` flag.** The fields below
-that select archive entries mean nothing to a plain download, and a record that
-accepts a field it ignores is what
-[the closed-record rule](../repoformat.md#actions) exists to prevent. Which one
-a repository wants is a fact about the URL that the author already knows, so it
-is written down rather than inferred.
-
-`file://` is listed below and is not fetched yet; it arrives with file remotes
-at step 9.3.
+| Field     | Type         | Required | Default     | Description                          |
+|-----------|--------------|:--------:|-------------|--------------------------------------|
+| `include` | `GlobFilter` |    no    | all entries | Entries to include while extracting. |
+| `exclude` | `GlobFilter` |    no    | none        | Entries to exclude while extracting. |
 
 ```toml
 [[actions]]
@@ -638,33 +630,18 @@ include = ["bin/*"]
 exclude = ["*.md"]
 ```
 
-| Field          | Type         | Required | Default     | Description                                                            |
-|----------------|--------------|:--------:|-------------|------------------------------------------------------------------------|
-| `source`       | string       |   yes    | —           | `https://`, `http://`, or `file://` archive URL.                       |
-| `dest`         | string       |   yes    | —           | Where the unpacked directory goes, exactly.                            |
-| `sha256`       | string       |    no    | —           | 64-digit hexadecimal digest of the archive bytes.                      |
-| `archive-root` | string       |    no    | archive top | Archive prefix to strip, or `"*"` for automatic single-root detection. |
-| `include`      | `GlobFilter` |    no    | all entries | Entries to include while extracting.                                   |
-| `exclude`      | `GlobFilter` |    no    | none        | Entries to exclude while extracting.                                   |
+They match against an entry's path with `archive-root` already stripped, so a
+filter is written against the tree as it will be installed rather than as the
+archive spells it. Neither is accepted today: a manifest that writes one is
+rejected, rather than installing more of an archive than it asked for.
 
-**`dest` is one name, not a merge root.** The action installs the unpacked tree
-as a single thing, exactly the way [`copy`](../repoformat.md#copy) installs a
-directory, so anything at all at `dest` means the action is done and no request
-is made — including a directory a prior `create-dir` left there. An earlier
-draft of this section had extraction merge into an existing `dest` and apply the
-missing-only check per archive entry instead; that is not what is being built,
-because it gives up the one property that makes a seed safe. The archive is
-unpacked beside its destination and moved there once, so a transfer that stops
-early, an entry that fails to write, and an entry that tries to escape all leave
-the destination exactly as they found it, and the whole extraction is abandoned
-by discarding one path. A per-entry merge has no such path to discard: it writes
-into `$HOME` as it goes, and an extraction that stops halfway leaves a
-destination that every later run finds occupied and calls finished. See
-[Seed actions and deletion](safety.md#seed-actions-and-deletion).
+They have no step. A named `archive-root` already installs one directory out of
+an archive and nothing beside it, which is what the two repositories driving this
+project would have wanted a filter for, and `GlobFilter` itself is not built
+until step 7.3. Whichever of those arrives first is when this is worth revisiting.
 
-Refreshing what an occupied `dest` holds is
-[`--refresh-content`](safety.md#seed-actions-and-deletion)'s at step 9.4, on the
-same terms as every other seed.
+A `file://` source is not fetched by either fetching action yet; it arrives with
+file remotes at step 9.3.
 
 ### `include-remote`
 

@@ -24,7 +24,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -53,9 +53,16 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   declared `sha256`. Nothing incomplete is ever installed: the download is
   built beside its destination and moved there once it is whole, so a transfer
   that stops early or a digest that does not match leaves the destination as it
-  found it. What arrives is installed as a file, whatever it holds; unpacking a
-  downloaded archive is `fetch-archive`, which is a separate action type and is
-  not built.
+  found it. What arrives is installed as a file, whatever it holds.
+- **So can a whole directory.** `fetch-archive` downloads a tarball, gzipped or
+  plain, and unpacks it — the same transfer and the same missing-only terms, with
+  `archive-root` stripping the versioned directory a release tarball puts
+  everything under. It is unpacked beside its destination and moved there once,
+  and every entry's path is read before any of them is written: an entry that
+  would land outside the destination fails the whole action rather than being
+  quietly skipped. That includes the ones no check on a single path finds —
+  nothing is written under a symlink the archive itself declares, and a target
+  may not climb out past one.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
@@ -225,7 +232,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 4     | `fetch-archive`, and cloning Git repositories                       |
+| 4     | Cloning Git repositories, one at a time or from a manifest          |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
 | 8     | `init` and `clone` for new machines, with default-disabled adoption |

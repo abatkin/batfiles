@@ -24,3 +24,14 @@ group = "shell"
 source = "{server}/starship.toml"
 sha256 = "0fbf196b3612d0bafdaaa79b45efb1d03c813bedc53bbe3e6e0f5550ec14683f"
 dest = "~/.config/starship.toml"
+
+# A tool published the way tools are: one tarball whose entries all sit under a
+# directory named for the version, which `archive-root = "*"` strips so that the
+# destination holds the tool rather than a directory holding the tool.
+[[actions]]
+type = "fetch-archive"
+id = "fzf"
+group = "shell"
+source = "{server}/fzf.tar.gz"
+dest = "~/.local/fzf"
+archive-root = "*"

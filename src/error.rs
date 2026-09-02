@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use crate::archive;
 use crate::item::{ItemAddress, ItemAddressError};
 use crate::manifest;
 use crate::paths::ExistingNode;
@@ -119,12 +120,13 @@ pub(crate) enum Error {
     )]
     DestinationInsideSource { installed: PathBuf, dest: PathBuf },
 
-    /// Something is at the path a copy would be built on. Very likely an
-    /// earlier run's, but batfiles does not remove what it did not create, so
-    /// clearing it is the user's call.
+    /// Something is at a path an install would be built on — the staging node,
+    /// or the scratch file an archive is downloaded to. Very likely an earlier
+    /// run's, but batfiles does not remove what it did not create, so clearing
+    /// it is the user's call.
     #[error(
-        "cannot build a copy at {}: something is already there. If it is an \
-         incomplete copy from an earlier run, remove it and run sync again",
+        "cannot install: something is already at {}. If it is left over from an \
+         interrupted run, remove it and run sync again",
         .path.display()
     )]
     StagingPathTaken { path: PathBuf },
@@ -182,6 +184,13 @@ pub(crate) enum Error {
         expected: String,
         actual: String,
     },
+
+    /// An archive that arrived whole and cannot be unpacked. Nested rather than
+    /// flat, because extraction has seven failures with vocabulary of their own
+    /// — entries, roots, formats — that no other part of the tool shares
+    /// (`guidance.md`, rule 5). The variants render themselves.
+    #[error(transparent)]
+    Archive(#[from] archive::Invalid),
 }
 
 impl Error {

@@ -133,24 +133,18 @@ afterwards could not.
 
 What remains here has no code yet.
 
-`fetch-file` and `fetch-archive` are missing-only seeds during `sync` and
-`apply-*`, and both apply the existence check to the exact `dest`: if any
-filesystem node already occupies that path, the action skips it. An earlier
-`create-dir` for an extraction root therefore does disable a later
-`fetch-archive` at the same path — which is the ordinary consequence of a seed,
-and a manifest that declares both is asking for the directory twice.
-
-An earlier draft had `dest` be a merge root for an extracting fetch, with the
-existence check applied per selected entry at its mapped path below that root,
-so that an extraction could seed the entries it was missing. Slice 4 was left to
-find out whether that survived contact with an implementation, and the answer is
-that it does not: a per-entry merge writes into `$HOME` as it goes, so an
-extraction that stops halfway leaves a destination every later run finds
-occupied and reports as finished. That is the failure
+The fetching half was promoted at 4.2 to the same two sections, and the build
+settled the question this paragraph used to leave open. It had `dest` be a merge
+root for an extracting fetch, with the existence check applied per selected
+entry at its mapped path below that root, so that an extraction could seed the
+entries it was missing; slice 4 was left to find out whether that survived
+contact with an implementation, and it does not. A per-entry merge writes into
+`$HOME` as it goes, so an extraction that stops halfway leaves a destination
+every later run finds occupied and reports as finished — the failure
 [Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse)
-is written against, and no cleanup step fixes it, because a run that is killed runs no
-cleanup. Unpacking beside the destination and moving it in once gives the
-property up front, and it is worth more than the merge.
+is written against, and one no cleanup step fixes, because a run that is killed
+runs no cleanup. What was built unpacks beside the destination and moves it in
+once, so `dest` is one name for `fetch-archive` exactly as it is for `copy`.
 
 Seed actions do not modify an existing entry merely because the source has
 changed. The user must pass `--refresh-content` to force seed actions to run
@@ -269,14 +263,14 @@ redone if a run is interrupted, per
 The build went further than "where practical" and further than "single-file",
 and the sentence that used to follow — that multi-file directory updates are
 neither atomic nor automatically rolled back — is no longer true of the actions
-that exist. `copy` and `copy-dir` build a whole directory beside its destination
-and move it in with one rename, so a directory install is atomic and an
-unfinished one leaves the destination untouched; see
+that exist. `copy`, `copy-dir`, and `fetch-archive` build a whole directory
+beside its destination and move it in with one rename, so a directory install is
+atomic and an unfinished one leaves the destination untouched; see
 [Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse).
 It is stated as a rule rather than a preference because the failure it prevents
 is a run that reports success over a half-installed destination forever. The
-actions that do not exist yet inherit it — `fetch-archive` most of all, being a
-seed over the same destinations. As the first phase of a directory action's execution, batfiles
+actions that do not exist yet inherit it.
+As the first phase of a directory action's execution, batfiles
 performs a best-effort inspection of the intended overlay. It then applies the
 overlay in a deterministic order, leaving adjacent backups for every
 destination node it replaces. On failure, it stops, reports what completed,

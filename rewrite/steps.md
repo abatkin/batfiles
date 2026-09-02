@@ -141,40 +141,13 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   `action/copy.rs` as a downstream entry. Landed as `fetch-url` and renamed
   before 4.2: the transport is what the two fetching actions share, so naming the
   built one after it left the ambiguous name on the specific member of the pair.
-- **4.2** Add `fetch-archive`, rejecting absolute paths, `..` traversal, and
-  symlinks escaping the destination root. A directory seed, so rule 15 again:
-  extract into the staging tree and publish once, rather than into the
-  destination. That also makes the entry rejections cheap to enforce — an entry
-  that escapes is caught before anything reaches `$HOME`, and the whole
-  extraction is abandoned by discarding one path.
-
-  **Add an action; do not widen `FetchFileAction`.** The archive-selection
-  fields mean nothing to a plain download, and a record accepting a field it
-  ignores is what `docs/repoformat.md`'s closed-record rule forbids — stated
-  there as "a choice between two shapes is a `type`, never a boolean", which is
-  4.1's other renaming. So `extract` does not exist in the format at all: the
-  four fields it would have gated are `fetch-archive`'s, they are permanently
-  unknown on `fetch-file`, and `tests/cli/fetching.rs` already asserts both that
-  and that `fetch-archive` is an unknown type until this step lands. The section
-  to promote is `docs/future/repoformat.md`'s `fetch-archive`, which is written
-  against this decision rather than the merge-root one it replaced.
-
-  It is also the second `install::Seed` whose `kind` is a directory, and
-  therefore the first caller to fill `Staged::Directory` — which is what makes
-  `Staged::into_file`'s panic arm unreachable by construction rather than by
-  convention.
-
-  **Its `dest` is one name, not a merge root**, so an occupied `dest` — a
-  directory an earlier `create-dir` made included — means the action is done and
-  nothing is fetched. `docs/future/safety.md` used to specify the opposite, with
-  the missing-only check applied per archive entry, and left it to this slice to
-  find out whether that survived an implementation. It does not: a per-entry
-  merge writes into `$HOME` as it goes, so a half-finished extraction converges
-  on success forever. Both future documents have been rewritten against the seed;
-  promote them, do not re-derive the merge.
-
-  Its fixture is `tests/fixtures/fetching`, whose `{server}` placeholder 4.1
-  built the substitution for.
+- **4.2** ✅ Add `fetch-archive`, refusing every entry that would be written
+  outside its destination. Gzipped and plain tar, sniffed from the archive's own
+  bytes; `archive-root` built and the entry filters left in `docs/future/`, which
+  now holds only them. The archive is a third sibling of the destination —
+  downloaded whole, verified, then unpacked into the staging tree — so
+  `install.rs` grew `with_scratch` beside `seed`, and that is where the rule-15
+  discipline for it lives.
 - **4.3** Add `git-clone` for one repository, and the shared helper that shells
   out to `git`. **That helper is the fourth thing that reads `RunMode`, and the only
   one slice 4 adds** (`guidance.md`, "Where the mode is read"). It is not covered
@@ -196,7 +169,12 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   for such a test to decide anyway.
 - **4.4** Add the `git-clone` list manifest format.
 - **4.5** Add `git-clone-list`, cloning each entry and updating existing clones
-  conservatively. Say what a dry run reports for each of the two cases, because
+  conservatively. **This is the step `error.rs` has been waiting on**, and 4.2
+  went first: `Error::Archive(archive::Invalid)` is the worked example of rule
+  5's nesting, with the sub-enum in the module that raises it. Telling a dirty
+  clone from a network failure is the caller that earns the same treatment for
+  git, and the flat fetch variants can move under it or stay, whichever the
+  match wants. Say what a dry run reports for each of the two cases, because
   they are not the same sentence: a destination that is absent is `would clone
   <url> into <dest>`, and one holding a clone already is `would update the clone
   at <dest>`. **Neither runs `git`**, so neither reaches the network and neither
@@ -469,6 +447,33 @@ step numbers, so an entry written that way would become an open step that a
   two worth reading together, and it is an argument for order rather than
   against the enhancement: what is left afterwards is a genuinely broken run
   wanting to say everything it found.
+
+- **Archive entry filters.** `include` and `exclude` on `fetch-archive`, matched
+  against an entry's path with `archive-root` already stripped. Specified in
+  `docs/future/repoformat.md`, refused by the closed record today, and left
+  unbuilt at 4.2 for two reasons worth keeping: a named `archive-root` already
+  installs one directory out of an archive and nothing beside it, which covers
+  what either repository driving this project would have wanted a filter for,
+  and `GlobFilter` is not ported until 7.3. Whichever of those changes first is
+  when this is worth revisiting.
+
+  The same fields are specified and unbuilt on `copy`, `copy-dir`, and
+  `symlink-dir`, so 7.3's port is likely to make all four cheap at once. That is
+  an argument for doing them together rather than for doing this one early.
+
+- **More archive formats.** 4.2 accepts gzipped and plain tar, decided by
+  sniffing the archive's leading bytes, and names what it saw when it refuses
+  anything else. Zip is the one worth adding first — it is what a Windows-facing
+  release publishes — and it is the one that would change the shape of the
+  extraction: zip needs random access, where a tar is read straight through. The
+  scratch file 4.2 downloads to already gives it that, so the cost is a
+  dependency and a second reader rather than a rework. `bzip2`, `xz`, and `zstd`
+  are each one more decompressor in `format_of`, and each brings a C toolchain to
+  a build that has none.
+
+  It has no step because nothing wants one yet: neither target repository
+  fetches an archive at all, and the refusal names the format, so a repository
+  that needs one finds out immediately rather than getting a corrupt install.
 
 - **Address individual `git-clone-list` entries.** `<action-id>.<entry-id>`, the
   same shape a remote-qualified address has, resolving against a list's manifest

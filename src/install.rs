@@ -2,8 +2,8 @@
 //!
 //! A thing is built beside its destination and moved in with one call, so the
 //! destination never holds half of it. Every seed-style action ends here —
-//! `copy` and `fetch-file` today, `fetch-archive` at 4.2 — which is why this
-//! is a peer of the actions rather than a part of one.
+//! `copy`, `copy-dir`, `fetch-file`, and `fetch-archive` — which is why this is
+//! a peer of the actions rather than a part of one.
 //!
 //! Producing the content is the caller's half: what fills the staging node this
 //! module created arrives as a closure, so a copy and a download reach the
@@ -197,8 +197,9 @@ impl Staged {
     /// was written beside, so one declaring [`FileOrDirectory::File`] is handed
     /// a file. The panic states that agreement rather than defending against it
     /// — it is one struct literal apart — the way [`crate::location`] states its
-    /// own resolved-root invariant. `fetch-archive` at 4.2 fills a directory and
-    /// uses both arms.
+    /// own resolved-root invariant. `fetch-archive` fills a directory, so both
+    /// arms are constructed and this one is not guarding against a variant
+    /// nothing makes.
     pub fn into_file(self) -> fs::File {
         match self {
             Self::File(file) => file,
@@ -289,7 +290,7 @@ fn discard(staging: &Path, kind: FileOrDirectory, reporter: &Reporter) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => reporter.warn(&format!(
-            "could not remove the incomplete copy at {}: {error}",
+            "could not remove the incomplete work at {}: {error}",
             staging.display()
         )),
     }
@@ -304,6 +305,62 @@ fn create_new(path: &Path) -> io::Result<fs::File> {
         .open(path)
 }
 
+/// Lend a filler a scratch file beside the destination, and take it away again.
+///
+/// For content that has to arrive *whole* before it can be used to build the
+/// staging node — an archive, which is verified against its digest and then
+/// unpacked. A staging node is the thing being installed, and `publish` renames
+/// it into place, so an archive cannot be built inside one; it needs a second
+/// path, with the same discipline. That discipline is why this is here rather
+/// than in the action: created closed and exclusively, named rather than
+/// removed if it was already taken, and discarded on every way out.
+///
+/// Reached only from inside a filler, so the mode has already allowed the write
+/// and nothing here asks about it.
+pub(crate) fn with_scratch<T>(
+    dest: &Path,
+    reporter: &Reporter,
+    work: impl FnOnce(&mut Scratch) -> Result<T, Error>,
+) -> Result<T, Error> {
+    let path = scratch_path(dest);
+    let mut scratch = Scratch {
+        file: create_staging(FileOrDirectory::File, &path)?.into_file(),
+        path,
+    };
+    let done = work(&mut scratch);
+    // Whatever happened, it is not wanted: it was never going anywhere, and
+    // what it held has either been used or been refused.
+    discard(&scratch.path, FileOrDirectory::File, reporter);
+    done
+}
+
+/// A scratch file this run created beside a destination.
+///
+/// Written through rather than handed out, so a caller can fill it without
+/// naming the filesystem itself — which is what keeps the fetcher and the
+/// archive reader the only modules downstream of here that do.
+pub(crate) struct Scratch {
+    path: PathBuf,
+    file: fs::File,
+}
+
+impl Scratch {
+    /// Where it is, for reading back what was written into it.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl io::Write for Scratch {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.file.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
 /// Where a copy is built while it is still incomplete.
 ///
 /// Beside the destination, so the move into place stays within one filesystem.
@@ -313,7 +370,21 @@ fn create_new(path: &Path) -> io::Result<fs::File> {
 /// name that varied would quietly accumulate leftovers instead, and clearing
 /// one to get out of the way is the user's call, not batfiles'.
 fn staging_path(dest: &Path) -> PathBuf {
+    beside(dest, ".batfiles-incomplete")
+}
+
+/// Where content that has to arrive whole is downloaded to.
+///
+/// Beside the destination for the same reason the staging node is, and fixed
+/// for the same reason: batfiles does not remove what it did not create, so a
+/// leftover stops the next run with a diagnostic naming the path.
+fn scratch_path(dest: &Path) -> PathBuf {
+    beside(dest, ".batfiles-download")
+}
+
+/// A sibling of `dest` under a name no manifest would ask for.
+fn beside(dest: &Path, suffix: &str) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
-    name.push(".batfiles-incomplete");
+    name.push(suffix);
     dest.with_file_name(name)
 }

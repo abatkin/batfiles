@@ -1,8 +1,14 @@
-//! Downloading one file, for `fetch-file`.
+//! Downloading, for the two fetching actions.
 //!
-//! What arrives is written straight into the staging node [`crate::install`]
-//! created, hashed on the way, so nothing partial and nothing unverified is ever
-//! at a destination — the same property a copy has, bought the same way.
+//! What arrives is written straight into the node [`crate::install`] created,
+//! hashed on the way, so nothing partial and nothing unverified is ever at a
+//! destination — the same property a copy has, bought the same way.
+//!
+//! **The transfer is one thing, and both actions get all of it.** The accepted
+//! schemes, the timeouts, the redirect limit, the `200 OK` rule, and the digest
+//! check do not vary with what the body turns out to be, so they are decided
+//! here once and the sink is what differs: `fetch-file` writes into the staging
+//! file it will publish, and `fetch-archive` into a scratch file it will unpack.
 //!
 //! Downstream of a mode reader, and structurally so: `install::seed` creates no
 //! staging node under `DryRun`, so nothing here is reachable in that mode and no
@@ -11,7 +17,7 @@
 
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Read, Write as _};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 
@@ -56,14 +62,30 @@ const USER_AGENT: &str = concat!("batfiles/", env!("CARGO_PKG_VERSION"));
 #[cfg(unix)]
 const FETCHED_MODE: u32 = 0o644;
 
-/// Download one URL into the file opened for it, verifying it if a digest was
+/// Download one URL into the file opened for it, and give it the permissions a
+/// fetched file should have.
+///
+/// [`download`] plus the widening, which is `fetch-file`'s alone: what it opened
+/// is the file that gets published, where an archive's scratch file is unpacked
+/// and thrown away.
+pub(crate) fn download_file(
+    url: &str,
+    sha256: Option<&str>,
+    mut into: fs::File,
+    built_at: &Path,
+) -> Result<(), Error> {
+    download(url, sha256, &mut into, built_at)?;
+    widen(&mut into, built_at)
+}
+
+/// Download one URL into whatever is collecting it, verifying it if a digest was
 /// declared.
 ///
-/// `built_at` is where `into` lives, which is never the action's destination:
-/// everything written here is a staging node, and it reaches the destination
-/// only when `install` publishes it whole.
+/// `built_at` is where `into` writes, which is never the action's destination:
+/// everything written here is a staging or scratch node, and content reaches the
+/// destination only when `install` publishes it whole.
 ///
-/// Three ways this refuses to hand back a file: the server did not answer with
+/// Three ways this refuses to hand back a body: the server did not answer with
 /// one, the transfer did not finish, or the bytes are not the ones the manifest
 /// named. Each returns an error, so the fill fails and nothing is published.
 ///
@@ -73,7 +95,7 @@ const FETCHED_MODE: u32 = 0o644;
 pub(crate) fn download(
     url: &str,
     sha256: Option<&str>,
-    mut into: fs::File,
+    into: &mut impl Write,
     built_at: &Path,
 ) -> Result<(), Error> {
     let mut response = agent()
@@ -130,8 +152,7 @@ pub(crate) fn download(
             });
         }
     }
-
-    widen(&mut into, built_at)
+    Ok(())
 }
 
 /// The client every fetch goes through.

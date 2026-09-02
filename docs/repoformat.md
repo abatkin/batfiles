@@ -322,7 +322,8 @@ named like any other node batfiles cannot account for.
 
 ### Seeds do not replace, and so do not refuse
 
-`copy`, `copy-dir`, and `fetch-file` install content the user then owns, and
+`copy`, `copy-dir`, `fetch-file`, and `fetch-archive` install content the user
+then owns, and
 they install it **only where nothing is**. That makes an occupied destination their ordinary
 steady state rather than an obstruction, so they do not apply the four steps
 above at all. A seed asks one question — is anything there? — and where the
@@ -345,7 +346,12 @@ and is not built.
 **Nothing is at the destination until the copy is whole.** Every copy, of a
 file or of a directory, is built *beside* where it is going and moved into place
 in one step at the end. Until then the destination is exactly as it was, which
-for a seed means absent.
+for a seed means absent. A `fetch-archive` is unpacked the same way, and it
+needs one more sibling than the others: the archive has to arrive whole before
+it can be read at all, so it is downloaded to
+`<destination>.batfiles-download`, checked against its digest there, and
+unpacked from there into the staging tree. Both siblings are taken away
+afterwards, and both follow every rule below.
 
 That is what a run which does not finish depends on. A half-written file, a
 half-filled directory, or an empty placeholder standing in for one would all be
@@ -359,9 +365,11 @@ Removing what an unfinished run left behind is therefore a separate matter, and
 is allowed to fail. Taking back a copied tree needs write permission on every
 directory in it, and a copy carries the source's permissions, so a repository
 holding a read-only directory produces a copy batfiles cannot remove. What
-survives is named `<destination>.batfiles-incomplete`, sits next to where the
-copy was going, and is reported when batfiles is still running to report it.
-Nothing ever reads it: it is litter, and deleting it is safe.
+survives is named `<destination>.batfiles-incomplete` — or
+`<destination>.batfiles-download` for an archive that was being fetched — sits
+next to where the install was going, and is reported when batfiles is still
+running to report it. Nothing ever reads either: they are litter, and deleting
+them is safe.
 
 **A leftover stops the next run rather than being cleared.** That path is
 somebody's, and "it is probably ours" is not something batfiles acts on —
@@ -409,7 +417,7 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, and `fetch-file` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, and `fetch-archive` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 
@@ -435,9 +443,10 @@ a field that is meaningful only in one of two modes is accepted and ignored in
 the other, which is precisely the silent misreading the format is written to
 avoid. So `symlink-dir` is an action type rather than `symlink` with a
 `children` flag, and unpacking a downloaded archive is
-[`fetch-archive`](future/repoformat.md#fetch-archive) rather than `fetch-file`
-with an `extract` flag — a repository asking for the wrong one gets an error
-naming the field, at the moment the manifest is read.
+[`fetch-archive`](#fetch-archive) rather than `fetch-file` with an `extract`
+flag — a repository asking for the wrong one gets an error naming the field, at
+the moment the manifest is read. There is no `extract` field in the format at
+all, on either action.
 
 `dot-prefix` is the format's only boolean and is not an exception: it changes
 what an installed child is called, and no other field's meaning turns on it.
@@ -810,30 +819,133 @@ occupied costs no transfer.
 never resolved against a root and follows none of [Sources and
 destinations](#sources-and-destinations); `dest` follows all of it.
 
-**A `sha256` is optional because a URL is often a moving target.** The example
-above names a file on a branch, where a pinned digest would fail on every
-upstream change. Where a repository does pin one, the bytes are hashed as they
-arrive and a mismatch installs nothing, naming both digests so the manifest can
-be corrected when the change upstream was the expected one.
-
-**Nothing incomplete is ever installed.** The download is written beside its
-destination and moved there in one step once it is whole, so a transfer that
-stops early, a server that answers with something other than the file, and a
-digest that does not match all leave the destination as they found it —
-untouched, rather than holding a half-file a later run would mistake for
-finished work.
-
 **A fetched file arrives readable** — mode `0644` on unix — rather than with the
 private mode it is written under. It is built closed and widened once complete,
 so an interrupted run leaves nothing readable behind, and there is no source on
 this machine whose permissions it could carry instead.
 
-**Only a `200 OK` is a file.** Batfiles asks for neither a byte range nor a
-conditional response, so an answer that is neither a file nor a refusal — a
+**What arrives is installed as a file, whatever it holds.** A `fetch-file` whose
+URL names a tarball installs the tarball. Unpacking one is
+[`fetch-archive`](#fetch-archive), a separate action type; `archive-root` is its
+field and is unknown here, so a manifest that writes it on a `fetch-file` is
+rejected rather than fetching an archive it would not unpack. A `file://`
+source is rejected on the same terms.
+
+### `fetch-archive`
+
+Declares one archive downloaded and unpacked at a destination where nothing is.
+
+```toml
+[[actions]]
+type = "fetch-archive"
+id = "fzf"
+source = "https://example.com/fzf-0.65.2.tar.gz"
+dest = "~/.local/fzf"
+archive-root = "*"
+```
+
+| Field          | Type   | Required | Description                                                            |
+|----------------|--------|:--------:|------------------------------------------------------------------------|
+| `source`       | string |   yes    | An `http://` or `https://` URL. Not a repository path.                 |
+| `dest`         | string |   yes    | Where the unpacked directory goes, exactly. Never empty; `~` is the home. |
+| `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
+| `archive-root` | string |    no    | A prefix every entry is written without, spelled as an entry path is, or `*` for the archive's single top-level directory. |
+
+The sibling of [`fetch-file`](#fetch-file), and [the
+transfer](#the-transfer-both-fetching-actions-share) is the same one. What
+differs is only what is done with the body.
+
+**`dest` is one name, not a merge root.** The unpacked tree is installed as a
+single thing, exactly the way [`copy`](#copy) installs a directory, so anything
+at all at `dest` means the action is done and no request is made — including a
+directory an earlier `create-dir` left there. A manifest declaring both is
+asking for the directory twice.
+
+**Gzipped tar and plain tar, decided by reading the archive.** The format comes
+from the archive's own leading bytes rather than from what the URL appears to end
+in, because a release URL redirects, carries a query string, and is named by
+whoever published it. A plain tar is recognized by the checksum its first header
+carries of itself rather than by any one format's magic, so V7, `ustar`, GNU, and
+pax archives are all read. A body that is not a tar at all is an error naming
+what it is instead — "a zip archive", "a bzip2 archive" — rather than a failure
+to parse.
+
+**`archive-root` strips a prefix off every entry.** Release tarballs usually put
+everything under one directory named for the version, and without stripping it
+`dest` would hold that directory rather than the tool. `*` asks batfiles to find
+it: an archive with a single top-level directory has it stripped, and one with
+several is an error naming them, because there is no answer to guess at. A
+written-out prefix does the same job explicitly, and doubles as a way of
+installing one directory out of an archive — entries outside it are not
+installed. A prefix the archive holds nothing under is an error. It is spelled
+the way an entry path is, so it may not be absolute and may not contain `..`;
+one that is, is refused as the manifest is read.
+
+**An entry that would be written outside `dest` fails the whole action.** Every
+entry's path is read before any of them is created, so nothing has been written
+when one of these is found, and skipping the entry is not on offer: an archive
+carrying one is not an archive to install part of. Four rules, and the last two
+exist because the first two are not enough on their own.
+
+- An absolute entry path, and a hardlink naming something outside the tree.
+- **A `..` anywhere in an entry path is refused rather than cancelled.**
+  Cancelling it on paper says `a/../b` means `b`, which is true only when `a` is
+  a real directory — and an archive is free to declare `a` a symlink. No archive
+  worth installing writes one, so there is nothing to weigh against refusing it.
+- **Nothing is written under a symlink the archive itself declares.** The
+  operating system follows a link before it creates what is below it, so an entry
+  under one does not land where the archive says it does.
+- **A symlink target may climb past a directory and not past a link.** A target
+  needs `..` — `../lib/libfoo.so` is ordinary, and so is a link to another link
+  — so unlike an entry path it cannot simply be refused. What is refused is the
+  one case where cancelling is wrong: a `..` that would cancel a component the
+  archive declares as a symlink. That closes an escape no check on a single path
+  finds, because it takes two entries to build: `a/b -> ../x` is honest and stays
+  inside, and `escape -> a/b/../../outside` cancels on paper to a path inside
+  while the kernel resolves `a/b` first and lands beside the destination.
+
+An entry that is neither a file, a directory, nor a link — a device node or a
+fifo — is refused on the same terms.
+
+**Unpacked entries carry the archive's permissions, minus the dangerous ones.**
+The executable bit comes across, and setuid, setgid, and the sticky bit do not:
+what is being installed came from a URL and is going into the home. Directories
+take their mode after their contents are written, so an archive that marks a
+directory read-only still gets its children. `dest` itself takes the mode of
+whatever `archive-root` stripped, and `0755` where the archive names no
+directory to take it from.
+
+Filtering the entries — `include` and `exclude` — is specified in
+[`future/repoformat.md`](future/repoformat.md#fetch-archive-entry-filters) and
+is not built. A manifest that writes one is rejected.
+
+### The transfer both fetching actions share
+
+Everything below governs `fetch-file` and `fetch-archive` alike. Neither the
+schemes, the digest, the redirect and timeout rules, nor what counts as an
+answer depends on what the body turns out to be.
+
+**A `sha256` is optional because a URL is often a moving target.** The
+`fetch-file` example above names a file on a branch, where a pinned digest would
+fail on every upstream change. Where a repository does pin one, the bytes are
+hashed as they arrive and a mismatch installs nothing, naming both digests so
+the manifest can be corrected when the change upstream was the expected one. For
+an archive the digest is checked against the archive's own bytes, and it is
+checked before a single entry is unpacked.
+
+**Nothing incomplete is ever installed.** What is fetched is built beside its
+destination and moved there in one step once it is whole, so a transfer that
+stops early, a server that answers with something other than the file, a digest
+that does not match, and — for an archive — an entry that cannot be written all
+leave the destination as they found it. Not a half-file and not a half-tree: a
+later run would find either occupied and mistake it for finished work.
+
+**Only a `200 OK` is a body.** Batfiles asks for neither a byte range nor a
+conditional response, so an answer that is neither content nor a refusal — a
 `204` with nothing in it, a `206` holding one range, a `304` naming a cache
-batfiles does not keep — is an error rather than content to install. Installing
-one would occupy the destination with something that is not the file, which
-every later run would then find and call done.
+batfiles does not keep — is an error rather than something to install.
+Installing one would occupy the destination with something that is not what was
+asked for, which every later run would then find and call done.
 
 Batfiles follows up to five redirects, sends no `Accept-Encoding`, and honors
 the usual proxy environment variables. Certificates are checked against the
@@ -842,14 +954,6 @@ trusts is trusted here. A server that takes the connection and then says
 nothing is given 30 seconds, and a body that stalls is given ten minutes in
 total — enough that a large download on a slow link is never the thing that
 runs out.
-
-**What arrives is installed as a file, whatever it holds.** A `fetch-file` whose
-URL names a tarball installs the tarball. Unpacking one is
-[`fetch-archive`](future/repoformat.md#fetch-archive), a separate action type
-that is specified and not built; `archive-root` and the entry filters are its
-fields and are unknown here, so a manifest that writes one on a `fetch-file` is
-rejected rather than fetching an archive it would not unpack. A `file://`
-source is rejected on the same terms.
 
 ## Default-disabled bootstrap entries
 

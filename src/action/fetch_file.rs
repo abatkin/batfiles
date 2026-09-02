@@ -33,7 +33,7 @@ pub(super) fn fetch_file(action: &FetchFileAction, context: &RunContext) -> Resu
             // Both parameters are annotated because the closure lives in a
             // struct field, where inference has nothing else to read them from.
             fill: |staged: install::Staged, staging: &Path| {
-                fetch::download(
+                fetch::download_file(
                     &action.source,
                     action.sha256.as_deref(),
                     staged.into_file(),

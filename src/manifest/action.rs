@@ -7,7 +7,7 @@
 
 use serde::Deserialize;
 
-use super::{Invalid, check_dest, check_digest, check_source, check_url};
+use super::{Invalid, check_archive_root, check_dest, check_digest, check_source, check_url};
 use crate::item::ItemId;
 
 /// One entry of `[[actions]]`.
@@ -20,6 +20,7 @@ pub(crate) enum Action {
     Copy(CopyAction),
     CopyDir(CopyDirAction),
     FetchFile(FetchFileAction),
+    FetchArchive(FetchArchiveAction),
 }
 
 impl Action {
@@ -37,6 +38,7 @@ impl Action {
             Self::Copy(action) => ("copy", &action.id, &action.group),
             Self::CopyDir(action) => ("copy-dir", &action.id, &action.group),
             Self::FetchFile(action) => ("fetch-file", &action.id, &action.group),
+            Self::FetchArchive(action) => ("fetch-archive", &action.id, &action.group),
         };
         Common {
             kind,
@@ -79,11 +81,17 @@ impl Action {
                 check_source(&action.source_dir, number)?;
                 check_dest(&action.dest_dir, number)
             }
-            // The one action type whose `source` names something off this
+            // The two action types whose `source` names something off this
             // machine, so it answers to neither path rule.
             Self::FetchFile(action) => {
                 check_url(&action.source, number)?;
                 check_digest(action.sha256.as_deref(), number)?;
+                check_dest(&action.dest, number)
+            }
+            Self::FetchArchive(action) => {
+                check_url(&action.source, number)?;
+                check_digest(action.sha256.as_deref(), number)?;
+                check_archive_root(action.archive_root.as_deref(), number)?;
                 check_dest(&action.dest, number)
             }
         }
@@ -250,9 +258,8 @@ pub(crate) struct CopyDirAction {
 /// than from the repository: something at the destination means the action is
 /// done, and what lands is the user's from then on. The response body is the
 /// file, whatever it holds; unpacking one that turns out to be an archive is
-/// `fetch-archive`'s, which 4.2 adds as a record of its own, so `archive-root`
-/// and the entry filters are permanently unknown fields here rather than ones
-/// waiting for a step.
+/// [`FetchArchiveAction`]'s, so `archive-root` is a permanently unknown field
+/// here rather than one waiting for a step.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchFileAction {
@@ -271,6 +278,51 @@ pub(crate) struct FetchFileAction {
     /// Optional because the URL a repository names is often a moving target —
     /// a file on a branch — where a digest would fail on every upstream change.
     pub sha256: Option<String>,
+}
+
+/// `fetch-archive`: one archive downloaded and unpacked at a destination where
+/// nothing is.
+///
+/// The sibling of [`FetchFileAction`], and the transfer is the same one — the
+/// same schemes, the same optional digest, the same redirect and timeout rules,
+/// the same `200 OK` rule. What differs is only what is done with the body.
+///
+/// A separate type rather than a flag on `fetch-file`, because `archive-root`
+/// means nothing to a plain download and a record accepting a field it ignores
+/// is what the closed-record rule exists to prevent: which of the two a
+/// repository wants is a fact about the URL its author already knows.
+///
+/// `dest` is one name, not a merge root. The unpacked tree is installed as a
+/// single thing, exactly the way [`CopyAction`] installs a directory, so
+/// anything at all at `dest` means the action is done and no request is made.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct FetchArchiveAction {
+    /// Makes the action addressable. The archive's entries never are,
+    /// individually: the action installs the whole tree or none of it.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    pub group: Option<ItemId>,
+    /// The URL to fetch, as written. Not a `RepoPath` and never resolved
+    /// against a root: what it names is not on this machine.
+    pub source: String,
+    /// Where the unpacked directory goes, exactly. Resolved against the
+    /// selected home when the action runs, with missing parents created on the
+    /// way.
+    pub dest: String,
+    /// The digest the fetched archive must have, if the repository pins one.
+    ///
+    /// Checked against the archive's own bytes, before a single entry is
+    /// unpacked.
+    pub sha256: Option<String>,
+    /// A prefix every entry is written without, or `*` for the single
+    /// top-level directory a release tarball usually has.
+    ///
+    /// Absent means the archive is unpacked as it is written. Entries outside
+    /// a named prefix are not installed, which is what makes the field a way of
+    /// installing one directory out of an archive as well as a way of dropping
+    /// a version number.
+    pub archive_root: Option<String>,
 }
 
 #[cfg(test)]
@@ -306,6 +358,10 @@ mod tests {
             (
                 "type = \"fetch-file\"\nsource = \"https://e.example/a\"\ndest = \"~/b\"\n",
                 "fetch-file",
+            ),
+            (
+                "type = \"fetch-archive\"\nsource = \"https://e.example/a.tar.gz\"\ndest = \"~/b\"\n",
+                "fetch-archive",
             ),
         ] {
             assert_eq!(described(record, 1), format!("{kind} action 1"));

@@ -683,7 +683,7 @@ fn a_copy_that_fails_leaves_no_destination_even_when_it_cannot_clean_up() {
     // The copy that could not be removed is named, so the user knows what is
     // there and where.
     assert!(
-        stderr_of(&assertion).contains("could not remove the incomplete copy"),
+        stderr_of(&assertion).contains("could not remove the incomplete work"),
         "the leftover was not reported:\n{}",
         stderr_of(&assertion)
     );
@@ -693,7 +693,7 @@ fn a_copy_that_fails_leaves_no_destination_even_when_it_cannot_clean_up() {
     // not create — which is the whole reason the first run left it.
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
     assert!(
-        stderr_of(&assertion).contains("something is already there"),
+        stderr_of(&assertion).contains("something is already at"),
         "the second run did not name what was in the way:\n{}",
         stderr_of(&assertion)
     );

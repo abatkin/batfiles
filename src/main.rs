@@ -2,6 +2,7 @@
 
 mod action;
 mod app;
+mod archive;
 mod cli;
 mod directory;
 mod disabled;

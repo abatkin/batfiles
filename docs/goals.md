@@ -65,7 +65,7 @@ fetching files and archives, and including a reusable remote's actions. The
 [future repository format](future/repoformat.md#actions) enumerates the intended
 set.
 
-**Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`.**
+**Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`.**
 
 That line is the answer to "what can `sync` actually do", and it gains an action
 each time one is built. `tests/hygiene.rs` checks it against the `Action` enum,

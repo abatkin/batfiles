@@ -36,6 +36,19 @@ ureq = { version = "3.4", default-features = false, features = [
 # Verifies a fetching action's `sha256` against the bytes as they arrive.
 sha2 = "0.11"
 
+# What `fetch-archive` unpacks. Tar because it is what the archives a dotfiles
+# repository fetches are published as, and gzip because that is how they are
+# compressed; the format is read from the archive's own leading bytes rather
+# than from the URL, so a redirect to a storage host does not change the answer.
+# Both are pure Rust, so the cross-target lint needs no C toolchain.
+#
+# `tar`'s default `xattr` feature restores extended attributes, and only from
+# its own `unpack`, which batfiles does not call: every entry is written here so
+# that its path can be refused before it is. Off, so the dependency does not
+# arrive for a code path that does not exist.
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
+
 [dev-dependencies]
 # Locates and runs the Cargo-built binary in the end-to-end CLI tests.
 assert_cmd = "2"
