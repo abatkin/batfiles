@@ -52,7 +52,15 @@ pub(super) fn fetch_archive(
                     // digest that does not match means the archive is never
                     // read, let alone written out.
                     fetch::download(&action.source, action.sha256.as_deref(), scratch, &at)?;
-                    archive::extract(&at, staging, action.archive_root.as_deref(), &action.source)
+                    // Unpacked from the handle it was written and hashed
+                    // through, so the bytes the digest passed are the bytes that
+                    // come out.
+                    archive::extract(
+                        scratch.written(),
+                        staging,
+                        action.archive_root.as_deref(),
+                        &action.source,
+                    )
                 })
             },
         },

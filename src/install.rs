@@ -210,6 +210,11 @@ impl Staged {
 
 /// Create a staging node no one but its owner can reach into.
 ///
+/// A file is opened for reading as well as writing. Nothing that publishes one
+/// reads it back, but [`with_scratch`] lends the same handle to a consumer that
+/// does, and reading through the handle the bytes were written through is what
+/// makes that content the content that was checked.
+///
 /// Created closed and widened at the end, so a copy of a private file is never
 /// briefly a public one (`guidance.md`, rule 15). The real permissions arrive
 /// with [`mirror_permissions`] once the copy is whole; that ordering is what
@@ -222,6 +227,7 @@ fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
 
     match kind {
         FileOrDirectory::File => fs::OpenOptions::new()
+            .read(true)
             .write(true)
             .create_new(true)
             .mode(0o600)
@@ -300,6 +306,7 @@ fn discard(staging: &Path, kind: FileOrDirectory, reporter: &Reporter) {
 #[cfg(not(unix))]
 fn create_new(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
+        .read(true)
         .write(true)
         .create_new(true)
         .open(path)
@@ -345,9 +352,21 @@ pub(crate) struct Scratch {
 }
 
 impl Scratch {
-    /// Where it is, for reading back what was written into it.
+    /// Where it is, for naming it in a diagnostic.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// What was written into it, read back through the handle it was written
+    /// through.
+    ///
+    /// **Not the path.** Content is checked as it arrives — an archive against
+    /// its `sha256` — and a consumer that reopened the path would be reading
+    /// whatever is at that name by then, which is not necessarily what was
+    /// checked. A descriptor names the file itself, so what is read is what
+    /// arrived.
+    pub fn written(&self) -> &fs::File {
+        &self.file
     }
 }
 

@@ -186,11 +186,18 @@ pub(crate) enum Error {
     },
 
     /// An archive that arrived whole and cannot be unpacked. Nested rather than
-    /// flat, because extraction has seven failures with vocabulary of their own
+    /// flat, because extraction has nine failures with vocabulary of their own
     /// — entries, roots, formats — that no other part of the tool shares
-    /// (`guidance.md`, rule 5). The variants render themselves.
-    #[error(transparent)]
-    Archive(#[from] archive::Invalid),
+    /// (`guidance.md`, rule 5).
+    ///
+    /// The URL is here rather than on each of them, so every [`archive::Invalid`]
+    /// is a predicate about the archive this names and no pass inside that
+    /// module has to carry a URL to say what went wrong.
+    #[error("the archive from {url} {source}")]
+    Archive {
+        url: String,
+        source: archive::Invalid,
+    },
 }
 
 impl Error {
