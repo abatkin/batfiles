@@ -179,15 +179,35 @@ GIT_INDEX_FILE  GIT_OBJECT_DIRECTORY  GIT_ALTERNATE_OBJECT_DIRECTORIES
 GIT_NAMESPACE  GIT_CONFIG  GIT_CONFIG_COUNT
 ```
 
-Each of these tells Git to work on a repository other than the one it is
-standing in, and an action must act on its own `dest` and nothing else. You need
-not have set any of them deliberately for this to matter: a Git hook, an editor
-plugin, and `git rebase --exec` all export some of them to whatever they run, so
-batfiles is quite likely to be running as one of those children. With `GIT_DIR`
-inherited, a `sync` would fetch into and fast-forward that repository while
-leaving the declared destination untouched.
+Most of these tell Git to work on a repository, an index, or an object store
+other than the one it is standing in, and an action must act on its own `dest`
+and nothing else. With `GIT_DIR` inherited, a `sync` would fetch into and
+fast-forward that repository while leaving the declared destination untouched.
 
-The split is between naming a *repository* and naming your *setup*: the first is
-cleared, the second is not. `GIT_CONFIG_COUNT` is cleared because it carries
-ad-hoc `key=value` pairs for a single invocation rather than naming a
-configuration file, and `core.worktree` is among the keys it can set.
+You need not have set any of them deliberately for this to matter. Git exports
+several to what it runs, so batfiles may well be one of those children: `git
+submodule foreach` exports `GIT_DIR`, a `pre-commit` hook gets `GIT_INDEX_FILE`,
+and `git rebase --exec` gets `GIT_PREFIX`.
+
+**This is not a security boundary.** Against something that means harm,
+`GIT_CONFIG_GLOBAL` and `GIT_SSH_COMMAND` are just as potent, and batfiles keeps
+both on purpose — honoring your Git setup is the point. What the removal defends
+against is state inherited by accident. The split is between naming a
+*repository* and naming your *setup*: the first is cleared, the second is not.
+
+Three entries do less than the list suggests, and are named here rather than
+quietly carried:
+
+- `GIT_CEILING_DIRECTORIES` and `GIT_DISCOVERY_ACROSS_FILESYSTEM` decide nothing
+  today. Batfiles confirms a `.git` at the destination before running any
+  command there, so Git's search stops at the destination and never walks up,
+  and these can only narrow a search that does not happen.
+- `GIT_CONFIG` redirects nothing either: in current Git it means `git config
+  --file`, reaching that one command and no other. It is cleared for a different
+  reason — batfiles asks `git config` which branch this clone tracks, and a
+  `GIT_CONFIG` you set for your own use of that command would have the question
+  answered out of an unrelated file.
+- `GIT_CONFIG_COUNT` carries ad-hoc `key=value` pairs for a single invocation.
+  Git ignores `core.worktree` from that scope, so it cannot move the worktree,
+  and what clearing it costs is a plausible one-off such as an `http.proxy` in
+  front of a single `sync`. Whether it belongs here at all is unsettled.

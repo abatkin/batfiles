@@ -480,26 +480,44 @@ fn remove(dest: &Path) -> Result<(), Error> {
 /// including the three that redirect part of an operation without moving the
 /// repository at all — the index, the object store, and the ref namespace.
 ///
-/// Whoever ran batfiles need not have set any of these deliberately: a git hook,
-/// an editor plugin, and `git rebase --exec` all export some of them to what
-/// they run, so batfiles is quite likely to be one of those children.
+/// Whoever ran batfiles need not have set any of these deliberately. Git exports
+/// several of them to what it runs, so batfiles is quite likely to be one of
+/// those children: `git submodule foreach` exports `GIT_DIR`, a `pre-commit`
+/// hook gets `GIT_INDEX_FILE`, and `git rebase --exec` gets `GIT_PREFIX`.
 ///
-/// **What is not here matters as much as what is.** Rule 6 exists so that the
+/// **This is not a security boundary, and the list is short because of that.**
+/// Against a parent that means harm, `GIT_CONFIG_GLOBAL` and `GIT_SSH_COMMAND`
+/// are every bit as potent and are kept deliberately — rule 6 exists so the
 /// user's own setup applies, so nothing naming their configuration, their
-/// credentials, or their transport is touched: `GIT_CONFIG_GLOBAL` and
-/// `GIT_CONFIG_SYSTEM` name the gitconfig batfiles is meant to honor, and
-/// `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `SSH_AUTH_SOCK`, and the proxy variables
-/// are how a clone authenticates and reaches the network at all.
-/// `GIT_CONFIG_COUNT` is the exception that shows where the line is: it carries
-/// ad-hoc `key=value` pairs for a single invocation rather than naming a
-/// configuration, and `core.worktree` and `core.bare` are among the keys it can
-/// set.
+/// credentials, or their transport is touched. What this defends against is
+/// state inherited by accident.
+///
+/// Two entries are worth their own note, because what justifies them is not
+/// what it looks like:
+///
+/// - **`GIT_CONFIG` redirects nothing.** In modern git it is `git config
+///   --file`, so it reaches that one command and no other; a `core.worktree` in
+///   the file it names does not move `--show-toplevel`. It is cleared for a
+///   different reason: [`upstream`] asks `git config --get` a question *about
+///   this repository*, and a `GIT_CONFIG` set for the user's own use of the
+///   `git config` command would have it answered out of an unrelated file.
+///   Defending the call site instead is not available — `--local` alongside
+///   `GIT_CONFIG` is "only one config file at a time".
+/// - **`GIT_CONFIG_COUNT` is the weakest entry here.** Git ignores
+///   `core.worktree` from that scope, as it does from `-c`, so the redirect it
+///   appears to offer is not real; and anything else it can set, the global
+///   config it is kept alongside can set too. What clearing it costs is a
+///   plausible one-off — an `http.proxy` or an `http.extraHeader` in front of a
+///   single `sync`. It stays on the list pending a decision, not because the
+///   case for it is strong.
 const REDIRECTS: [&str; 12] = [
     // Where the repository is.
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
-    // How it is found from the working directory.
+    // How it is found from the working directory, which decides nothing today:
+    // `inspect` has already established a `.git` at the destination, so
+    // discovery stops there and never walks up. These only ever narrow it.
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
     "GIT_PREFIX",
@@ -508,7 +526,8 @@ const REDIRECTS: [&str; 12] = [
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_NAMESPACE",
-    // Configuration injected for one invocation, which can name the first two.
+    // Configuration that reaches one invocation. Neither redirects git; see the
+    // note above for what each is actually doing here.
     "GIT_CONFIG",
     "GIT_CONFIG_COUNT",
 ];

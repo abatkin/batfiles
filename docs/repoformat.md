@@ -989,9 +989,12 @@ repository you can clone by hand is one batfiles can clone.
 The one thing it does not inherit is a pointer to a *different* repository.
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of that family are
 cleared before `git` is run, so an action always acts on its own `dest` and
-never on whatever some parent process was working in — a Git hook, an editor
-plugin, and `git rebase --exec` all export those to what they run. Nothing that
-names your configuration, your credentials, or your transport is touched.
+never on whatever some parent process was working in — `git submodule foreach`
+exports `GIT_DIR` to what it runs, and batfiles may well be running as one of
+those children. Nothing that names your configuration, your credentials, or your
+transport is touched. [Variables passed on to
+`git`](environment.md#variables-passed-on-to-git) has the list and what each
+entry is doing there.
 
 `ref` — a branch, tag, or commit to follow — is specified in
 [`future/repoformat.md`](future/repoformat.md#git-clone) and is not built. A
