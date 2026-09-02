@@ -185,6 +185,62 @@ pub(crate) enum Error {
         actual: String,
     },
 
+    // Cloning and updating repositories. Flat for the same reason the fetching
+    // variants are: 4.5 is where a caller first has to tell one of these apart
+    // from another, and nesting waits for that (`guidance.md`, rule 5). The
+    // conservative update rules produce warnings rather than errors, so nothing
+    // matches on these yet.
+    /// `git` could not be run at all, most often because it is not on `PATH`.
+    #[error(
+        "could not run git: {source}. batfiles runs the `git` on your PATH so that your \
+         gitconfig, credential helpers, and SSH agent apply"
+    )]
+    GitUnavailable { source: io::Error },
+
+    /// A `git` command ran and failed, carrying git's own diagnostic. The
+    /// message is built by one function in [`crate::git`] rather than at each
+    /// call site, so it stays a fact about a subprocess.
+    #[error("git {command} failed in {}: {message}", .path.display())]
+    GitFailed {
+        command: &'static str,
+        path: PathBuf,
+        message: String,
+    },
+
+    /// A clone destination holding a directory with no `.git` in it. Named
+    /// apart from [`Self::DestinationExists`] because the remedy is the same
+    /// but the reason is not one the node's kind gives away: it is a directory,
+    /// and the refusal is about what is missing inside it.
+    #[error(
+        "cannot update {}: it is a directory, and not a git clone; \
+         move it aside and run sync again",
+        .path.display()
+    )]
+    NotAClone { path: PathBuf },
+
+    /// A destination whose git directory is not its own: a `.git` that is a
+    /// symlink or a file rather than the directory `git clone` makes, or a real
+    /// one whose configured worktree is somewhere else. Refused because running
+    /// git here reaches a checkout batfiles never installed — a fetch and a
+    /// fast-forward would move *that* one's branch.
+    #[error(
+        "cannot update {}: its .git belongs to a checkout somewhere else, so updating it \
+         would change that one; move it aside and run sync again",
+        .path.display()
+    )]
+    CloneElsewhere { path: PathBuf },
+
+    /// A destination holding a `.git` whose `HEAD` names no commit: what an
+    /// interrupted clone leaves, and what a damaged one looks like. This is the
+    /// arm that stops a later run mistaking either for finished work, so it
+    /// carries git's own account of which it was.
+    #[error(
+        "cannot update {}: it has a .git but nothing checked out, so it is an incomplete \
+         or damaged clone ({message}); move it aside and run sync again",
+        .path.display()
+    )]
+    CloneIncomplete { path: PathBuf, message: String },
+
     /// An archive that arrived whole and cannot be unpacked. Nested rather than
     /// flat, because extraction has nine failures with vocabulary of their own
     /// — entries, roots, formats — that no other part of the tool shares

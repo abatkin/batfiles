@@ -595,6 +595,15 @@ fails when the action executes.
 
 ### `git-clone`
 
+Built and specified in
+[`docs/repoformat.md`](../repoformat.md#git-clone), including the conservative
+update policy a later `sync` applies to the clone it finds. One field of it is
+not built:
+
+| Field | Type   | Required | Description                      |
+|-------|--------|:--------:|----------------------------------|
+| `ref` | string |    no    | Branch, tag, or commit selector. |
+
 ```toml
 [[actions]]
 type = "git-clone"
@@ -603,11 +612,12 @@ dest = "~/.oh-my-zsh"
 ref = "refs/heads/master"
 ```
 
-| Field    | Type   | Required | Description                                   |
-|----------|--------|:--------:|-----------------------------------------------|
-| `source` | string |   yes    | Literal Git repository URL, not a `RepoPath`. |
-| `dest`   | string |   yes    | Exact clone directory.                        |
-| `ref`    | string |    no    | Branch, tag, or commit selector.              |
+Absent, an update follows whatever branch the clone is on. The closed record
+rejects it today rather than accepting a pin it would not honor. It arrives at
+step 4.5 with `git-clone-list`, whose per-entry `ref=` is the first thing that
+needs it, and it is what the rest of [`safety.md`](safety.md#git-repositories)'s
+"Git repositories" waits on: switching a clean worktree's branch means nothing
+until something declares which branch it should be on.
 
 ### `fetch-archive` entry filters
 

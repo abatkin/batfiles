@@ -955,6 +955,139 @@ nothing is given 30 seconds, and a body that stalls is given ten minutes in
 total — enough that a large download on a slow link is never the thing that
 runs out.
 
+### `git-clone`
+
+Declares one Git repository cloned at a destination, and kept up to date there.
+
+```toml
+[[actions]]
+type = "git-clone"
+id = "oh-my-zsh"
+source = "https://github.com/ohmyzsh/ohmyzsh.git"
+dest = "~/.oh-my-zsh"
+```
+
+| Field    | Type   | Required | Description                                                   |
+|----------|--------|:--------:|---------------------------------------------------------------|
+| `source` | string |   yes    | A repository for git to clone. Not a repository path.         |
+| `dest`   | string |   yes    | The clone directory, exactly. Never empty; `~` is the home.   |
+
+**`source` is whatever `git` accepts**, and batfiles hands it over as written:
+an `https://` URL, an `scp`-style `git@github.com:user/repo.git`, `ssh://`,
+`git://`, and a plain directory on this machine are all repositories git can
+clone. Only an empty value is rejected here — what the rest means is git's
+question, and what git says when it cannot make sense of one is better than
+anything batfiles could guess. Like a fetching action's `source` it is never
+resolved against a root and follows none of [Sources and
+destinations](#sources-and-destinations); `dest` follows all of it, and its
+missing parents are created.
+
+Batfiles runs the `git` on your `PATH` rather than linking a library, so your
+`~/.gitconfig`, your credential helpers, and your SSH agent all apply. A
+repository you can clone by hand is one batfiles can clone.
+
+The one thing it does not inherit is a pointer to a *different* repository.
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of that family are
+cleared before `git` is run, so an action always acts on its own `dest` and
+never on whatever some parent process was working in — a Git hook, an editor
+plugin, and `git rebase --exec` all export those to what they run. Nothing that
+names your configuration, your credentials, or your transport is touched.
+
+`ref` — a branch, tag, or commit to follow — is specified in
+[`future/repoformat.md`](future/repoformat.md#git-clone) and is not built. A
+manifest that writes one is rejected.
+
+#### A clone is the one thing batfiles comes back to
+
+Every other action installs something and then leaves it alone: a copy, a
+fetched file, and an unpacked archive are all yours once they land, and a later
+`sync` that finds the destination occupied reports that it kept what is there. A
+clone is different, because it is a live checkout with its own history and the
+whole point of declaring one is to track what upstream publishes.
+
+So a later `sync` does return to it — **conservatively, and never in a way that
+discards work.** Batfiles fetches, and then only fast-forwards:
+
+| What it finds at `dest`                   | What it does               |
+|-------------------------------------------|----------------------------|
+| Nothing                                   | Clones                     |
+| A clone that is already current           | Nothing; says so at `-v`   |
+| A clone the upstream has moved past       | Fetches and fast-forwards  |
+| A clone with uncommitted changes          | Warns, and leaves it alone |
+| A clone on no branch, or one tracking nothing | Warns, and leaves it alone |
+| A clone holding commits upstream does not | Warns, and leaves it alone |
+| Anything that is not a clone              | Fails, naming the path     |
+
+The three warnings are warnings rather than failures, and the run continues.
+None of them is a mistake in the repository — they are all states a working
+checkout is legitimately in — and stopping the run would strand every action
+after this one over a plugin directory somebody was editing. What is not
+survivable is a `git` that cannot be run and a `fetch` that fails, and both stop
+the run.
+
+**Uncommitted means staged, unstaged, or untracked.** Ignored build and cache
+output does not block an update. Batfiles asks Git for the untracked half
+explicitly, so a `status.showUntrackedFiles = no` in your gitconfig changes what
+`git status` shows you and not what blocks an update. **Clean does not mean
+disposable**: a worktree with no changes but with commits of its own is still
+skipped, because fast-forwarding it is impossible and anything stronger throws
+those commits away.
+
+**A skip is for a checkout that is fine and simply is not moving.** A detached
+`HEAD` and a branch with no upstream configured are skips; a branch whose
+upstream is configured but cannot be resolved is not, and fails the run naming
+what Git said. The difference matters because Git reports all three the same way
+by default, and treating a broken configuration as "tracks nothing" would let a
+repository quietly stop updating.
+
+**The remote a clone fetches from is the one it was cloned with.** Batfiles does
+not compare `source` against the clone's configured remote or rewrite it, so
+pointing an existing `git-clone` action at a different repository does not move
+the checkout. Delete it and let the next `sync` clone the new one. That is also
+why the line reporting an update names no URL where the line reporting a clone
+does: batfiles fetched the clone's own remote, and claiming otherwise would name
+a repository the run never contacted.
+
+#### A destination that is not a clone
+
+`dest` is judged by what is *at* it, never by what it points to, exactly as
+every other action's destination is ([Replacing what is already
+there](#replacing-what-is-already-there)). A regular file, a device, and a
+symlink that leaves the repository and reaches something are all refused by
+name. **A symlink is not followed**, and that matters more here than anywhere
+else in the format: a link at `dest` reaching a checkout somewhere else would,
+if followed, make an update fetch into and fast-forward a repository batfiles
+never installed. A symlink that holds no content of its own — one reaching
+nothing, or one pointing into the batfiles repository — is cleared and cloned
+over, and the removal is reported.
+
+A directory at `dest` is the only thing that can be a clone, and two things have
+to agree before batfiles will update one, because **neither on its own
+establishes that Git will act on `dest`**.
+
+**Its `.git` has to be `dest`'s own** — a real directory, which is what `git
+clone` makes. A `.git` that is a symlink to another checkout's Git directory
+leaves Git using that repository's refs while treating `dest` as the worktree,
+so a fetch and a fast-forward move the *other* checkout's branch. `git rev-parse
+--show-toplevel` does not notice, because the worktree genuinely is `dest`. A
+`.git` file, which is how a linked worktree and a submodule spell it, is
+refused on the same grounds.
+
+**Git has also to agree the worktree is `dest`.** A real `.git` whose config sets
+`core.worktree` elsewhere points every command at that tree, and no check of the
+filesystem can see it. This is also what keeps a plain directory sitting *inside*
+someone's larger repository from being updated as though it were a clone of its
+own: asked from in there, Git reports the enclosing repository, and that is a
+mismatch — otherwise an update would fast-forward your home directory, if you
+keep it in Git.
+
+A `.git` with nothing checked out is refused too, and named as incomplete or
+damaged with Git's own account of it. That is the state an interrupted clone
+leaves, and it is the one this whole check exists for: a clone writes directly
+into its destination, so a tool that read the mere presence of something as
+"already installed" would report success over that wreckage on every run from
+then on.
+
 ## Default-disabled bootstrap entries
 
 `[default-disabled]` is where a leaf repository says what a fresh machine should

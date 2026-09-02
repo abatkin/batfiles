@@ -118,12 +118,26 @@ impl Tree {
     /// after the copy keeps the URL in the repository — where a reader of the
     /// fixture sees it — rather than in the test that drives it.
     pub(crate) fn point_at(&self, server: &Server) {
+        self.fill_in("server", server.address());
+    }
+
+    /// The same, for a fixture whose sources are repositories rather than URLs:
+    /// a bare repository lands in a temporary directory no fixture can name.
+    pub(crate) fn point_at_origin(&self, origin: &BareRepo) {
+        self.fill_in("origin", &display(&origin.origin()));
+    }
+
+    /// Replace every `{placeholder}` in the leaf manifest, insisting there was
+    /// one: a fixture that stopped carrying it would otherwise be driven against
+    /// a source the test never set.
+    fn fill_in(&self, placeholder: &str, value: &str) {
         let manifest = fs::read_to_string(self.manifest()).expect("the fixture manifest");
+        let written = format!("{{{placeholder}}}");
         assert!(
-            manifest.contains("{server}"),
-            "the fixture has no `{{server}}` to point at a server"
+            manifest.contains(&written),
+            "the fixture has no `{written}` to point at anything"
         );
-        self.write_manifest(&manifest.replace("{server}", server.address()));
+        self.write_manifest(&manifest.replace(&written, value));
     }
 
     /// Put a file in the leaf repository, and return where it landed.
@@ -167,6 +181,103 @@ impl Tree {
             .env_remove("XDG_CACHE_HOME");
         command
     }
+}
+
+/// A local bare git repository, standing in for one on the network.
+///
+/// No test may reach the network (`guidance.md`, "Test environments"), and a
+/// path is not a stand-in for a URL here so much as another spelling of one:
+/// git clones from a directory by the same code path it clones from `https://`,
+/// so what the binary runs against this is what it runs against GitHub.
+///
+/// It keeps a working clone of its own beside the bare repository, which is how
+/// a test publishes a second commit for an update to bring. Both live in a
+/// temporary directory of their own rather than inside [`Tree`], so nothing here
+/// lands in a snapshot of the four roots.
+pub(crate) struct BareRepo {
+    dir: TempDir,
+}
+
+impl BareRepo {
+    /// A repository with one commit on `main`, holding one file.
+    pub(crate) fn new() -> Self {
+        let repo = Self {
+            dir: tempfile::tempdir().expect("a temporary directory"),
+        };
+        git(
+            repo.dir.path(),
+            &["init", "--bare", "-b", "main", "origin.git"],
+        );
+        git(repo.dir.path(), &["init", "-b", "main", "work"]);
+        git(
+            &repo.work(),
+            &["remote", "add", "origin", &display(&repo.origin())],
+        );
+        repo.publish("README.md", "a plugin\n", "first");
+        repo
+    }
+
+    /// Commit a file and push it, for the tests about what an update brings.
+    pub(crate) fn publish(&self, name: &str, contents: &str, message: &str) {
+        fs::write(self.work().join(name), contents).expect("a file to commit");
+        git(&self.work(), &["add", "-A"]);
+        git(&self.work(), &["commit", "-m", message]);
+        git(&self.work(), &["push", "origin", "main"]);
+    }
+
+    /// The bare repository, which is what a manifest names as a `source`.
+    pub(crate) fn origin(&self) -> PathBuf {
+        self.dir.path().join("origin.git")
+    }
+
+    fn work(&self) -> PathBuf {
+        self.dir.path().join("work")
+    }
+}
+
+/// Run one `git` command while building a fixture, and insist it worked.
+///
+/// An identity and no signing are forced on the command line rather than
+/// written into a config file: a runner with no `user.email` set and a developer
+/// whose global config signs every commit would otherwise fail here for reasons
+/// that have nothing to do with what is under test.
+///
+/// This is the suite's one hard dependency on `git` being on `PATH`, which the
+/// binary has too — it shells out rather than linking a library (`guidance.md`,
+/// rule 6).
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
+    let mut command = std::process::Command::new("git");
+    // The binary under test clears these for itself; a fixture built by the
+    // suite needs the same, or a developer who has `GIT_DIR` exported in their
+    // shell builds every bare repository inside whatever it names.
+    for redirect in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ] {
+        command.env_remove(redirect);
+    }
+    let output = command
+        .args([
+            "-c",
+            "user.name=batfiles tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git should be on PATH for the cloning tests");
+    assert!(
+        output.status.success(),
+        "git {args:?} in {} failed: {}",
+        display(dir),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 /// What the local server answers one path with.

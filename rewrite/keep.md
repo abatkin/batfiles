@@ -99,11 +99,12 @@ Taskfile or the test suite; the one workflow edit any of them needed is 0.12's
   "serde cannot express `when`/`unless` exclusivity", and it is why no parallel
   raw/validated type family is needed. Port the mechanism at 0.6 with one rule in
   it; add rules as their fields land.
-- **`src/init.rs`** (693) — step 8.1. Working and correct, and its `fn git(dir,
-  args) -> Output` helper is the pattern for rule 6 — though step 4.3 needs that
-  helper first, so lift it out ahead of the rest of this file. Large for what it
-  does; expect to lose a third. The `install.sh` template it writes is slice 10,
-  not slice 8.
+- **`src/init.rs`** (693) — step 8.1. Working and correct. Its `fn git(dir, args)
+  -> Output` helper was the pattern for rule 6 and has already been rebuilt as
+  `src/git.rs` at 4.3, so port `init` onto that rather than bringing a second
+  copy across; what it adds is `git init` and `inside_work_tree`. Large for what
+  it does; expect to lose a third. The `install.sh` template it writes is slice
+  10, not slice 8.
 - **`src/toggle.rs`** (297) and **`src/state/disabled.rs`** (207) — step 3.3. One
   implementation over four commands is right. Both landed as one `src/disabled.rs`:
   the document and its only writer are the same subject, and `toggle` named a

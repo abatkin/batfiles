@@ -86,7 +86,7 @@ struct Owner {
 ///
 /// The list is meant to grow. Growing it means editing this file, which is what
 /// makes saying which [`Kind`] you are adding unavoidable.
-const FILESYSTEM_OWNERS: [Owner; 8] = [
+const FILESYSTEM_OWNERS: [Owner; 9] = [
     Owner {
         path: "src/paths.rs",
         kind: Kind::ReadOnly,
@@ -116,6 +116,11 @@ const FILESYSTEM_OWNERS: [Owner; 8] = [
         path: "src/install.rs",
         kind: Kind::ModeReader,
         reason: "rule 15's staging, publication, and discard",
+    },
+    Owner {
+        path: "src/git.rs",
+        kind: Kind::ModeReader,
+        reason: "runs git, and under DryRun runs none for any caller",
     },
     Owner {
         path: "src/action/symlink.rs",

@@ -7,6 +7,7 @@ mod support;
 
 mod actions;
 mod apply;
+mod cloning;
 mod disabled;
 mod fetching;
 mod groups;

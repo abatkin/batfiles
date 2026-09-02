@@ -157,23 +157,23 @@ filter or upstream archive unexpectedly deletes local content.
 
 ## Git repositories
 
-Git repositories are updated conservatively. Batfiles may fetch on every
-normal synchronization, but it skips an update with a warning when the working
-tree or index contains changes that the operation might disturb. Staged,
-unstaged, and relevant untracked content all count; ignored build or cache
-files need not block an update unless Git reports that they conflict.
+The conservative update policy was promoted at 4.3 to
+[`docs/repoformat.md`](../repoformat.md#a-clone-is-the-one-thing-batfiles-comes-back-to):
+fetch on every normal synchronization, fast-forward only, and skip with a
+warning where the worktree is dirty, tracks nothing, or holds commits of its
+own. What is left here is the half that needs a `ref` to mean anything.
 
 A clean worktree allows batfiles to follow the declared configuration. It may
-change the checked-out branch or ref, update the configured remote URL, and
-fetch from that remote. Those transitions should be reported because they may
-be surprising, but they do not by themselves require a backup.
+change the checked-out branch or ref, and update the configured remote URL.
+Those transitions should be reported because they may be surprising, but they do
+not by themselves require a backup. Changing away from a branch does not delete
+that branch or its commits.
 
-Clean does not mean disposable. Batfiles must not discard local commits merely
-to make a repository match its configured upstream. Fast-forward updates are
-safe; divergent history, a non-fast-forward update, or another state requiring
-a reset is skipped with a warning unless a future explicit operation defines a
-stronger policy. Changing away from a branch does not delete that branch or
-its commits.
+Neither is built. `ref` is refused by the closed record until step 4.5 gives
+`git-clone-list` entries one, and until then an update follows whatever branch a
+clone is on; `source` is never compared against a clone's configured remote, so
+repointing an action at a different repository does not move an existing
+checkout.
 
 Network and repository trust still apply. Batfiles does not guarantee signed
 commits or immutable branch contents. Updating a declared Git remote can

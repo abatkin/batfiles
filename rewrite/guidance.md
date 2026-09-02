@@ -218,6 +218,19 @@ a recursive delete is how a tool destroys data it was written to protect.
 `fetch-archive` are seeds with the same destinations and the same failure —
 so reuse that path rather than deriving it again.
 
+**Building elsewhere is the mechanism, not the rule.** What the rule is about is
+the *convergence*: a later run that finds the path occupied, calls the work done,
+and reports success over wreckage forever. Building beside the destination buys
+that by making a half-thing impossible to leave at the destination at all, which
+is the right answer wherever the tool is producing the content. `git-clone` at
+4.3 is the one action where it is not: git manages its own destination, and a
+staging sibling would buy nothing the alternative does not. That action satisfies
+the rule the other way — **by making the wreckage recognizable.** It classifies a
+destination as absent, as a healthy worktree rooted exactly there, or as
+something refused by name, so an interrupted clone lands in the third arm rather
+than the second. Either mechanism is fine; converging on a broken state is not,
+and an action that does neither is the bug.
+
 ## Budgets
 
 Not hard limits. If you are far over one, stop and ask why.
@@ -385,7 +398,7 @@ already has the branch the check goes in:
 | `directory::ensure_directory`, reached through `RunContext::ensure_directory` and `directory::create_parents` | the arm taken when nothing resolves at the path | built |
 | `action::symlink::link_one` | the `Occupancy::at` arms that remove and create | built |
 | `install::seed` | the `paths::occupied(dest)` check, ahead of any staging node | built |
-| the git helper that clones and updates a worktree | the clone-or-update decision | 4.3 |
+| `git::clone_or_update` | the clone-or-update decision | built |
 
 `RunMode` is a field on `action::RunContext`, beside the anchored roots — the same
 value 9.4's `--refresh-content` becomes a second field on. `fetch-file` and
@@ -394,8 +407,12 @@ dry-run correct on the day they are written. **The git helper is the one
 addition, and it is needed because `seed` does not cover it**: an existing clone
 is an occupied destination, which `install::seed` declines by design, so the
 update path reaches the filesystem — and the network — through neither `seed` nor
-`paths`. The helper takes the mode itself and under `DryRun` runs no git at all;
-4.5 says what it reports instead.
+`paths`. The helper takes the mode itself and under `DryRun` runs no git at all,
+reporting `would clone` or `would update` from `paths::occupied` alone. What that
+gives up is classification, and it is stated as such in `docs/cmdline.md`: a dry
+run cannot tell a healthy clone from a directory that merely occupies the path,
+so it says it would update either, and the real run is where the second is
+refused.
 
 **That holds for materializing a remote too, and it is a deliberate limit rather
 than an oversight.** A dry run does not clone or update `remotes/<id>/`, so an

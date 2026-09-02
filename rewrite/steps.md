@@ -148,55 +148,59 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   downloaded whole, verified, then unpacked into the staging tree — so
   `install.rs` grew `with_scratch` beside `seed`, and that is where the rule-15
   discipline for it lives.
-- **4.3** Add `git-clone` for one repository, and the shared helper that shells
-  out to `git`. **That helper is the fourth thing that reads `RunMode`, and the only
-  one slice 4 adds** (`guidance.md`, "Where the mode is read"). It is not covered
-  by anything slice 2 built: a clone destination that already exists is an
-  occupied destination, which `install::seed` declines by design, so the update
-  path reaches the worktree — and the network — through neither `seed` nor
-  `paths`. A dry run that ran it would contact the network and modify a checkout
-  it was asked only to describe, which is the invariant this slice is most able
-  to break. Add the helper to 2.3's allowlist in the same change, since it names
-  `std::process::Command`; it is the one addition of the mode-reader kind.
-
-  **Under `DryRun` the helper runs no git, for any caller.** It needs no write
-  scope and no exception argument, and 6.2 must not add one: a dry run does not
-  materialize remotes either, and that limit is deliberate (`guidance.md`, "Where
-  the mode is read"). **Do not infer the answer from the destination path.** A
-  containment test against the home is wrong in both directions — the batfiles
-  directory is ordinarily inside the home, and an action's `dest` may be an
-  absolute path outside it — and with one rule for every caller there is nothing
-  for such a test to decide anyway.
+- **4.3** ✅ Add `git-clone` for one repository, and the shared `src/git.rs` that
+  shells out to `git` — the fourth reader of `RunMode`, and the only one slice 4
+  adds. It clones where nothing is and fast-forwards where a clone is, which is
+  the whole of the conservative update policy that does not need a `ref`.
 - **4.4** Add the `git-clone` list manifest format.
-- **4.5** Add `git-clone-list`, cloning each entry and updating existing clones
-  conservatively. **This is the step `error.rs` has been waiting on**, and 4.2
-  went first: `Error::Archive(archive::Invalid)` is the worked example of rule
-  5's nesting, with the sub-enum in the module that raises it. Telling a dirty
-  clone from a network failure is the caller that earns the same treatment for
-  git, and the flat fetch variants can move under it or stay, whichever the
-  match wants. Say what a dry run reports for each of the two cases, because
-  they are not the same sentence: a destination that is absent is `would clone
-  <url> into <dest>`, and one holding a clone already is `would update the clone
-  at <dest>`. **Neither runs `git`**, so neither reaches the network and neither
-  can say what the update would bring — which is the "intent, not success"
-  boundary rather than a partial plan (`guidance.md`, "Why there is no effect
-  type"). The conservative update rules 6.2 reuses are about what a real run
-  does; a dry run stops before all of them.
-- **4.7** Test against local bare git repositories; no step in the suite may
-  reach the network. A dry run is part of what is tested here: `git-clone-list`
-  reads its manifest — a repository file, readable at the moment the action runs
-  — and says one line per entry, without reaching the network, and an existing
-  clone is left exactly as it was, unfetched.
+- **4.5** Add `git-clone-list`, cloning each entry through 4.3's
+  `git::clone_or_update` and giving it the two things a list needs that one
+  repository did not.
 
-  The HTTP half landed at 4.1: `tests/cli/support.rs` has a `tiny_http` `Server`
-  that counts requests, which is what lets a dry-run test assert that *nothing
-  was asked of the network* rather than only that the tree is unchanged. Write
-  the git tests to assert the same way where they can.
+  **`ref`.** 4.3 refused it on the closed record, so this is the step that
+  un-rejects it — on the list's per-entry `ref=` *and* on the `git-clone` record,
+  which is specified with one. It is also what makes the rest of
+  `docs/future/safety.md`'s "Git repositories" mean something: with a declared
+  ref, a clean worktree may have its checked-out branch changed and its remote
+  URL updated, and both transitions are reported. Promote that half of the
+  section when you build it; 4.3 already promoted the rest.
+
+  **A per-entry decision.** 4.3's skips are warnings because one action either
+  runs or does not, and nothing had to tell the cases apart; a list has to decide
+  entry by entry whether to carry on. **That is what `error.rs` has been waiting
+  on**, and 4.2 is the worked example: `Error::Archive(archive::Invalid)` puts
+  the sub-enum in the module that raises it. Telling a dirty clone from a network
+  failure earns git the same `Error::Git(git::Error)` treatment, and the three
+  flat `Git*` variants 4.3 added move under it or stay, whichever the match
+  wants.
+
+  A dry run reports one line per entry — the manifest is a repository file,
+  readable at the moment the action runs — in 4.3's shape and tense: `would clone
+  <dest> from <url>` where nothing is, `would update <dest> from <url>` where
+  something is. **No entry runs `git`**, by the one rule in `src/git.rs`, so none
+  reaches the network and none can say what an update would bring, which is the
+  "intent, not success" boundary rather than a partial plan (`guidance.md`, "Why
+  there is no effect type").
+- **4.7** Extend the git fixtures to a *list* of repositories; no step in the
+  suite may reach the network. A dry run is part of what is tested here:
+  `git-clone-list` reads its manifest — a repository file, readable at the moment
+  the action runs — and says one line per entry, without reaching the network,
+  and an existing clone is left exactly as it was, unfetched.
+
+  Most of the apparatus is already there. 4.1 gave `tests/cli/support.rs` a
+  `tiny_http` `Server` that counts requests, and 4.3 gave it `BareRepo`, a bare
+  repository with a working clone beside it for publishing a second commit, plus
+  a `git` helper that forces an identity and no signing. 4.3's `cloning` tests
+  are the pattern for asserting the strong claim rather than the weak one: an
+  existing clone's `.git/FETCH_HEAD` staying absent is what says no git ran, the
+  way `Server::requests` says nothing was asked of the server. Write the list
+  tests to assert the same way.
 
   Promote what is left of `docs/future/cmdline.md`'s "Remote content is
   described, not retrieved" paragraph into the section 2.4 created — 4.1 took
-  `fetch-file`'s share of it and the digest sentence beside it — minus its second
-  half about inclusions, which waits for 7.1.
+  `fetch-file`'s share and the digest sentence beside it, and 4.3 took
+  `git-clone`'s along with the no-git-under-dry-run rule the list inherits —
+  minus its second half about inclusions, which waits for 7.1.
 - **4.8** **Acceptance: your personal dotfiles are fully managed by `sync`, and
   the personal shell script is retired.**
 
@@ -257,10 +261,14 @@ No inclusion of remote actions yet.
 - **6.1** Add a `[remotes]` table with `type = "git"`. As at 5.1, this
   un-rejects a section the closed document turns away, and edits the same
   paragraph of `docs/repoformat.md`.
-- **6.2** Materialize a declared remote into `remotes/<id>/`, reusing 4.3's git
-  helper and 4.5's conservative update rules. It calls that helper the same way
-  `git-clone` does and asks it for no exception, so under `--dry-run` nothing is
-  cloned or fetched here either; 6.6 is where that is stated and tested.
+- **6.2** Materialize a declared remote into `remotes/<id>/` by calling
+  `git::clone_or_update`, which already does both halves of this. It takes no
+  exception argument and must not grow one, so under `--dry-run` nothing is
+  cloned or fetched here either; 6.6 is where that is stated and tested. Note
+  that a remote's warnings arrive already written for a destination in the home
+  — "not updating `<path>`: it has uncommitted changes" is an odd thing to read
+  about `remotes/<id>/`, and whether that wants different words is this step's to
+  decide.
 - **6.3** Add `@remote/path` as a parsed repository path resolved against
   exactly one repository, in the one resolver every action uses.
 - **6.4** Let a leaf symlink or copy action take its source from a remote.

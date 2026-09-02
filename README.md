@@ -24,7 +24,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -63,6 +63,16 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   quietly skipped. That includes the ones no check on a single path finds —
   nothing is written under a symlink the archive itself declares, and a target
   may not climb out past one.
+- **A repository can be cloned and kept up to date.** `git-clone` clones one
+  where nothing is, and on later runs brings the clone it finds forward —
+  conservatively. It fetches, and fast-forwards only: a worktree with
+  uncommitted changes, one on a branch that tracks nothing, and one holding
+  commits the upstream does not are each left exactly as they are, with a
+  warning rather than a failed run. batfiles will not discard work you did in a
+  checkout it made for you. A destination holding something that is not a clone
+  — a file, a symlink to a checkout elsewhere, a directory somebody else filled,
+  or what an interrupted clone left behind — is refused by name rather than
+  cloned over or fetched into.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not
@@ -232,7 +242,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 4     | Cloning Git repositories, one at a time or from a manifest          |
+| 4     | Cloning a list of Git repositories from a manifest                  |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
 | 8     | `init` and `clone` for new machines, with default-disabled adoption |

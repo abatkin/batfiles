@@ -7,7 +7,10 @@
 
 use serde::Deserialize;
 
-use super::{Invalid, check_archive_root, check_dest, check_digest, check_source, check_url};
+use super::{
+    Invalid, check_archive_root, check_dest, check_digest, check_git_source, check_source,
+    check_url,
+};
 use crate::item::ItemId;
 
 /// One entry of `[[actions]]`.
@@ -21,6 +24,7 @@ pub(crate) enum Action {
     CopyDir(CopyDirAction),
     FetchFile(FetchFileAction),
     FetchArchive(FetchArchiveAction),
+    GitClone(GitCloneAction),
 }
 
 impl Action {
@@ -39,6 +43,7 @@ impl Action {
             Self::CopyDir(action) => ("copy-dir", &action.id, &action.group),
             Self::FetchFile(action) => ("fetch-file", &action.id, &action.group),
             Self::FetchArchive(action) => ("fetch-archive", &action.id, &action.group),
+            Self::GitClone(action) => ("git-clone", &action.id, &action.group),
         };
         Common {
             kind,
@@ -92,6 +97,12 @@ impl Action {
                 check_url(&action.source, number)?;
                 check_digest(action.sha256.as_deref(), number)?;
                 check_archive_root(action.archive_root.as_deref(), number)?;
+                check_dest(&action.dest, number)
+            }
+            // A third kind of source: neither a repository path nor a URL, but
+            // whatever `git` accepts as a repository to clone.
+            Self::GitClone(action) => {
+                check_git_source(&action.source, number)?;
                 check_dest(&action.dest, number)
             }
         }
@@ -325,6 +336,38 @@ pub(crate) struct FetchArchiveAction {
     pub archive_root: Option<String>,
 }
 
+/// `git-clone`: one repository cloned where nothing is, and brought up to date
+/// where a clone of it already is.
+///
+/// The one action type that does not install a copy of something and then leave
+/// it alone. A clone is a live checkout with its own history, so a later `sync`
+/// does come back to it — conservatively, and never in a way that discards work:
+/// the rules are in `docs/repoformat.md`, and every one of them decides between
+/// updating and leaving the clone exactly as it is.
+///
+/// `ref` — a branch, tag, or commit to follow — is specified in
+/// `docs/future/repoformat.md` and refused by this closed record for now. It
+/// arrives at 4.5 with the `git-clone-list` manifest, whose per-entry `ref=` is
+/// the first thing that needs it; until then an update follows whatever branch
+/// the clone is on.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct GitCloneAction {
+    /// Makes the action addressable. The clone's contents never are,
+    /// individually.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    pub group: Option<ItemId>,
+    /// The repository to clone, exactly as git is given it. Not a `RepoPath`
+    /// and not checked as a URL: git accepts an `scp`-style `git@host:path`, a
+    /// plain directory, and several schemes, and which of them a source is is
+    /// git's question rather than batfiles'.
+    pub source: String,
+    /// Where the clone goes, exactly. Resolved against the selected home when
+    /// the action runs, with missing parents created on the way.
+    pub dest: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +405,10 @@ mod tests {
             (
                 "type = \"fetch-archive\"\nsource = \"https://e.example/a.tar.gz\"\ndest = \"~/b\"\n",
                 "fetch-archive",
+            ),
+            (
+                "type = \"git-clone\"\nsource = \"https://e.example/a.git\"\ndest = \"~/b\"\n",
+                "git-clone",
             ),
         ] {
             assert_eq!(described(record, 1), format!("{kind} action 1"));

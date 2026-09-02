@@ -167,6 +167,11 @@ pub(crate) enum Invalid {
     #[error("action {action}: sha256 `{value}` is not 64 hexadecimal digits")]
     DigestNotSha256 { action: usize, value: String },
 
+    // A `git-clone` source names a repository, in any of the several ways git
+    // spells one. Emptiness is the only thing decidable from the value alone.
+    #[error("action {action}: source is empty; a source names a repository for git to clone")]
+    GitSourceEmpty { action: usize },
+
     /// An `archive-root` no entry batfiles would unpack could ever match. An
     /// escaping entry is refused as the archive is read, so a prefix that only
     /// selects escaping entries selects nothing, and saying so here is better
@@ -288,6 +293,24 @@ fn check_url(source: &str, action: usize) -> Result<(), Invalid> {
         action,
         value: source.to_owned(),
     })
+}
+
+/// The rules a `git-clone` source satisfies as written, of which there is one.
+///
+/// Deliberately weaker than [`check_url`], because git accepts far more than a
+/// URL: an `scp`-style `git@host:path`, a plain directory, `ssh://`, `git://`,
+/// and `file://` are all repositories it can clone. Anything narrower would
+/// refuse sources that work — a local path among them, which is what the test
+/// suite clones from — so what a source means is left to git, and what it says
+/// when it cannot make sense of one is better than anything guessed here.
+///
+/// A leading `-` needs no rule of its own: [`crate::git`] passes the source
+/// after `--`, so git reads it as a repository whatever it is spelled like.
+fn check_git_source(source: &str, action: usize) -> Result<(), Invalid> {
+    if source.trim().is_empty() {
+        return Err(Invalid::GitSourceEmpty { action });
+    }
+    Ok(())
 }
 
 /// The shape a `sha256` has to have to be one.

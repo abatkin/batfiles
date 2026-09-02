@@ -10,6 +10,7 @@ mod env;
 mod error;
 mod execute;
 mod fetch;
+mod git;
 mod install;
 mod item;
 mod location;

@@ -1,0 +1,17 @@
+# A leaf repository whose actions clone git repositories, kept apart from `leaf`
+# and `fetching` for the reason those two are kept apart from each other: every
+# test here needs a local bare repository on disk, and the others should not pay
+# for one (`guidance.md`, "Test environments").
+#
+# `{origin}` is replaced with the path of the bare repository the test created,
+# because a fixture cannot know which temporary directory one lands in.
+
+# The action step 4.8 retires a hand-written `git clone` for: a plugin framework
+# that lives as a checkout in the home, cloned on the first run and brought up to
+# date on every later one.
+[[actions]]
+type = "git-clone"
+id = "oh-my-zsh"
+group = "shell"
+source = "{origin}"
+dest = "~/.oh-my-zsh"

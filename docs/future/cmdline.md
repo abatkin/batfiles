@@ -70,13 +70,13 @@ today. What is left here is what the unbuilt half of the tool adds to it: the
 actions that reach the network, the remotes an inclusion composes over, and the
 one thing a dry run does that is not describing.
 
-**Remote content is described, not retrieved.** `git-clone` and
-`git-clone-list` say what they would fetch and where it would land — and, where a
-clone is already there, that they would update it — without contacting the
-network. `fetch-file` already does; see
-[`docs/cmdline.md`](../cmdline.md#dry-run-behavior). Naming that is a complete account of the action, at the same granularity
-a directory copy is reported at; what a dry run cannot say is what an update
-would actually bring.
+**Remote content is described, not retrieved.** `git-clone-list` says what it
+would clone and where each entry would land — and, where a clone is already
+there, that it would update it — without contacting the network. Its manifest is
+a repository file, readable at the moment the action runs, so a dry run reads it
+and reports one line per entry. The fetching actions and `git-clone` already
+work this way; see [`docs/cmdline.md`](../cmdline.md#dry-run-behavior), which
+also states the one rule this inherits — under `--dry-run` no `git` runs at all.
 
 The same holds for the remotes an `include-remote` composes over, and there it
 costs more. A dry run neither clones nor updates a remote, so an inclusion is

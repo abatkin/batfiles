@@ -431,12 +431,12 @@ fn the_copy_types_paths_follow_the_same_rules_as_every_other() {
 fn an_action_type_that_has_not_landed_is_rejected() {
     let stderr = rejected(
         "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"https://example.invalid/repo.git\"\n\
-         dest = \"~/repo\"\n",
+         type = \"git-clone-list\"\n\
+         source = \"manifests/vim-plugins.txt\"\n\
+         dest = \"~/.vim/bundle\"\n",
     );
     assert!(
-        stderr.contains("git-clone"),
+        stderr.contains("git-clone-list"),
         "the type was not named:\n{stderr}"
     );
 }

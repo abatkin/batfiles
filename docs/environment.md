@@ -1,8 +1,9 @@
 # Environment variables
 
 The environment inputs batfiles reads today: the four location variables that
-select where it works, the two run-only skip lists, and the color selection. The
-rest — one-shot variable overrides, bootstrap adoption, and the host facts
+select where it works, the two run-only skip lists, and the color selection.
+There is also one family it deliberately does *not* pass on, covered at the end.
+The rest — one-shot variable overrides, bootstrap adoption, and the host facts
 conditions use — are in [`future/environment.md`](future/environment.md), along
 with the table naming every variable in the intended set.
 
@@ -160,3 +161,33 @@ Color is resolved before the arguments are parsed, because clap may need to
 render a usage error for arguments it could not parse, and that output should
 honor the requested color too. This is why `--color` is recovered from the raw
 arguments rather than read off the parsed command.
+
+## Variables passed on to `git`
+
+`git-clone` runs the `git` on your `PATH`, which inherits batfiles' own
+environment, so the things that make Git work as you have set it up keep
+working: `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, `GIT_SSH_COMMAND`,
+`GIT_ASKPASS`, `SSH_AUTH_SOCK`, and the proxy variables are all passed through
+untouched.
+
+One family is removed first:
+
+```text
+GIT_DIR  GIT_WORK_TREE  GIT_COMMON_DIR
+GIT_CEILING_DIRECTORIES  GIT_DISCOVERY_ACROSS_FILESYSTEM  GIT_PREFIX
+GIT_INDEX_FILE  GIT_OBJECT_DIRECTORY  GIT_ALTERNATE_OBJECT_DIRECTORIES
+GIT_NAMESPACE  GIT_CONFIG  GIT_CONFIG_COUNT
+```
+
+Each of these tells Git to work on a repository other than the one it is
+standing in, and an action must act on its own `dest` and nothing else. You need
+not have set any of them deliberately for this to matter: a Git hook, an editor
+plugin, and `git rebase --exec` all export some of them to whatever they run, so
+batfiles is quite likely to be running as one of those children. With `GIT_DIR`
+inherited, a `sync` would fetch into and fast-forward that repository while
+leaving the declared destination untouched.
+
+The split is between naming a *repository* and naming your *setup*: the first is
+cleared, the second is not. `GIT_CONFIG_COUNT` is cleared because it carries
+ad-hoc `key=value` pairs for a single invocation rather than naming a
+configuration file, and `core.worktree` is among the keys it can set.

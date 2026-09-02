@@ -449,6 +449,25 @@ resting on inspection is still exact: a `copy` whose destination is already
 occupied reports that it would keep what is there, and copies nothing, and so
 does either fetching action, which asks nothing of the server either.
 
+**No `git` runs under `--dry-run`, at all.** `git-clone` reports that it would
+clone the repository into a destination nothing is at, or that it would update
+the clone at a destination holding a directory, and it runs no git to decide
+which. So nothing reaches the network and no checkout is touched, not even by
+the read-only commands that would tell batfiles whether an update is possible.
+
+What is *at* a destination is a filesystem question, so it is answered the same
+in both modes: a dry run refuses a `dest` holding a regular file or a symlink
+out of the repository exactly as a real run does. What it gives up is one
+distinction — telling a clone from a plain directory takes git, so a dry run
+says it would update either, and the real run is where the second is refused.
+That is the same "intent, not success" boundary the fetching actions sit on.
+
+The alternative — a dry run that fetched, so its report could say what an update
+would actually bring — would make `--dry-run` a command that reaches the network
+and modifies a checkout it was asked only to describe, and doing neither of those
+is the whole value of the flag. To see the current picture, update the clone and
+run it again.
+
 What the manifest names is still read. A `source` that is missing or unreadable
 fails in either mode, before the destination is considered — including where the
 destination is occupied and a real run would have kept it. A manifest naming a
