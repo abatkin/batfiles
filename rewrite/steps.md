@@ -132,8 +132,8 @@ Dry-run needs one addition here and no rework. Both fetching actions publish
 through `install::seed`, which reads the mode, so they are dry-run correct as
 written; the git helper at 4.3 is the exception and reads the mode itself. The
 step that made them report unknown effects went with the effect type it was an
-artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
-4.6.
+artifact of (`guidance.md`, "Why there is no effect type"); 4.6 below is the
+number it left free, put back to use rather than kept as a gap.
 
 - **4.1** ✅ Add `fetch-file` for a single file, seeded only when missing, through
   the same `install.rs` path `copy` uses. `fill` is now a parameter carried on an
@@ -195,6 +195,16 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   one rule in `src/git.rs`, so none reaches the network and none can say what an
   update would bring, which is the "intent, not success" boundary rather than a
   partial plan (`guidance.md`, "Why there is no effect type").
+- **4.6** Make rule 1's within-slice reading mechanical: `tests/hygiene.rs`
+  rejects an `expect(dead_code)` whose `reason` names a step `steps.md` marks ✅,
+  names a step it does not define, or names no step at all. Today the reason is
+  prose the check only requires to be non-empty, and the compiler covers only the
+  half where the caller lands; an item whose step is done and whose caller never
+  arrived is the other half, and it is the one rot path that letting code sit
+  unused between two steps opens. Reuse `recorded_steps`, `is_step`, and the
+  three-case shape the `CARRY` check already has — a step-shaped token anywhere
+  in the reason is the step, since these read `"cloned at 4.5"` rather than a bare
+  number (`guidance.md`, rule 1).
 - **4.7** Extend the git fixtures to a *list* of repositories; no step in the
   suite may reach the network. `tests/fixtures/clonelist` exists and names
   repositories nothing contacts, which is what 4.4 needed; this is where it

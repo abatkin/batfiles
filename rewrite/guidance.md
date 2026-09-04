@@ -16,14 +16,30 @@ preferences.
 
 ## Rules
 
-**1. No `#[allow(dead_code)]`.** CI already runs `clippy -D warnings`, so this
-enforces itself. If code has no caller reachable from `main`, it does not get
-committed. The old crate carried eight of these annotations, each one the
-compiler correctly reporting the problem and being overruled. The stubbed CLI is
-not an exception and needs none — clap's derive reads every field.
+**1. No code without a caller, by the end of the slice.** CI already runs
+`clippy -D warnings`, so this mostly enforces itself. Code that no command
+reaches once the slice is done does not stay committed. The old crate carried
+eight `#[allow(dead_code)]` annotations, each one the compiler correctly
+reporting the problem and being overruled. `allow` is never permitted; the two
+exceptions below are both spelled `#[expect(dead_code, reason = "…")]` and both
+name the step that makes the item live. The stubbed CLI needs neither — clap's
+derive reads every field.
 
-**A field of a serde record is the one exception, and it is spelled
-`#[expect(dead_code, reason = "…")]`.** A record mirrors a file whose shape the
+**The slice is the unit that has to be clean, and the step is not.** Splitting a
+slice into steps small enough to land one at a time is worth more than a tree
+that is fully reachable at every intermediate commit, so an item whose caller
+arrives at a later step *of the same slice* carries an expectation naming that
+step: 4.1 may build what 4.2 calls, and 4.4 need not read a list it has nothing
+to do with yet just to keep the parser live. Same slice is the whole of the
+bound. A slice ends with a binary a user can run and a `tests/cli/` test that
+runs it, so an item still unreachable *then* is unreachable in exactly the sense
+that produced 5,250 dead lines, and an expectation reaching into a later slice is
+that failure with a note attached. It is not licence to build breadth-first
+inside a slice either: the caller has to be a step `steps.md` already defines, and
+that step is the one that deletes the annotation.
+
+**A field of a serde record is the second exception, and the only one that may
+name a step in a later slice.** A record mirrors a file whose shape the
 format already fixes, so a field nothing reads yet is not an abstraction built
 ahead of its caller; it is one line of a document that exists either way.
 `symlink`'s `dest` is written the same way at 0.6 whether or not 0.7 has been
@@ -34,15 +50,20 @@ manifests the format calls valid, and opening the record stops it rejecting the
 mistyped ones.
 
 Use `expect`, never `allow`, and give each one a `reason` naming the step that
-reads the field. `expect` is self-cleaning: once the reader lands the annotation
-becomes an unfulfilled expectation, which is a warning, which under `-D
-warnings` fails CI until it is deleted. That makes these the one kind of
+makes the item live. `expect` is self-cleaning: once the caller lands the
+annotation becomes an unfulfilled expectation, which is a warning, which under
+`-D warnings` fails CI until it is deleted. That makes these the one kind of
 carry-forward note that cannot rot, because the compiler is holding the list.
 
 It is self-enforcing: `tests/hygiene.rs` fails if `allow(dead_code)` appears
 anywhere under `src/`, or if any `expect(dead_code)` is missing its `reason`.
-This is the one rule that can be checked mechanically, and the old crate is the
-proof that the honor-system version of it loses.
+Step 4.6 closes the gap the by-the-end-of-the-slice reading opens, which is an
+expectation whose step is done and whose item is still unread: the compiler
+deletes the note when the caller lands and says nothing when it never does, so
+the check rejects a reason naming a step `steps.md` marks ✅, exactly as it
+rejects a spent `CARRY` marker. This is the rule that can be checked
+mechanically, and the old crate is the proof that the honor-system version of it
+loses.
 
 **2. Vertical slices, never horizontal layers.** Every slice ends with a
 `batfiles` binary that does something a user can run, and a test in
@@ -284,8 +305,41 @@ Every slice, without exception:
 - Every cross-document link and step reference still resolves.
 - The unimplemented-option list (rule 12) shrank if the slice made an option
   live.
+- No `expect(dead_code)` naming a step in this slice survives it. The compiler
+  deletes the ones whose callers landed; whatever is left is code the slice
+  turned out not to need (rule 1).
 - Anything the slice leaves for later has been routed, and the step it was
   discovered on carries none of it. See "Carrying work forward".
+
+## What may lag within a slice
+
+The list above is a statement about the slice and not about each step, and the
+gap between them is deliberate. A slice whose every intermediate commit had to be
+reachable, documented, and complete could not be split into steps small enough to
+land one at a time, and the steps would grow until a single one built a format, a
+parser, a caller, a test, and a document at once — which is the size of change
+this rewrite exists to stop making. Three things may therefore be behind between
+two steps of the same slice, each held by a carrier that expires:
+
+- **Code with no caller yet**, carrying `#[expect(dead_code, reason = "…")]` that
+  names the step in this slice which calls it (rule 1).
+- **An action type or option that parses but does not act**, provided it says so
+  at the moment it would have acted and carries a `// CARRY(<step>)` marker. 4.4
+  is the worked example: `git-clone-list` landed reading its list and warning that
+  it cloned nothing, and 4.5 replaces the warning and the marker together. What
+  rule 12 forbids is silence, and it forbids it mid-slice for the same reason it
+  forbids it in a release — the user believes something happened.
+- **Prose in `docs/`**, promoted by the step that finishes a behavior rather than
+  the step that starts it.
+
+Everything else holds at every commit, because `main` is green at every commit:
+`task ci` passes, including every check in `tests/hygiene.rs`, so the
+filesystem-owner list, the action-type lines in `README.md` and `docs/goals.md`,
+the fixtures, and rule 12's list are current the day each step lands rather than
+the day the slice ends. Correctness is not on the list at all. A step may leave a
+behavior unfinished and must never leave one wrong: the three lags above are all
+things a *reader* notices, and nothing here licenses a commit that installs the
+wrong thing, reports something that did not happen, or fails a test.
 
 ## Carrying work forward
 
