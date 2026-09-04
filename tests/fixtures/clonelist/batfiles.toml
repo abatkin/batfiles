@@ -1,0 +1,17 @@
+# A leaf repository whose action names a list of repositories rather than one.
+#
+# Apart from `cloning` because nothing here clones: the list is read and checked
+# as the repository is loaded, and carrying the action out arrives at step 4.5.
+# That is also why its entries name repositories on the internet and no test is
+# the worse for it -- none of them is contacted, and a test that needs a clone
+# made uses a local bare repository instead (`guidance.md`, "Test environments").
+
+# The action step 4.8 retires `install_bundles` for: one directory holding a
+# checkout per plugin, listed in a file that is edited by pasting a URL onto the
+# end of it.
+[[actions]]
+type = "git-clone-list"
+id = "zsh-plugins"
+group = "shell"
+source = "manifests/zsh-plugins.txt"
+dest-dir = "~/.oh-my-zsh/custom/plugins"

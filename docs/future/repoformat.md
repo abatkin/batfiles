@@ -553,45 +553,42 @@ the whole of what was specified here.
 
 ### `git-clone-list`
 
-Reads a line-oriented manifest and maps each repository URL below a destination
-directory.
+Built and specified in
+[`docs/repoformat.md`](../repoformat.md#git-clone-list), along with the [clone
+list format](../repoformat.md#the-clone-list-format) it reads. Two things about
+it are not built.
 
-```toml
-[[actions]]
-id = "zsh-plugins"
-type = "git-clone-list"
-source = "manifests/zsh-plugins.txt"
-dest = "~/.local/share/zsh-plugins"
-```
+**Cloning the entries.** The record and its list are read and checked as the
+repository is loaded; a run that reaches the action warns that it cloned nothing
+and carries on, naming step 4.5. Everything below about *what* is cloned is
+settled and specified there.
 
-| Field    | Type       | Required | Description                                      |
-|----------|------------|:--------:|--------------------------------------------------|
-| `source` | `RepoPath` |   yes    | Manifest file.                                   |
-| `dest`   | string     |   yes    | Parent directory for derived clone destinations. |
+**Per-entry conditions.** `when` and `unless` are refused with the message that
+names step 5.6, on the same terms as the identical fields on an action. A
+`ref=`, unlike a condition, is accepted and checked today and is honored at 4.5
+with [`ref` on `git-clone`](#git-clone).
 
-An action `id` is required only if its individual manifest entries need
-qualified addresses.
+Entries are not individually selectable yet either. An entry may carry an `id`,
+and an `<action>.<entry>` address may be written in `disabled.toml` or passed to
+`--skip-action`; nothing resolves one, which is the outcome every list holding
+an address already has a rule for. What has to happen for one to resolve is a
+step of its own, and it is what `install_bundles`' blacklist becomes.
 
-#### Deferred manifest expansion
+#### When the list is read
 
-The manifest is not read during structural planning. A selected `git-clone-list`
-stays one opaque node in the plan, carrying its resolved configuration, where its
-manifest source comes from, the variable, fact, and environment context needed to
-evaluate entry conditions, and any requested, disabled, or skipped entry
-addresses that execution must apply. The plan does not claim to know or validate
-the entries.
+**This supersedes the deferred manifest expansion this section used to
+specify.** That design had the list read only when the action executed, on the
+grounds that a remote refresh or an earlier ordered action might change it
+first. What was built reads it as the repository is loaded, because the gain is
+concrete and the loss is not: a malformed line is caught while the home is
+untouched, and neither repository this project exists for generates a list from
+an earlier action.
 
-When the action executes, batfiles materializes or refreshes the manifest's
-source remote if required, reads and validates the manifest, expands its entries
-into a nested execution-time plan, evaluates each entry's condition, and performs
-the selected clones. This holds even when the manifest is already readable at
-planning time, because a remote refresh or an earlier ordered action may change
-it before this action runs.
-
-Entry existence is therefore checked during execution, not during planning. A
-targeted `apply-action --id <action>.<entry>` produces a deferred manifest node
-carrying the requested entry ID; an entry address that no manifest entry matches
-fails when the action executes.
+The rule generalizes to remotes as *a list is read as early as its source is
+readable*: at repository load for a leaf's own list, and at materialization for
+one inside a remote, since a remote's files do not exist before then. Whichever
+step makes an included remote's `git-clone-list` work is where that half is
+built and specified.
 
 ### `git-clone`
 
@@ -708,53 +705,22 @@ other combinations are valid.
 
 ## Git Clone Manifest Format
 
-The `git-clone-list` source is a line-oriented text file rather than TOML.
-Blank lines and full-line comments are ignored.
+Built, and specified as [the clone list
+format](../repoformat.md#the-clone-list-format). What was built differs from
+what this section used to say in three ways, each of which the build settled:
 
-```text
-https://github.com/zsh-users/zsh-autosuggestions.git
-https://github.com/romkatv/powerlevel10k.git id=p10k when="use_p10k" ref=master dest-name=p10k # fancy prompt; example=x
-# plain comment
-```
-
-An entry has this conceptual shape:
-
-```text
-<git-url> [<key>=<value> ...] [# <comment text>]
-```
-
-The URL is the first whitespace-delimited field. It may be followed by
-whitespace-separated `key=value` metadata. The first `#` outside a quoted
-metadata value begins an opaque comment; nothing after it is parsed as
-metadata. A literal hash in a URL must therefore be percent-encoded as `%23`.
-This separation allows comments to contain arbitrary text, including `=`,
-quotes, and text that resembles a supported metadata key.
-
-Supported metadata keys are:
-
-| Key         | Type             | Description                                                       |
-|-------------|------------------|-------------------------------------------------------------------|
-| `id`        | `ID`             | Optional entry ID.                                                |
-| `when`      | condition string | Optional enablement expression. Quote it when it contains spaces. |
-| `unless`    | condition string | Negated alias for `when`; mutually exclusive with it.             |
-| `ref`       | string           | Optional branch, tag, or commit selector.                         |
-| `dest-name` | string           | Optional one-component override for the destination directory name. |
-
-Without `dest-name`, the destination name is the final component after the last
-slash in the repository URL with a trailing `.git` removed. Whether derived or
-specified by `dest-name`, it must be a single ordinary directory component: it
-cannot be `.`, `..`, an absolute path, or a path containing directory
-separators. The entry is cloned to `<action dest>/<destination name>`;
-`dest-name` is only a name and cannot select another directory.
-
-Values may be bare, single-quoted, or double-quoted. Bare values end at
-whitespace or `#`. Quoted values end at the matching quote and may contain `#`.
-Within quoted values the only escapes are `\\`, `\"`, and `\'`. Every
-non-comment field after the URL must be metadata. Unknown keys, duplicate keys,
-unterminated quotes, unsupported escapes, an empty `key=` value, a field without
-`=`, or specifying both `when` and `unless` make that entry's metadata invalid.
-An `id` value that does not match the [shared ID syntax](#names-and-ids) is also
-invalid.
+- The name is derived from everything after the last `/` **or `:`**, not the
+  last slash alone, so that an `scp`-style `git@host:repo.git` — which has no
+  slash — names a directory like every other form. A `ssh://host:2222/…` port
+  colon comes before the last slash, so taking whichever separator falls later
+  reads both correctly.
+- A derived or written name may not be `.git` either, alongside `.` and `..`,
+  and `:` is refused in one along with the directory separators: a list is read
+  on every machine that shares the repository, and a name holding one cannot be
+  a directory on all of them.
+- `when` and `unless` are refused rather than parsed, until step 5.6 gives
+  conditions something to be evaluated against. Both remain specified for an
+  entry; what one may say is the shared [condition](#condition) type.
 
 ## Serializer-Oriented Summary
 

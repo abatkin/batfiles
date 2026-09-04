@@ -41,10 +41,10 @@ Promoted at 0.10 to
 these rules are stated for every action type rather than for `symlink` alone.
 What remains here has no code yet.
 
-A `git-clone-list` manifest's per-entry `dest-name` is not a destination path
-and is not governed by those rules: it is restricted to one ordinary directory
-component beneath the action's `dest`, as defined by the
-[Git clone manifest format](repoformat.md#git-clone-manifest-format).
+That promotion now covers a clone list's per-entry `dest-name` too, which is not
+a destination path and is not governed by those rules: it is restricted to one
+ordinary directory component beneath the action's `dest-dir`, as defined by [the
+clone list format](../repoformat.md#what-a-clone-is-called).
 
 Before mutation, batfiles should resolve and display the effective destination
 in plans. Both halves of that run: a diagnostic names the resolved destination,
@@ -219,9 +219,10 @@ filesystem state at the beginning of the run.
 Instead, execution has two levels:
 
 1. Structural planning resolves variables, conditions, included actions,
-   sources, and the final action order. A `git-clone-list` remains one opaque
-   node whose entries are expanded at execution time, per the repository
-   format's [deferred manifest expansion](repoformat.md#deferred-manifest-expansion).
+   sources, and the final action order. A `git-clone-list`'s own list is read
+   with the repository rather than at execution time, so its entries are known
+   before the first action runs; see [when the list is
+   read](repoformat.md#when-the-list-is-read).
 2. Each enabled action then runs in one pass: it inspects the filesystem as the
    previous action left it and acts on what it finds, rather than on anything
    decided for it earlier.

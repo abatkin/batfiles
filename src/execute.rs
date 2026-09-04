@@ -9,12 +9,14 @@
 //! need"). The three commands differ only in the [`Selection`] they hand it.
 
 use crate::action::{self, RunContext};
+use crate::clone_list;
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::item::ItemAddress;
 use crate::location::Roots;
 use crate::manifest::Manifest;
+use crate::manifest::action::Action;
 use crate::mode::RunMode;
 use crate::output::Reporter;
 use crate::selection::{Selection, Target};
@@ -119,6 +121,39 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
     Ok((manifest, disabled))
 }
 
+/// Read and check every clone list this run would install from, before the
+/// first action writes anything.
+///
+/// A `git-clone-list` names a file in the repository, which is on disk and
+/// readable now, so the rule the manifest itself follows extends to it: a
+/// document a run cannot make sense of stops the run before it has done any
+/// work, rather than partway through. That is what a list buys over the
+/// repositories being spread across the manifest — one malformed line is caught
+/// while the home is still untouched.
+///
+/// It costs one thing, worth saying out loud: a list produced by an earlier
+/// action in the same run is not a list this can read. Both repositories this
+/// exists for keep theirs in git, which is the case the format is for.
+///
+/// Only the records the run would carry out. A list belonging to a disabled or
+/// skipped action is not read, because a run that never reaches an action must
+/// not be failed by it — the same reason its `source` is not required to exist.
+fn read_clone_lists(
+    manifest: &Manifest,
+    selection: &Selection<'_>,
+    context: &RunContext<'_>,
+) -> Result<(), Error> {
+    for action in &manifest.actions {
+        if let Action::GitCloneList(list) = action
+            && selection.wants(action)
+            && selection.skipped(action).is_none()
+        {
+            clone_list::read(&context.source(&list.source)?)?;
+        }
+    }
+    Ok(())
+}
+
 /// The one action-execution loop: everything the target asked for, in
 /// declaration order, stopping at the first failure. Answers with how many
 /// records it carried out.
@@ -141,6 +176,7 @@ fn run(
     // including the context, whose own failure would otherwise swallow it.
     selection.warn_unmatched(&manifest.actions, reporter);
     let context = RunContext::new(roots, mode, reporter)?;
+    read_clone_lists(manifest, selection, &context)?;
     // Counted rather than pre-collected, so the loop keeps iterating the
     // manifest's own list and a heading keeps naming a record by its position
     // in it (`guidance.md`, "Seams the late slices need").

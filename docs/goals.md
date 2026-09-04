@@ -65,10 +65,12 @@ fetching files and archives, and including a reusable remote's actions. The
 [future repository format](future/repoformat.md#actions) enumerates the intended
 set.
 
-**Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`.**
+**Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`.**
 
 That line is the answer to "what can `sync` actually do", and it gains an action
-each time one is built. `tests/hygiene.rs` checks it against the `Action` enum,
+each time one is built. `git-clone-list` is the one entry that is not yet the
+whole of an action: its record and its [list](repoformat.md#git-clone-list) are
+read and checked, and the cloning is being built. `tests/hygiene.rs` checks it against the `Action` enum,
 here and in the project `README.md`, so it cannot fall behind the build.
 
 Normal synchronization is convergence-oriented but intentionally asymmetric:

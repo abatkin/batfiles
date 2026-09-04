@@ -25,6 +25,7 @@ pub(crate) enum Action {
     FetchFile(FetchFileAction),
     FetchArchive(FetchArchiveAction),
     GitClone(GitCloneAction),
+    GitCloneList(GitCloneListAction),
 }
 
 impl Action {
@@ -44,6 +45,7 @@ impl Action {
             Self::FetchFile(action) => ("fetch-file", &action.id, &action.group),
             Self::FetchArchive(action) => ("fetch-archive", &action.id, &action.group),
             Self::GitClone(action) => ("git-clone", &action.id, &action.group),
+            Self::GitCloneList(action) => ("git-clone-list", &action.id, &action.group),
         };
         Common {
             kind,
@@ -104,6 +106,14 @@ impl Action {
             Self::GitClone(action) => {
                 check_git_source(&action.source, number)?;
                 check_dest(&action.dest, number)
+            }
+            // The one action whose `source` names a file in the repository and
+            // whose repositories are named somewhere else entirely, so its two
+            // fields answer to the two ordinary rules and its `source` is a
+            // path again.
+            Self::GitCloneList(action) => {
+                check_source(&action.source, number)?;
+                check_dest(&action.dest_dir, number)
             }
         }
     }
@@ -368,6 +378,37 @@ pub(crate) struct GitCloneAction {
     pub dest: String,
 }
 
+/// `git-clone-list`: every repository a list in the repository names, cloned
+/// under one directory.
+///
+/// [`GitCloneAction`] repeated over a file, and the file is the point: a list of
+/// plugins is edited by pasting a URL onto the end of it, and a format that
+/// asked for a five-line TOML record per repository would be a worse version of
+/// the file it replaces (`guidance.md`, rule 11). What the list may say is the
+/// [clone list format](crate::clone_list), which is not TOML and is read by a
+/// parser of its own.
+///
+/// The list is read as the repository is loaded, so a malformed one fails before
+/// any action has run. Cloning its entries arrives at 4.5.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct GitCloneListAction {
+    /// Makes the action addressable, and — once entries are individually
+    /// selectable — the first segment of `<action>.<entry>`.
+    pub id: Option<ItemId>,
+    /// The one group the action belongs to.
+    pub group: Option<ItemId>,
+    /// The list, relative to the repository root. An ordinary repository path,
+    /// unlike the sources of the two actions that reach the network: what is off
+    /// this machine is named by the list's lines, not by this field.
+    pub source: String,
+    /// The directory the clones are made in, resolved against the selected home
+    /// when the action runs. Spelled `dest-dir` like the other actions that
+    /// install into a directory rather than at a name, because that is what it
+    /// is: each entry contributes one child of it.
+    pub dest_dir: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +450,10 @@ mod tests {
             (
                 "type = \"git-clone\"\nsource = \"https://e.example/a.git\"\ndest = \"~/b\"\n",
                 "git-clone",
+            ),
+            (
+                "type = \"git-clone-list\"\nsource = \"list.txt\"\ndest-dir = \"~/b\"\n",
+                "git-clone-list",
             ),
         ] {
             assert_eq!(described(record, 1), format!("{kind} action 1"));

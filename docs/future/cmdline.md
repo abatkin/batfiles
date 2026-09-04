@@ -72,9 +72,9 @@ one thing a dry run does that is not describing.
 
 **Remote content is described, not retrieved.** `git-clone-list` says what it
 would clone and where each entry would land — and, where a clone is already
-there, that it would update it — without contacting the network. Its manifest is
-a repository file, readable at the moment the action runs, so a dry run reads it
-and reports one line per entry. The fetching actions and `git-clone` already
+there, that it would update it — without contacting the network. Its list is a
+repository file, read with the repository in both modes, so a dry run reports
+one line per entry from a list it already holds. The fetching actions and `git-clone` already
 work this way; see [`docs/cmdline.md`](../cmdline.md#dry-run-behavior), which
 also states the one rule this inherits — under `--dry-run` no `git` runs at all.
 

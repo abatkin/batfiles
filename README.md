@@ -24,7 +24,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`.
 
 - **`sync` reads a repository and installs it.** It executes the manifest's
   actions in declaration order, each one seeing the filesystem the previous
@@ -73,6 +73,17 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   — a file, a symlink to a checkout elsewhere, a directory somebody else filled,
   or what an interrupted clone left behind — is refused by name rather than
   cloned over or fetched into.
+- **A list of repositories is read and checked, and not yet cloned.**
+  `git-clone-list` names a plain text file in the repository — one repository
+  per line, `key=value` metadata beside it — and one directory to clone them
+  all under, which is how a vim or zsh plugin directory is usually kept. The
+  list is read and checked as the repository is loaded, so a malformed line
+  fails the run before the first action has touched anything; carrying the
+  action out arrives with the next slice, and until then reaching one warns
+  that nothing was cloned and the run continues. It is the second thing
+  accepted without being acted on, and like `[default-disabled]` it is named
+  here rather than left to be discovered — a `sync` that succeeds does not yet
+  mean every repository in your lists is on disk.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not

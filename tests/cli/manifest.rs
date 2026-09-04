@@ -429,14 +429,16 @@ fn the_copy_types_paths_follow_the_same_rules_as_every_other() {
 
 #[test]
 fn an_action_type_that_has_not_landed_is_rejected() {
+    // `include-remote` is the last action type the format specifies and this
+    // build does not have; it arrives at step 7.2. Until then a manifest
+    // declaring one fails rather than appearing to include anything.
     let stderr = rejected(
         "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"manifests/vim-plugins.txt\"\n\
-         dest = \"~/.vim/bundle\"\n",
+         type = \"include-remote\"\n\
+         remote = \"core\"\n",
     );
     assert!(
-        stderr.contains("git-clone-list"),
+        stderr.contains("include-remote"),
         "the type was not named:\n{stderr}"
     );
 }

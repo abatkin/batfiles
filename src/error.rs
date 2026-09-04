@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::archive;
+use crate::clone_list;
 use crate::item::{ItemAddress, ItemAddressError};
 use crate::manifest;
 use crate::paths::ExistingNode;
@@ -159,6 +160,16 @@ pub(crate) enum Error {
     /// An action type this build of batfiles cannot carry out on this platform.
     #[error("`{action_type}` actions are not supported on this platform")]
     UnsupportedOnPlatform { action_type: &'static str },
+
+    /// A clone list that was read and breaks one of its own rules. The rules,
+    /// and why the line rather than the file is what a fault is attached to,
+    /// are [`clone_list::Invalid`]'s.
+    #[error("invalid clone list in {}, line {line}: {source}", .path.display())]
+    CloneList {
+        path: PathBuf,
+        line: usize,
+        source: clone_list::Invalid,
+    },
 
     // Fetching over the network. Flat for now: 4.5 is where a caller first has
     // to tell one of these apart from another, and nesting waits for that

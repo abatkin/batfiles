@@ -152,14 +152,25 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   shells out to `git` — the fourth reader of `RunMode`, and the only one slice 4
   adds. It clones where nothing is and fast-forwards where a clone is, which is
   the whole of the conservative update policy that does not need a `ref`.
-- **4.4** Add the `git-clone` list manifest format.
-- **4.5** Add `git-clone-list`, cloning each entry through 4.3's
-  `git::clone_or_update` and giving it the two things a list needs that one
-  repository did not.
+- **4.4** ✅ Add the clone list format, and read it as the repository is loaded.
+  The record and `src/clone_list.rs` landed together, there being no artifact
+  separable from the parser that enforces it, and the load-time read is a change
+  of mind about `docs/future/`'s deferred manifest expansion that the future
+  document now records. Reaching the action warns that it cloned nothing and the
+  run carries on, on `git.rs`'s terms for a clone it declines to update rather
+  than rule 12's for an option — deliberately, the window being one step wide,
+  and the cost being that a successful `sync` does not mean the whole manifest
+  is installed. `action/git_clone_list.rs` holds the warning and the `CARRY`
+  marker; 4.5 replaces both.
+- **4.5** Add the cloning half of `git-clone-list`, through 4.3's
+  `git::clone_or_update`, and give it the two things a list needs that one
+  repository did not. `clone_list::read` already returns the entries and 4.4
+  discards them; the change is to carry them from `execute::read_clone_lists` to
+  the action rather than to read the file again.
 
   **`ref`.** 4.3 refused it on the closed record, so this is the step that
-  un-rejects it — on the list's per-entry `ref=` *and* on the `git-clone` record,
-  which is specified with one. It is also what makes the rest of
+  un-rejects it on `git-clone`; 4.4 already accepts and checks the list's
+  per-entry `ref=`, and honoring it is what is left. It is also what makes the rest of
   `docs/future/safety.md`'s "Git repositories" mean something: with a declared
   ref, a clean worktree may have its checked-out branch changed and its remote
   URL updated, and both transitions are reported. Promote that half of the
@@ -174,18 +185,23 @@ artifact of (`guidance.md`, "Why there is no effect type"), so no bullet defines
   flat `Git*` variants 4.3 added move under it or stay, whichever the match
   wants.
 
-  A dry run reports one line per entry — the manifest is a repository file,
-  readable at the moment the action runs — in 4.3's shape and tense: `would clone
-  <dest> from <url>` where nothing is, `would update <dest> from <url>` where
-  something is. **No entry runs `git`**, by the one rule in `src/git.rs`, so none
-  reaches the network and none can say what an update would bring, which is the
-  "intent, not success" boundary rather than a partial plan (`guidance.md`, "Why
-  there is no effect type").
+  A dry run reports one line per entry — 4.4 read the list with the repository,
+  in both modes, so the entries are already in hand — in 4.3's shape and tense,
+  which means taking the wording from `clone_or_update` rather than restating it:
+  `would clone <dest> from <url>` where nothing is, and `would update <dest>`
+  where something is, **with no URL on the update line**. 4.3 left it off
+  deliberately, an update fetching the clone's own remote rather than the
+  manifest's `source`, and a list inherits that. **No entry runs `git`**, by the
+  one rule in `src/git.rs`, so none reaches the network and none can say what an
+  update would bring, which is the "intent, not success" boundary rather than a
+  partial plan (`guidance.md`, "Why there is no effect type").
 - **4.7** Extend the git fixtures to a *list* of repositories; no step in the
-  suite may reach the network. A dry run is part of what is tested here:
-  `git-clone-list` reads its manifest — a repository file, readable at the moment
-  the action runs — and says one line per entry, without reaching the network,
-  and an existing clone is left exactly as it was, unfetched.
+  suite may reach the network. `tests/fixtures/clonelist` exists and names
+  repositories nothing contacts, which is what 4.4 needed; this is where it
+  starts pointing at local bare repositories, the way `cloning` does. A dry run
+  is part of what is tested here: `git-clone-list` says one line per entry
+  without reaching the network, and an existing clone is left exactly as it was,
+  unfetched.
 
   Most of the apparatus is already there. 4.1 gave `tests/cli/support.rs` a
   `tiny_http` `Server` that counts requests, and 4.3 gave it `BareRepo`, a bare

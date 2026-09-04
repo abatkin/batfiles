@@ -417,7 +417,7 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, and `fetch-archive` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, and `git-clone-list` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 
@@ -1090,6 +1090,148 @@ leaves, and it is the one this whole check exists for: a clone writes directly
 into its destination, so a tool that read the mere presence of something as
 "already installed" would report success over that wreckage on every run from
 then on.
+
+### `git-clone-list`
+
+Declares every repository a list names, cloned under one directory.
+
+```toml
+[[actions]]
+type = "git-clone-list"
+id = "zsh-plugins"
+source = "manifests/zsh-plugins.txt"
+dest-dir = "~/.oh-my-zsh/custom/plugins"
+```
+
+| Field      | Type   | Required | Description                                                        |
+|------------|--------|:--------:|--------------------------------------------------------------------|
+| `source`   | string |   yes    | The list, relative to the repository root. Never empty.            |
+| `dest-dir` | string |   yes    | The directory the clones are made in. Never empty; `~` is the home. |
+
+[`git-clone`](#git-clone) repeated over a file, and the file is the point: a
+plugin directory is kept by pasting a URL onto the end of a list, and a format
+asking for a whole TOML record per repository would be a worse version of the
+file it replaces. What the list may say is the [clone list
+format](#the-clone-list-format) below.
+
+Both fields are ordinary. `source` names a file in the repository and follows
+[Sources and destinations](#sources-and-destinations) like any other — unlike
+`git-clone`'s `source`, which names something off this machine; here that is the
+list's job, line by line. `dest-dir` is spelled as it is because this action
+installs *into* a directory rather than at a name, exactly as `symlink-dir` and
+`copy-dir` do, and each entry contributes one child of it.
+
+**The list is read as the repository is loaded, before any action runs.** It is
+a file in the repository, on disk and readable at that point, so the rule the
+manifest itself follows extends to it: a document batfiles cannot make sense of
+stops the run before it has done any work rather than partway through. One
+malformed line is caught while your home is still untouched, which is most of
+what a list buys over the same repositories spread through the manifest. The
+cost is worth stating: a list *produced* by an earlier action in the same run is
+not a list this can read. A list belonging to an action the run passes over —
+disabled, or skipped for this run — is not read at all, for the same reason such
+an action's `source` need not exist.
+
+**Cloning the entries is not built yet.** The record is accepted, the list is
+read and checked, and a run that reaches the action **warns that it cloned
+nothing and carries on** — the same terms a clone batfiles declines to update
+gets, and for the same reason: stopping would strand every action after this
+one. Declaring one today gets you a repository and a list you can correct before
+there is anything to install from them; what a clone then does, and what it
+refuses, is [`git-clone`](#git-clone)'s and will not differ here.
+
+The consequence is worth knowing while it lasts: **a successful `sync` does not
+yet mean every repository your lists name is on disk.** The warning is the only
+thing that says so, and it is a warning rather than a note so that `--quiet`
+does not take it away.
+
+## The clone list format
+
+The file a [`git-clone-list`](#git-clone-list) names is not TOML. It is one
+repository per line, in the shape a hand-maintained list of plugins already
+takes:
+
+```text
+# vim plugins
+https://github.com/tpope/vim-fugitive.git
+https://github.com/vim-airline/vim-airline
+https://github.com/romkatv/powerlevel10k.git dest-name=p10k id=p10k  # the prompt
+```
+
+An entry is a repository, optional `key=value` metadata beside it, and an
+optional comment:
+
+```text
+<repository> [<key>=<value> ...] [# <comment>]
+```
+
+The repository is the first whitespace-delimited field, and it is whatever `git`
+accepts, exactly as [`git-clone`](#git-clone)'s `source` is: only an empty one is
+refused here. **Blank lines and comments declare nothing.** The first `#`
+outside a quoted value begins a comment and nothing after it is read, so a
+comment may contain anything at all — including text that looks like metadata. A
+`#` that is part of a repository URL has to be written `%23`.
+
+| Key         | Type   | Description                                                |
+|-------------|--------|-------------------------------------------------------------|
+| `id`        | `ID`   | Makes the entry addressable as `<action>.<entry>`.          |
+| `ref`       | string | The branch, tag, or commit to follow.                       |
+| `dest-name` | string | What to call the clone, in place of the derived name.       |
+
+`when` and `unless` are specified for an entry and are refused today, naming the
+step they arrive at, rather than accepted and never consulted. So is any other
+key: a misspelled one is an error, and so is writing a key twice, writing
+`key=` with no value, and writing a field after the repository that is not
+`key=value` at all — most often a second repository on the same line.
+
+An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory
+name follows: `ack.vim` is a perfectly good directory and not a valid ID,
+because a dot composes a qualified address. So an entry's ID is never derived
+from its name; write one when you want to name the entry.
+
+**Values may be quoted**, with `'` or `"`, which is what lets one hold a space or
+a `#`. Inside a quoted value the only escapes are `\\`, `\"`, and `\'`; a
+backslash before anything else is an error rather than a newline or a silently
+dropped character. A quote that never closes is an error too, since it would
+otherwise swallow the rest of the line.
+
+### What a clone is called
+
+Without `dest-name`, the directory an entry clones into is derived from the
+repository: everything after its last `/` or `:`, with a trailing `.git`
+removed. Both characters are separators because both end a repository name —
+`git@github.com:repo.git` has no slash, while `ssh://git@host:2222/user/repo.git`
+has a colon that is a port, and taking whichever comes last reads every form
+correctly. The derivation is textual and does not ask what kind of URL it is
+looking at.
+
+Derived or written, the name must be **one ordinary directory component**: not
+empty, not `.`, `..`, or `.git`, and holding no `/`, `\`, or `:`. `dest-name` is
+a name and not a path — an entry cannot install outside the directory its action
+declared, whether by climbing out of it or by naming a directory of its own. A
+repository whose last component is no directory name, such as one ending at its
+own separator, is an error that asks for a `dest-name`; a Windows path is the
+ordinary case of it, its drive letter being the last separator.
+
+**Two entries may not clone into one directory**, and two may not share an `id`.
+Both are caught as the list is read, and both name the earlier line as well as
+the later one. The same repository under two names is not a repeat: what has to
+differ is the directory.
+
+**Two names that differ only in case are one of those directories**, and are
+refused on every platform — including the ones where they genuinely are two.
+`Plugin` and `plugin` are one directory on Windows and on a typical macOS
+volume, and a list is meant to read the same on every machine that shares the
+repository. Where they do collide, the second entry would find the first's
+clone and be satisfied by it, and an update never asks which repository a clone
+came from ([the remote a clone fetches from](#a-clone-is-the-one-thing-batfiles-comes-back-to)),
+so the wrong repository would sit there reporting success on every run. Case
+that carries a real difference is untouched: only names that are the same word
+collide, and a clone still lands under the name exactly as it is written.
+
+Every fault names the file, the line, and what is wrong with it, and the first
+one stops the run — a list with two mistakes reports the earlier one and the
+next run reports the rest, which is how the manifest's own rules behave.
 
 ## Default-disabled bootstrap entries
 
