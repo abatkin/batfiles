@@ -271,7 +271,8 @@ exclude = ["private/*", "*.bak"]
 
 The ID rule itself, and action-ID uniqueness, are specified in
 [`docs/repoformat.md`](../repoformat.md#names-and-ids). The variable-name rule
-below is not built, and neither are the remote and manifest-entry IDs.
+below and remote IDs are not built. Clone-list entry IDs follow the current
+[entry format](../repoformat.md#the-clone-list-format).
 
 ```text
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
@@ -452,36 +453,15 @@ bootstrap policy belongs to the leaf repository.
 
 ## Actions
 
-The ordered list, the tagged-record shape, and the common `type`, `id`, and
-`group` fields are specified in
-[`docs/repoformat.md`](../repoformat.md#actions), along with `symlink`,
-`symlink-dir`, `create-dir`, `copy`, and `copy-dir` in full. `when` and `unless`
-are not built, nor is any variant other than those five.
-
-`[[actions]]` is an ordered heterogeneous array. Each action is a tagged record
-selected by its required `type` field.
-
-All action variants share these fields:
-
-| Field   | Type               | Required | Description                                                                |
-|---------|--------------------|:--------:|----------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant.                                                |
-| `id`    | `ID`               |    no    | Makes the action addressable when its surrounding context also permits it. |
-| `when`  | `Condition`        |    no    | Conditionally enables the action.                                          |
-| `group` | `ID`               |    no    | Places the action in one group.                                            |
+Current action types and their shared fields are specified in
+[`docs/repoformat.md`](../repoformat.md#actions). The proposed `when` and `unless`
+fields conditionally select any action; see [conditions](#condition).
 
 ### `symlink-dir`
 
 The action itself — `source-dir`, `dest-dir`, and `dot-prefix` — is built and
 specified in [`docs/repoformat.md`](../repoformat.md#symlink-dir). Only the two
 filters below are not built, and a manifest that writes either is rejected.
-
-This was originally specified as a second *mode* of `symlink`, selected by
-writing `source-dir` instead of `source`, with "exactly one of the two modes is
-valid" as a rule spanning the record. It was built as its own action type
-instead: each record is then closed independently, serde decides which fields
-are required, and there is no half-inert record whose meaning depends on a
-sibling field. The build wins, per [`docs/README.md`](../README.md).
 
 ```toml
 [[actions]]
@@ -497,35 +477,15 @@ exclude = "private"
 | `include` | `GlobFilter` |    no    | Direct child names to include. |
 | `exclude` | `GlobFilter` |    no    | Direct child names to exclude. |
 
-Neither is built, and neither is scheduled. They were deferred rather than
-declined: the two repositories this action exists for need no filter, adding one
-to an existing record later is purely additive, and the pattern dialect is an
-open question a real need should settle. Note that a child is a single path
-segment here, since nothing descends — so a `GlobFilter` in this action can
-never usefully contain a `/`, which is what distinguishes it from
-[`copy`](#copy)'s filters, where selection is recursive.
+These filters are unbuilt; the pattern dialect remains open. Each child name is
+one path segment, so `/` cannot match here. The proposed [`copy`](#copy) filters
+select recursively.
 
 ### `copy`
 
-Built as **two** actions, `copy` and `copy-dir`, specified in
+`copy` and `copy-dir` are specified in
 [`docs/repoformat.md`](../repoformat.md#copy). Only the two filters below are
 not built, and they are rejected on both.
-
-This was originally specified as one action whose `dest` meant an exact
-destination for a file-like source and a merge root for a directory source —
-switching, that is, on a fact that is not in the manifest but on the disk, and
-discovered only when the action runs. It was split along the same line as
-`symlink`/`symlink-dir`, which is not the source type but what happens to the
-source's *contents*: `copy` installs one thing at one name, whatever that thing
-is, and `copy-dir` installs each direct child of a directory into a directory.
-Both readings of the original are still expressible; the author now writes which
-one they meant. The build wins, per [`docs/README.md`](../README.md).
-
-Two consequences went with the split, both recorded in
-[`safety.md`](safety.md#seed-actions-and-deletion): `dot-prefix` belongs only to
-`copy-dir`, so writing it on a `copy` is an unknown field caught while the
-manifest is read rather than a run-time complaint; and a child directory that
-already exists is kept whole rather than traversed as a merge point.
 
 ```toml
 [[actions]]
@@ -541,15 +501,11 @@ exclude = ["private/*"]
 | `include` | `GlobFilter` |    no    | Recursive selection when the source is a directory. |
 | `exclude` | `GlobFilter` |    no    | Recursive exclusion when the source is a directory. |
 
-Neither is built, and neither is scheduled, for the reasons given under
-[`symlink-dir`](#symlink-dir). Unlike that action's filters these are recursive,
-so a pattern here can usefully contain a `/`.
+These filters are unbuilt. Selection is recursive, so patterns may contain `/`.
 
 ### `create-dir`
 
 Built and specified in [`docs/repoformat.md`](../repoformat.md#create-dir).
-Nothing about it is deferred: the action is one `dest` and no source, and it is
-the whole of what was specified here.
 
 ### `git-clone-list`
 
@@ -565,23 +521,13 @@ Entries are not individually selectable yet either. An entry may carry an `id`,
 and an `<action>.<entry>` address may be written in `disabled.toml` or passed to
 `--skip-action`; nothing resolves one, which is the outcome every list holding
 an address already has a rule for. What has to happen for one to resolve is a
-step of its own, and it is what `install_bundles`' blacklist becomes.
+step of its own, and it is per-machine plugin selection.
 
 #### When the list is read
 
-**This supersedes the deferred manifest expansion this section used to
-specify.** That design had the list read only when the action executed, on the
-grounds that a remote refresh or an earlier ordered action might change it
-first. What was built reads it as the repository is loaded, because the gain is
-concrete and the loss is not: a malformed line is caught while the home is
-untouched, and neither repository this project exists for generates a list from
-an earlier action.
-
-The rule generalizes to remotes as *a list is read as early as its source is
-readable*: at repository load for a leaf's own list, and at materialization for
-one inside a remote, since a remote's files do not exist before then. Whichever
-step makes an included remote's `git-clone-list` work is where that half is
-built and specified.
+[Leaf clone lists](../repoformat.md#git-clone-list) are prepared before action
+writes. For remote inclusion, materialize the source first, then prepare the
+list before executing included actions. Step 7.2 owns this extension.
 
 ### `git-clone`
 
@@ -589,7 +535,7 @@ Built and specified in
 [`docs/repoformat.md`](../repoformat.md#git-clone), including the conservative
 update policy a later `sync` applies to the clone it finds and the
 [`ref`](../repoformat.md#ref-following-one-branch-tag-or-commit) that says which
-branch, tag, or commit it should be on. Nothing about it is deferred.
+branch, tag, or commit it should be on.
 
 ### `fetch-archive` entry filters
 
@@ -680,29 +626,17 @@ other combinations are valid.
 
 ## Git Clone Manifest Format
 
-Built, and specified as [the clone list
-format](../repoformat.md#the-clone-list-format). What was built differs from
-what this section used to say in three ways, each of which the build settled:
-
-- The name is derived from everything after the last `/` **or `:`**, not the
-  last slash alone, so that an `scp`-style `git@host:repo.git` — which has no
-  slash — names a directory like every other form. A `ssh://host:2222/…` port
-  colon comes before the last slash, so taking whichever separator falls later
-  reads both correctly.
-- A derived or written name may not be `.git` either, alongside `.` and `..`,
-  and `:` is refused in one along with the directory separators: a list is read
-  on every machine that shares the repository, and a name holding one cannot be
-  a directory on all of them.
-- `when` and `unless` are refused rather than parsed, until step 5.6 gives
-  conditions something to be evaluated against. Both remain specified for an
-  entry; what one may say is the shared [condition](#condition) type.
+The current [clone-list format](../repoformat.md#the-clone-list-format) defines
+names, metadata, quoting, and collision handling. Proposed entry conditions use
+the shared [condition](#condition) type and are scheduled for 5.6.
 
 ## Serializer-Oriented Summary
 
 A serializer or deserializer needs to account for four unions:
 
 1. `Remote` is tagged by `type` as `git`, `file`, or `archive`.
-2. `Action` is tagged by `type` as one of seven action variants.
+2. `Action` is tagged by `type`; current variants are in the
+   [action schema](../repoformat.md#actions).
 3. A `[vars]` value is either a string or a dynamic-variable record.
 4. A repository-backed source is either a string or a structured remote/path
    record.

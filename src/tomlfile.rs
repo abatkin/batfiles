@@ -1,13 +1,4 @@
-//! Reading and writing the TOML documents batfiles owns.
-//!
-//! Reading is plain parse-and-validate. Writing is a whole-document rewrite:
-//! serialize in memory, write a temporary file beside the destination, then
-//! rename over it, so a reader sees either the complete old document or the
-//! complete new one.
-//!
-//! Everything here is about files and syntax. Which document lives where, what
-//! its records mean, and when it is rewritten belong to the modules that own
-//! those documents.
+//! Read TOML documents and atomically replace them through owned temporary files.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -22,10 +13,6 @@ use serde::de::DeserializeOwned;
 use crate::error::Error;
 
 /// Read and parse one document. A missing file is an error.
-///
-/// Both failures name the path: a diagnostic that does not say which file it
-/// read leaves the reader guessing between the manifest and the state
-/// documents.
 pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
     let text = fs::read_to_string(path).map_err(|source| Error::Read {
         path: path.to_path_buf(),
@@ -38,9 +25,6 @@ pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
 }
 
 /// Read and parse one document, treating a missing file as an empty one.
-///
-/// Only a missing file falls back. An unreadable or malformed document is still
-/// fatal and leaves the file untouched, so this is not a repair path.
 pub(crate) fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Error> {
     match read(path) {
         Err(error) if error.is_not_found() => Ok(T::default()),
@@ -48,12 +32,9 @@ pub(crate) fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> Res
     }
 }
 
-/// Serialize `value` and replace `path` with it atomically.
-///
-/// The rename is the commit point. If anything before it fails the temporary
-/// file is removed and the destination keeps its previous contents. Missing
-/// parent directories are created. There is no fsync: the rename buys
-/// atomicity, not crash durability.
+/// Serialize and atomically replace a document, creating missing parents.
+/// Existing permissions are applied before writing content. Cleanup is
+/// best-effort; no fsync or lock is used.
 pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), Error> {
     let text = toml::to_string(value).map_err(|source| Error::Serialize {
         path: path.to_path_buf(),
@@ -74,49 +55,42 @@ pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(),
 
     // The temporary file is a sibling so the rename stays within one filesystem.
     let temp = temp_path(path);
-    publish(&temp, path, text.as_bytes()).map_err(|source| {
-        let _ = fs::remove_file(&temp);
-        write_error(source)
-    })
+    publish(&temp, path, text.as_bytes()).map_err(write_error)
 }
 
-/// Write the bytes to `temp` and rename it over `dest`.
-///
-/// The order matters. A replacement keeps the permissions the destination
-/// already had, and it has to acquire them while it is still empty: the
-/// temporary file is created under the process umask, so writing first and
-/// narrowing afterwards would publish the finished document through a
-/// world-readable sibling — exactly in the case where the destination was
-/// deliberately restricted.
+/// Write through an exclusively created temporary file and rename it over `dest`.
+/// On failure, remove only the temporary file created by this call.
 fn publish(temp: &Path, dest: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = create_guarded(temp, dest)?;
-    file.write_all(bytes)?;
+    let written = file.write_all(bytes);
     drop(file);
-
-    fs::rename(temp, dest)
+    let result = written.and_then(|()| fs::rename(temp, dest));
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
 }
 
-/// Create `temp` empty and, when `dest` already exists, narrow it to `dest`'s
-/// permissions — all before the caller has anything to write into it.
-///
-/// Splitting this out is what keeps the ordering true: the only handle a caller
-/// can write through is one this function has already protected. A brand new
-/// file keeps what the umask gave it, like any other file batfiles creates.
+/// Exclusively create `temp` and apply existing destination permissions before
+/// returning its empty handle. New documents retain the process umask.
+/// Permission failures remove the newly created file; occupied paths are untouched.
 fn create_guarded(temp: &Path, dest: &Path) -> io::Result<fs::File> {
-    let file = fs::File::create(temp)?;
-    if let Ok(metadata) = fs::metadata(dest) {
-        // Applied through the open handle rather than the path, so nothing can
-        // swap the file out from under it. A failure here is fatal instead of
-        // best-effort: publishing a replacement more permissive than what it
-        // replaces would quietly widen access to the destination.
-        file.set_permissions(metadata.permissions())?;
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)?;
+    if let Ok(metadata) = fs::metadata(dest)
+        && let Err(error) = file.set_permissions(metadata.permissions())
+    {
+        drop(file);
+        let _ = fs::remove_file(temp);
+        return Err(error);
     }
     Ok(file)
 }
 
-/// A sibling path for the temporary file: dot-prefixed so it is inconspicuous,
-/// and tagged with the process id and a counter so concurrent writers — within
-/// this process or across processes — never share one.
+/// Choose a hidden sibling name using the process ID and a local counter.
+/// Exclusive creation detects collisions with files from other invocations.
 fn temp_path(dest: &Path) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -228,6 +202,48 @@ mod tests {
         assert_eq!(leftovers, 1, "the temporary file should have been removed");
     }
 
+    #[test]
+    fn an_existing_temporary_file_is_neither_truncated_nor_removed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let dest = dir.path().join("disabled.toml");
+        let temp = temp_path(&dest);
+        fs::write(&dest, "original").expect("destination");
+        fs::write(&temp, "someone else's file").expect("occupied temporary path");
+
+        let error = publish(&temp, &dest, b"replacement").expect_err("occupied path");
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&temp).expect("temporary file"),
+            "someone else's file"
+        );
+        assert_eq!(fs::read_to_string(&dest).expect("destination"), "original");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_at_the_temporary_path_and_its_target_are_preserved() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let dest = dir.path().join("disabled.toml");
+        let temp = temp_path(&dest);
+        let target = dir.path().join("other");
+        fs::write(&dest, "original").expect("destination");
+        fs::write(&target, "other content").expect("target");
+        std::os::unix::fs::symlink(&target, &temp).expect("symlink");
+
+        assert_eq!(
+            publish(&temp, &dest, b"replacement")
+                .expect_err("symlink")
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_link(&temp).expect("symlink remains"), target);
+        assert_eq!(
+            fs::read_to_string(&target).expect("target"),
+            "other content"
+        );
+        assert_eq!(fs::read_to_string(&dest).expect("destination"), "original");
+    }
+
     /// Permissions are a Unix mode here; on Windows `Permissions` carries only
     /// the read-only flag, so there is nothing equivalent to assert.
     #[cfg(unix)]
@@ -253,12 +269,6 @@ mod tests {
 
         #[test]
         fn the_temporary_file_is_narrowed_before_it_can_hold_content() {
-            // A restricted document must be unreadable to other users for the
-            // whole time it exists, not only once it has been renamed into
-            // place. Writing first and adopting the mode afterwards would leave
-            // the finished document sitting in a world-readable sibling, so the
-            // guarantee is that the handle a caller writes through is already
-            // narrowed and still empty.
             let dir = tempfile::tempdir().expect("temp dir");
             let dest = dir.path().join("disabled.toml");
             fs::write(&dest, "editor = \"nvim\"\n").expect("fixture");
@@ -286,9 +296,6 @@ mod tests {
 
         #[test]
         fn a_new_file_honors_the_umask_like_any_other_create() {
-            // Asserting a literal mode would depend on the umask CI happens to
-            // run with, so compare against an ordinary create in the same
-            // process instead.
             let dir = tempfile::tempdir().expect("temp dir");
             let reference = dir.path().join("reference.toml");
             fs::write(&reference, "").expect("fixture");

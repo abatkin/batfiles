@@ -33,9 +33,7 @@ Three of the four are live so far. `sync` opens the `batfiles.toml` in the leaf
 repository and the [`disabled.toml`](state.md) under the config directory, and
 installs into the selected home; the enable and disable commands rewrite
 `disabled.toml` and open nothing else. Only the cache directory is still an
-answer to where a command *would* work. All four are resolved together anyway,
-because one set of rules covers all four roots and splitting it would mean
-writing those rules twice.
+answer to where a command *would* work. All four roots are resolved together.
 
 ## Run-only skips
 
@@ -44,31 +42,14 @@ writing those rules twice.
 | `BATFILES_SKIP_ACTIONS` | `--skip-action`   | Names actions to leave out of the current run.           |
 | `BATFILES_SKIP_GROUPS`  | `--skip-group`    | Names groups to leave out of the current run.            |
 
-Both are comma-separated lists. Each item is trimmed, empty items are discarded,
-and the remaining items are **unioned** with the values of the matching option
-rather than replacing or being replaced by them — these say what to leave out,
-so anything either source names is left out. This is why the general
-`option > variable` precedence does not apply to them.
+Both are comma-separated lists. Items are trimmed and empty items discarded.
+The lists are combined with the matching CLI options. See
+[selection](cmdline.md#selecting-what-a-run-does) for command-specific handling,
+precedence of reported exclusions, and unmatched-address diagnostics.
 
 ```console
 $ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
 ```
-
-`sync` honors both, and `clone` will when it is built.
-[`apply-group`](cmdline.md#apply-group) honors `BATFILES_SKIP_ACTIONS` and
-ignores `BATFILES_SKIP_GROUPS`, matching the options it accepts: it has already
-named the group it is applying, so a group skip could only contradict that.
-[`apply-action`](cmdline.md#apply-action) ignores both, naming one action being
-what waives every reason to pass it over.
-
-Skips apply only to the current run and are never
-persisted to [`disabled.toml`](state.md); what a run does with the two together,
-and what it says about a name that matches nothing, is specified in
-[selecting what a run does](cmdline.md#selecting-what-a-run-does).
-
-Each item is an action or group [address](cmdline.md#addresses). Since items are
-trimmed and split on commas, an address may contain neither — which is why the
-ID rule excludes both characters.
 
 ## Location selection
 
@@ -179,35 +160,7 @@ GIT_INDEX_FILE  GIT_OBJECT_DIRECTORY  GIT_ALTERNATE_OBJECT_DIRECTORIES
 GIT_NAMESPACE  GIT_CONFIG  GIT_CONFIG_COUNT
 ```
 
-Most of these tell Git to work on a repository, an index, or an object store
-other than the one it is standing in, and an action must act on its own `dest`
-and nothing else. With `GIT_DIR` inherited, a `sync` would fetch into and
-fast-forward that repository while leaving the declared destination untouched.
-
-You need not have set any of them deliberately for this to matter. Git exports
-several to what it runs, so batfiles may well be one of those children: `git
-submodule foreach` exports `GIT_DIR`, a `pre-commit` hook gets `GIT_INDEX_FILE`,
-and `git rebase --exec` gets `GIT_PREFIX`.
-
-**This is not a security boundary.** Against something that means harm,
-`GIT_CONFIG_GLOBAL` and `GIT_SSH_COMMAND` are just as potent, and batfiles keeps
-both on purpose — honoring your Git setup is the point. What the removal defends
-against is state inherited by accident. The split is between naming a
-*repository* and naming your *setup*: the first is cleared, the second is not.
-
-Three entries do less than the list suggests, and are named here rather than
-quietly carried:
-
-- `GIT_CEILING_DIRECTORIES` and `GIT_DISCOVERY_ACROSS_FILESYSTEM` decide nothing
-  today. Batfiles confirms a `.git` at the destination before running any
-  command there, so Git's search stops at the destination and never walks up,
-  and these can only narrow a search that does not happen.
-- `GIT_CONFIG` redirects nothing either: in current Git it means `git config
-  --file`, reaching that one command and no other. It is cleared for a different
-  reason — batfiles asks `git config` which branch this clone tracks, and a
-  `GIT_CONFIG` you set for your own use of that command would have the question
-  answered out of an unrelated file.
-- `GIT_CONFIG_COUNT` carries ad-hoc `key=value` pairs for a single invocation.
-  Git ignores `core.worktree` from that scope, so it cannot move the worktree,
-  and what clearing it costs is a plausible one-off such as an `http.proxy` in
-  front of a single `sync`. Whether it belongs here at all is unsettled.
+Repository discovery and command-local configuration overrides are cleared along
+with repository, index, and object-store redirects. `GIT_CONFIG_COUNT` overrides
+are not supported; use your Git configuration files for proxy or header settings.
+This is protection against accidental inherited state, not a security boundary.

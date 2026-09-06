@@ -1,10 +1,4 @@
 //! Location-root resolution.
-//!
-//! The four directories a command works in, resolved from the command line and
-//! the captured [`Environment`]. Each root follows `option > BATFILES_* >
-//! default`; the home and the leaf repository track the *selected* home, while
-//! the config and cache directories hold batfiles' own machine-local state and
-//! default off the invoking user's OS home, so `--home-dir` does not move them.
 
 use std::path::PathBuf;
 
@@ -14,9 +8,6 @@ use crate::error::Error;
 use crate::manifest::Manifest;
 
 /// The four location options, as parsed from the command line.
-///
-/// Named rather than passed as four bare `Option<PathBuf>` arguments, which are
-/// indistinguishable at a call site and trivial to transpose.
 #[derive(Debug, Default)]
 pub(crate) struct LocationInputs {
     pub batfiles_dir: Option<PathBuf>,
@@ -39,10 +30,6 @@ pub(crate) struct Roots {
 }
 
 /// The documents each root contains.
-///
-/// Pairing a file with the root it lives under is location policy — the same
-/// policy the fields above resolve — so it stays next to them rather than with
-/// the type that parses the file.
 impl Roots {
     /// The leaf repository's manifest. A remote's manifest is not here: it lives
     /// in that remote's materialization rather than under a resolved root.
@@ -58,22 +45,11 @@ impl Roots {
 }
 
 /// Detect the invoking user's OS home.
-///
-/// Resolution consults this only as a last resort, when the home is unset and
-/// no `$XDG_*` base already covers config or cache. Failure is fatal.
 pub(crate) fn detect_os_home() -> Result<PathBuf, Error> {
     std::env::home_dir().ok_or(Error::HomeUnavailable)
 }
 
 /// Resolve the four roots from the CLI options and the captured environment.
-///
-/// `os_home` supplies the OS home directory as the final fallback. It is called
-/// at most once, and only when a root still needs it: when the home is unset, or
-/// when config or cache must fall back to `~/.config`/`~/.cache` because neither
-/// their `BATFILES_*` variable nor the matching `$XDG_*` base is set. A command
-/// handed every root it needs therefore never looks up a home and works even
-/// where none can be determined. Injecting `os_home` keeps this a pure function
-/// that tests exercise without the real environment.
 pub(crate) fn resolve_roots(
     cli: &LocationInputs,
     env: &Environment,
@@ -100,9 +76,6 @@ pub(crate) fn resolve_roots(
         .or_else(|| env.location("BATFILES_CACHE_DIR"))
         .or_else(|| xdg_base(env, "XDG_CACHE_HOME"));
 
-    // The OS home is the final fallback, so resolve it once and only when a root
-    // still lacks a value. `batfiles_dir` defaults to `<selected-home>/dotfiles`,
-    // which needs the OS home only when the home itself is unresolved.
     let os_home = if home.is_none() || config_dir.is_none() || cache_dir.is_none() {
         Some(os_home()?)
     } else {

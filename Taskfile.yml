@@ -13,13 +13,7 @@ tasks:
     desc: Run clippy with warnings denied, for the host and for Windows
     cmds:
       - cargo clippy --all-targets -- -D warnings
-      # CI is ubuntu-only, so a `#[cfg(unix)]` gate that has rotted is caught
-      # here or nowhere. This needs the target's std, which
-      # rust-toolchain.toml asks for, and — since the TLS stack under
-      # `fetch-url` compiles C — a compiler and headers targeting MSVC, which
-      # `cargo xwin` supplies by fetching the Windows SDK. Nothing is linked;
-      # the C is compiled. `cargo install cargo-xwin` is the one tool this
-      # repository needs beyond the pinned toolchain, `cargo-deny`, and go-task.
+      # cargo-xwin supplies Windows SDK headers and libraries for cross-target lint.
       - XWIN_ACCEPT_LICENSE=1 cargo xwin clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 
   test:

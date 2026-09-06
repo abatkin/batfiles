@@ -1,59 +1,29 @@
 # Environment variables
 
-Batfiles reads environment variables for tool configuration, one-shot variable
-overrides, run-only skips, bootstrap adoption, color selection, and host facts
-used by conditions. Command-line arguments take precedence unless a more
-specific rule below says otherwise.
+This document proposes variable overrides, bootstrap adoption, and condition
+inputs. Current environment capture, location selection, run-only skips, color,
+and Git inheritance are specified in [the environment reference](../environment.md).
 
 ## General precedence
 
-The general input order, from highest to lowest precedence, is:
-
-```text
-command-line arguments > environment variables > configuration files > built-in defaults
-```
-
-Environment inputs are parsed and combined with command-line arguments,
-configuration files, and defaults as needed. Color is resolved separately
-because it affects only presentation.
-
-Capturing the environment once at startup, and the name case-sensitivity rule
-that goes with it, are built and specified in
-[`docs/environment.md`](../environment.md). Two consequences of that rule apply
-to variables that do not exist yet: Windows uppercasing applies to the whole
-name, including a `BATFILES_VAR_<name>` suffix, and it is what keeps the `env`
-namespace deterministic there.
+For proposed inputs, precedence is command-line arguments, then environment
+variables, configuration files, and built-in defaults. Variable declarations
+follow the more detailed [runtime precedence](#runtime-variable-precedence).
 
 ## Batfiles configuration variables
 
-| Variable                   | Equivalent option        | Effect                                                                                              |
-|----------------------------|--------------------------|-----------------------------------------------------------------------------------------------------|
-| `BATFILES_DIR`             | `--batfiles-dir`         | Selects the leaf repository.                                                                        |
-| `BATFILES_HOME`            | `--home-dir`             | Selects the destination home directory and the home used to expand `~` and home-relative defaults.  |
-| `BATFILES_CONFIG_DIR`      | `--config-dir`           | Selects the directory containing `vars.toml` and `disabled.toml`.                                   |
-| `BATFILES_CACHE_DIR`       | `--cache-dir`            | Selects the directory containing the disposable dynamic-variable cache, `dynamic-vars.toml`.        |
-| `BATFILES_VAR_<NAME>`      | `--var <NAME>=<value>`   | Defines a one-shot user variable for the invocation.                                                |
-| `BATFILES_SKIP_ACTIONS`    | `--skip-action`          | Supplies action or addressable-child addresses to skip for the current run.                         |
-| `BATFILES_SKIP_GROUPS`     | `--skip-group`           | Supplies group addresses to skip for the current run.                                               |
-| `BATFILES_ENABLE_ACTIONS`  | `clone --enable-action`  | Removes action addresses from persisted bootstrap-disabled state.                                   |
-| `BATFILES_DISABLE_ACTIONS` | `clone --disable-action` | Adds action addresses to persisted bootstrap-disabled state.                                        |
-| `BATFILES_ENABLE_GROUPS`   | `clone --enable-group`   | Removes group addresses from persisted bootstrap-disabled state.                                    |
-| `BATFILES_DISABLE_GROUPS`  | `clone --disable-group`  | Adds group addresses to persisted bootstrap-disabled state.                                         |
-| `BATFILES_COLOR`           | `--color`                | Selects `auto`, `always`, or `never` color output.                                                  |
-| `NO_COLOR`                 | none                     | Disables color when present with a non-empty value and no higher-precedence color selection exists. |
+| Variable | Equivalent option | Effect |
+| --- | --- | --- |
+| `BATFILES_VAR_<NAME>` | `--var <NAME>=<value>` | Defines a one-shot user variable. |
+| `BATFILES_ENABLE_ACTIONS` | `clone --enable-action` | Removes action addresses from bootstrap-disabled state. |
+| `BATFILES_DISABLE_ACTIONS` | `clone --disable-action` | Adds action addresses to bootstrap-disabled state. |
+| `BATFILES_ENABLE_GROUPS` | `clone --enable-group` | Removes group addresses from bootstrap-disabled state. |
+| `BATFILES_DISABLE_GROUPS` | `clone --disable-group` | Adds group addresses to bootstrap-disabled state. |
 
 ### Location selection
 
-Location selection is built. The four location variables, their precedence, and
-the OS-home rules are specified in
-[`docs/environment.md`](../environment.md#location-selection).
-
-Two parts of it are not built and stay here. The selected home is also intended
-to control `~` expansion and to anchor home-relative destinations, whose
-detailed path-safety rules are defined by the
-[safety model](safety.md#destination-paths); there are no destinations yet. And
-the leaf-repository selection is intended to supply the initial destination of
-`batfiles clone`, which does not exist yet.
+`batfiles clone` uses the selected leaf-repository path as its initial destination.
+Existing [location rules](../environment.md#location-selection) apply.
 
 ### One-shot variables: `BATFILES_VAR_<NAME>`
 
@@ -62,7 +32,7 @@ one-shot variable:
 
 - The suffix after `BATFILES_VAR_` is the variable name exactly as written and
   is case-sensitive on Unix. On Windows the whole name is uppercased at capture
-  (see above), so `BATFILES_VAR_editor` defines the user variable `EDITOR`; name
+  (see [environment capture](../environment.md)), so `BATFILES_VAR_editor` defines the user variable `EDITOR`; name
   the matching `[vars]`/`vars.toml` keys in uppercase for Windows.
 - A bare `BATFILES_VAR_` with an empty suffix is ignored.
 - An empty value is significant: `BATFILES_VAR_PROFILE=` defines `PROFILE` as
@@ -138,15 +108,9 @@ lists above do not:
 
 ### Run-only skips
 
-Run-only skips are built. `BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`,
-their comma-separated list rule, and the way they union with `--skip-action` and
-`--skip-group` are specified in
-[`docs/environment.md`](../environment.md#run-only-skips).
-
-What is not built is what they can *reach*. A qualified address naming an
-included remote's action or group parses and matches nothing today, for want of
-a remote to resolve it against; see the [address forms](cmdline.md#address-forms)
-below.
+The existing [run-only skip inputs](../environment.md#run-only-skips) will also
+resolve qualified addresses in included remotes. See the proposed
+[address forms](cmdline.md#address-forms).
 
 ### Bootstrap enable and disable lists
 

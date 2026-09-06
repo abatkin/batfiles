@@ -1,11 +1,4 @@
 //! The line-oriented manifest a `git-clone-list` action reads.
-//!
-//! One repository per line, its metadata written beside it as `key=value`. Not
-//! TOML, because the file it replaces is a list of URLs somebody maintains by
-//! hand and pasting a new one on its own line has to stay the whole of adding a
-//! repository.
-//!
-//! Reading is all this module does: it never clones, so it never writes.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -17,17 +10,12 @@ use crate::error::Error;
 use crate::item::{ItemId, ItemIdError};
 
 /// One repository the list names.
-///
-/// `name` is the directory the clone lands in, under the action's `dest-dir`:
-/// derived from the URL, or taken from `dest-name=`. It is settled here rather
-/// than where the clone is made, because two entries deriving one directory is
-/// a fault of the document and is caught by reading it.
 #[derive(Debug)]
 pub(crate) struct Entry {
     /// The repository, exactly as git is given it.
     pub url: String,
     /// The one directory component the clone lands in.
-    pub name: String,
+    pub dest_name: String,
     /// Makes the entry addressable as `<action>.<entry>`.
     pub id: Option<ItemId>,
     /// The branch, tag, or commit the entry follows.
@@ -40,14 +28,6 @@ pub(crate) struct Entry {
 }
 
 /// Read and check one list.
-///
-/// The path is attached here rather than threaded through the rules, which are
-/// about a line and do not care what file it came from — the same division
-/// [`crate::manifest::Manifest::load`] makes.
-///
-/// A path that names nothing is the caller's to report and not this function's:
-/// a list is an action's `source`, and one the repository does not have has
-/// already failed as a missing source by the time this is reached.
 pub(crate) fn read(path: &Path) -> Result<Vec<Entry>, Error> {
     let text = fs::read_to_string(path).map_err(|source| Error::Read {
         path: path.to_path_buf(),
@@ -61,15 +41,8 @@ pub(crate) fn read(path: &Path) -> Result<Vec<Entry>, Error> {
 }
 
 /// Every entry the text declares, or the first fault and the line it is on.
-///
-/// **One problem at a time**, as a manifest's rules are, so a list with two
-/// faults reports the earlier one and the next run reports the rest.
 fn parse(text: &str) -> Result<Vec<Entry>, (usize, Invalid)> {
     let mut entries: Vec<Entry> = Vec::new();
-    // What each name and id was first claimed on, which is the half of a repeat
-    // that the second line cannot say for itself. A name is kept under its
-    // folded spelling and beside the one that was written: what decides is the
-    // first, and what a diagnostic has to quote is the second.
     let mut names: BTreeMap<String, (usize, String)> = BTreeMap::new();
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -79,18 +52,19 @@ fn parse(text: &str) -> Result<Vec<Entry>, (usize, Invalid)> {
             continue;
         };
 
-        if let Some((first, written)) = names.insert(fold(&entry.name), (line, entry.name.clone()))
+        if let Some((first, written)) =
+            names.insert(fold(&entry.dest_name), (line, entry.dest_name.clone()))
         {
             return Err((
                 line,
-                if written == entry.name {
+                if written == entry.dest_name {
                     Invalid::RepeatedName {
-                        name: entry.name,
+                        name: entry.dest_name,
                         first,
                     }
                 } else {
                     Invalid::AliasedName {
-                        name: entry.name,
+                        name: entry.dest_name,
                         written,
                         first,
                     }
@@ -179,7 +153,7 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
 
     Ok(Some(Entry {
         url,
-        name,
+        dest_name: name,
         id: metadata
             .get("id")
             .map(|id| ItemId::try_from(id.clone()))
@@ -190,17 +164,6 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
 }
 
 /// The directory an entry clones into when it does not name one.
-///
-/// Textual, and deliberately so: which of the several things git accepts a
-/// source is is git's question, and the last component is the answer for all of
-/// them. `/` and `:` are both separators here, which is what carries the
-/// `scp`-style `git@host:repo.git` that has no slash to end on; a `ssh://`
-/// URL's port colon comes before its last slash, so the later separator wins in
-/// every form at once.
-///
-/// What comes back is not necessarily usable — [`is_one_component`] is what
-/// decides that, and a source it cannot name a directory for is one the author
-/// writes `dest-name=` for.
 fn derive_name(url: &str) -> String {
     let trimmed = url.trim_end_matches('/');
     let tail = match trimmed.rfind(['/', ':']) {
@@ -215,35 +178,19 @@ fn derive_name(url: &str) -> String {
     }
 }
 
-/// A name as a filesystem that ignores case would see it.
-///
-/// **Only ever used to refuse a list, never to decide where a clone goes**, so
-/// approximating is the right shape: what this has to catch is two entries that
-/// *could* be one directory somewhere, and lowercasing catches more of those
-/// than the case-folding rules of any one filesystem would. A clone still lands
-/// at the name exactly as it was written.
+/// Lowercase a destination name for portable collision detection.
 fn fold(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// Whether a name is one ordinary directory, which is all an entry may install
-/// into.
-///
-/// `dest-name` is a name and not a path: an entry cannot reach out of the
-/// directory the action declared, whether by climbing, by anchoring, or by
-/// naming a directory of its own. `:` is refused with the separators because a
-/// list is meant to be read on every machine that shares the repository, and a
-/// name holding one cannot be a directory on all of them.
+/// Accept a nonempty destination name without path separators or a drive colon.
+/// Reject `.`, `..`, and `.git`.
 fn is_one_component(name: &str) -> bool {
     !name.is_empty() && !matches!(name, "." | ".." | ".git") && !name.contains(['/', '\\', ':'])
 }
 
-/// One line split into fields, with quoting honored and the comment dropped.
-///
-/// The first `#` outside a quoted value ends the line, so a comment may hold
-/// anything at all — including text that looks like metadata. A `#` that is
-/// part of a URL has to be written `%23`, which is what a URL means by it
-/// anyway.
+/// Split a line into whitespace-separated fields, honoring quotes and escapes.
+/// An unquoted `#` starts a comment. Empty quoted fields are retained.
 fn fields(line: &str) -> Result<Vec<String>, Invalid> {
     let mut fields = Vec::new();
     let mut current = String::new();
@@ -278,10 +225,6 @@ fn fields(line: &str) -> Result<Vec<String>, Invalid> {
 }
 
 /// Read a quoted run into `value`, stopping at the quote that opened it.
-///
-/// Three escapes and no others. A `\n` that meant a newline would be a second
-/// way of writing something no field can hold, and one that silently meant `n`
-/// would be worse; what the escapes exist for is a quote inside a quoted value.
 fn quoted(
     opener: char,
     characters: &mut std::str::Chars<'_>,
@@ -302,29 +245,21 @@ fn quoted(
 }
 
 /// What a line of a clone list can be that stops it naming a repository.
-///
-/// **Every variant is a predicate rather than a sentence.** The subject is
-/// supplied by [`Error::CloneList`], which names the file and the line, so
-/// nothing below carries either.
 #[derive(Debug, Error)]
 pub(crate) enum Invalid {
-    /// A line whose first field is empty, which is the one thing a repository
-    /// cannot be. What the rest of it means is git's question, the same way it
-    /// is for a `git-clone` record's `source`.
+    /// A line whose first field is empty, which is the one thing a repository cannot
+    /// be.
     #[error("names no repository")]
     UrlEmpty,
 
-    /// A field after the repository that is not `key=value`. Very often a
-    /// second repository written on the same line.
+    /// A field after the repository that is not `key=value`.
     #[error("has `{field}` after the repository, which is not `key=value` metadata")]
     NotMetadata { field: String },
 
     #[error("uses the unknown key `{key}`; the keys are id, ref, and dest-name")]
     UnknownKey { key: String },
 
-    /// A condition on an entry, which the format specifies and nothing
-    /// evaluates yet. Refused rather than accepted and ignored, so that a list
-    /// never installs what it said to leave out.
+    /// A condition on an entry, which the format specifies and nothing evaluates yet.
     #[error("uses `{key}`, and conditions arrive at step 5.6")]
     ConditionNotYet { key: String },
 
@@ -334,50 +269,38 @@ pub(crate) enum Invalid {
     #[error("writes `{key}=` with no value")]
     EmptyValue { key: String },
 
-    /// A quoted value that never closes, which would otherwise swallow whatever
-    /// follows it — including the `#` that was meant to start a comment.
+    /// A quoted value that never closes, which would otherwise swallow whatever follows
+    /// it — including the `#` that was meant to start a comment.
     #[error("opens a quote that never closes")]
     UnterminatedQuote,
 
-    /// A backslash inside a quoted value that escapes something the format has
-    /// no meaning for. Refused rather than read as the character itself, since
-    /// `\n` is far likelier to mean a newline to whoever wrote it.
+    /// A backslash inside a quoted value that escapes something the format has no
+    /// meaning for.
     #[error("writes the escape `\\{escape}`; only `\\\\`, `\\\"`, and `\\'` are escapes")]
     UnsupportedEscape { escape: char },
 
-    /// An `id` that is not an ID. The rejected value travels inside
-    /// [`ItemIdError`], which already renders the whole complaint.
+    /// An `id` that is not an ID.
     #[error(transparent)]
     EntryId(#[from] ItemIdError),
 
-    /// A repository whose last component is no directory name: a bare host, a
-    /// path ending in a separator this cannot see past, a Windows path whose
-    /// drive letter is the last separator.
+    /// A repository whose last component is no directory name: a bare host, a path
+    /// ending in a separator this cannot see past, a Windows path whose drive letter is
+    /// the last separator.
     #[error(
         "names `{url}`, which gives `{name}` as a directory name; \
          write `dest-name=` to say what to call the clone"
     )]
     DerivedNameUnusable { url: String, name: String },
 
-    /// A `dest-name` that is a path rather than a name. The entry is trying to
-    /// install outside the directory its action declared, which is the one
-    /// thing this field must not be able to do.
+    /// A `dest-name` that is a path rather than a name.
     #[error("writes `dest-name={name}`, which is not one ordinary directory name")]
     DestNameUnusable { name: String },
 
-    /// Two entries installing into one directory. The second would clone over
-    /// the first, or — once a clone is there — update it from the wrong
-    /// repository on every run.
+    /// Two entries installing into one directory.
     #[error("clones into `{name}`, which line {first} already clones into")]
     RepeatedName { name: String, first: usize },
 
-    /// Two entries whose names differ only in case. One directory on Windows
-    /// and on a typical macOS volume, two on Linux — so this is refused
-    /// everywhere rather than on the machines where it bites, a list being
-    /// meant to read the same on all of them. Refused rather than merged: the
-    /// second entry would find the first's clone, and an update never checks
-    /// which repository a clone came from, so the wrong one would sit there
-    /// reporting success on every run.
+    /// Two entries whose names differ only in case.
     #[error(
         "clones into `{name}`, which differs only in case from the `{written}` on line {first}; \
          on a filesystem that ignores case they are one directory"
@@ -388,8 +311,7 @@ pub(crate) enum Invalid {
         first: usize,
     },
 
-    /// Two entries answering to one address, which would make either
-    /// unreachable.
+    /// Two entries answering to one address, which would make either unreachable.
     #[error("repeats the id `{id}`, which line {first} already uses")]
     RepeatedEntryId { id: ItemId, first: usize },
 }
@@ -410,7 +332,7 @@ mod tests {
     /// derivation rule.
     fn name_of(url: &str) -> String {
         let parsed = entries(url);
-        parsed.into_iter().next().expect("one entry").name
+        parsed.into_iter().next().expect("one entry").dest_name
     }
 
     #[test]
@@ -472,14 +394,11 @@ mod tests {
              \t# indented\n",
         );
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].name, "a");
+        assert_eq!(parsed[0].dest_name, "a");
     }
 
     #[test]
     fn a_fault_is_reported_against_the_line_it_is_written_on() {
-        // Physical lines, counted through the ones that declare nothing: a
-        // diagnostic that named the entry's position in the list would send the
-        // reader to the wrong line of the file.
         assert!(matches!(
             fault(
                 "# a comment\n\
@@ -493,11 +412,8 @@ mod tests {
 
     #[test]
     fn a_value_may_be_quoted_and_hold_what_a_bare_one_cannot() {
-        // A space, which would otherwise end the field, and a `#`, which would
-        // otherwise end the line. Read back through `dest-name`, the one key
-        // whose value 4.4 acts on.
         let parsed = entries("https://e.example/a.git dest-name=\"my plugin\"\n");
-        assert_eq!(parsed[0].name, "my plugin");
+        assert_eq!(parsed[0].dest_name, "my plugin");
         assert_eq!(name_of("https://e.example/a.git dest-name='a#b'"), "a#b");
     }
 
@@ -514,10 +430,6 @@ mod tests {
 
     #[test]
     fn a_line_splits_into_fields_at_whitespace_a_quote_does_not_cover() {
-        // The lexer at its own level, because what a quoted value may hold is
-        // wider than what any key accepts today: a name cannot hold a
-        // backslash, so reading one back through `dest-name` would be testing
-        // the name rule rather than the quoting.
         assert_eq!(
             fields(r#"url dest-name="a\"b\\c" ref='x y' # "not a field""#).expect("fields"),
             ["url", r#"dest-name=a"b\c"#, "ref=x y"]
@@ -623,11 +535,6 @@ mod tests {
 
     #[test]
     fn two_names_that_differ_only_in_case_are_refused_on_every_platform() {
-        // One directory on Windows and on a typical macOS volume, two on Linux.
-        // Refusing everywhere is what keeps a list meaning the same thing on
-        // every machine that shares the repository -- and on the machines where
-        // they do collide, the second entry would find the first's clone and an
-        // update would leave the wrong repository sitting there.
         let (line, fault) = fault(
             "https://e.example/Plugin.git\n\
              https://elsewhere.example/plugin.git\n",
@@ -665,7 +572,10 @@ mod tests {
              https://github.com/vim-airline/vim-airline\n",
         );
         assert_eq!(
-            parsed.iter().map(|entry| &entry.name).collect::<Vec<_>>(),
+            parsed
+                .iter()
+                .map(|entry| &entry.dest_name)
+                .collect::<Vec<_>>(),
             ["zsh-syntax-highlighting", "vim-airline"]
         );
     }

@@ -1,9 +1,4 @@
 //! `batfiles.toml`: the one file in a repository with intrinsic meaning.
-//!
-//! The record mirrors the file. A rule serde cannot express — one spanning two
-//! records, or one about the shape of a value rather than its type — is checked
-//! by [`Manifest::validate`] as the document is read, so that a manifest which
-//! cannot be honored is refused before any of it is acted on.
 
 pub(crate) mod action;
 pub(crate) mod default_disabled;
@@ -21,12 +16,6 @@ use crate::manifest::default_disabled::DefaultDisabled;
 use crate::tomlfile;
 
 /// A parsed `batfiles.toml`.
-///
-/// Every section is optional, and there is no format-version field. The
-/// document is a closed record: a top-level key batfiles does not know is an
-/// error rather than something to ignore, so a section belonging to a slice
-/// that has not landed — `[vars]`, `[remotes]` — fails outright instead of
-/// looking as though it took effect.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct Manifest {
@@ -47,16 +36,9 @@ pub(crate) struct Manifest {
 
 impl Manifest {
     /// The manifest's name within a repository root.
-    ///
-    /// The name travels with the parser, but *where* a repository is does not:
-    /// a leaf comes from the resolved roots and a remote will come from its
-    /// materialization, so callers pass a whole path to [`load`](Self::load).
     pub const FILE_NAME: &'static str = "batfiles.toml";
 
     /// Read, parse, and check one manifest.
-    ///
-    /// The path is attached here rather than threaded through the rules, which
-    /// are about the document's contents and do not care what it is called.
     pub fn load(path: &Path) -> Result<Self, CrateError> {
         let manifest: Self = tomlfile::read(path)?;
         manifest
@@ -69,17 +51,6 @@ impl Manifest {
     }
 
     /// The rules serde cannot express, checked as the document is read.
-    ///
-    /// One of them is the manifest's own: IDs are unique across records, which
-    /// no single record can check. The rest belong to the records, and
-    /// [`Action::check_paths`] is where one answers for its own fields.
-    ///
-    /// A rule belongs here at all when it is decidable from the document alone.
-    /// One needing a resolved root or the filesystem — whether a `source`
-    /// exists — is not, and stays with the action as it runs.
-    ///
-    /// **One problem at a time.** The first offense returns, so a manifest with
-    /// two faults reports the earlier one and the next run reports the rest.
     fn validate(&self) -> Result<(), Invalid> {
         let mut seen: BTreeMap<&ItemId, usize> = BTreeMap::new();
         for (index, action) in self.actions.iter().enumerate() {
@@ -99,16 +70,13 @@ impl Manifest {
 
             // Which of a record's fields are paths, and which rule each one
             // follows, is the record's own answer.
-            action.check_paths(action_number)?;
+            action.validate(action_number)?;
         }
         Ok(())
     }
 }
 
 /// A manifest that parsed but breaks one of [`Manifest::validate`]'s rules.
-///
-/// The manifest path is not here; [`Manifest::load`] adds it once, so no rule
-/// carries it.
 #[derive(Debug, Error)]
 pub(crate) enum Invalid {
     #[error("action {second} repeats the id `{id}`, which action {first} already uses")]
@@ -190,9 +158,6 @@ pub(crate) enum Invalid {
 }
 
 /// The rules a `source` satisfies as written.
-///
-/// No repository is needed: a source is relative, so how far it climbs is a
-/// property of its own components.
 fn check_source(source: &str, action: usize) -> Result<(), Invalid> {
     if source.is_empty() {
         return Err(Invalid::SourceEmpty { action });
@@ -220,10 +185,6 @@ fn check_source(source: &str, action: usize) -> Result<(), Invalid> {
 
 /// Whether a path starts from somewhere of its own rather than from wherever it
 /// is joined onto.
-///
-/// Not [`Path::is_absolute`]: on Windows that holds only for a path carrying
-/// both a drive and a root, so `/etc/hosts` and `C:config` are not absolute
-/// there, yet `join` honors each one by discarding what it joined to.
 fn is_anchored(source: &Path) -> bool {
     matches!(
         source.components().next(),
@@ -233,9 +194,6 @@ fn is_anchored(source: &Path) -> bool {
 
 /// How many components deep a relative path lands, or `None` if it does not stay
 /// within the tree it is relative to.
-///
-/// No wildcard arm: counting a root or a prefix as ordinary depth is what a
-/// wildcard here does, and it is wrong in the direction that lets a path out.
 fn depth_within_tree(source: &str) -> Option<usize> {
     let mut depth: usize = 0;
     for component in Path::new(source).components() {
@@ -251,9 +209,6 @@ fn depth_within_tree(source: &str) -> Option<usize> {
 }
 
 /// The rules a `dest` satisfies as written.
-///
-/// Only the `~` forms are constrained: a `dest` is free to be absolute or to
-/// traverse out of the home, so there is no containment rule here.
 fn check_dest(dest: &str, action: usize) -> Result<(), Invalid> {
     if dest.is_empty() {
         return Err(Invalid::DestinationEmpty { action });
@@ -272,16 +227,7 @@ fn check_dest(dest: &str, action: usize) -> Result<(), Invalid> {
 }
 
 /// The rules a fetching action's `source` satisfies as written.
-///
-/// Only the scheme is checked. What the rest of a URL may say is the server's
-/// business, and a client that will parse it properly is already a dependency —
-/// so this refuses what batfiles knows it cannot fetch and leaves the rest to
-/// fail at the fetch, where the diagnostic can say what the network said.
 fn check_url(source: &str, action: usize) -> Result<(), Invalid> {
-    // Compared as bytes, not by slicing the string: a `source` is whatever the
-    // author typed, so an offset inside a scheme-length prefix can land in the
-    // middle of a character, and slicing there panics. A scheme is ASCII, so
-    // the bytes answer the question exactly.
     let scheme = |prefix: &str| {
         let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
         source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
@@ -302,16 +248,6 @@ fn check_url(source: &str, action: usize) -> Result<(), Invalid> {
 }
 
 /// The rules a `git-clone` source satisfies as written, of which there is one.
-///
-/// Deliberately weaker than [`check_url`], because git accepts far more than a
-/// URL: an `scp`-style `git@host:path`, a plain directory, `ssh://`, `git://`,
-/// and `file://` are all repositories it can clone. Anything narrower would
-/// refuse sources that work — a local path among them, which is what the test
-/// suite clones from — so what a source means is left to git, and what it says
-/// when it cannot make sense of one is better than anything guessed here.
-///
-/// A leading `-` needs no rule of its own: [`crate::git`] passes the source
-/// after `--`, so git reads it as a repository whatever it is spelled like.
 fn check_git_source(source: &str, action: usize) -> Result<(), Invalid> {
     if source.trim().is_empty() {
         return Err(Invalid::GitSourceEmpty { action });
@@ -320,12 +256,6 @@ fn check_git_source(source: &str, action: usize) -> Result<(), Invalid> {
 }
 
 /// The rules a `git-clone` ref satisfies as written, of which there is one.
-///
-/// Weak for [`check_git_source`]'s reason: a branch, a tag, a commit, and a full
-/// `refs/…` name are all things git resolves, and which of them a ref is — or
-/// whether the clone has one at all — cannot be decided from the string. What
-/// the string does have to be is something, since an empty one would silently
-/// mean "follow whatever branch the clone is on" rather than what it says.
 fn check_git_ref(git_ref: Option<&str>, action: usize) -> Result<(), Invalid> {
     if git_ref.is_some_and(|value| value.trim().is_empty()) {
         return Err(Invalid::GitRefEmpty { action });
@@ -334,10 +264,6 @@ fn check_git_ref(git_ref: Option<&str>, action: usize) -> Result<(), Invalid> {
 }
 
 /// The shape a `sha256` has to have to be one.
-///
-/// Checked here rather than at the fetch so that a typo fails before anything
-/// is downloaded: a digest that cannot match is a repository bug, and finding
-/// out after the transfer wastes the transfer and reports the wrong thing.
 fn check_digest(sha256: Option<&str>, action: usize) -> Result<(), Invalid> {
     match sha256 {
         Some(value) if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
@@ -351,20 +277,6 @@ fn check_digest(sha256: Option<&str>, action: usize) -> Result<(), Invalid> {
 }
 
 /// The shape an `archive-root` has to have to name something inside an archive.
-///
-/// `*` is the one value that is not a path: it asks batfiles to find the single
-/// top-level directory rather than naming it. Everything else is a prefix of an
-/// entry path, so it answers to the same rule an entry path does — ordinary
-/// components, and nothing else. That is stricter than a `source`, which may
-/// climb with `..` as long as it lands back inside: an archive entry may not,
-/// because cancelling a `..` on paper is only right when the component before it
-/// is a real directory and an archive is free to declare a symlink there. A root
-/// spelled with one would be matched against entries that carry no such
-/// spelling, and would select nothing at all.
-///
-/// Refused here rather than at the extraction so that the diagnostic arrives
-/// before anything is fetched, and so that the two rules cannot drift: this is
-/// what lets `archive::root_prefix` clean the value without a second check.
 fn check_archive_root(archive_root: Option<&str>, action: usize) -> Result<(), Invalid> {
     let Some(value) = archive_root else {
         return Ok(());
@@ -464,9 +376,6 @@ mod tests {
 
     #[test]
     fn a_source_may_not_name_the_whole_repository() {
-        // Installing the repository root would put `batfiles.toml` and `.git`
-        // in the home. How it was spelled decides only which diagnostic it
-        // gets, not whether it is refused.
         assert!(matches!(source_error(""), Invalid::SourceEmpty { .. }));
         for whole in [".", "./", "shell/.."] {
             assert!(
@@ -511,11 +420,6 @@ mod tests {
 
     #[test]
     fn a_fetched_source_that_is_not_a_url_is_refused_as_written() {
-        // A repository path is the mistake worth catching: it would otherwise
-        // reach the fetcher and fail as a network error, naming DNS rather than
-        // the manifest. The last three are multibyte: a scheme-length offset
-        // into one lands mid-character, and deciding this by slicing there
-        // panics on a manifest someone wrote by hand.
         for refused in [
             "files/ackrc",
             "example.com/a",
@@ -538,9 +442,6 @@ mod tests {
 
     #[test]
     fn a_file_url_says_which_step_makes_it_work() {
-        // `docs/future/repoformat.md` lists `file://` among the schemes, so
-        // someone will write one; it gets its own diagnostic rather than being
-        // called malformed.
         assert!(matches!(
             check_url("file:///etc/hosts", 1).expect_err("expected a file URL to be refused"),
             Invalid::SourceIsFileUrl { .. }
@@ -588,11 +489,6 @@ mod tests {
 
     #[test]
     fn an_archive_root_that_could_match_no_entry_is_refused_as_written() {
-        // Each of these is spelled in a way no archive entry path is, so it
-        // would be matched against entries carrying no such spelling and would
-        // select nothing however the archive is built. `..` is refused even
-        // where it lands back inside, because an entry path may not hold one:
-        // cancelling it is only right when what it cancels is a real directory.
         for refused in ["", "/tool", "../tool", ".", "tool/..", "releases/../tool"] {
             assert!(
                 matches!(

@@ -1,9 +1,4 @@
 //! Carrying one `[[actions]]` record out.
-//!
-//! One file per action type, plus the two things every action needs: the
-//! [`RunContext`] it runs against, and — for the two `-dir` types — the
-//! [`children`] loop they share. Nothing else lives here, so which file holds an
-//! action is answered by its name.
 
 mod children;
 mod context;

@@ -1064,7 +1064,7 @@ fn a_repository_reached_through_a_symlink_still_converges() {
 // with the tests that can run anywhere.
 
 /// Every link `tests/fixtures/leaf` installs, in the order it installs
-/// them, all of them after everything in [`LEAF_DIRS`] and [`LEAF_SEEDS`].
+/// them, all of them after the leaf directories and seeds.
 ///
 /// Written out rather than read back from the manifest: a test that derives
 /// its expectations from the file under test asserts nothing. The last

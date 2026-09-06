@@ -7,55 +7,36 @@ authors = ["Adam Batkin <adam@batkin.net>"]
 repository = "https://github.com/abatkin/batfiles-rust"
 rust-version = "1.94"
 
-# One line per dependency, saying what uses it. A dependency is added by the
-# slice that needs it, not ahead of it.
 [dependencies]
-# Argument parsing and help/usage generation.
+# CLI parsing and help.
 clap = { version = "4.5", features = ["derive"] }
 
-# The on-disk records for `batfiles.toml` and the local state documents.
+# TOML document serialization.
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 
-# Generates `Display` and `Error` for the crate error, so a variant's message
-# sits next to the variant instead of in a match arm a screen away.
+# Error messages derived from variants.
 thiserror = "2"
 
-# What `fetch-file` downloads with. Blocking, so a fetch is an ordinary call in
-# the middle of an action. The default features are off because a download of
-# one file needs none of them: without `gzip` and `brotli` batfiles asks for no
-# transfer encoding and servers send none, which is two fewer dependencies for
-# a saving that matters to an API client rather than to this.
+# Blocking HTTP with OS certificate roots; automatic decompression is disabled.
 ureq = { version = "3.4", default-features = false, features = [
     "rustls",
-    # Roots from the OS rather than the bundled Mozilla set, so a corporate CA
-    # works where the work repository lives.
     "platform-verifier",
 ] }
 
-# Verifies a fetching action's `sha256` against the bytes as they arrive.
+# Download checksum verification.
 sha2 = "0.11"
 
-# What `fetch-archive` unpacks. Tar because it is what the archives a dotfiles
-# repository fetches are published as, and gzip because that is how they are
-# compressed; the format is read from the archive's own leading bytes rather
-# than from the URL, so a redirect to a storage host does not change the answer.
-# Both are pure Rust, so the cross-target lint needs no C toolchain.
-#
-# `tar`'s default `xattr` feature restores extended attributes, and only from
-# its own `unpack`, which batfiles does not call: every entry is written here so
-# that its path can be refused before it is. Off, so the dependency does not
-# arrive for a code path that does not exist.
+# Tar and gzip extraction; extended attributes are not restored.
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 
 [dev-dependencies]
-# Locates and runs the Cargo-built binary in the end-to-end CLI tests.
+# Run the binary in CLI tests.
 assert_cmd = "2"
 
-# Throwaway repositories and home directories for those tests.
+# Temporary fixture directories.
 tempfile = "3"
 
-# The local HTTP server the fetching tests run against, so no test reaches the
-# network (`guidance.md`, "Test environments").
+# Loopback HTTP fixtures.
 tiny_http = "0.12"

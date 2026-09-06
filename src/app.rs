@@ -1,12 +1,4 @@
-//! Wiring: capture the environment, resolve presentation, parse arguments,
-//! resolve the roots a command works in, dispatch, and map the result to an
-//! exit status.
-//!
-//! Every command in the surface parses; `version`, `sync`, the two apply
-//! commands, and the four enable/disable commands run. The rest report an
-//! option they accept and do not honor yet, or else resolve their roots and
-//! report that they are not implemented yet, which is the honest thing to do
-//! and the reason the whole surface can be committed before the tool works.
+//! Parse arguments, resolve presentation and locations, dispatch commands, and report errors.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -37,9 +29,6 @@ pub(crate) fn run() -> ExitCode {
     // Read once, so every later lookup sees the same environment.
     let env = Environment::capture();
 
-    // Presentation is settled first: clap may need to render `--help`,
-    // `--version`, or a usage error before there is a parsed `Cli` to consult,
-    // and that output should honor the requested color too.
     let color = color::resolve(
         color::preparse_choice(&args),
         env.get("BATFILES_COLOR"),
@@ -79,9 +68,6 @@ fn dispatch(
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<ExitCode, Error> {
-    // Ahead of every command and of root resolution: an unsupported option
-    // means nothing was attempted, and resolving first would let a missing-home
-    // failure preempt it on the machines least able to explain why.
     if let Some(found) = unsupported::first(&cli.command) {
         return Ok(not_yet(reporter, &found));
     }
@@ -106,10 +92,6 @@ fn dispatch(
             )?;
             Ok(ExitCode::SUCCESS)
         }
-        // The two apply commands run the same loop over the same list as
-        // `sync`, restricted to what they name. Naming one action waives every
-        // exclusion, which is why `apply-action` accepts neither run-only
-        // option and why neither variable that is their other half reaches it.
         Command::ApplyAction(args) => {
             let roots = locate(cli, env, reporter)?;
             execute::apply_action(&roots, RunMode::new(args.dry_run), &args.id, env, reporter)?;
@@ -127,9 +109,6 @@ fn dispatch(
             )?;
             Ok(ExitCode::SUCCESS)
         }
-        // The four differ only in which list they edit and which way they move a
-        // name, so they share one implementation and are told apart here rather
-        // than inside it.
         Command::DisableAction(args) => edit_disabled_list(
             cli,
             env,
@@ -170,10 +149,6 @@ fn dispatch(
 }
 
 /// Edit one of the machine-local disabled lists.
-///
-/// The roots are resolved as for any other command, though only the config one
-/// is read: these commands never open the leaf repository, so a manifest that is
-/// missing or malformed cannot fail an enable or a disable.
 fn edit_disabled_list(
     cli: &Cli,
     env: &Environment,
@@ -243,9 +218,6 @@ fn parse(args: &[OsString], color: ColorChoice) -> Result<(Cli, String), clap::E
 }
 
 /// The command as the user spelled it: `sync`, or `vars set`.
-///
-/// Read back from the parse rather than matched over `Command`, so adding a
-/// command does not require remembering to name it here.
 fn command_name(matches: &ArgMatches) -> String {
     let mut names = Vec::new();
     let mut current = matches;

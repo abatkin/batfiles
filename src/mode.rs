@@ -1,13 +1,6 @@
 //! Whether a run carries its work out or only says what it would do.
-//!
-//! `guidance.md`, "Dry-run", is the design and names the helpers that read
-//! [`RunMode`]. How a run *words* what it did is [`crate::output`]'s.
 
 /// Whether an action does its work or describes it.
-///
-/// [`Self::DryRun`] promises that none of the plan is carried out. It does not
-/// promise that the process writes nothing anywhere: batfiles' own bookkeeping
-/// runs in both modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunMode {
     Perform,

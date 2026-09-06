@@ -1,10 +1,4 @@
-//! What an action is carried out against, and how it reads the two paths a
-//! manifest record gives it.
-//!
-//! Resolving what a `source` and a `dest` mean happens here rather than inside
-//! the records, so there is one place that decides. What a path means, and what
-//! is already *at* one, is [`crate::paths`]': every action asks it the same
-//! questions and they are not asked twice.
+//! Action roots, source and destination resolution, run mode, and reporting.
 
 use std::path::{Path, PathBuf};
 
@@ -15,19 +9,7 @@ use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, Repository};
 
-/// What every action is carried out against: the two roots it can reach, and
-/// somewhere to say what it did.
-///
-/// The roots are anchored once, when this is built, because a symlink stores
-/// the target it is given: a relative one is read back relative to the link's
-/// own directory rather than to wherever batfiles happened to be run, so a
-/// relative `--batfiles-dir` would otherwise produce a link that points nowhere
-/// and a next run that calls it correct.
-///
-/// Everything an action needs that is not in its own record reaches it through
-/// here, so a run's settings are fields on one value rather than parameters on
-/// every action. `RunMode` is the first; 9.4's `--refresh-content` is the
-/// second (`guidance.md`, "Seams the late slices need").
+/// Anchored repository and home roots, execution mode, and reporter for one run.
 pub(crate) struct RunContext<'a> {
     repository: Repository,
     home: PathBuf,
@@ -46,17 +28,9 @@ impl<'a> RunContext<'a> {
         })
     }
 
-    /// An action's `source`, resolved against the repository that declared it.
-    ///
-    /// The manifest has already settled what a source may say, so this expects
-    /// one that is relative and lands strictly inside the repository, and
-    /// checks only the rule needing a filesystem: the path has to exist. The
-    /// repository is already anchored, so the result is too — this is a path
-    /// batfiles writes into a link, not one it classifies, so it keeps the
-    /// spelling the user chose.
-    ///
-    /// The one place a repository path is resolved, which 6.3 widens to take
-    /// `@remote/path` (`guidance.md`, "Seams the late slices need").
+    /// Resolve a validated repository-relative source to an absolute path.
+    /// The final node must exist; a broken symlink counts as present. The returned
+    /// path preserves repository symlinks rather than canonicalizing them.
     pub fn source(&self, source: &str) -> Result<PathBuf, Error> {
         let resolved = paths::normalize(&self.repository.path().join(source));
 
@@ -69,11 +43,8 @@ impl<'a> RunContext<'a> {
         }
     }
 
-    /// An action's `source-dir`, resolved and confirmed to be one.
-    ///
-    /// Followed, unlike a destination: a `source-dir` that is a symlink to a
-    /// directory inside the repository is something the repository put there
-    /// deliberately, and its children are what the action is asking for.
+    /// Resolve a source directory, following its final symlink.
+    /// Fails if the source is missing, unreadable, or does not resolve to a directory.
     pub fn source_directory(&self, source_dir: &str) -> Result<PathBuf, Error> {
         let resolved = self.source(source_dir)?;
         if paths::reaches_directory(&resolved)? {
@@ -99,23 +70,13 @@ impl<'a> RunContext<'a> {
     }
 
     /// Whether this run performs its work or only says what it would do.
-    ///
-    /// For handing to a helper that writes. An action does not branch on it.
     pub fn mode(&self) -> RunMode {
         self.mode
     }
 
-    /// [`directory::ensure_directory`], plus the report it has no reporter to make.
-    ///
-    /// Every caller says the same thing about the same directory, because they
-    /// are all the same operation: `create-dir` asks for one outright, and the
-    /// two directory-wide actions need one to install into. A directory that
-    /// appeared in the home is worth a line either way.
+    /// Ensure a destination directory exists and report creation or link removal.
     pub fn ensure_directory(&self, dir: &Path) -> Result<(), Error> {
         let outcome = directory::ensure_directory(dir, self.mode)?;
-        // Ahead of the line about the directory, and at normal verbosity rather
-        // than at `-v`: each of these is a removal, and a broken link is still
-        // one the user may have been meaning to fix.
         for link in outcome.removals() {
             self.reporter.info(&link.removal_note(self.mode));
         }
@@ -133,18 +94,9 @@ impl<'a> RunContext<'a> {
     }
 }
 
-/// A `dest` resolved against a selected home.
-///
-/// `~` and a relative path both resolve from the selected home rather than from
-/// an independently discovered one, and an absolute path is used as written.
-/// None of this makes the home a boundary: a destination may deliberately point
-/// outside it, and only `--home-dir` decides what "home" means.
-///
-/// Free rather than a method so that the rule can be tested against a home that
-/// no filesystem has to have.
-///
-/// Infallible: the manifest has already refused an empty `dest` and a `~other`,
-/// so what reaches this is `~`, `~/…`, or an ordinary path.
+/// Resolve a validated destination against the selected home.
+/// Accepts `~`, `~/...`, relative paths, and absolute paths; paths may leave home.
+/// The caller must reject empty values and `~other` before calling.
 fn destination(home: &Path, dest: &str) -> PathBuf {
     let path = match dest.strip_prefix('~') {
         // `~` leaves nothing and `~/…` leaves a separator, so trimming covers

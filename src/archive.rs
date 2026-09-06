@@ -1,16 +1,5 @@
-//! Unpacking a downloaded archive, for `fetch-archive`.
-//!
-//! Everything written lands inside the staging tree [`crate::install`] created,
-//! so a malformed or hostile archive is abandoned by discarding one path.
-//!
-//! **The archive is read twice, and that is the point.** [`plan`] refuses it if
-//! any entry would be written outside the tree; only then does [`unpack`] write
-//! anything, so a hostile entry is caught before its neighbors are unpacked.
-//!
-//! Both reads go through the descriptor the archive was downloaded and hashed
-//! through, never through its path. That is what makes "the digest is checked
-//! before a single entry is unpacked" a statement about the bytes being unpacked
-//! rather than about a name that happened to hold them once.
+//! Validate tar and gzip archives, then extract into an owned staging directory.
+//! Both passes use the supplied open file; unsafe paths and link traversal fail.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -20,10 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use flate2::read::MultiGzDecoder;
 use thiserror::Error;
 
-// Making a symlink is platform-specific, as it is in `action/symlink.rs`, and
-// for the same reason it is not built for Windows. An archive entry that is one
-// is refused there by name, so the stand-in below exists to keep the crate
-// compiling rather than to be called.
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
@@ -44,28 +29,16 @@ const CHECKSUM_FIELD: std::ops::Range<usize> = 148..156;
 const DETECT_ROOT: &str = "*";
 
 /// The permission bits an unpacked entry may carry.
-///
-/// The low nine and nothing above them: setuid, setgid, and the sticky bit are
-/// dropped rather than honored, because nothing a dotfiles repository installs
-/// from a URL has any business arriving with elevated privileges.
 #[cfg(unix)]
 const KEPT_BITS: u32 = 0o777;
 
 /// The mode an entry is created with, before the archive's own is applied.
-///
-/// Closed, then widened once the entry is complete, the way every other staging
-/// node in the crate is made (`guidance.md`, rule 15).
 #[cfg(unix)]
 const BUILDING_MODE: u32 = 0o600;
 
 /// The mode a directory lands with where the archive does not say: the unpacked
 /// tree when no entry describes the root being stripped, and any directory whose
 /// header mode does not read.
-///
-/// It has to be *something*, because the staging directory is created closed and
-/// publishing it as it stands would install a directory the owner alone could
-/// enter. What an ordinary umask would have produced, which is what
-/// `fetch-file`'s `0644` is too.
 #[cfg(unix)]
 const UNSTATED_DIRECTORY_MODE: u32 = 0o755;
 
@@ -88,11 +61,6 @@ fn symlink(_target: &Path, _at: &Path) -> io::Result<()> {
 type ArchiveEntry<'a> = tar::Entry<'a, Box<dyn io::Read>>;
 
 /// What an archive can be that stops it being unpacked.
-///
-/// **Every variant is a predicate rather than a sentence.** The subject is
-/// supplied by [`Error::Archive`], which names the URL rather than the file,
-/// because the file is a staging path the user never chose and will never see
-/// again. That is also why nothing below carries a URL of its own.
 #[derive(Debug, Error)]
 pub(crate) enum Invalid {
     /// Bytes that are not an archive batfiles unpacks, named by what they look
@@ -142,21 +110,13 @@ pub(crate) enum Invalid {
     Empty,
 
     /// A second read of the archive that did not line up with the first.
-    ///
-    /// Both reads are of one open file, so this is not something an archive can
-    /// be talked into: it is the guard on the assumption [`unpack`] rests on.
-    /// What it buys is that the assumption failing costs an error rather than a
-    /// tree that stopped early and was published as a whole one.
     #[error("changed while it was being unpacked")]
     Changed,
 }
 
-/// Unpack an archive into a directory this run created.
-///
-/// `archive` is the downloaded file, open — never its path, so that what is
-/// unpacked is what the digest was checked against. `into` is the staging tree
-/// being built, `root` is the manifest's `archive-root`, and `url` names the
-/// archive in a diagnostic and is used for nothing else.
+/// Validate an archive and unpack selected entries into an owned staging directory.
+/// The file must contain the complete, verified download. `root` must already
+/// pass manifest validation. Failure may leave partial content inside `into`.
 pub(crate) fn extract(
     archive: &fs::File,
     into: &Path,
@@ -170,9 +130,6 @@ pub(crate) fn extract(
 
 /// The archive being unpacked: its open bytes, how they are wrapped, and what to
 /// call it when something is wrong with it.
-///
-/// The three travel together through every pass, and holding one is proof the
-/// bytes were read far enough to say they are a tar archive.
 struct Tarball<'a> {
     /// The downloaded file, held open. A descriptor rather than a path because
     /// the path is a scratch name beside the destination, and reopening it would
@@ -238,9 +195,6 @@ enum Format {
 }
 
 /// One entry, as [`plan`] left it.
-///
-/// Everything [`unpack`] needs in order to write it, and nothing it would have
-/// to decide again: what it is, and where it goes.
 struct Record {
     /// Where the archive says it is, with `.` components dropped — the form
     /// everything below matches against, and the one a diagnostic names it by. A
@@ -292,10 +246,6 @@ enum Kind {
 }
 
 /// Whether a block is a tar header, by the checksum it carries of itself.
-///
-/// Not by looking for `ustar` at offset 257: a V7 archive carries no magic there
-/// at all, and refusing it would refuse an archive the reader after this one goes
-/// on to read perfectly well.
 fn is_tar_header(head: &[u8]) -> bool {
     let Some(block) = head.get(..HEADER_BYTES) else {
         return false;
@@ -337,10 +287,6 @@ fn octal(field: &[u8]) -> Option<u32> {
 }
 
 /// What a run of leading bytes is, in the words a diagnostic uses.
-///
-/// The formats worth naming are the ones somebody plausibly wrote a
-/// `fetch-archive` for, each of which wants a different answer from "this is not
-/// an archive at all".
 fn looks_like(head: &[u8]) -> &'static str {
     for (magic, name) in [
         (&b"PK\x03\x04"[..], "a zip archive"),
@@ -367,12 +313,8 @@ fn head_of(file: &fs::File) -> io::Result<Vec<u8>> {
     Ok(head)
 }
 
-/// A second handle on the same open file, positioned at the start.
-///
-/// A duplicated descriptor, not a second `open` of the path: it names the file
-/// the digest was computed over, and nothing done to the path it arrived under
-/// can point it at different bytes. Each pass takes its own, so a pass never
-/// inherits where the one before it stopped.
+/// Clone the open file handle and rewind it. Both handles share the file cursor;
+/// callers must read sequentially.
 fn rewound(file: &fs::File) -> io::Result<fs::File> {
     use std::io::Seek as _;
 
@@ -383,21 +325,6 @@ fn rewound(file: &fs::File) -> io::Result<fs::File> {
 
 /// Read every entry, check what will be written, and settle what the root
 /// strips.
-///
-/// **Nothing is written here.** What comes back is one record per entry in
-/// archive order, so [`unpack`] creates without deciding anything.
-///
-/// Three sweeps over the same entries, because each needs the answer before it.
-/// The paths have to be read before the root can be detected, the root has to be
-/// stripped before anything can be said about where an entry lands, and *every*
-/// entry's placement has to be known before any one of them can be checked: what
-/// makes a target safe depends on which paths the archive declares as symlinks,
-/// and an archive is free to declare one after the entry that walks through it.
-///
-/// A path that leaves the archive is refused wherever it turns up, selected or
-/// not — `../../.ssh/authorized_keys` is hostile whatever the `archive-root`
-/// picks. The rest is asked only of the entries being installed, so a fifo in a
-/// part of the archive nobody asked for does not refuse the part they did.
 fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error> {
     let mut declared: Vec<(PathBuf, Kind)> = Vec::new();
     for_each_entry(tarball, |entry| {
@@ -459,21 +386,6 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error>
 }
 
 /// Check an entry that is going to be installed, and settle where a link points.
-///
-/// Two things are left to ask of one. **Nothing is written through a symlink the
-/// archive itself declares**, so no ancestor of the path may be one: the kernel
-/// follows a link before it creates what is under it, and where that link goes
-/// is not where the archive said the entry was.
-///
-/// And a link's target has to reach somewhere inside, which is a question about
-/// the archive as a whole rather than about the target's spelling. The two link
-/// kinds answer to different rules because they mean different things: a
-/// symlink's target is read from the directory the link ends up in, and a
-/// hardlink's names another entry of the archive. The hardlink's is rewritten
-/// here rather than at the write, because this is where the root prefix is known.
-///
-/// An entry that is not being installed has neither question to answer, so this
-/// returns having done nothing.
 fn check_and_resolve(
     record: &mut Record,
     strip: Option<&Path>,
@@ -494,10 +406,6 @@ fn check_and_resolve(
                     entry: display(&record.archive_path),
                 }));
             }
-            // Read from where the link ends up, which is after the root strip
-            // and therefore shallower than where the archive wrote it. Asking at
-            // the archive's own depth would let `../../x` out of a stripped
-            // tree.
             let from = inside.parent().unwrap_or_else(|| Path::new(""));
             if stays_inside(&from.join(target.as_path()), links) {
                 Ok(())
@@ -505,15 +413,6 @@ fn check_and_resolve(
                 Err(tarball.escaping(&record.archive_path))
             }
         }
-        // Three ways for one of these to point at nothing this run will create,
-        // and they are one refusal: a target that leaves the archive altogether,
-        // one that is merely outside the selected root, and one reached through
-        // a symlink. An archive whose links do not resolve is not one to
-        // install.
-        //
-        // A hardlink's target is an archive path, spelled the way the entry it
-        // names is spelled, so it answers to the entry rule rather than the
-        // symlink one.
         Kind::Hardlink(target) => {
             *target = entry_path(target)
                 .map(|named| place(&named, strip))
@@ -527,10 +426,6 @@ fn check_and_resolve(
 
 /// The prefix every entry is written without, resolved from what the manifest
 /// asked for.
-///
-/// `*` is the only value that has to look at the archive: it means the single
-/// top-level directory a release tarball usually has, so an archive with two of
-/// them is refused rather than guessed at.
 fn root_prefix(
     declared: &[(PathBuf, Kind)],
     root: Option<&str>,
@@ -540,11 +435,6 @@ fn root_prefix(
         return Ok(None);
     };
     if root != DETECT_ROOT {
-        // Cleaned the way an entry path is, because that is what it is matched
-        // against: a root written `./tool` carries a component no entry path has
-        // and would match nothing at all. The panic states the agreement with
-        // the manifest rather than defending against it — a root this could
-        // reject was refused before anything was fetched.
         return Ok(Some(entry_path(Path::new(root)).expect(
             "the manifest refuses an archive-root that is not a path inside an archive",
         )));
@@ -565,10 +455,6 @@ fn root_prefix(
 }
 
 /// Where an entry lands once the root has been stripped.
-///
-/// Two ways to be left with nothing, and they are not the same thing: an entry
-/// that *is* the root is the tree, which already exists and still has a mode to
-/// give it, and one outside a named prefix is not being installed at all.
 fn place(path: &Path, strip: Option<&Path>) -> Placement {
     let remainder = match strip {
         Some(prefix) => match path.strip_prefix(prefix) {
@@ -583,19 +469,8 @@ fn place(path: &Path, strip: Option<&Path>) -> Placement {
     }
 }
 
-/// A path inside an archive, with its `.` components dropped, or `None` where it
-/// is not one batfiles will write.
-///
-/// An empty result is the archive's own root: `tar czf x.tgz .` — which is how
-/// most archives are made — writes it as `./`, and every entry under it with a
-/// leading `./` that has to come off first. `archive-root = "*"` would otherwise
-/// find `.` at the top of every path and strip that instead of the directory it
-/// was meant to.
-///
-/// **`..` is refused rather than cancelled.** Cancelling it on paper is right
-/// only when the component before it is a real directory, and an archive is free
-/// to declare a symlink there instead — after which the kernel goes up from
-/// wherever the link landed and the paper answer is somewhere else entirely.
+/// Remove `.` components from an archive path. Reject roots, platform prefixes,
+/// and every `..` component; an empty path represents the archive root.
 fn entry_path(path: &Path) -> Option<PathBuf> {
     let mut cleaned = PathBuf::new();
     for component in path.components() {
@@ -609,34 +484,14 @@ fn entry_path(path: &Path) -> Option<PathBuf> {
 }
 
 /// Whether a path passes *through* one of the archive's own symlinks.
-///
-/// Nothing is created under one. The kernel follows a link before it creates
-/// what is below it, so an entry written there does not land where the archive
-/// says it does — and where the link leads is a question this cannot answer by
-/// looking at the path.
 fn walks_through_a_link(path: &Path, links: &BTreeSet<PathBuf>) -> bool {
     path.ancestors()
         .skip(1)
         .any(|ancestor| links.contains(ancestor))
 }
 
-/// Whether a symlink target reaches somewhere inside the tree, resolved the way
-/// the operating system would rather than the way `..` cancels on paper.
-///
-/// Asked of the target already joined to the directory the link sits in, which
-/// is where a relative target is read from — `../lib/x` on its own says nothing
-/// about whether it stays inside, and `bin/../lib/x` says it does.
-///
-/// A target needs `..` — `../lib/libfoo.so` is ordinary — so unlike an entry
-/// path this cannot simply refuse it. What it refuses instead is the one case
-/// where cancelling is wrong: a `..` that would cancel a component the archive
-/// declares as a symlink.
-///
-/// That is the whole of the escape, and it takes two entries to build. `a/b ->
-/// ../x` is honest and stays inside. `escape -> a/b/../../outside` cancels on
-/// paper to `outside`, which is inside; on disk the kernel resolves `a/b` to
-/// `x`, goes up twice from there, and lands beside the destination. Anything
-/// later written under `escape/` would then be written outside `dest`.
+/// Check a relative symlink target for root escape. Reject `..` immediately
+/// after an archive symlink, whose filesystem resolution cannot be canceled lexically.
 fn stays_inside(path: &Path, links: &BTreeSet<PathBuf>) -> bool {
     let mut walked = PathBuf::new();
     for component in path.components() {
@@ -644,10 +499,6 @@ fn stays_inside(path: &Path, links: &BTreeSet<PathBuf>) -> bool {
             Component::CurDir => {}
             Component::Normal(name) => walked.push(name),
             Component::ParentDir => {
-                // `walked` still holds the component this `..` would cancel.
-                // Above the tree there is nothing to cancel, and where the
-                // archive declares that component a symlink there is nothing
-                // this can say about where going up from it leads.
                 if walked.components().next().is_none() || links.contains(&walked) {
                     return false;
                 }
@@ -660,32 +511,17 @@ fn stays_inside(path: &Path, links: &BTreeSet<PathBuf>) -> bool {
 }
 
 /// Write the records into the tree being built.
-///
-/// Every path has already been checked, so what is left is creation, in archive
-/// order, with directory modes held back to the end.
 fn unpack(tarball: &Tarball<'_>, records: &[Record], into: &Path) -> Result<(), Error> {
-    // What the tree itself should end up with. Most archives carry a directory
-    // entry for the root being stripped, and its mode is the one that wins; this
-    // stands in for the ones that list only files, because the staging node was
-    // created closed (`guidance.md`, rule 15's widen-at-the-end).
     let mut root_mode = UNSTATED_DIRECTORY_MODE;
     let mut directories: Vec<(PathBuf, u32)> = Vec::new();
     let mut planned = records.iter();
 
     for_each_entry(tarball, |entry| {
-        // One open file read the same way twice, so the records line up with the
-        // entries one for one and nothing here has to be decided again. Checked
-        // rather than assumed: a read that ran out of records would otherwise
-        // stop early and publish part of a tree as a whole one.
         let Some(record) = planned.next() else {
             return Err(tarball.fault(Invalid::Changed));
         };
         let built_at = match &record.placement {
             Placement::At(inside) => into.join(inside),
-            // Already there, and the only thing it has left to say is its mode.
-            // This is the usual `archive-root = "*"` case: the directory being
-            // stripped is the one carrying the mode the destination should end
-            // up with.
             Placement::TheTreeItself => {
                 if matches!(record.kind, Kind::Directory) {
                     root_mode = mode_of(entry, &record.kind);
@@ -752,11 +588,6 @@ fn for_each_entry(
 ) -> Result<(), Error> {
     let file = rewound(tarball.file).map_err(|source| tarball.unreadable(source))?;
     let reader: Box<dyn io::Read> = match tarball.format {
-        // Multi-member, not single: a gzip stream may be several members
-        // concatenated — which is what `pigz` writes — and a decoder that
-        // stopped at the first would hand back part of the archive as though it
-        // were all of it. That is the failure rule 15 is about, arriving through
-        // the reader.
         Format::Gzip => Box::new(MultiGzDecoder::new(file)),
         Format::Plain => Box::new(file),
     };
@@ -868,10 +699,6 @@ fn create_closed(at: &Path) -> Result<fs::File, Error> {
 
 /// The permission bits an entry asks for, with the ones batfiles will not grant
 /// removed.
-///
-/// A header whose mode field does not read leaves the entry with what its kind
-/// ordinarily carries, which is not one answer: a directory without its execute
-/// bit is one nothing under it can be reached through.
 #[cfg(unix)]
 fn mode_of(entry: &ArchiveEntry<'_>, kind: &Kind) -> u32 {
     let unstated = match kind {
@@ -928,9 +755,6 @@ mod tests {
 
     #[test]
     fn an_entry_path_that_could_leave_the_tree_is_refused_rather_than_cancelled() {
-        // `a/../b` names `b` only if `a` is a real directory. It is refused
-        // rather than cancelled because the same archive may declare `a` a
-        // symlink, and then it names something else entirely.
         for refused in ["/etc/passwd", "..", "../a", "a/../b", "a/../../b"] {
             assert_eq!(entry_path(Path::new(refused)), None, "`{refused}`");
         }
@@ -983,16 +807,9 @@ mod tests {
     #[test]
     fn a_symlink_target_may_climb_past_a_directory_and_not_past_a_link() {
         let links = linking(&["a/b", "lib/libfoo.so.1"]);
-        // Targets already joined to the directory their link sits in, which is
-        // the form this is asked about. The last is the chained link a library
-        // tarball ships — `lib/libfoo.so -> libfoo.so.1`, pointing at another
-        // link — which is fine, because neither hop climbs past one.
         for inside in ["x", "bin/../lib/x", "a/b", "lib/libfoo.so.1"] {
             assert!(stays_inside(Path::new(inside), &links), "`{inside}`");
         }
-        // The escape, which takes two entries: `a/b -> ../x` is honest, and this
-        // target cancels down to `outside` on paper while the kernel resolves
-        // `a/b` first and lands beside the tree.
         assert!(!stays_inside(Path::new("a/b/../../outside"), &links));
         // One `..` past the link is already wrong, before it leaves the tree.
         assert!(!stays_inside(Path::new("a/b/../c"), &links));

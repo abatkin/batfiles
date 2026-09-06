@@ -45,8 +45,7 @@ fn help_lists_every_documented_command() {
     }
 }
 
-/// A command that resolves its roots and then reports that it does not exist
-/// yet. `sync` used to be the specimen; it runs now.
+/// A stub command that resolves roots before reporting unsupported behavior.
 fn a_stub() -> [&'static str; 2] {
     ["clone", "https://example.invalid/dotfiles.git"]
 }

@@ -1,35 +1,16 @@
 //! Item IDs and the dotted addresses built from them.
-//!
-//! "Item" is the collective noun for the things the ID rule names — actions,
-//! groups, remotes, and manifest entries. An address is defined entirely in
-//! terms of IDs, so both types live here.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A validated item ID.
-///
-/// IDs match `[A-Za-z0-9][A-Za-z0-9_-]*` and name actions, groups, remotes, and
-/// manifest entries. Holding one is proof the value was checked, so an ID is
-/// validated where it enters and nothing re-checks it afterwards.
-///
-/// This is deliberately not the user-variable rule: `_hidden` is a valid
-/// variable name and not a valid ID, while `9front`, `oh-my-zsh`, and `env` are
-/// valid IDs and not valid variable names. In particular an ID cannot contain
-/// whitespace, `.`, or `,` — dots compose qualified addresses and commas
-/// delimit environment lists.
-/// Serialized as the bare string it wraps, so a document batfiles writes reads
-/// back the way a hand-written one is spelled.
+/// An ASCII alphanumeric ID, with hyphens and underscores allowed after the first character.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(try_from = "String")]
 pub(crate) struct ItemId(String);
 
 /// Why a candidate ID was rejected.
-///
-/// The rejected value travels with the error: serde renders this where the user
-/// cannot see what was written, so the message has to carry it.
 #[derive(Debug, Error)]
 #[error(
     "`{candidate}` is not a valid ID: an ID starts with a letter or digit, \
@@ -71,24 +52,11 @@ impl fmt::Display for ItemId {
 const SEGMENT_SEPARATOR: char = '.';
 
 /// A validated address: one or more [`ItemId`]s joined by `.`.
-///
-/// This is only the shared syntax. Which shapes a repository can *resolve* is a
-/// separate question, and one this type deliberately does not ask: `a.b.c.d.e`
-/// is a well-formed address that nothing happens to contain, and the commands
-/// that record an address without resolving it may write it down.
-///
-/// Held as the dotted text rather than as a segment list, so ordering is over
-/// that text. `disabled.toml` holds a sorted set of addresses and the order is
-/// visible in the written document, which is the order a plain string sort
-/// gives: `a-c` before `a.b`, because `-` sorts before `.`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(try_from = "String")]
 pub(crate) struct ItemAddress(String);
 
 /// Why a candidate address was rejected.
-///
-/// Carries the whole address rather than the offending segment: the segment
-/// alone does not say which line to fix.
 #[derive(Debug, Error)]
 #[error(
     "`{candidate}` is not a valid address: every dot-separated segment must be an ID \
@@ -100,12 +68,6 @@ pub(crate) struct ItemAddressError {
 
 impl ItemAddress {
     /// Whether this address names `id`, which is a leaf action or a leaf group.
-    ///
-    /// Only an unqualified address can, and an ID cannot contain the separator,
-    /// so equality is the whole test. A qualified address names an action or a
-    /// group an included remote contributed, and no remote exists yet, so it
-    /// names nothing — which is an outcome every list holding one already has a
-    /// rule for.
     pub fn names(&self, id: &ItemId) -> bool {
         self.0 == id.as_str()
     }
@@ -115,9 +77,6 @@ impl TryFrom<String> for ItemAddress {
     type Error = ItemAddressError;
 
     fn try_from(address: String) -> Result<Self, Self::Error> {
-        // Every segment is an ID, and `split` yields an empty one for a leading,
-        // trailing, or doubled dot, so the empty forms are refused by the same
-        // rule rather than by a check of their own.
         if address
             .split(SEGMENT_SEPARATOR)
             .all(|segment| ItemId::try_from(segment.to_owned()).is_ok())
@@ -227,9 +186,6 @@ mod tests {
 
     #[test]
     fn addresses_sort_by_their_dotted_text() {
-        // The written `disabled.toml` array is this order, and it is the one a
-        // plain string sort gives: `-` sorts before `.`, so `a-c` comes first.
-        // Comparing segment lists instead would swap these two.
         let mut sorted = ["b", "a.b", "a", "a-c", "a.a"].map(address);
         sorted.sort();
         assert_eq!(

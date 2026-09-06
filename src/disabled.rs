@@ -1,18 +1,6 @@
 //! `disabled.toml`: the actions and groups switched off on this machine, and
 //! the four commands that edit it — `disable-action`, `enable-action`,
 //! `disable-group`, and `enable-group`.
-//!
-//! The document and its only writer live together. One implementation serves
-//! all four commands, differing in nothing but which list it edits and which
-//! way it moves a name.
-//!
-//! Two properties the code here rests on, both specified in `docs/state.md`.
-//! Addresses are validated for *syntax* and never resolved, so a name can be
-//! recorded before anything answers to it — which is why nothing in this module
-//! opens the leaf repository, and why an unreadable `batfiles.toml` cannot fail
-//! one of these commands. And both lists are [`BTreeSet`]s, whose
-//! `insert`/`remove` report whether the set actually changed: that answer is
-//! what keeps a mutation changing nothing from rewriting the document.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -26,9 +14,6 @@ use crate::output::Reporter;
 use crate::tomlfile;
 
 /// The parsed `disabled.toml`.
-///
-/// Read by [`crate::selection`], which filters a run's action list by both
-/// lists and by the run-only skips.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Disabled {
@@ -42,7 +27,7 @@ pub(crate) struct Disabled {
 
 impl Disabled {
     /// The document's name. Which directory it sits in is
-    /// [`Roots`](crate::location::Roots)' answer, not this type's.
+    /// [`Roots`]' answer, not this type's.
     pub const FILE_NAME: &'static str = "disabled.toml";
 
     /// Load the document, treating a missing file as an empty disabled set.
@@ -51,20 +36,12 @@ impl Disabled {
     }
 
     /// Rewrite the document.
-    ///
-    /// Both keys are always written, including when their sets are empty: an
-    /// empty `disabled.toml` is kept rather than deleted, and spelling out the
-    /// two arrays keeps a hand-edited file self-explanatory.
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         tomlfile::write(path, self)
     }
 }
 
 /// Which of the document's two lists a command edits.
-///
-/// Nothing in the syntax distinguishes an action from a group, so this is the
-/// command's choice alone: `disable-action` will happily record what is really
-/// a group name. That is inherent to validating syntax only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DisabledList {
     Actions,
@@ -79,9 +56,6 @@ pub(crate) enum Change {
 }
 
 /// Add the names to, or remove them from, the machine-local disabled list.
-///
-/// Nothing is reported until the document has been rewritten, so every line the
-/// command prints describes a change that is on disk.
 pub(crate) fn run(
     names: &[String],
     list: DisabledList,
@@ -105,17 +79,10 @@ pub(crate) fn run(
         lines.push(outcome(list, change, name, mutated));
     }
 
-    // A mutation that changed nothing must not rewrite the document merely to
-    // sort or deduplicate it — and a command that changed nothing does not
-    // create a `disabled.toml` that was not there before.
     if changed {
         disabled.save(&path)?;
     }
 
-    // Reported only once the rewrite has committed. The account is all-or-nothing
-    // for the same reason the edit is: a run whose save failed changed nothing,
-    // and saying "disabled action `p10k`" above the error explaining that nothing
-    // was written describes a state the machine is not in.
     for line in &lines {
         reporter.info(line);
     }
@@ -123,10 +90,6 @@ pub(crate) fn run(
 }
 
 /// Validate every supplied name, keeping the first of each.
-///
-/// A repeated name warns rather than failing: it names one thing however many
-/// times it was written, so the invocation still has an unambiguous meaning.
-/// Order is preserved so the output follows the command line.
 fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemAddress>, Error> {
     let mut parsed: Vec<ItemAddress> = Vec::with_capacity(names.len());
     for name in names {
@@ -141,9 +104,6 @@ fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemAddress>, 
 }
 
 /// Move one name, reporting whether the set actually changed.
-///
-/// `BTreeSet` answers that directly, and the answer is what keeps an idempotent
-/// mutation from rewriting the file.
 fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) -> bool {
     match change {
         Change::Disable => set.insert(name.clone()),
@@ -152,9 +112,6 @@ fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) ->
 }
 
 /// The line describing what one name's mutation did.
-///
-/// A real state change is spelled out — re-enabling something that was actually
-/// off is the outcome that must never be silent or ambiguous.
 fn outcome(list: DisabledList, change: Change, name: &ItemAddress, changed: bool) -> String {
     let noun = list.noun();
     match (change, changed) {
@@ -246,9 +203,6 @@ mod tests {
 
     #[test]
     fn a_qualified_address_is_recorded_without_being_resolved() {
-        // These lists validate syntax and resolve nothing, so an address naming
-        // an included remote's action is stored the way any other name is —
-        // which is what lets one be written down before the remote exists.
         let disabled = parse("actions = ['core.zshrc', 'a.b.c.d.e']\n").expect("parse");
         assert_eq!(disabled.actions, set(["a.b.c.d.e", "core.zshrc"]));
     }

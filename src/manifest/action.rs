@@ -1,9 +1,4 @@
 //! `[[actions]]`: the ordered list of things a repository does.
-//!
-//! Each action is one closed record selected by its `type` tag. Variants repeat
-//! the common fields rather than sharing a flattened record, because
-//! `#[serde(flatten)]` silently disables `deny_unknown_fields`, and a closed
-//! record is what the format promises.
 
 use serde::Deserialize;
 
@@ -31,11 +26,6 @@ pub(crate) enum Action {
 
 impl Action {
     /// What every record carries, whichever variant it is.
-    ///
-    /// One exhaustive match, so asking for a shared field costs no match of its
-    /// own: `id`, `group`, and `describe` all read it, and `when` and `unless`
-    /// join it at 5.6. No wildcard, so a variant added later fails to compile
-    /// until someone says what it is called and where its shared fields are.
     pub fn common(&self) -> Common<'_> {
         let (kind, id, group) = match self {
             Self::Symlink(action) => ("symlink", &action.id, &action.group),
@@ -55,20 +45,9 @@ impl Action {
         }
     }
 
-    /// Check the paths this record declares, each by the rule its own field
-    /// follows.
-    ///
-    /// Which fields hold paths, and which rule each one answers to, is a
-    /// question only the variant can answer — a `source-dir` is a repository
-    /// source and a `dest-dir` is a destination, and the fetching action types
-    /// name a URL, which is neither and must not be checked as either. So the
-    /// arms name their fields rather than a shared shape naming them, and there
-    /// is no wildcard: a variant added later fails to compile until it says
-    /// which rules its own fields follow.
-    ///
-    /// `number` is the record's one-based position, which is how a diagnostic
-    /// names one carrying no `id`.
-    pub fn check_paths(&self, number: usize) -> Result<(), Invalid> {
+    /// Validate declared paths, URLs, digests, archive roots, and Git refs.
+    /// `number` is the one-based action position used in diagnostics.
+    pub fn validate(&self, number: usize) -> Result<(), Invalid> {
         match self {
             Self::Symlink(action) => {
                 check_source(&action.source, number)?;
@@ -109,10 +88,6 @@ impl Action {
                 check_git_ref(action.git_ref.as_deref(), number)?;
                 check_dest(&action.dest, number)
             }
-            // The one action whose `source` names a file in the repository and
-            // whose repositories are named somewhere else entirely, so its two
-            // fields answer to the two ordinary rules and its `source` is a
-            // path again.
             Self::GitCloneList(action) => {
                 check_source(&action.source, number)?;
                 check_dest(&action.dest_dir, number)
@@ -121,28 +96,17 @@ impl Action {
     }
 
     /// The action's `id`, if it was written with one.
-    ///
-    /// IDs share one namespace across a repository, so uniqueness is checked
-    /// over the list as a whole — by a caller that does not know, and should
-    /// not have to ask, which variant it is holding.
     pub fn id(&self) -> Option<&ItemId> {
         self.common().id
     }
 
     /// The group the action belongs to, if it was written with one.
-    ///
-    /// A group is nothing but this field: no section declares one, so a group
-    /// exists because some action names it and holds exactly the actions that
-    /// do.
     pub fn group(&self) -> Option<&ItemId> {
         self.common().group
     }
 
     /// How the action introduces itself in a report: what kind it is, what it is
     /// called, and the group it is in.
-    ///
-    /// `number` is its one-based position in the list, which is what names a
-    /// record carrying no `id` — the same way a load error names one.
     pub fn describe(&self, number: usize) -> String {
         let Common { kind, id, group } = self.common();
         let name = match id {
@@ -184,12 +148,6 @@ pub(crate) struct SymlinkAction {
 
 /// `symlink-dir`: one symlink per direct child of a directory in the
 /// repository, all of them into one destination directory.
-///
-/// A separate type rather than a second mode of `symlink`, so that serde
-/// decides which fields a record must carry and there is no invariant spanning
-/// two optional halves. Filtering the children — `include` and `exclude` — is
-/// specified in `docs/future/repoformat.md` and not built; adding it later is
-/// additive, and neither repository this exists for needs it.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct SymlinkDirAction {
@@ -211,11 +169,6 @@ pub(crate) struct SymlinkDirAction {
 }
 
 /// `create-dir`: one directory, created where nothing is.
-///
-/// The only action with no source. It exists for a directory whose contents
-/// come from somewhere else — a plugin root another tool clones into, a cache a
-/// program expects to find — where the manifest has nothing of its own to put
-/// there.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CreateDirAction {
@@ -229,11 +182,6 @@ pub(crate) struct CreateDirAction {
 }
 
 /// `copy`: one file or one directory, seeded at a destination where nothing is.
-///
-/// The copy is the user's from then on. That is what separates this from
-/// `symlink` — the same pair of fields, installing the same thing at the same
-/// place, but a detached one that editing does not write back into the
-/// repository, and that a later `sync` will not undo.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyAction {
@@ -250,12 +198,6 @@ pub(crate) struct CopyAction {
 
 /// `copy-dir`: one copy per direct child of a directory, all of them into one
 /// destination directory.
-///
-/// Stands to [`CopyAction`] as [`SymlinkDirAction`] does to [`SymlinkAction`]:
-/// the same installation, done once per child rather than once. There is no
-/// `dot-prefix` on `CopyAction` for the same reason there is none on
-/// `SymlinkAction` — a destination written out in full already says what it is
-/// called.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyDirAction {
@@ -276,13 +218,6 @@ pub(crate) struct CopyDirAction {
 }
 
 /// `fetch-file`: one file downloaded to a destination where nothing is.
-///
-/// The same bargain as [`CopyAction`], with the content coming from a URL rather
-/// than from the repository: something at the destination means the action is
-/// done, and what lands is the user's from then on. The response body is the
-/// file, whatever it holds; unpacking one that turns out to be an archive is
-/// [`FetchArchiveAction`]'s, so `archive-root` is a permanently unknown field
-/// here rather than one waiting for a step.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchFileAction {
@@ -297,27 +232,11 @@ pub(crate) struct FetchFileAction {
     /// the action runs, with missing parents created on the way.
     pub dest: String,
     /// The digest the fetched bytes must have, if the repository pins one.
-    ///
-    /// Optional because the URL a repository names is often a moving target —
-    /// a file on a branch — where a digest would fail on every upstream change.
     pub sha256: Option<String>,
 }
 
 /// `fetch-archive`: one archive downloaded and unpacked at a destination where
 /// nothing is.
-///
-/// The sibling of [`FetchFileAction`], and the transfer is the same one — the
-/// same schemes, the same optional digest, the same redirect and timeout rules,
-/// the same `200 OK` rule. What differs is only what is done with the body.
-///
-/// A separate type rather than a flag on `fetch-file`, because `archive-root`
-/// means nothing to a plain download and a record accepting a field it ignores
-/// is what the closed-record rule exists to prevent: which of the two a
-/// repository wants is a fact about the URL its author already knows.
-///
-/// `dest` is one name, not a merge root. The unpacked tree is installed as a
-/// single thing, exactly the way [`CopyAction`] installs a directory, so
-/// anything at all at `dest` means the action is done and no request is made.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchArchiveAction {
@@ -334,29 +253,14 @@ pub(crate) struct FetchArchiveAction {
     /// way.
     pub dest: String,
     /// The digest the fetched archive must have, if the repository pins one.
-    ///
-    /// Checked against the archive's own bytes, before a single entry is
-    /// unpacked.
     pub sha256: Option<String>,
     /// A prefix every entry is written without, or `*` for the single
     /// top-level directory a release tarball usually has.
-    ///
-    /// Absent means the archive is unpacked as it is written. Entries outside
-    /// a named prefix are not installed, which is what makes the field a way of
-    /// installing one directory out of an archive as well as a way of dropping
-    /// a version number.
     pub archive_root: Option<String>,
 }
 
 /// `git-clone`: one repository cloned where nothing is, and brought up to date
 /// where a clone of it already is.
-///
-/// The one action type that does not install a copy of something and then leave
-/// it alone. A clone is a live checkout with its own history, so a later `sync`
-/// does come back to it — conservatively, and never in a way that discards work:
-/// the rules are in `docs/repoformat.md`, and every one of them decides between
-/// updating and leaving the clone exactly as it is.
-///
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneAction {
@@ -375,25 +279,12 @@ pub(crate) struct GitCloneAction {
     pub dest: String,
     /// The branch, tag, or commit to follow. Absent, an update follows whatever
     /// branch the clone is on.
-    ///
-    /// Spelled `ref` in the file, which `rename_all` would otherwise make
-    /// `git-ref`, and named `git_ref` here because `ref` is a keyword.
     #[serde(rename = "ref")]
     pub git_ref: Option<String>,
 }
 
 /// `git-clone-list`: every repository a list in the repository names, cloned
 /// under one directory.
-///
-/// [`GitCloneAction`] repeated over a file, and the file is the point: a list of
-/// plugins is edited by pasting a URL onto the end of it, and a format that
-/// asked for a five-line TOML record per repository would be a worse version of
-/// the file it replaces (`guidance.md`, rule 11). What the list may say is the
-/// [clone list format](crate::clone_list), which is not TOML and is read by a
-/// parser of its own.
-///
-/// The list is read as the repository is loaded, so a malformed one fails before
-/// any action has run, and what was read travels in the record: see `entries`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneListAction {
@@ -412,18 +303,8 @@ pub(crate) struct GitCloneListAction {
     /// is: each entry contributes one child of it.
     pub dest_dir: String,
 
-    /// What the `source` list declared, filled in by
-    /// [`crate::execute`]'s read pass before the first action runs.
-    ///
-    /// **Not a field of the file.** The record is a closed mirror of one
-    /// otherwise, and `deny_unknown_fields` still rejects an `entries` key in a
-    /// manifest; this is here so that what was checked is what is cloned, rather
-    /// than the action reading the list a second time and installing from a
-    /// document nothing validated.
-    ///
-    /// `None` is "no pass read this", which is an ordinary state: a list
-    /// belonging to an action the run passes over is deliberately never read.
-    /// `Some(vec![])` is a list that declares no repositories.
+    /// Entries read during execution preparation. None means the list has not been
+    /// read; executable lists must contain Some, including when the list is empty.
     #[serde(skip)]
     pub entries: Option<Vec<Entry>>,
 }

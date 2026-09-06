@@ -9,10 +9,8 @@ boundary: a repository selected by the user can name destinations outside the
 home directory, included repositories can contribute installation actions, and
 allowed dynamic variables can execute arbitrary commands as the current user.
 
-This document records guiding policy rather than an exhaustive implementation
-specification. Implementations should preserve these principles when details
-are not yet specified, and should fail with an actionable diagnostic when they
-cannot determine a safe course of action.
+These are unbuilt proposals. Implemented safety behavior is specified in
+[installation safety](../safety.md).
 
 ## Trust model
 
@@ -32,48 +30,23 @@ Batfiles runs with the invoking user's permissions and does not elevate
 privileges. It does not sandbox Git, dynamic-variable commands, or filesystem
 access. In particular, a dry run may execute allowed dynamic-variable commands
 and update their cache, as described by the command-line specification's
-[dry-run behavior](../cmdline.md#dry-run-behavior).
+[proposed dry-run behavior](cmdline.md#dry-run-behavior).
 
 ## Destination paths
 
-Promoted at 0.10 to
-[Sources and destinations](../repoformat.md#sources-and-destinations), where
-these rules are stated for every action type rather than for `symlink` alone.
-What remains here has no code yet.
-
-That promotion now covers a clone list's per-entry `dest-name` too, which is not
-a destination path and is not governed by those rules: it is restricted to one
-ordinary directory component beneath the action's `dest-dir`, as defined by [the
-clone list format](../repoformat.md#what-a-clone-is-called).
-
-Before mutation, batfiles should resolve and display the effective destination
-in plans. Both halves of that run: a diagnostic names the resolved destination,
-and so does a [dry run](../cmdline.md#dry-run-behavior).
+Current [path and destination safety](../safety.md) applies to new action types.
 
 ## Repository source paths
 
-Promoted at 0.10 to
-[Sources and destinations](../repoformat.md#sources-and-destinations), minus the
-remote materializations below, which are not built.
-
-A source path resolves from its owning leaf repository *or remote
-materialization*, and the tool-owned `remotes/` tree is inside the selected
-batfiles directory and is a valid source location. Until remotes exist, the
-leaf repository is the only thing a source can be contained by, which is how the
-promoted rule is written.
+A remote source resolves against its materialization under the tool-owned
+`remotes/` tree. Extend the shared repository resolver and containment rules
+when materialization is implemented.
 
 ## Replacement and backups
 
-Steps 1 through 3 and the definition of a batfiles-owned symlink were promoted
-at 0.10 to
-[Replacing what is already there](../repoformat.md#replacing-what-is-already-there),
-minus the remote materializations, which are not built. Step 4 is what remains:
-until the backup policy exists at 9.4, an unmanaged destination is an error
-rather than something to preserve and replace, and `--no-overwrite` and
-`--interactive` are refused rather than honored.
-
-4. Otherwise, preserve the existing node in a recoverable backup before
-   replacing it.
+The current [replacement rules](../safety.md#replacing-what-is-already-there)
+refuse unmanaged destinations. Step 9.4 adds backups and conflict options.
+Preserve an unmanaged node in a recoverable backup before replacing it.
 
 The backup is placed next to the node it replaces and uses a collision-resistant
 name that never overwrites an earlier backup. Successful output tells the user
@@ -102,49 +75,15 @@ rules in [Local state and cache files](state.md#shared-read-and-write-rules).
 
 ## Installed permissions
 
-Promoted at 1.3 to [`copy`](../repoformat.md#copy), which is the only action
-that installs content carrying permissions of its own. What is written there is
-this section minus the replacement clause: a copied file receives the source's
-permission bits including the executable one, a copied directory receives the
-source directory's, synthetic parents that exist only to reach a destination
-take the platform default subject to the umask, and ownership is not copied.
-
-What remains here has no code yet. Replacing a destination does not preserve the
-old destination's permissions; its adjacent backup preserves them, while the
-replacement follows the source. Batfiles does not elevate privileges to
-reproduce another owner. Symlink permission bits are not portable and carry no
-separate guarantee.
+A refreshed replacement follows its source permissions; its adjacent backup
+preserves the old destination's permissions. Do not elevate privileges to
+reproduce another owner. Current [installed permissions](../safety.md#installed-permissions)
+remain the default for newly created content.
 
 ## Seed actions and deletion
 
-The copy half was promoted at 1.3 to
-[Seeds do not replace, and so do not refuse](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse)
-and the two `copy` action sections, and the build changed it in one way worth
-recording. This section had one `copy` whose `dest` was an exact destination or
-a merge root depending on the source type, with the missing-only check applied
-recursively to every mapped entry below a merge root and existing directories
-traversed as merge points. What was built is two actions and one level: `copy`
-installs one thing at one name and does nothing at all if something is at that
-name, `copy-dir` installs each direct child on its own, and a child directory
-that already exists is kept whole rather than descended into. Deep merging is
-what interleaves two configurations that were never written to combine, and it
-can be added later without changing what a working manifest does; taking it away
-afterwards could not.
-
-What remains here has no code yet.
-
-The fetching half was promoted at 4.2 to the same two sections, and the build
-settled the question this paragraph used to leave open. It had `dest` be a merge
-root for an extracting fetch, with the existence check applied per selected
-entry at its mapped path below that root, so that an extraction could seed the
-entries it was missing; slice 4 was left to find out whether that survived
-contact with an implementation, and it does not. A per-entry merge writes into
-`$HOME` as it goes, so an extraction that stops halfway leaves a destination
-every later run finds occupied and reports as finished — the failure
-[Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse)
-is written against, and one no cleanup step fixes, because a run that is killed
-runs no cleanup. What was built unpacks beside the destination and moves it in
-once, so `dest` is one name for `fetch-archive` exactly as it is for `copy`.
+Extend the current [seed policy](../safety.md#seeds-do-not-replace-and-so-do-not-refuse)
+with explicit refresh and backups at 9.4.
 
 Seed actions do not modify an existing entry merely because the source has
 changed. The user must pass `--refresh-content` to force seed actions to run
@@ -157,25 +96,7 @@ filter or upstream archive unexpectedly deletes local content.
 
 ## Git repositories
 
-The conservative update policy was promoted at 4.3 to
-[`docs/repoformat.md`](../repoformat.md#a-clone-is-the-one-thing-batfiles-comes-back-to):
-fetch on every normal synchronization, fast-forward only, and skip with a
-warning where the worktree is dirty, tracks nothing, or holds commits of its
-own. The branch half went at 4.5 to
-[`ref`](../repoformat.md#ref-following-one-branch-tag-or-commit): a clean
-worktree follows the declared configuration, batfiles may change which branch or
-object is checked out, the transition is reported because it may be surprising,
-and it needs no backup, since changing away from a branch deletes neither the
-branch nor its commits.
-
-**The remote URL is the half that stays here, and deliberately so.** This
-section had a clean worktree's update also rewrite the configured remote, and
-4.5 promoted the opposite: `source` is never compared against a clone's
-configured remote or written over it, so pointing an existing action at a
-different repository does not move the checkout — delete it and let the next
-`sync` clone the new one. That is also why an update line names no URL where a
-clone line does. A clone list is the case that wants a rewrite least, an entry's
-repository and its directory name being derived from each other.
+Use the current [Git update policy](../safety.md#git-updates) for materializations.
 
 Network and repository trust still apply. Batfiles does not guarantee signed
 commits or immutable branch contents. Updating a declared Git remote can
@@ -184,16 +105,9 @@ otherwise control sources where upstream mutability is unacceptable.
 
 ## Downloads and archives
 
-Downloads should be written to a temporary file, verified when a digest is
-configured, and only then moved into a tool-owned cache or destination. A
-failed download or digest check must not replace existing content.
-
-Archives require stricter handling than user-authored destination paths.
-Batfiles should inspect and stage a complete selected archive tree before
-moving it into the destination in one step. It must reject entries that would escape the
-staging root, including absolute names, lexical `..` traversal, and unsafe
-symlink or hard-link targets. Device nodes and other special archive entries
-should be rejected rather than created.
+Remote file and archive materialization must follow the current
+[staging](../safety.md#staging-and-publication) and
+[archive validation](../safety.md#archive-extraction) rules.
 
 No metadata field supplied by an archive is trusted as a resource bound.
 Extraction should stream data, count actual uncompressed bytes and entries,
@@ -209,75 +123,17 @@ different one.
 
 ## Action order and overlapping destinations
 
-Enabled actions run in declaration order after `include-remote` actions have
-been expanded in place. Each action observes the filesystem state left by all
-earlier successful actions. If an action fails, later actions do not run.
-
-Batfiles does not compare destinations across actions, maintain cross-action
-ownership, or diagnose overlapping actions as conflicts. It does not freeze a
-concrete create, skip, or replace decision for every action based on the
-filesystem state at the beginning of the run.
-
-Instead, execution has two levels:
-
-1. Structural planning resolves variables, conditions, included actions,
-   sources, and the final action order. A `git-clone-list`'s own list is read
-   with the repository rather than at execution time, so its entries are known
-   before the first action runs; see [when the list is
-   read](repoformat.md#when-the-list-is-read).
-2. Each enabled action then runs in one pass: it inspects the filesystem as the
-   previous action left it and acts on what it finds, rather than on anything
-   decided for it earlier.
-
-A later action may therefore skip, back up, replace, or otherwise act on output
-from an earlier action according to its ordinary semantics. For example, if an
-earlier action creates `f`:
-
-- a later seed-only copy to `f` sees that it exists and skips;
-- a later symlink action applies the normal owned-link or unmanaged-destination
-  replacement policy;
-- a later `create-dir` does nothing if `f` is already the required directory,
-  and otherwise applies its normal type-mismatch behavior; and
-- a later directory action sees and merges with the tree produced so far.
-
-In particular, a `create-dir` followed by a seed-only directory copy or archive
-extraction at the same path leaves the merge root in place and seeds missing
-selected entries beneath it.
-
-Batfiles does not warn merely because those actions overlap. Ordering and any
-intentional or accidental overlap are the repository author's responsibility.
+Expand included actions in place before capturing selection and preparing clone
+lists. Preserve the current [execution order](../cmdline.md#sync): each action
+inspects the filesystem left by earlier successful actions. Inclusion does not
+add cross-action destination conflict detection.
 
 ## Planning, errors, and recovery
 
-The structural plan is an ordered program, not a transaction or a frozen list
-of filesystem mutations. Inspection during the first phase of an action's
-execution determines that action's creates, skips, Git updates, backups, and
-replacements from the state that actually exists at that point. Every
-destructive step still checks the filesystem immediately before mutation; the
-earlier inspection is not an ownership claim and cannot eliminate races with
-other processes.
-
-Single-file writes that carry content should use a temporary sibling and atomic
-rename where practical. Content is what the rule is about: a node batfiles can
-rebuild from the manifest — an owned symlink — is replaced in place and simply
-redone if a run is interrupted, per
-[Replacing what is already there](../repoformat.md#replacing-what-is-already-there).
-
-The build went further than "where practical" and further than "single-file",
-and the sentence that used to follow — that multi-file directory updates are
-neither atomic nor automatically rolled back — is no longer true of the actions
-that exist. `copy`, `copy-dir`, and `fetch-archive` build a whole directory
-beside its destination and move it in with one rename, so a directory install is
-atomic and an unfinished one leaves the destination untouched; see
-[Seeds do not replace](../repoformat.md#seeds-do-not-replace-and-so-do-not-refuse).
-It is stated as a rule rather than a preference because the failure it prevents
-is a run that reports success over a half-installed destination forever. The
-actions that do not exist yet inherit it.
-As the first phase of a directory action's execution, batfiles
-performs a best-effort inspection of the intended overlay. It then applies the
-overlay in a deterministic order, leaving adjacent backups for every
-destination node it replaces. On failure, it stops, reports what completed,
-and leaves completed changes and recovery material in place.
+Refresh and backup operations must report completed changes and recovery paths
+when they fail. They do not make the entire action list transactional. Apply
+refresh overlays in deterministic order and retain adjacent backups for every
+replaced destination node.
 
 Batfiles never deletes a backup in response to a later error. It may clean up
 its own incomplete download or staging files when the destination was not yet

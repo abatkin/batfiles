@@ -4,10 +4,8 @@ The parts of the command-line interface that run today: the set of commands, the
 options every command accepts, where output goes, and what the exit status
 means.
 
-The per-command specifications and the shared action-execution and selection
-options are in [`future/cmdline.md`](future/cmdline.md) until the commands that
-use them are built, as are the [address forms](future/cmdline.md#address-forms)
-that nothing can resolve yet.
+Unimplemented commands, options, and additional address forms are described in
+[`future/cmdline.md`](future/cmdline.md).
 
 ## What runs today
 
@@ -17,11 +15,9 @@ an invalid invocation is rejected as a usage error before anything else happens.
 **Only `version`, `sync`, `apply-action`, `apply-group`, and the four
 enable/disable commands do any work.** Every other command resolves the location
 roots it needs and then reports that it is not implemented yet, exiting 2 having
-written nothing. That message is the answer to "what can batfiles do", and it
-disappears one command at a time.
+written nothing.
 
-`sync` is the first command that writes, and the first with an option that is
-honored: it executes the action types that exist, `--dry-run` reports what it
+`sync` executes the action types that exist, `--dry-run` reports what it
 would execute without doing any of it, and `--skip-action`/`--skip-group` leave
 part of it out for one run.
 
@@ -371,7 +367,7 @@ remove no installed content: what they change is what the *next* `sync` does,
 which is to pass the recorded names over — see
 [selecting what a run does](#selecting-what-a-run-does).
 
-They read and write `disabled.toml` and nothing else. They do not resolve or load
+They read and write `disabled.toml` and nothing else. They do not load
 the leaf repository, so a `batfiles.toml` that is malformed, or missing
 altogether, cannot fail one — and each supplied name is validated for
 [syntax](repoformat.md#names-and-ids) alone. A name matching nothing in the

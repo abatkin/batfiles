@@ -1,11 +1,4 @@
 //! Making the directories an action needs, and saying what that took.
-//!
-//! The only place batfiles creates a directory. What a path *means*, and what is
-//! already at one, is [`crate::paths`]'; this module is what happens when the
-//! answer is "nothing, and something has to be".
-//!
-//! One of the helpers that reads [`RunMode`], so a dry run reports the
-//! directories and the cleared links without making or clearing either.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,9 +9,6 @@ use crate::output::Verb;
 use crate::paths::{ExistingNode, reaches_nothing};
 
 /// What [`ensure_directory`] found, for a caller that reports what it did.
-///
-/// The distinction is the whole output of a `create-dir` action, and it is the
-/// difference between a run that changed the home and one that agreed with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DirectoryOutcome {
     /// A directory was already there. Nothing was written.
@@ -31,10 +21,6 @@ pub(crate) enum DirectoryOutcome {
 
 impl DirectoryOutcome {
     /// The links this cleared, which a caller has to say something about.
-    ///
-    /// Making a directory is unremarkable; removing something is not, at any
-    /// verbosity. Empty for an outcome that removed nothing, which is nearly
-    /// all of them.
     pub fn removals(&self) -> &[BrokenLink] {
         match self {
             Self::AlreadyThere => &[],
@@ -68,22 +54,9 @@ impl BrokenLink {
     }
 }
 
-/// Make sure a destination *directory* is one, creating it where nothing is.
-///
-/// `mkdir -p`, and deliberately: an existing directory satisfies it, a
-/// non-directory refuses it, and missing parents come with it. The one
-/// departure is a broken symlink in the way, where `mkdir -p` reports a bare
-/// `EEXIST` naming nothing: that link reaches nothing, so it is removed and the
-/// directory made in its place, and the caller is told what went.
-///
-/// A container rather than a destination, so unlike [`crate::paths::Occupancy::at`] this
-/// follows a final symlink: a home whose `~/.config` is a link onto another
-/// volume is an ordinary arrangement, and the contents belong where it points.
-/// Nothing is replaced either way, which is what makes following it safe.
-/// What is already inside is left alone.
-///
-/// Under [`RunMode::DryRun`] a [`DirectoryOutcome::Created`] describes the
-/// directory that *would* have been made, and nothing is written.
+/// Ensure a directory and its parents exist, following links to directories.
+/// Clear broken links along the path; refuse other occupied nodes. Dry runs
+/// return intended creations and removals without changing the filesystem.
 pub(crate) fn ensure_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> {
     match fs::metadata(dir) {
         Ok(existing) if existing.is_dir() => Ok(DirectoryOutcome::AlreadyThere),
@@ -103,16 +76,6 @@ pub(crate) fn ensure_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOut
 
 /// Make one directory and every missing ancestor, clearing a broken symlink at
 /// any level that has to become one.
-///
-/// A level at a time, rather than one [`fs::create_dir_all`]: the bulk call
-/// cannot be told about those links, and reports one partway up as an `EEXIST`
-/// against the path that was asked for — the one path in the chain known not to
-/// exist. Walking down asks each level the question the named directory was
-/// asked, so a link is cleared wherever it turns up and a *file* in the way is
-/// named for what it is.
-///
-/// Under [`RunMode::DryRun`] the walk names the links it found and leaves them
-/// there, so a later inspection of the same path finds one again.
 fn make_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> {
     // The ancestors first, so this is only ever creating a directory whose
     // parent is known to be one.
@@ -143,15 +106,8 @@ fn make_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> 
     Ok(DirectoryOutcome::Created { replaced })
 }
 
-/// Name the broken symlink sitting where a directory has to go.
-///
-/// Only ever called where [`fs::metadata`] has already reported that nothing is
-/// reachable, so a symlink found here is broken by construction and needs no
-/// second question asked of it. `None` where the path is simply empty, which is
-/// the ordinary case.
-///
-/// Finding it is separate from [`remove_link`]: a dry run reports the link and
-/// does not clear it.
+/// Read a final symlink target. The caller must first establish that following
+/// the path fails with NotFound or NotADirectory.
 fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
     if !fs::symlink_metadata(path).is_ok_and(|node| node.is_symlink()) {
         return Ok(None);
@@ -173,19 +129,6 @@ fn remove_link(path: &Path) -> Result<(), Error> {
 }
 
 /// Create the directories a destination sits in, if they are not there.
-///
-/// These correspond to nothing in the repository — they exist only so the
-/// destination can, so they take the platform default rather than any source's
-/// permissions.
-///
-/// A parent is a container in exactly the sense [`ensure_directory`] means, so
-/// it is one, and it inherits that function's handling of whatever is in the
-/// way — including naming the *component* that is a file, where the caller only
-/// knows that the destination under it read as vacant.
-///
-/// The outcome is returned rather than discarded because clearing a link removed
-/// something, and a caller that said nothing about it would be destroying a node
-/// silently — which rule 13 declines even for a node it is willing to destroy.
 pub(crate) fn create_parents(dest: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> {
     match dest.parent() {
         // An empty parent is what a one-component relative path has; there is

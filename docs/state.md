@@ -56,55 +56,33 @@ same outcome as any other name a manifest does not answer to.
 
 ### Semantics and lifecycle
 
-The enable and disable commands validate each supplied address for syntax only.
+The file stores action and group addresses independently. Unknown addresses are
+retained without warning, including when synchronization finds no matching
+record. Malformed entries fail the load; they are never silently dropped.
 
-- **They never load the leaf repository.** An unreadable or invalid
-  `batfiles.toml` therefore cannot fail an enable or a disable, and neither can a
-  repository that is not there at all.
-- **A name matching nothing is recorded without complaint.** That is the point
-  rather than a mistake to warn about: these commands resolve nothing, so a name
-  a later branch change or Git update introduces can be disabled ahead of time.
-  Since they never read the manifest, they could not tell a typo from a
-  pre-registration even if they wanted to. **A `sync` that then finds nothing to
-  match is silent too**, though it has the manifest open and could tell:
-  pre-registration is what the document is for, so a non-match is the expected
-  outcome rather than a complaint. That is the one rule separating these lists
-  from a run-only `--skip`, which warns.
-- **A malformed entry fails the load**, like any other malformed document. It can
-  never become live, so carrying it silently would leave a permanently dead
-  entry, and dropping it on the next save would make an unrelated `disable-action`
-  destructive. Fixing one means editing the file, which is already a supported
-  way to maintain it. It fails a `sync` for a further reason: a run that
-  installed everything because it could not read the list of what to leave out
-  would be doing the opposite of what the document says.
-- **A repeated name warns and is applied once.** It names one thing however many
-  times it was written, so the invocation still has an unambiguous meaning.
-- **An invalid name fails the whole invocation**, before the document is opened.
-  The other names on the command line are not applied: an invocation applies in
-  full or changes nothing.
-- **Mutations are idempotent.** Adding a name already present, or removing one
-  that is absent, is a no-op. It does not rewrite the document merely to sort or
-  deduplicate it, and it does not create a `disabled.toml` — or its directory —
-  that was not there before.
-- **Each outcome says whether the state actually moved**, so re-enabling
-  something that really was off is never confused with enabling something that
-  already was. Those lines are ordinary status output and are suppressed by
-  `--quiet`, which does not suppress the edit itself.
+Mutations are idempotent. A no-op does not rewrite the file or create a missing
+file or parent directory. Deleting `disabled.toml` clears persistent exclusions;
+run-only skips can still exclude actions.
 
-Deleting `disabled.toml` re-enables everything on this machine.
+[Enable and disable commands](cmdline.md#enable-and-disable-actions-or-groups)
+define argument validation and output.
+[Selection](cmdline.md#selecting-what-a-run-does) defines when each command
+honors these lists and how they combine with run-only skips.
 
 ## Writing
 
 Every mutation of a document batfiles owns is a whole-document rewrite:
 
 1. Build and serialize the complete replacement in memory.
-2. Write it to a temporary file in the destination directory.
+2. Exclusively create a temporary file in the destination directory, apply
+   existing destination permissions, and write the replacement.
 3. Atomically rename the temporary file over the destination.
 
 The rename is the commit point. Concurrent readers see either the complete old
 document or the complete new document, never a torn write. If anything fails
-before the rename, the temporary file is removed and the destination keeps what
-it had.
+before the rename, cleanup attempts to remove only the temporary file created
+by that invocation; the destination keeps what it had. An occupied temporary
+path, including a symlink, is refused without truncating or removing it.
 
 Consequences of this policy:
 

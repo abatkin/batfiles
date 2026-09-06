@@ -1,20 +1,4 @@
 //! Which of a manifest's actions a run carries out.
-//!
-//! A run asks for part of the manifest — everything, one action, or one group —
-//! and then passes over whatever the machine-local [`Disabled`] lists or this
-//! run's `--skip-action`/`--skip-group` name. Both halves are [`Selection`],
-//! because one rule joins them: **an exclusion no finer-grained than what the
-//! command asked for is waived.** `sync` asks for everything, so every exclusion
-//! outranks it and none is waived; `apply-group` names a group, which waives an
-//! exclusion on that group and leaves one naming a member standing; nothing is
-//! finer-grained than the one action `apply-action` names, so it waives all four
-//! lists.
-//!
-//! The two exclusion sources differ in exactly one rule. A run-only name that
-//! matches nothing warns: it was typed for this run, and the manifest is loaded,
-//! so it can be told. A `disabled.toml` entry that matches nothing is silent,
-//! because pre-registering a name a later branch introduces is what that file is
-//! for.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -34,10 +18,6 @@ const SKIP_ACTIONS: &str = "BATFILES_SKIP_ACTIONS";
 const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
 
 /// Which of the manifest's records a command asked for.
-///
-/// Holds the borrowed name rather than resolving to an index, because a group
-/// names any number of records and an action's position is what the report
-/// calls it.
 #[derive(Debug)]
 pub(crate) enum Target<'a> {
     /// Every record, which is `sync`.
@@ -60,12 +40,6 @@ impl Target<'_> {
 
     /// What it means for this target to have matched no record at all, which
     /// only the arm that asked can say.
-    ///
-    /// Naming an action or a group that nothing in the manifest answers to is a
-    /// command resolving nothing, and each gets its own failure. A group is
-    /// nothing but the actions naming it, so an empty one and an absent one are
-    /// the same failure. `sync` names nothing to resolve: an empty manifest is
-    /// an ordinary successful run that did nothing.
     fn unresolved(&self, manifest: PathBuf) -> Option<Error> {
         match self {
             Self::Everything => None,
@@ -95,9 +69,6 @@ impl Target<'_> {
 }
 
 /// Why an action is not being run.
-///
-/// Borrows the name from whichever list matched, so reporting a skip allocates
-/// nothing but the line itself.
 #[derive(Debug)]
 pub(crate) enum SkipReason<'a> {
     /// A `disabled.toml` entry. The noun says which of its two lists.
@@ -124,11 +95,6 @@ impl fmt::Display for SkipReason<'_> {
 
 /// One run-only skip list: the names to pass over, each remembering the source
 /// that supplied it.
-///
-/// A map rather than a set because the two sources union, and a line reporting
-/// a skip should name the one the reader can go and change. Command-line
-/// arguments outrank the environment everywhere else, so the option wins the
-/// attribution where both named the same thing.
 #[derive(Debug, Default)]
 struct SkipList {
     names: BTreeMap<ItemAddress, &'static str>,
@@ -136,12 +102,6 @@ struct SkipList {
 
 impl SkipList {
     /// Validate and add every name one source supplied.
-    ///
-    /// A name that is not an address cannot match anything, which is the outcome
-    /// a non-match already has, so it warns and is dropped rather than failing
-    /// the run. That is deliberately not the rule for `disable-action`, which
-    /// fails: recording the name is all that command does, so a rejected one
-    /// leaves it with nothing to do.
     fn extend(&mut self, values: &[String], origin: &'static str, reporter: &Reporter) {
         for value in values {
             match ItemAddress::try_from(value.clone()) {
@@ -174,8 +134,6 @@ impl SkipList {
 
 /// One namespace's run-only skips: the option's names unioned with the
 /// variable's, or nothing at all where this run waives them.
-///
-/// The option is read first, so a name given both ways is attributed to it.
 fn run_only(
     consulted: bool,
     values: &[String],
@@ -205,10 +163,6 @@ pub(crate) struct Selection<'a> {
 impl<'a> Selection<'a> {
     /// The filter one run applies: everything the target asked for, less what
     /// either source names and the target does not waive.
-    ///
-    /// A waived namespace's run-only list is not read at all, so no name in it
-    /// warns about its syntax or its failure to match. The machine-local lists
-    /// are taken whole and waived in [`Selection::skipped`].
     pub fn new(
         target: Target<'a>,
         skip_actions: &[String],
@@ -251,11 +205,6 @@ impl<'a> Selection<'a> {
     }
 
     /// Warn about every run-only skip that names nothing the manifest declares.
-    ///
-    /// Reported ahead of the first action rather than at the end, because it is
-    /// a complaint about the invocation and a run that fails partway should not
-    /// swallow it. A waived namespace says nothing here, its list never having
-    /// been read.
     pub fn warn_unmatched(&self, actions: &[Action], reporter: &Reporter) {
         let ids: BTreeSet<&ItemId> = actions.iter().filter_map(Action::id).collect();
         let groups: BTreeSet<&ItemId> = actions.iter().filter_map(Action::group).collect();
@@ -263,20 +212,9 @@ impl<'a> Selection<'a> {
         self.groups.warn_unmatched(&groups, "group", reporter);
     }
 
-    /// Why this action is being passed over, or `None` to carry it out.
-    ///
-    /// The waiver is applied first, by taking the waived name away: in a
-    /// namespace the request already outranks, the record presents nothing for
-    /// either list — persistent or run-only — to match.
-    ///
-    /// Among the reasons that remain, a disable is reported ahead of a skip
-    /// because it is the reason that will still be there tomorrow, when the skip
-    /// that was typed for one run is gone. An action's own name is reported
-    /// ahead of its group's for the same kind of reason: it is the more specific
-    /// of the two.
-    ///
-    /// Every name reported is the record's own, so a reason borrows the action
-    /// rather than the list that matched it.
+    /// Return the first applicable exclusion, or None. Persistent disables precede
+    /// run-only skips; action exclusions precede group exclusions within each source.
+    /// The target determines which exclusions are honored.
     pub fn skipped<'b>(&self, action: &'b Action) -> Option<SkipReason<'b>> {
         let id = action.id().filter(|_| self.target.honors_actions());
         let group = action.group().filter(|_| self.target.honors_groups());
@@ -431,9 +369,6 @@ mod tests {
 
     #[test]
     fn a_disable_is_reported_ahead_of_a_skip() {
-        // Every list names this record. The disable is the reason still standing
-        // once the run-only skip is gone, and the action's own name is more
-        // specific than its group's.
         let selection = selection(
             &["zshrc"],
             &["shell"],
@@ -469,9 +404,6 @@ mod tests {
 
     #[test]
     fn asking_for_a_group_waives_the_group_level_exclusions_only() {
-        // `apply-group`. The disable and the skip naming the group go; the ones
-        // naming the action itself are more specific than what was asked for
-        // and stay, in the order a `sync` reports them.
         let shell = address("shell");
         let by_skip = filter(
             Target::Group(&shell),
@@ -529,9 +461,6 @@ mod tests {
 
     #[test]
     fn a_qualified_skip_is_kept_and_names_no_leaf_record() {
-        // It is well formed, so it is not dropped; it names an action an
-        // included remote would have contributed, and there are none, so it
-        // selects nothing and is left to `warn_unmatched` to complain about.
         let by_skip = selection(&["core.zshrc"], &["core.shell"], &[], Disabled::default());
         assert_eq!(reason(&by_skip, &action("zshrc", "shell")), None);
 

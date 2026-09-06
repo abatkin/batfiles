@@ -1,16 +1,7 @@
-//! Source-hygiene checks that keep five of `rewrite/guidance.md`'s rules
-//! mechanical rather than honor-system: rule 1's dead-code annotations, the
-//! `CARRY` markers of "Carrying work forward", rule 12's list of options that
-//! parse but are not honored yet, "Two lists, and why they are not the same
-//! one" — which modules may touch the filesystem at all — and the definition of
-//! done's requirement that the documents keep saying what the binary actually
-//! does.
-//!
-//! The scans are textual and line-oriented, with one exception: the dead-code
-//! scan anchors on the `dead_code` token, which rustfmt leaves on a line of its
-//! own when it breaks a long attribute up, and joins the attribute back together
-//! from there. A `CARRY` marker split across lines is still not seen. None of it
-//! is worth a parser.
+//! Textual checks for dead-code annotations, scheduled markers, filesystem-owner
+//! imports, and action inventories. These scans do not parse Rust or prove
+//! read-only access, mode gating, call reachability, or behavioral coverage.
+//! Review those properties in code and exercise them through CLI tests.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -35,24 +26,16 @@ const IMPLEMENTED: &str = "Implemented so far:";
 /// The fixture repositories the CLI tests drive whole. Between them they
 /// declare every action type, which is what makes "the suite covers them all"
 /// true rather than apparent.
-///
-/// Several fixtures rather than one, because an action type can need an
-/// environment the others must not pay for: everything in `fetching` wants an
-/// HTTP server running, and the tests that drive `leaf` want none
-/// (`guidance.md`, "Test environments").
 const FIXTURES: &str = "tests/fixtures";
 
 /// This file, which the marker scan skips: its fixtures spell out the forms the
 /// check rejects, so scanning it would report its own examples.
 const CHECKER: &str = "tests/hygiene.rs";
 
-/// Why a module is allowed to name the filesystem (`guidance.md`, "Two lists,
-/// and why they are not the same one"). An addition that is none of these is
-/// the bug this check exists to catch.
+/// Declared filesystem role for review. The scanner does not verify the role.
 #[derive(Debug, Clone, Copy)]
 enum Kind {
     /// Inspects and never writes, so there is no work for a mode to withhold.
-    /// The safest kind, and the one to reach for first.
     ReadOnly,
     /// Performs part of an action's work, and therefore consults `RunMode` itself.
     ModeReader,
@@ -86,9 +69,6 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-///
-/// The list is meant to grow. Growing it means editing this file, which is what
-/// makes saying which [`Kind`] you are adding unavoidable.
 const FILESYSTEM_OWNERS: [Owner; 10] = [
     Owner {
         path: "src/clone_list.rs",
@@ -118,12 +98,12 @@ const FILESYSTEM_OWNERS: [Owner; 10] = [
     Owner {
         path: "src/directory.rs",
         kind: Kind::ModeReader,
-        reason: "the only place a directory is made",
+        reason: "creates installation containers and missing destination parents",
     },
     Owner {
         path: "src/install.rs",
         kind: Kind::ModeReader,
-        reason: "rule 15's staging, publication, and discard",
+        reason: "creates, publishes, and cleans up seed staging nodes",
     },
     Owner {
         path: "src/git.rs",
@@ -174,11 +154,6 @@ fn display(path: &Path) -> String {
 }
 
 /// A `dead_code` annotation found in a source file.
-///
-/// Anchored on the `dead_code` token rather than on `#[expect(`, because rustfmt
-/// breaks a long attribute across lines and leaves that token on one of its own.
-/// Three of the five annotations under `src/` are in that form, and a scan
-/// looking for the opening instead sees none of them.
 #[derive(Debug)]
 enum DeadCode {
     /// `allow(dead_code)`, which rule 1 permits nowhere under `src/`.
@@ -272,11 +247,6 @@ fn reason_of(attribute: &str) -> Option<&str> {
 }
 
 /// Every step-shaped token a `reason` names, in the order it names them.
-///
-/// A reason is prose — `"adopted at 8.3, by the bootstrap that reads it"` — so
-/// the step is found rather than parsed: split on everything a step number is
-/// not, then shed the sentence punctuation a number at the end of a clause
-/// wears. A version like `1.0.107` is not step-shaped and does not survive.
 fn reason_steps(reason: &str) -> Vec<String> {
     reason
         .split(|c: char| !c.is_ascii_digit() && c != '.')
@@ -448,10 +418,6 @@ fn step_status(steps: &str) -> BTreeMap<String, bool> {
 }
 
 /// Why a step named by an annotation can no longer clear it.
-///
-/// Three checks ask [`STEPS`] the same two questions — the `CARRY` markers, rule
-/// 12's withheld options, and rule 1's expectations — so the questions are asked
-/// once here and each caller says what its own remedy is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Spent {
     /// [`STEPS`] defines no such step, so nothing will ever clear the note.
@@ -487,9 +453,6 @@ fn spent_reason(mention: &Mention, steps: &BTreeMap<String, bool>) -> Option<Str
 }
 
 /// Every step-shaped string literal in `source`, with its line number.
-///
-/// Literal-oriented rather than line-oriented, because rustfmt wraps a long
-/// entry across several lines and an option need not sit beside its step.
 fn step_literals(source: &str) -> Vec<(usize, String)> {
     source
         .lines()
@@ -560,9 +523,6 @@ fn kebab_case(variant: &str) -> String {
 }
 
 /// The action types a document claims are built, from its [`IMPLEMENTED`] line.
-///
-/// `None` where the document has no such line at all, which is a failure rather
-/// than an empty answer: a document that stops naming them stops being checked.
 fn documented_action_types(document: &str) -> Option<Vec<String>> {
     let (_, named) = document
         .lines()
@@ -649,10 +609,7 @@ fn allow_dead_code_is_rejected_however_it_is_spelled() {
 
 #[test]
 fn an_annotation_is_seen_however_rustfmt_broke_it_up() {
-    // Copied from `src/manifest/mod.rs`, where rustfmt broke the attribute up
-    // because the reason made it too long to fit. Three of the five annotations
-    // under `src/` are in this form, and the line-oriented scan 4.6 replaced saw
-    // none of them.
+    // rustfmt may put the token and reason on separate lines.
     let wrapped = "    #[expect(\n\
                    \x20       dead_code,\n\
                    \x20       reason = \"walked at 1.3, to reject an entry setting both \
@@ -717,9 +674,8 @@ fn an_expectation_naming_no_step_at_all_is_rejected() {
 
 #[test]
 fn an_expectation_naming_a_step_that_does_not_exist_is_rejected() {
-    // 0.10 absorbed 0.9, so no bullet defines it and nothing would ever clear
-    // an expectation pointing at it.
-    let orphan = r#"#[expect(dead_code, reason = "read at 0.9, a step that no longer exists")]"#;
+    // The fixture has no step 0.9.
+    let orphan = r#"#[expect(dead_code, reason = "read at 0.9, an undefined step")]"#;
     let mentions = dead_code_mentions(orphan);
     assert!(
         dead_code_reason(&mentions[0], &fixture_steps()).is_some(),
@@ -759,7 +715,7 @@ fn a_step_is_found_in_a_reason_however_it_is_punctuated() {
 fn a_dead_code_outside_an_attribute_is_not_an_annotation() {
     // Rule 1 is discussed in prose in the modules it governs, and a doc comment
     // saying `dead_code` is not one.
-    let prose = "//! `allow(dead_code)` is what the old crate carried eight of.\n";
+    let prose = "//! The text `allow(dead_code)` in prose is not an annotation.\n";
     assert!(dead_code_mentions(prose).is_empty(), "{prose}");
 
     // The same prose below an annotation that has already closed, which the
@@ -788,7 +744,7 @@ fn only_the_modules_that_own_filesystem_access_name_it() {
     assert!(
         failures.is_empty(),
         "\n{}\n\nA module that writes carries out part of an action's work, so it has to \
-         consult `Mode` or sit downstream of something that does. If this file genuinely \
+         consult `RunMode` or sit downstream of something that does. If this file genuinely \
          owns an operation, add it to `FILESYSTEM_OWNERS` with the kind of owner it is:\n{}\n",
         failures.join("\n"),
         owners_as_written()
@@ -809,7 +765,7 @@ fn every_module_that_owns_filesystem_access_still_exists() {
 }
 
 #[test]
-fn the_filesystem_is_found_however_it_is_named() {
+fn supported_filesystem_import_spellings_are_detected() {
     for (source, expected) in [
         ("use std::fs;", "std::fs"),
         ("    let found = std::fs::metadata(path)?;", "std::fs"),
@@ -1034,9 +990,8 @@ fn a_marker_is_spent_once_its_step_is_done() {
 
 #[test]
 fn a_marker_naming_no_step_is_rejected() {
-    // 0.10 absorbed 0.9, so no bullet defines it and nothing would ever clear
-    // a note pointing at it.
-    let mentions = carry_mentions("// CARRY(0.9): a step that no longer exists\n");
+    // The fixture has no step 0.9.
+    let mentions = carry_mentions("// CARRY(0.9): an undefined step\n");
     assert!(
         spent_reason(&mentions[0], &fixture_steps()).is_some(),
         "{mentions:?}"
@@ -1060,7 +1015,7 @@ fn an_entry_is_found_however_rustfmt_wrapped_it() {
 fn an_entry_is_live_while_the_step_that_frees_its_option_is_open() {
     let steps = fixture_steps();
     assert_eq!(live_step_reason("1.3", &steps), None);
-    // 0.13 is done in the fixture, and 0.9 was absorbed and defines no bullet.
+    // The fixture completes 0.13 and does not define 0.9.
     assert!(live_step_reason("0.13", &steps).is_some());
     assert!(live_step_reason("0.9", &steps).is_some());
 }

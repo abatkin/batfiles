@@ -1,75 +1,43 @@
 # AGENTS.md
 
-Guidance for AI agents (and humans) working in this repository. `CLAUDE.md` is
-a symlink to this file.
+Guidance for agents and humans working in this repository. `CLAUDE.md` is a
+symlink to this file.
 
-## Status: rewrite in progress
+## Rewrite status
 
-The implementation is being rebuilt from scratch. **`rewrite/` is authoritative
-and outranks this file and `docs/` until it is retired at slice 8, at which point
-this file is rewritten to absorb the durable rules from it** — see
-`rewrite/docs.md` for which ones, and `rewrite/README.md` for what happens to the
-remaining slices 9 and 10. Read `rewrite/README.md` first.
-`rewrite/guidance.md` supersedes "Source organization" below, and
-`rewrite/docs.md` supersedes "Where the documentation lives".
+Read [rewrite/README.md](rewrite/README.md) first. During the rewrite,
+`rewrite/` is authoritative over this file and `docs/`. Its
+[guidance](rewrite/guidance.md) owns implementation design and its
+[documentation rules](rewrite/docs.md) own documentation placement.
 
-In particular, "treat `docs/` as primary implementation guidance" and "if a
-decision is settled, honor it" do **not** apply to specification describing
-behavior that has not been built. Honoring 2,400 lines of decisions made without
-implementation feedback is what caused the rewrite. `docs/` is being cut to what
-runs, with the remainder moved to `docs/future/`, which binds nothing.
+## Project
 
-## What batfiles is
+Batfiles is a Rust dotfiles manager: one Cargo package producing the `batfiles`
+binary. Source organization is specified in
+[rewrite/guidance.md](rewrite/guidance.md#source-organization).
 
-A Rust-based dotfiles manager. The project is one Cargo package and produces
-the `batfiles` binary.
+## Documentation
 
-## Where the documentation lives
+`docs/` specifies implemented behavior; `docs/future/` contains unbuilt proposals
+and binds nothing. Read the owning specification before changing behavior and
+update it in the same change. Keep each rule in its owner and link from other
+documents. Keep development history and design rationale in commit messages.
 
-Treat `docs/` as primary implementation guidance. It is plain markdown on
-purpose so it reads as context.
+## Workflow
 
-Read the relevant spec before changing behavior. If a decision is settled,
-honor it. When a behavior or design decision changes, update its owning
-document in the same change.
-
-## Source organization
-
-Keep the implementation proportional to the tool:
-
-- Use modules to group cohesive behavior inside the single crate.
-- Keep clap definitions in `cli`, but command orchestration need not be an
-  artificially thin composition layer.
-- Preserve useful validated types and concrete planning structures. Keep pure
-  calculations separate when that makes rules easier to understand and test.
-- Prefer direct function calls and concrete types. Do not introduce capability
-  traits, adapters, duplicate boundary types, or conversion layers without a
-  current need that outweighs their cost.
-- Direct filesystem, process, Git, clock, and network access is allowed in the
-  module that owns the operation.
-- On-disk and runtime representations may share a type when their shape and
-  invariants agree.
-- Use ordinary parameters, closures, fixtures, and temporary directories for
-  tests. Add a trait only when it provides meaningful polymorphism or is the
-  clearest practical test seam.
-- Add modules when implemented behavior needs them; do not create speculative
-  placeholder layers.
-
-See [rewrite/guidance.md](rewrite/guidance.md) for the durable design guidance.
-It replaces the deleted `docs/architecture.md`, and supersedes this section
-wherever the two disagree.
+Follow [How a slice lands](rewrite/guidance.md#how-a-slice-lands): work on a
+branch, commit completed changes, squash when merging to `main`, and remove the
+branch after merging unless instructed otherwise.
 
 ## Canonical commands
 
-`Taskfile.yml` (go-task) is the single source of truth. CI runs the identical
-entry point, so what passes locally passes in CI.
+`Taskfile.yml` is the single source of truth. CI runs the same entry point.
 
-- `task ci` — everything CI runs (fmt + lint + test + deny + build + build:release).
-- `task test` — the project test suite.
-- `task fmt` — formatting check.
-- `task lint` — clippy with warnings denied.
-- `task build` — build the project (debug).
-- `task build:release` — build the project (release).
+- `task ci`: format, lint, test, dependency checks, debug and release builds.
+- `task test`: project test suite.
+- `task fmt`: formatting check.
+- `task lint`: clippy with warnings denied, including the Windows target.
+- `task build`: debug build.
+- `task build:release`: release build.
 
-The toolchain is pinned in `rust-toolchain.toml`; do not bypass the pin.
-Commit `Cargo.lock`.
+Use the toolchain pinned in `rust-toolchain.toml`. Commit `Cargo.lock`.

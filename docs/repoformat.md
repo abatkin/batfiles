@@ -97,318 +97,33 @@ variables.
 
 ## Sources and destinations
 
-A `source` names a path in a repository, and a `dest` names a path on the
-machine. Which of the two an action takes is a property of the action type, and
-the tables below say; these rules decide what the field means wherever one
-appears.
+Repository-local `source` and `source-dir` values are nonempty relative paths
+within the declaring repository. They may contain `.` and `..` only if they
+remain strictly inside it; `.`, `./`, and `shell/..` cannot name the whole
+repository. Use `/` separators. Anchored paths and drive prefixes are rejected
+according to the host's path syntax. A symlink stored inside the repository may
+point outside it.
 
-The two happen at different moments, and the split is worth stating once:
+Sources are checked for presence when the action runs, including dry runs. A
+final broken symlink counts as present for linking; a copy must be able to read
+its target. `source-dir` must resolve to a directory. Executable clone lists are
+read during preparation before any action writes.
 
-- **What a path may say is settled when the manifest is read.** Every rule below
-  about the shape of a written value is decidable from the document alone, with
-  no root selected and no filesystem consulted, so a manifest that says
-  something batfiles cannot honor is refused whole rather than partway through
-  executing it.
-- **What a path resolves to is settled when the action runs.** Anchoring to
-  absolute paths, and the one rule that genuinely needs a filesystem — whether a
-  `source` exists — cannot be answered earlier and are not attempted earlier. A
-  selected root may be written relative to wherever batfiles was invoked, and a
-  path batfiles stores on disk, such as the target of a symlink, is read back
-  relative to its own location rather than to that working directory.
+`dest` and `dest-dir` use the selected home as their relative base:
 
-**Composing a path is lexical.** `.` and `..` are cancelled textually, and
-batfiles does not canonicalize every component to prove where a path ends up. A
-parent component that is itself a symlink is followed by ordinary
-operating-system path resolution, because that link is something the user put
-there deliberately. `~/.config/nvim` means those components joined to the
-selected home, whatever `~/.config` turns out to be.
+| Form | Resolution |
+| --- | --- |
+| `~` | Selected home |
+| `~/path` or `path` | Path relative to selected home |
+| Absolute path | Used as written |
+| Empty value or `~other` | Invalid |
 
-**Classifying what is already at a path is not.** The two are different
-questions, and only the first is about the path batfiles was given. A symlink
-already sitting at a destination has a target the operating system reads from
-the directory the link is *physically* in — so where `~/bin` is a symlink to
-`~/.local/bin`, a link at `~/bin/tool` spelled `../dotfiles/bin/tool` points
-into `~/.local/`, not into `~/`. Composing that answer lexically judges the link
-against a directory it is not in, which is how a link pointing outside a
-repository comes to look like one batfiles owns. So an existing link's target,
-and the repository the result is tested against, are both resolved before they
-are compared. See [Replacing what is already there](#replacing-what-is-already-there).
+Destinations may leave the selected home. Roots are anchored and paths are
+normalized lexically. [Location selection](environment.md#location-selection)
+defines the roots; [installation safety](safety.md) defines filesystem
+resolution, source containment checks, occupied destinations, and staging.
 
-This affects only what batfiles *concludes* about a node it found. The path it
-writes into a link is still the anchored, lexical one, spelled from the
-repository root as selected — a repository chosen as `~/dotfiles` is not
-rewritten to some other route to the same directory.
-
-**A `source` is contained by its repository.** It resolves from the repository
-that declared it, and the result must stay inside that repository. A source that
-names its own starting point is invalid — a leading `/`, a leading `\`, or a
-drive letter such as `C:config` — and so is a relative one that climbs out, even
-where the outside path exists; an internal `.` or `..` is fine as long as the
-result stays in. How far a relative source climbs is a property of the source
-itself, so this is decided while the manifest is read, before any repository is
-selected. The containment check is lexical, so a symlink deliberately stored
-inside the repository may point anywhere and is followed like any other.
-
-The three anchored spellings are named individually because "absolute" does not
-cover them on every platform: Windows treats a path as absolute only when it
-carries both a drive and a root, so `/etc/hosts` and `C:config` are absolute by
-neither that definition nor any useful one, while both still start somewhere
-outside the repository. A manifest is meant to be shared between machines, so
-the rule is the same everywhere: a `source` is written relative to the
-repository root, with `/` separators.
-
-**A `source` names a path *within* the repository, not the repository itself.**
-An empty `source` is invalid, and so is one that lands on the repository root —
-`.`, `./`, and `shell/..` all do. Such a source would install the whole
-repository, `batfiles.toml` and `.git` along with it, which is what a manifest
-that lost a value looks like rather than what one asking for that looks like.
-The two are reported differently, because an empty field is something left blank
-while the others named a real path and need to say which part was meant.
-
-**A `source` must exist.** A repository naming a file it does not contain is a
-mistake batfiles can see, and the alternative is installing something that
-points at nothing. This is the one path rule that needs a filesystem, so it is
-the one checked when the action runs rather than when the manifest is read.
-
-**A `dest` is anchored to the selected home, which is not a boundary.** A `dest`
-beginning with `~` uses the selected home rather than an independently discovered
-shell home, and `~user` is not expanded and is an error. A relative `dest`
-resolves from the selected home, and an absolute one is used as written. Most
-destinations sit in the home by convention rather than by rule: `--home-dir`
-selects the base for home-relative behavior, it does not create a jail. People
-symlink parts of their home onto other volumes, and an explicit absolute or
-traversing destination has to keep working.
-
-**An empty `dest` is invalid; write `~` for the home directory itself.** The two
-would otherwise mean the same thing, and only one of them says so on purpose. A
-`dest` that has gone missing — a field left blank, a value a template never
-filled in — looks exactly like the empty one, so batfiles refuses it and names
-the spelling that is deliberate.
-
-That and `~user` are the two things a `dest` may not say. There is no
-containment rule here to match the one on `source`, because the home is a base
-rather than a boundary.
-
-Where the selected home cannot be determined, batfiles reports that rather than
-silently substituting the working directory. See
-[location selection](environment.md#location-selection).
-
-### Installing into what you install from
-
-**A destination that lands inside the source it installs from is an error**, for
-every action that installs anything. `~/dotfiles` is an ordinary place for a
-repository and a `dest` may point anywhere, so this is a manifest batfiles
-accepts and an action it cannot carry out.
-
-It is refused rather than merely allowed to fail, because for a directory it
-does not fail: the destination becomes a child of the source, and the action
-then works on what it is writing. `copy` and `copy-dir` descend into the tree
-they are producing; `symlink-dir` creates its destination directory, enumerates
-the source, finds that directory among the children, and links it into itself.
-Every one of them writes into the repository, which `sync` otherwise never does.
-
-Decided by where the two paths resolve rather than by how they are spelled, as
-everywhere else, and refused before anything is created — for the `-dir`
-actions, before the destination directory that would join the children exists.
-
-The one action that cannot ask this question up front is `symlink` for a single
-link, because a link that is already correct *resolves into* its own source: a
-converged destination is indistinguishable from an offending one until what is
-already there has been inspected. So it is asked at the moment the link would be
-written — which is both the case where nothing is there and the case where a
-link batfiles may replace is, since repairing writes a link just as creating one
-does, and asks before removing what it found rather than after. `copy` and
-`copy-dir` ask it per destination for the same reason, after the seed's
-occupancy check — see
-[Seeds do not replace](#seeds-do-not-replace-and-so-do-not-refuse).
-
-## Replacing what is already there
-
-Creating something where nothing exists is safe. Replacing a node that is already
-there is destructive, so an action that installs something at a `dest` inspects
-that destination first and decides from what it finds.
-
-**The destination is examined without following a final symlink**, so a link is
-judged by where it points rather than by what it reaches. Its target is read as
-the operating system would read it, with a relative target resolved from the
-directory the link is physically in — which is not always the directory the
-destination path names, since any parent may itself be a symlink. A link spelled
-`../dotfiles/zshrc` may point exactly where an action wants it to, and one
-spelled `<repository>/../elsewhere` leaves the repository despite beginning
-inside it; judging the spelling gets both backwards.
-
-Every check in this section is decided in that resolved form, on both sides:
-whether the link is already right, and whether it lands inside the repository.
-A repository selected by one route and a link resolving through another are the
-same repository, and mixing the two forms is what makes an unmanaged link look
-owned.
-
-What is found there is one of:
-
-- **Nothing**, in which case the action creates what it was asked to, along with
-  any missing parent directories.
-- **A symlink batfiles owns** — one whose target resolves inside the selected
-  leaf repository. Replacing it destroys nothing: the link holds no content of
-  its own, and what it pointed at is left alone.
-- **A broken symlink** — one whose target is not there, wherever it names. It
-  reaches no content and gives access to none, so replacing it destroys nothing
-  either, and where it pointed is not consulted: batfiles will not create the far
-  end of a link somebody else made, inside the repository or out.
-- **A regular file, a directory, a symlink that leaves the repository and lands
-  on something, or none of those** — a socket, a fifo, a device. This is
-  someone's data.
-
-The dividing line is whether the node holds content, not who put it there. A link
-that leaves the repository is unmanaged when it reaches something, even where its
-name is exactly the one an action would install; the same link reaching nothing
-is replaceable.
-
-An action decides in this order:
-
-1. Determine what exists, without treating a final symlink as its target.
-2. If the requested result is already there, do nothing, and say so only at `-v`.
-   This is decided before brokenness, so a repository that deliberately names a
-   source which is itself a broken link converges rather than relinking on every
-   run.
-3. If it is a symlink batfiles owns, or one that is broken, replace it directly.
-   Replacing a broken link is reported at normal verbosity rather than at `-v`:
-   something was removed, and a broken link may be one the user meant to fix.
-4. Otherwise the node is unmanaged. Until there is a backup policy with which to
-   give it back, the action fails and names the path; see
-   [`future/safety.md`](future/safety.md#replacement-and-backups).
-
-A refusal under 4 says which of those kinds it found, because the path alone does
-not tell the user whether they are looking at a file to move, a directory to
-merge by hand, or a link some other tool installed. A link is named both as it is
-written and as it resolves — the two differ exactly when the target is relative,
-and the resolved form is the one the refusal was decided on. There is no way to
-waive any of this yet; the remedy is to move the destination aside and run the
-command again.
-
-**A directory an action puts things into is a container, not a destination, and
-is judged by a shorter rule.** `symlink-dir`'s `dest-dir` and `create-dir`'s
-`dest` are both `mkdir -p`: an existing directory satisfies them, missing parents
-come with the one they name, and what is already inside is left alone. A final
-symlink *is* followed there, unlike everywhere else in this section — a home
-whose `~/.config` is a link onto another volume is an ordinary arrangement, and
-the directory the action wants is at the far end of it. Following it is safe
-precisely because neither action replaces what it finds; the rules above are for
-a node an action installs *over*, and that is the case where following the last
-link would judge a node by what it reaches rather than by what it is.
-
-A container still refuses a non-directory — a regular file, a socket, or a
-symlink resolving to one — under rule 4 above. A *broken* symlink is not one of
-those: it is replaced here on exactly the terms rule 3 replaces one at a
-destination, removed and the directory made in its place, and the line saying so
-names both the target it held and the path it was at. Nothing else in this
-section would have been able to say anything useful about it — `mkdir -p`
-reports a bare `EEXIST` naming nothing where a broken link is in the way — and
-treating it as a container's own special refusal would have made the same node
-mean two different things depending on which action reached it.
-
-**That applies to the missing parents a container brings with it, not only to
-the container itself.** A `dest-dir` of `~/a/b/c` creates `~/a` and `~/a/b` on
-the way, and each is judged as a container in its own right: a directory
-satisfies it, a broken symlink is cleared and reported by the path it was at, and
-a regular file is refused and named. The removal lines therefore mention paths
-the manifest never wrote, which is the point — a link at `~/a` is where the
-problem is, and reporting it against `~/a/b/c` would name the one path in the
-chain that does not exist.
-
-**A symlink resolves nowhere whether the path it names is absent or runs through
-something that is not a directory.** `<some-file>/child` is broken in exactly the
-sense that a link to a deleted file is. A symlink loop is not: it is refused and
-named like any other node batfiles cannot account for.
-
-### Seeds do not replace, and so do not refuse
-
-`copy`, `copy-dir`, `fetch-file`, and `fetch-archive` install content the user
-then owns, and
-they install it **only where nothing is**. That makes an occupied destination their ordinary
-steady state rather than an obstruction, so they do not apply the four steps
-above at all. A seed asks one question — is anything there? — and where the
-answer is yes it keeps what it found and reports it at `-v`.
-
-This is the same rule 4 in different circumstances, not an exception to it. A
-`symlink` refuses because it *wants* to write and may not; a seed does not want
-to write, because a copy that has been edited since it was installed is the
-point of copying rather than a state to converge away from. Nothing is examined
-beyond whether something is present: a file, a directory, or a link, broken or
-not, all end the question, and who put them there does not matter.
-
-Consequently a seed never reports an error for a destination it found occupied,
-never repairs anything, and never removes anything it did not just create. Where
-a manifest changes an action from `symlink` to `copy`, the old link stays and the
-copy is not made; the `-v` line says so. Re-seeding over content that is already
-there is [`--refresh-content`](future/safety.md#seed-actions-and-deletion)'s job
-and is not built.
-
-**Nothing is at the destination until the copy is whole.** Every copy, of a
-file or of a directory, is built *beside* where it is going and moved into place
-in one step at the end. Until then the destination is exactly as it was, which
-for a seed means absent. A `fetch-archive` is unpacked the same way, and it
-needs one more sibling than the others: the archive has to arrive whole before
-it can be read at all, so it is downloaded to
-`<destination>.batfiles-download`, checked against its digest there, and
-unpacked from there into the staging tree. Both siblings are taken away
-afterwards, and both follow every rule below.
-
-That is what a run which does not finish depends on. A half-written file, a
-half-filled directory, or an empty placeholder standing in for one would all be
-found by the next run, called occupied, kept, and reported as success over a
-seed that never finished — a broken state that converges rather than one that
-gets noticed. A run that *fails* could tidy that up itself, but a run that is
-interrupted cannot, and a copy that is somewhere else until it is complete needs
-no tidying to be correct.
-
-Removing what an unfinished run left behind is therefore a separate matter, and
-is allowed to fail. Taking back a copied tree needs write permission on every
-directory in it, and a copy carries the source's permissions, so a repository
-holding a read-only directory produces a copy batfiles cannot remove. What
-survives is named `<destination>.batfiles-incomplete` — or
-`<destination>.batfiles-download` for an archive that was being fetched — sits
-next to where the install was going, and is reported when batfiles is still
-running to report it. Nothing ever reads either: they are litter, and deleting
-them is safe.
-
-**A leftover stops the next run rather than being cleared.** That path is
-somebody's, and "it is probably ours" is not something batfiles acts on —
-clearing a directory it did not create is exactly the thing rule 13 forbids, and
-a recursive removal of the wrong one takes the whole tree. So a copy whose
-staging path is occupied fails, names the path, and says to remove it. Deciding
-that is the user's.
-
-**Publishing tries not to replace a destination that appeared meanwhile.** A
-copy can take a while, and the destination was checked before it started. A file
-is therefore published by a link, which is the one move the standard library
-offers that *refuses* to replace what is already there: a destination that
-appeared during the copy is kept and reported as kept, exactly as one that was
-there from the start.
-
-**Directories are the case this does not close, and it is a gap rather than a
-technicality.** There is no portable atomic move that refuses to replace, so
-`dest-dir` is checked again immediately before the move — two adjacent
-operations, with no way to make them one. A directory created in between is
-replaced if it is empty; one holding anything fails the move instead. An empty
-directory is still a node somebody made, so this does not meet the standard the
-rest of this section is written to. A file falls into the same gap on a
-filesystem with no links, where the move is all that is left.
-
-Closing it needs a platform-specific call — `renameat2` on Linux, `renamex_np`
-on macOS, neither on the BSDs, and not guaranteed by every filesystem on the two
-that have them. **The same gap, considerably wider, is in every other action:**
-`symlink` inspects a destination, removes what it finds, and creates the
-replacement, which is three steps with a deletion in the middle. Closing it here
-alone would buy nothing, so it is recorded rather than patched, and batfiles
-does not claim to be safe against another process writing to a destination while
-a run is in progress. Nothing in a run takes a lock. Do not run two at once.
-
-Replacing an owned symlink under 3 happens in place rather than through a
-temporary sibling. The link carries no content, so a run interrupted partway
-through leaves at most a missing link that the next `sync` puts back from the
-manifest. The staged-write rule that machine-local state files follow governs
-writes that carry content, which is a different case from a node batfiles can
-reconstruct.
+Fetching and Git actions have their own `source` syntax in the action tables.
 
 ## Actions
 
@@ -517,7 +232,7 @@ it back relative to the link's own directory: a target left relative to the
 working directory would point somewhere other than where it was meant to.
 
 What happens at the destination depends on what is already there, applying
-[Replacing what is already there](#replacing-what-is-already-there):
+[Replacing what is already there](safety.md#replacing-what-is-already-there):
 
 | Already at the destination                          | Result                                                            |
 |-----------------------------------------------------|-------------------------------------------------------------------|
@@ -537,7 +252,7 @@ there. The three error rows are one refusal but not one message, and a repaired
 link is repointed regardless of how the stale one was written.
 
 A `dest` landing inside the `source` is an error, under
-[Installing into what you install from](#installing-into-what-you-install-from).
+[Installing into what you install from](safety.md#installing-into-what-you-install-from).
 Unlike the other actions this one is decided at the moment the link would be
 written rather than up front, because a link that is already correct resolves
 into its own source and would otherwise be refused on every run. Repointing a
@@ -591,7 +306,7 @@ happens to hold them in is not one anybody can diff.
 
 **`dest-dir` is a container, not a destination**, so it is created where it is
 missing and followed where it is a symlink, under
-[Replacing what is already there](#replacing-what-is-already-there) — unlike the
+[Replacing what is already there](safety.md#replacing-what-is-already-there) — unlike the
 destination of each individual link, which is judged without following one. It
 may hold entries batfiles did not put there, and those are left alone. Creating
 it is reported, because a directory that appeared in the home is worth a line
@@ -621,7 +336,7 @@ A `source-dir` that exists but is not a directory is an error, because there are
 no children to link and linking the thing itself is what `symlink` is for.
 
 A `dest-dir` landing inside the `source-dir` is an error, under
-[Installing into what you install from](#installing-into-what-you-install-from),
+[Installing into what you install from](safety.md#installing-into-what-you-install-from),
 and is refused before the destination directory is created — creating it is what
 would put it among the children about to be linked.
 
@@ -654,7 +369,7 @@ would otherwise have no way to ask for.
 
 `dest` follows [Sources and destinations](#sources-and-destinations), and is a
 container rather than a destination under
-[Replacing what is already there](#replacing-what-is-already-there). The action
+[Replacing what is already there](safety.md#replacing-what-is-already-there). The action
 is `mkdir -p`:
 
 | Already at the destination            | Result                                                            |
@@ -714,35 +429,13 @@ So `copy` over an existing directory does nothing — it does not seed into it.
 Filling in around what someone already has is [`copy-dir`](#copy-dir), and
 choosing between them is the whole of the difference between the two.
 
-**A copy carries the permissions of what it copied**, including whether a file
-is executable, and a copied directory arrives with the source directory's
-permissions rather than more broadly readable. Ownership is not copied: the copy
-belongs to whoever ran the command. Directories created only to *reach* a
-destination correspond to nothing in the repository and take the platform
-default subject to the umask.
+Copies preserve source permissions under the shared [permission and staging
+rules](safety.md#installed-permissions). A destination inside the source
+directory is refused under the [containment rule](safety.md#installing-into-what-you-install-from).
 
-Those permissions are set once the copy is whole, because a source directory its
-owner cannot write into would otherwise lock batfiles out of the copy it is
-still filling. **So a copy is made closed and opened up at the end, never the
-other way round**: while it is being built it is reachable by its owner and
-nobody else, whatever the source's mode turns out to be. A copy of a private
-file is never briefly a public one — which matters most exactly when a run does
-not finish, since what it was building is deliberately left where it is.
-
-**A destination inside the directory being copied is an error**, under the rule
-[every install action shares](#installing-into-what-you-install-from). For a
-copy the consequence is the worst of the four: the destination would become a
-child of the source, enumerating the source would find it, and the copy would
-descend into what it was writing until the filesystem refused a longer path.
-
-**Only files and directories are copied.** A symlink found inside a directory
-being copied is an error naming it, not something to follow or to recreate:
-following it would turn a link the repository chose into a detached file with
-nothing said about it, and recreating it would re-read a relative target from a
-directory it is no longer in. A socket, a fifo, or a device is an error on the
-same terms. The `source` the manifest *named* is not covered by this — like
-every other action's source it resolves through a final symlink, because naming
-a thing through a link the repository stores is naming that thing.
+Only regular files and directories are copied. Symlinks, sockets, FIFOs, and
+devices nested in a copied tree are errors naming the offending path. The
+manifest's source itself may resolve through a symlink.
 
 ### `copy-dir`
 
@@ -815,14 +508,10 @@ created, and what lands is the user's from then on. Anything at all at `dest`
 means the action is done — and the check comes first, so a destination that is
 occupied costs no transfer.
 
-`source` is the one path-shaped field in the format that is not a path. It is
-never resolved against a root and follows none of [Sources and
-destinations](#sources-and-destinations); `dest` follows all of it.
-
-**A fetched file arrives readable** — mode `0644` on unix — rather than with the
-private mode it is written under. It is built closed and widened once complete,
-so an interrupted run leaves nothing readable behind, and there is no source on
-this machine whose permissions it could carry instead.
+`source` is a URL and is never resolved against a filesystem root. `dest` follows
+[source and destination syntax](#sources-and-destinations). Fetched files use the
+shared [staging](safety.md#staging-and-publication) and
+[permission rules](safety.md#installed-permissions).
 
 **What arrives is installed as a file, whatever it holds.** A `fetch-file` whose
 URL names a tarball installs the tarball. Unpacking one is
@@ -881,39 +570,9 @@ installed. A prefix the archive holds nothing under is an error. It is spelled
 the way an entry path is, so it may not be absolute and may not contain `..`;
 one that is, is refused as the manifest is read.
 
-**An entry that would be written outside `dest` fails the whole action.** Every
-entry's path is read before any of them is created, so nothing has been written
-when one of these is found, and skipping the entry is not on offer: an archive
-carrying one is not an archive to install part of. Four rules, and the last two
-exist because the first two are not enough on their own.
-
-- An absolute entry path, and a hardlink naming something outside the tree.
-- **A `..` anywhere in an entry path is refused rather than cancelled.**
-  Cancelling it on paper says `a/../b` means `b`, which is true only when `a` is
-  a real directory — and an archive is free to declare `a` a symlink. No archive
-  worth installing writes one, so there is nothing to weigh against refusing it.
-- **Nothing is written under a symlink the archive itself declares.** The
-  operating system follows a link before it creates what is below it, so an entry
-  under one does not land where the archive says it does.
-- **A symlink target may climb past a directory and not past a link.** A target
-  needs `..` — `../lib/libfoo.so` is ordinary, and so is a link to another link
-  — so unlike an entry path it cannot simply be refused. What is refused is the
-  one case where cancelling is wrong: a `..` that would cancel a component the
-  archive declares as a symlink. That closes an escape no check on a single path
-  finds, because it takes two entries to build: `a/b -> ../x` is honest and stays
-  inside, and `escape -> a/b/../../outside` cancels on paper to a path inside
-  while the kernel resolves `a/b` first and lands beside the destination.
-
-An entry that is neither a file, a directory, nor a link — a device node or a
-fifo — is refused on the same terms.
-
-**Unpacked entries carry the archive's permissions, minus the dangerous ones.**
-The executable bit comes across, and setuid, setgid, and the sticky bit do not:
-what is being installed came from a URL and is going into the home. Directories
-take their mode after their contents are written, so an archive that marks a
-directory read-only still gets its children. `dest` itself takes the mode of
-whatever `archive-root` stripped, and `0755` where the archive names no
-directory to take it from.
+[Archive safety](safety.md#archive-extraction) specifies path and link checks.
+[Installed permissions](safety.md#installed-permissions) specifies entry and
+root modes. Extraction is staged and published only after it succeeds.
 
 Filtering the entries — `include` and `exclude` — is specified in
 [`future/repoformat.md`](future/repoformat.md#fetch-archive-entry-filters) and
@@ -921,39 +580,22 @@ is not built. A manifest that writes one is rejected.
 
 ### The transfer both fetching actions share
 
-Everything below governs `fetch-file` and `fetch-archive` alike. Neither the
-schemes, the digest, the redirect and timeout rules, nor what counts as an
-answer depends on what the body turns out to be.
+Both fetching actions use these rules:
 
-**A `sha256` is optional because a URL is often a moving target.** The
-`fetch-file` example above names a file on a branch, where a pinned digest would
-fail on every upstream change. Where a repository does pin one, the bytes are
-hashed as they arrive and a mismatch installs nothing, naming both digests so
-the manifest can be corrected when the change upstream was the expected one. For
-an archive the digest is checked against the archive's own bytes, and it is
-checked before a single entry is unpacked.
+- HTTP and HTTPS URLs; up to five redirects.
+- Status `200 OK` is required. Partial, empty-status, and conditional responses
+  such as 206, 204, and 304 fail.
+- An optional `sha256` is checked against the downloaded bytes. A mismatch
+  reports both digests and installs nothing. Archives are verified before
+  extraction.
+- No `Accept-Encoding` request header. Proxy environment variables are honored.
+- TLS certificates use the operating system's trust store, including corporate
+  CAs trusted by that machine.
+- Thirty seconds to connect, thirty seconds to receive response headers, and
+  ten minutes total for the body.
 
-**Nothing incomplete is ever installed.** What is fetched is built beside its
-destination and moved there in one step once it is whole, so a transfer that
-stops early, a server that answers with something other than the file, a digest
-that does not match, and — for an archive — an entry that cannot be written all
-leave the destination as they found it. Not a half-file and not a half-tree: a
-later run would find either occupied and mistake it for finished work.
-
-**Only a `200 OK` is a body.** Batfiles asks for neither a byte range nor a
-conditional response, so an answer that is neither content nor a refusal — a
-`204` with nothing in it, a `206` holding one range, a `304` naming a cache
-batfiles does not keep — is an error rather than something to install.
-Installing one would occupy the destination with something that is not what was
-asked for, which every later run would then find and call done.
-
-Batfiles follows up to five redirects, sends no `Accept-Encoding`, and honors
-the usual proxy environment variables. Certificates are checked against the
-operating system's trust store, so a corporate CA that the machine already
-trusts is trusted here. A server that takes the connection and then says
-nothing is given 30 seconds, and a body that stalls is given ten minutes in
-total — enough that a large download on a slow link is never the thing that
-runs out.
+An incomplete or failed transfer is not published. See
+[staging and publication](safety.md#staging-and-publication).
 
 ### `git-clone`
 
@@ -983,27 +625,10 @@ resolved against a root and follows none of [Sources and
 destinations](#sources-and-destinations); `dest` follows all of it, and its
 missing parents are created.
 
-Batfiles runs the `git` on your `PATH` rather than linking a library, so your
-`~/.gitconfig`, your credential helpers, and your SSH agent all apply. A
-repository you can clone by hand is one batfiles can clone.
-
-**Submodules are not cloned, initialized, or updated**, here or in a
-[`git-clone-list`](#git-clone-list). A clone that needs them is one you finish
-by hand — `git submodule update --init --recursive` in the destination — and a
-later `sync` leaves what that produced alone, since it fast-forwards the
-superproject and nothing else. Declaring them recursively is not on offer
-because there is no way to say it is wanted, and doing it for every clone would
-fetch a great deal that most repositories do not want.
-
-The one thing it does not inherit is a pointer to a *different* repository.
-`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of that family are
-cleared before `git` is run, so an action always acts on its own `dest` and
-never on whatever some parent process was working in — `git submodule foreach`
-exports `GIT_DIR` to what it runs, and batfiles may well be running as one of
-those children. Nothing that names your configuration, your credentials, or your
-transport is touched. [Variables passed on to
-`git`](environment.md#variables-passed-on-to-git) has the list and what each
-entry is doing there.
+Batfiles runs Git from `PATH` using the
+[documented environment](environment.md#variables-passed-on-to-git).
+Submodules are not initialized or updated. Initialize them manually with
+`git submodule update --init --recursive` when required.
 
 #### `ref`: following one branch, tag, or commit
 
@@ -1037,107 +662,10 @@ remote does not is warned about rather than reset. Changing which branch a clone
 is on is reported — `switched <dest> to <ref>` — and deletes nothing: the branch
 you were on, and its commits, stay where they are.
 
-#### A clone is the one thing batfiles comes back to
-
-Every other action installs something and then leaves it alone: a copy, a
-fetched file, and an unpacked archive are all yours once they land, and a later
-`sync` that finds the destination occupied reports that it kept what is there. A
-clone is different, because it is a live checkout with its own history and the
-whole point of declaring one is to track what upstream publishes.
-
-So a later `sync` does return to it — **conservatively, and never in a way that
-discards work.** Batfiles fetches, and then only fast-forwards:
-
-| What it finds at `dest`                   | What it does               |
-|-------------------------------------------|----------------------------|
-| Nothing                                   | Clones                     |
-| A clone that is already current           | Nothing; says so at `-v`   |
-| A clone the upstream has moved past       | Fetches and fast-forwards  |
-| A clone on something other than its `ref` | Switches to it, and says so |
-| A clone with uncommitted changes          | Warns, and leaves it alone |
-| A clone whose own file upstream now tracks | Warns, and leaves it alone |
-| A clone on no branch, or one tracking nothing | Warns, and leaves it alone |
-| A clone holding commits upstream does not | Warns, and leaves it alone |
-| Anything that is not a clone              | Fails, naming the path     |
-
-The three warnings are warnings rather than failures, and the run continues.
-None of them is a mistake in the repository — they are all states a working
-checkout is legitimately in — and stopping the run would strand every action
-after this one over a plugin directory somebody was editing. What is not
-survivable is a `git` that cannot be run and a `fetch` that fails, and both stop
-the run.
-
-**Uncommitted means staged, unstaged, or untracked.** Ignored build and cache
-output does not block an update. Batfiles asks Git for the untracked half
-explicitly, so a `status.showUntrackedFiles = no` in your gitconfig changes what
-`git status` shows you and not what blocks an update. **Clean does not mean
-disposable**: a worktree with no changes but with commits of its own is still
-skipped, because fast-forwarding it is impossible and anything stronger throws
-those commits away.
-
-**An ignored file is still yours.** Not blocking an update is not permission to
-overwrite one: where upstream starts tracking a path your clone already has its
-own file at — a local config a `.gitignore` covers, say — the update stops and
-says which file it was. Git protects an *untracked* file here and an ignored one
-it does not, on the reasoning that ignored content is build output; batfiles did
-not create it either way, so it does not replace it. The same holds when a
-declared `ref` moves the checkout to a branch that tracks the path: the switch is
-refused rather than made, and nothing is lost.
-
-**A skip is for a checkout that is fine and simply is not moving.** A detached
-`HEAD` and a branch with no upstream configured are skips; a branch whose
-upstream is configured but cannot be resolved is not, and fails the run naming
-what Git said. The difference matters because Git reports all three the same way
-by default, and treating a broken configuration as "tracks nothing" would let a
-repository quietly stop updating.
-
-**The remote a clone fetches from is the one it was cloned with.** Batfiles does
-not compare `source` against the clone's configured remote or rewrite it, so
-pointing an existing `git-clone` action at a different repository does not move
-the checkout. Delete it and let the next `sync` clone the new one. That is also
-why the line reporting an update names no URL where the line reporting a clone
-does: batfiles fetched the clone's own remote, and claiming otherwise would name
-a repository the run never contacted.
-
-#### A destination that is not a clone
-
-`dest` is judged by what is *at* it, never by what it points to, exactly as
-every other action's destination is ([Replacing what is already
-there](#replacing-what-is-already-there)). A regular file, a device, and a
-symlink that leaves the repository and reaches something are all refused by
-name. **A symlink is not followed**, and that matters more here than anywhere
-else in the format: a link at `dest` reaching a checkout somewhere else would,
-if followed, make an update fetch into and fast-forward a repository batfiles
-never installed. A symlink that holds no content of its own — one reaching
-nothing, or one pointing into the batfiles repository — is cleared and cloned
-over, and the removal is reported.
-
-A directory at `dest` is the only thing that can be a clone, and two things have
-to agree before batfiles will update one, because **neither on its own
-establishes that Git will act on `dest`**.
-
-**Its `.git` has to be `dest`'s own** — a real directory, which is what `git
-clone` makes. A `.git` that is a symlink to another checkout's Git directory
-leaves Git using that repository's refs while treating `dest` as the worktree,
-so a fetch and a fast-forward move the *other* checkout's branch. `git rev-parse
---show-toplevel` does not notice, because the worktree genuinely is `dest`. A
-`.git` file, which is how a linked worktree and a submodule spell it, is
-refused on the same grounds.
-
-**Git has also to agree the worktree is `dest`.** A real `.git` whose config sets
-`core.worktree` elsewhere points every command at that tree, and no check of the
-filesystem can see it. This is also what keeps a plain directory sitting *inside*
-someone's larger repository from being updated as though it were a clone of its
-own: asked from in there, Git reports the enclosing repository, and that is a
-mismatch — otherwise an update would fast-forward your home directory, if you
-keep it in Git.
-
-A `.git` with nothing checked out is refused too, and named as incomplete or
-damaged with Git's own account of it. That is the state an interrupted clone
-leaves, and it is the one this whole check exists for: a clone writes directly
-into its destination, so a tool that read the mere presence of something as
-"already installed" would report success over that wreckage on every run from
-then on.
+[Git updates](safety.md#git-updates) specifies dirty-worktree checks,
+fast-forwarding, local-file protection, and failure handling.
+[Clone validation](safety.md#clone-validation) specifies which existing
+checkouts can be updated. Existing clones retain their configured remotes.
 
 ### `git-clone-list`
 
@@ -1298,7 +826,7 @@ refused on every platform — including the ones where they genuinely are two.
 volume, and a list is meant to read the same on every machine that shares the
 repository. Where they do collide, the second entry would find the first's
 clone and be satisfied by it, and an update never asks which repository a clone
-came from ([the remote a clone fetches from](#a-clone-is-the-one-thing-batfiles-comes-back-to)),
+came from ([the remote a clone fetches from](safety.md#git-updates)),
 so the wrong repository would sit there reporting success on every run. Case
 that carries a real difference is untouched: only names that are the same word
 collide, and a clone still lands under the name exactly as it is written.

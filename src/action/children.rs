@@ -1,8 +1,5 @@
 //! The shape both `-dir` actions are: one thing installed per direct child of a
 //! source directory, all of them into one destination directory.
-//!
-//! `symlink-dir` and `copy-dir` differ only in what they do with each child, so
-//! everything up to that point is here and each of them supplies the rest.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -13,15 +10,6 @@ use crate::output::Verb;
 use crate::paths;
 
 /// What a `-dir` action installs, and where.
-///
-/// The three fields both records carry, resolved, plus the one word their
-/// reports differ by. A struct rather than four parameters because `source_dir`
-/// and `dest_dir` are both `&Path` and neighbours: transposing them compiles,
-/// and would empty a repository directory's children into itself.
-///
-/// Not shared with the manifest records, which repeat these fields for a
-/// separate reason — `#[serde(flatten)]` silently disables
-/// `deny_unknown_fields` ([`crate::manifest::action`]).
 pub(super) struct ChildInstall<'a> {
     pub source_dir: &'a Path,
     pub dest_dir: &'a Path,
@@ -31,11 +19,6 @@ pub(super) struct ChildInstall<'a> {
 }
 
 /// Do one action's work once per direct child of its source directory.
-///
-/// Make the destination, then install every direct child of the source into it
-/// under the name [`installed_name`] gives. Not recursive, in either action — a
-/// child that is itself a directory is one thing installed, and what is inside
-/// it is reached through what was installed rather than decided entry by entry.
 pub(super) fn for_each_child(
     context: &RunContext,
     install: &ChildInstall,
@@ -65,10 +48,6 @@ pub(super) fn for_each_child(
 }
 
 /// What a child of a `source-dir` is called once installed.
-///
-/// The dot-prefix rule and its one refusal, shared by both actions that install
-/// a directory's children: a child already starting with `.` would arrive as
-/// `..name`, which is a legal file name and never the one that was meant.
 fn installed_name(child: &OsString, dot_prefix: bool) -> Result<OsString, Error> {
     if !dot_prefix {
         return Ok(child.clone());

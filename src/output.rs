@@ -1,19 +1,8 @@
 //! How batfiles words what it did, and where it says it.
-//!
-//! Standard error carries diagnostics; standard output is reserved for data a
-//! command was asked for. Nothing here writes to standard output, so a label
-//! and a color can never contaminate a value a script is reading.
-//!
-//! [`Verb`] is the vocabulary half: one act, in whichever tense the run's
-//! [`RunMode`] calls for, so the tense is decided here rather than at each call
-//! site.
 
 use crate::mode::RunMode;
 
 /// One act an action reports, in whichever tense the mode calls for.
-///
-/// Not `unchanged`: that is a state a destination is already in rather than an
-/// act, so it reads the same in both modes and takes no "would".
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Verb {
     Link,
@@ -139,10 +128,6 @@ impl Reporter {
 
     /// What a command did, printed at normal verbosity and suppressed by
     /// `--quiet`.
-    ///
-    /// A diagnostic, not requested data: it says what happened rather than
-    /// answering a question, so it goes to standard error and through the
-    /// verbosity gate. Unlabeled, for the same reason `detail` is.
     pub fn info(&self, message: &str) {
         if self.verbosity.shows_info() {
             eprintln!("{message}");
@@ -206,9 +191,6 @@ mod tests {
 
     #[test]
     fn quiet_wins_over_verbose_when_both_somehow_arrive() {
-        // The two options conflict, so clap rejects the invocation before this
-        // is reached. The resolution is here anyway because a silent
-        // reinterpretation of `--quiet` would be the worse failure.
         assert_eq!(Verbosity::new(true, 2), Verbosity::Quiet);
     }
 
