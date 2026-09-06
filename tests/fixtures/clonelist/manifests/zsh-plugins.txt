@@ -1,7 +1,11 @@
-# Every shape a real list is written in, in one file: a plain URL, one without
-# the `.git` suffix, a named entry, and a pinned one.
-https://github.com/zsh-users/zsh-syntax-highlighting.git
-https://github.com/zsh-users/zsh-autosuggestions
+# Every shape a real list is written in, in one file: a repository whose
+# directory name is derived from it, one that says what to call itself, and one
+# pinned to a ref.
+#
+# The placeholders are local bare repositories the test creates, because no test
+# may reach the network (`guidance.md`, "Test environments"). A real list of
+# this kind names repositories on the internet, and reads exactly the same.
+{plugin}
+{prompt} dest-name=p10k id=p10k  # the prompt
 
-https://github.com/romkatv/powerlevel10k.git dest-name=p10k id=p10k  # the prompt
-https://github.com/agkozak/zsh-z.git ref=main
+{plugin} ref=main dest-name=zsh-z

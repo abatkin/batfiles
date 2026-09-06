@@ -162,39 +162,22 @@ number it left free, put back to use rather than kept as a gap.
   and the cost being that a successful `sync` does not mean the whole manifest
   is installed. `action/git_clone_list.rs` holds the warning and the `CARRY`
   marker; 4.5 replaces both.
-- **4.5** Add the cloning half of `git-clone-list`, through 4.3's
-  `git::clone_or_update`, and give it the two things a list needs that one
-  repository did not. `clone_list::read` already returns the entries and 4.4
-  discards them; the change is to carry them from `execute::read_clone_lists` to
-  the action rather than to read the file again.
-
-  **`ref`.** 4.3 refused it on the closed record, so this is the step that
-  un-rejects it on `git-clone`; 4.4 already accepts and checks the list's
-  per-entry `ref=`, and honoring it is what is left. It is also what makes the rest of
-  `docs/future/safety.md`'s "Git repositories" mean something: with a declared
-  ref, a clean worktree may have its checked-out branch changed and its remote
-  URL updated, and both transitions are reported. Promote that half of the
-  section when you build it; 4.3 already promoted the rest.
-
-  **A per-entry decision.** 4.3's skips are warnings because one action either
-  runs or does not, and nothing had to tell the cases apart; a list has to decide
-  entry by entry whether to carry on. **That is what `error.rs` has been waiting
-  on**, and 4.2 is the worked example: `Error::Archive(archive::Invalid)` puts
-  the sub-enum in the module that raises it. Telling a dirty clone from a network
-  failure earns git the same `Error::Git(git::Error)` treatment, and the three
-  flat `Git*` variants 4.3 added move under it or stay, whichever the match
-  wants.
-
-  A dry run reports one line per entry — 4.4 read the list with the repository,
-  in both modes, so the entries are already in hand — in 4.3's shape and tense,
-  which means taking the wording from `clone_or_update` rather than restating it:
-  `would clone <dest> from <url>` where nothing is, and `would update <dest>`
-  where something is, **with no URL on the update line**. 4.3 left it off
-  deliberately, an update fetching the clone's own remote rather than the
-  manifest's `source`, and a list inherits that. **No entry runs `git`**, by the
-  one rule in `src/git.rs`, so none reaches the network and none can say what an
-  update would bring, which is the "intent, not success" boundary rather than a
-  partial plan (`guidance.md`, "Why there is no effect type").
+- **4.5** ✅ Add the cloning half of `git-clone-list`, and `ref` on `git-clone`
+  with it. The entries the read pass checks now travel on the record —
+  `Option<Vec<Entry>>` under `#[serde(skip)]`, `None` meaning no pass read this
+  one, which **7.2 keeps true by splicing included records ahead of that pass**
+  rather than after it. A `ref` is resolved after the fetch and **against the
+  remote-tracking namespace first**, `origin` deciding where several remotes
+  match: resolving the bare string finds the local branch a fetch never moves, so
+  `ref=main` would pin a plugin to the commit it was first cloned at and report
+  success forever. That is the one way to get this wrong, and
+  `docs/repoformat.md` now says so where a reader of the format will find it. A
+  clone at a ref reports `cloned <dest> from <url> at <ref>` rather than a clone
+  line and a switch; `Verb::SwitchRef` belongs to the clone that was already
+  there and moves. The git failures nest as `Error::Git(git::Failure)` —
+  `Failure`, not `Error`, because `git.rs` names the crate's `Error` throughout
+  and one module cannot have both — and `action/git_clone_list.rs` holds the
+  private predicate deciding whether a failure costs one entry or the run.
 - **4.6** Make rule 1's within-slice reading mechanical: `tests/hygiene.rs`
   rejects an `expect(dead_code)` whose `reason` names a step `steps.md` marks ✅,
   names a step it does not define, or names no step at all. Today the reason is
@@ -205,13 +188,13 @@ number it left free, put back to use rather than kept as a gap.
   three-case shape the `CARRY` check already has — a step-shaped token anywhere
   in the reason is the step, since these read `"cloned at 4.5"` rather than a bare
   number (`guidance.md`, rule 1).
-- **4.7** Extend the git fixtures to a *list* of repositories; no step in the
-  suite may reach the network. `tests/fixtures/clonelist` exists and names
-  repositories nothing contacts, which is what 4.4 needed; this is where it
-  starts pointing at local bare repositories, the way `cloning` does. A dry run
-  is part of what is tested here: `git-clone-list` says one line per entry
-  without reaching the network, and an existing clone is left exactly as it was,
-  unfetched.
+- **4.7** Finish the git fixtures for a *list* of repositories; no step in the
+  suite may reach the network. 4.5 took the minimum — `BareRepo` making more than
+  one origin, and `tests/fixtures/clonelist` pointing at local bare repositories
+  the way `cloning` does — because a step may leave a behavior unfinished and
+  never leave one untested. What is left here is the strong-claim pass, and a dry
+  run is most of it: `git-clone-list` says one line per entry without reaching
+  the network, and an existing clone is left exactly as it was, unfetched.
 
   Most of the apparatus is already there. 4.1 gave `tests/cli/support.rs` a
   `tiny_http` `Server` that counts requests, and 4.3 gave it `BareRepo`, a bare
@@ -219,8 +202,12 @@ number it left free, put back to use rather than kept as a gap.
   a `git` helper that forces an identity and no signing. 4.3's `cloning` tests
   are the pattern for asserting the strong claim rather than the weak one: an
   existing clone's `.git/FETCH_HEAD` staying absent is what says no git ran, the
-  way `Server::requests` says nothing was asked of the server. Write the list
-  tests to assert the same way.
+  way `Server::requests` says nothing was asked of the server. 4.5 wrote one list
+  test that way — a dry run over clones that are already there — and landed the
+  case one repository could not have: an entry that fails leaves the entries after
+  it cloned. What is left is the rest of that pass, and the shapes only a list can
+  be in: an entry that fails on its `ref`, one whose clone is already there beside
+  one that is not, and a `dest-dir` that is somebody else's directory.
 
   Promote what is left of `docs/future/cmdline.md`'s "Remote content is
   described, not retrieved" paragraph into the section 2.4 created — 4.1 took
@@ -288,8 +275,10 @@ No inclusion of remote actions yet.
   un-rejects a section the closed document turns away, and edits the same
   paragraph of `docs/repoformat.md`.
 - **6.2** Materialize a declared remote into `remotes/<id>/` by calling
-  `git::clone_or_update`, which already does both halves of this. It takes no
-  exception argument and must not grow one, so under `--dry-run` nothing is
+  `git::clone_or_update`, which already does both halves of this. Pass `None` for
+  the ref a remote does not declare: 4.5 left that a plain parameter rather than a
+  descriptor struct, and this is the third caller, the one entitled to decide
+  otherwise (rule 3). It takes no exception argument and must not grow one, so under `--dry-run` nothing is
   cloned or fetched here either; 6.6 is where that is stated and tested. Note
   that a remote's warnings arrive already written for a destination in the home
   — "not updating `<path>`: it has uncommitted changes" is an odd thing to read

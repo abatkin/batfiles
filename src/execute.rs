@@ -30,7 +30,7 @@ pub(crate) fn sync(
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    let (manifest, disabled) = load(roots)?;
+    let (mut manifest, disabled) = load(roots)?;
     let selection = Selection::new(
         Target::Everything,
         skip_actions,
@@ -41,7 +41,7 @@ pub(crate) fn sync(
     );
     // An empty manifest, and one whose every action is disabled, are both
     // ordinary successful runs that did nothing, so the count is not consulted.
-    run(&manifest, &selection, roots, mode, reporter)?;
+    run(&mut manifest, &selection, roots, mode, reporter)?;
     Ok(())
 }
 
@@ -58,13 +58,13 @@ pub(crate) fn apply_action(
     // matched is reported as the malformed name it is rather than as a
     // resolution failure.
     let id = ItemAddress::try_from(id.to_owned())?;
-    let (manifest, disabled) = load(roots)?;
+    let (mut manifest, disabled) = load(roots)?;
     // The command accepts neither run-only option, and naming one action waives
     // every exclusion either document holds.
     let selection = Selection::new(Target::Action(&id), &[], &[], env, disabled, reporter);
     // Nothing filters this command, so a record it named was carried out, and a
     // name no record carries has already failed as unresolved.
-    run(&manifest, &selection, roots, mode, reporter)?;
+    run(&mut manifest, &selection, roots, mode, reporter)?;
     Ok(())
 }
 
@@ -79,7 +79,7 @@ pub(crate) fn apply_group(
     reporter: &Reporter,
 ) -> Result<(), Error> {
     let group = ItemAddress::try_from(group.to_owned())?;
-    let (manifest, disabled) = load(roots)?;
+    let (mut manifest, disabled) = load(roots)?;
     // `--skip-group` is not accepted, so there is no group-shaped run-only list
     // to hand over; naming the group waives the one there would have been.
     let selection = Selection::new(
@@ -90,7 +90,7 @@ pub(crate) fn apply_group(
         disabled,
         reporter,
     );
-    let carried_out = run(&manifest, &selection, roots, mode, reporter)?;
+    let carried_out = run(&mut manifest, &selection, roots, mode, reporter)?;
 
     // The group exists — a name no record names has already failed as
     // unresolved — and every member of it was passed over, which at normal
@@ -122,7 +122,8 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
 }
 
 /// Read and check every clone list this run would install from, before the
-/// first action writes anything.
+/// first action writes anything, and leave what was read on the record that
+/// named it.
 ///
 /// A `git-clone-list` names a file in the repository, which is on disk and
 /// readable now, so the rule the manifest itself follows extends to it: a
@@ -138,17 +139,25 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
 /// Only the records the run would carry out. A list belonging to a disabled or
 /// skipped action is not read, because a run that never reaches an action must
 /// not be failed by it — the same reason its `source` is not required to exist.
+/// That is also why the entries are an `Option` on the record: this pass is
+/// selective by design, and "no pass read this" has to be tellable from "the
+/// file declares nothing".
+///
+/// The two predicates below are the ones the execution loop asks again, off the
+/// same [`Selection`], which is what makes an action that runs an action that
+/// was filled. 7.2 splices included records into this list and has to do it
+/// ahead of this pass, or the actions it adds arrive at execution unread.
 fn read_clone_lists(
-    manifest: &Manifest,
+    manifest: &mut Manifest,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
 ) -> Result<(), Error> {
-    for action in &manifest.actions {
-        if let Action::GitCloneList(list) = action
-            && selection.wants(action)
-            && selection.skipped(action).is_none()
-        {
-            clone_list::read(&context.source(&list.source)?)?;
+    for action in &mut manifest.actions {
+        if !selection.wants(action) || selection.skipped(action).is_some() {
+            continue;
+        }
+        if let Action::GitCloneList(list) = action {
+            list.entries = Some(clone_list::read(&context.source(&list.source)?)?);
         }
     }
     Ok(())
@@ -166,7 +175,7 @@ fn read_clone_lists(
 /// `mode` is carried to the actions rather than consulted here: a dry run is
 /// the same loop over the same list, and it passes over the same entries.
 fn run(
-    manifest: &Manifest,
+    manifest: &mut Manifest,
     selection: &Selection<'_>,
     roots: &Roots,
     mode: RunMode,

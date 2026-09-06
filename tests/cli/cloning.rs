@@ -604,24 +604,357 @@ fn a_git_clone_source_is_not_read_as_a_repository_path_or_a_url() {
     );
 }
 
+/// A tree whose one `git-clone` declares a `ref`.
+fn one_clone_at(origin: &BareRepo, dest: &str, git_ref: &str) -> Tree {
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        "[[actions]]\n\
+         type = \"git-clone\"\n\
+         source = \"{}\"\n\
+         dest = \"{dest}\"\n\
+         ref = \"{git_ref}\"\n",
+        display(&origin.origin())
+    ));
+    tree
+}
+
+/// What a checkout is on: a branch by name, or `HEAD` where it is detached.
+fn branch_of(clone: &std::path::Path) -> String {
+    git(clone, &["rev-parse", "--abbrev-ref", "HEAD"])
+}
+
 #[test]
-fn a_ref_is_refused_until_the_step_that_builds_it() {
-    // The closed record turns away a field the format specifies and batfiles
-    // does not honor yet, rather than accepting it and following the wrong
-    // branch (`guidance.md`, rule 12's reasoning, applied to the manifest).
+fn a_ref_names_the_branch_a_clone_is_put_on() {
+    // What the field is for, and the reason it cannot be resolved by handing
+    // the string to `rev-parse`: `next` has to mean the branch the origin
+    // publishes, not the local one a clone happens to make.
+    let origin = BareRepo::new();
+    origin.publish_on("next", "next.zsh", "echo next\n", "on next");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "next");
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    let clone = tree.home(".oh-my-zsh");
+    assert!(
+        clone.join("next.zsh").is_file(),
+        "the declared branch was not checked out"
+    );
+    assert_eq!(branch_of(&clone), "next");
+    let stderr = stderr_of(&assertion);
+    // One act, one line: a clone that was never anywhere else has nothing to
+    // have switched from.
+    assert!(
+        stderr.contains(&format!(
+            "cloned {} from {} at next",
+            display(&clone),
+            display(&origin.origin())
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("switched"), "{stderr}");
+}
+
+#[test]
+fn a_declared_branch_is_fast_forwarded_by_a_later_run() {
+    // The steady state has to hold: a run after the first finds the clone on
+    // the branch, brings what upstream published, and says so as an update.
+    let origin = BareRepo::new();
+    origin.publish_on("next", "next.zsh", "echo next\n", "on next");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "next");
+    tree.batfiles().arg("sync").assert().success();
+    let clone = tree.home(".oh-my-zsh");
+    let first = head(&clone);
+
+    origin.publish_on("next", "more.zsh", "echo more\n", "more on next");
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_ne!(head(&clone), first, "the declared branch was not advanced");
+    assert_eq!(branch_of(&clone), "next");
+    assert!(clone.join("more.zsh").is_file());
+    assert!(
+        stderr_of(&assertion).contains(&format!("updated {}", display(&clone))),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_ref_that_is_a_tag_pins_the_clone_and_keeps_it_there() {
+    // A tag is not a branch, so the checkout is detached — and detached at the
+    // right object is the steady state rather than something to correct, which
+    // is what keeps a later run from dragging the pin forward.
+    let origin = BareRepo::new();
+    origin.tag("v1");
+    origin.publish("after.zsh", "echo after\n", "after the tag");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "v1");
+
+    tree.batfiles().arg("sync").assert().success();
+
+    let clone = tree.home(".oh-my-zsh");
+    let pinned = head(&clone);
+    assert_eq!(branch_of(&clone), "HEAD", "the clone is not detached");
+    assert!(
+        !clone.join("after.zsh").exists(),
+        "the pin took a commit published after the tag"
+    );
+
+    origin.publish("later.zsh", "echo later\n", "later still");
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+
+    assert_eq!(head(&clone), pinned, "a pinned clone was moved");
+    assert!(
+        stderr_of(&assertion).contains(&format!("unchanged {}", display(&clone))),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_clone_switches_when_the_record_names_a_different_ref() {
+    // The one case `switched` exists for: the repository is where it was asked
+    // to be, and getting there changed the checkout rather than advancing it.
+    let origin = BareRepo::new();
+    origin.publish_on("next", "next.zsh", "echo next\n", "on next");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "main");
+    tree.batfiles().arg("sync").assert().success();
+    let clone = tree.home(".oh-my-zsh");
+    assert_eq!(branch_of(&clone), "main");
+
+    // The same repository and the same home, with the record's `ref` edited:
+    // the case a user creates by changing their manifest.
+    tree.write_manifest(&format!(
+        "[[actions]]\n\
+         type = \"git-clone\"\n\
+         source = \"{}\"\n\
+         dest = \"~/.oh-my-zsh\"\n\
+         ref = \"next\"\n",
+        display(&origin.origin())
+    ));
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(branch_of(&clone), "next");
+    assert!(clone.join("next.zsh").is_file());
+    assert!(
+        stderr_of(&assertion).contains(&format!("switched {} to next", display(&clone))),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_ref_switch_does_not_overwrite_a_file_the_clone_ignores() {
+    // Git protects an untracked file from a checkout and an ignored one it does
+    // not, on the reasoning that ignored content is build output. batfiles did
+    // not create it either way, so it is not batfiles' to replace (rule 13):
+    // here it is somebody's local notes at a path the branch being switched to
+    // happens to track.
+    let origin = BareRepo::new();
+    origin.publish(".gitignore", "notes.local\n", "ignore it");
+    origin.publish_ignored("next", "notes.local", "upstream version\n");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "main");
+    tree.batfiles().arg("sync").assert().success();
+    let clone = tree.home(".oh-my-zsh");
+    fs::write(clone.join("notes.local"), "my own notes\n").expect("an ignored file of their own");
+
+    tree.write_manifest(&format!(
+        "[[actions]]\n\
+         type = \"git-clone\"\n\
+         source = \"{}\"\n\
+         dest = \"~/.oh-my-zsh\"\n\
+         ref = \"next\"\n",
+        display(&origin.origin())
+    ));
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+
+    assert_eq!(
+        fs::read_to_string(clone.join("notes.local")).expect("the ignored file"),
+        "my own notes\n",
+        "an ignored file was overwritten by a ref switch"
+    );
+    assert!(
+        stderr_of(&assertion).contains("notes.local"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_fast_forward_stops_at_a_file_the_clone_keeps_and_upstream_starts_tracking() {
+    // The same data, the same rule, and a hole `--no-overwrite-ignore` does not
+    // cover: `git merge --ff-only` replaces an ignored file without a word, and
+    // the dirty check cannot see one because ignored output deliberately does
+    // not block an update. So the collision is asked about directly, and the
+    // clone is left alone with a warning rather than the run being failed --
+    // the terms every other conservative skip already has.
+    let origin = BareRepo::new();
+    let tree = cloning(&origin);
+    tree.batfiles().arg("sync").assert().success();
+    let clone = tree.home(".oh-my-zsh");
+    origin.publish(".gitignore", "notes.local\n", "ignore it");
+    tree.batfiles().arg("sync").assert().success();
+    fs::write(clone.join("notes.local"), "my own notes\n").expect("an ignored file of their own");
+    let before = head(&clone);
+
+    origin.publish_ignored("main", "notes.local", "upstream version\n");
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(clone.join("notes.local")).expect("the ignored file"),
+        "my own notes\n",
+        "an ignored file was overwritten by a fast-forward"
+    );
+    assert_eq!(head(&clone), before, "the clone was moved over it");
+    assert!(
+        stderr_of(&assertion).contains("it has a file of its own at notes.local"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_fast_forward_stops_at_a_file_upstream_renames_onto() {
+    // The same collision, arriving in the shape a diff describes differently:
+    // git records no rename and infers one from content, so a file moved onto
+    // the ignored path is an `R` rather than an `A` while the merge writes it
+    // exactly as it would an addition. A guard that filtered on additions alone
+    // would pass over this and lose the file.
+    let origin = BareRepo::new();
+    let tree = cloning(&origin);
+    origin.publish(".gitignore", "notes.local\n", "ignore it");
+    tree.batfiles().arg("sync").assert().success();
+    let clone = tree.home(".oh-my-zsh");
+    fs::write(clone.join("notes.local"), "my own notes\n").expect("an ignored file of their own");
+    let before = head(&clone);
+
+    origin.publish_renamed("README.md", "notes.local");
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(clone.join("notes.local")).expect("the ignored file"),
+        "my own notes\n",
+        "an ignored file was overwritten by a renaming fast-forward"
+    );
+    assert_eq!(head(&clone), before, "the clone was moved over it");
+    assert!(
+        stderr_of(&assertion).contains("it has a file of its own at notes.local"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_ref_is_followed_on_whichever_remote_publishes_it() {
+    // `resolve` searches every remote, so every remote has to be current: a
+    // bare `git fetch` brings the one the *current branch* tracks, which would
+    // leave a branch published on a second remote either invisible or stale.
+    let origin = BareRepo::new();
+    let elsewhere = BareRepo::new();
+    elsewhere.publish_on("next", "next.zsh", "echo next\n", "on next");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "main");
+    tree.batfiles().arg("sync").assert().success();
+    let clone = tree.home(".oh-my-zsh");
+    git(
+        &clone,
+        &["remote", "add", "other", &display(&elsewhere.origin())],
+    );
+
+    tree.write_manifest(&format!(
+        "[[actions]]\n\
+         type = \"git-clone\"\n\
+         source = \"{}\"\n\
+         dest = \"~/.oh-my-zsh\"\n\
+         ref = \"next\"\n",
+        display(&origin.origin())
+    ));
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(branch_of(&clone), "next");
+    assert!(
+        clone.join("next.zsh").is_file(),
+        "the second remote's branch was not fetched"
+    );
+}
+
+#[test]
+fn a_ref_that_is_not_a_branch_name_goes_down_the_detached_path() {
+    // A `ref` is a string the manifest wrote, so it can be a revision
+    // expression. `refs/remotes/origin/main~1` is something `rev-parse`
+    // evaluates and `refs/remotes/origin/HEAD` is a real ref in any clone, so
+    // both would enter the branch case and then fail making a local branch by
+    // that name. Neither is a branch name, and both resolve to a commit.
+    let origin = BareRepo::new();
+    origin.publish("second.zsh", "echo second\n", "second");
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "main~1");
+
+    tree.batfiles().arg("sync").assert().success();
+
+    let clone = tree.home(".oh-my-zsh");
+    assert_eq!(branch_of(&clone), "HEAD", "the clone is not detached");
+    assert!(
+        !clone.join("second.zsh").exists(),
+        "`main~1` was not read as the commit before the tip"
+    );
+}
+
+#[test]
+fn a_ref_that_resolves_to_nothing_fails_and_says_which_one() {
+    // A repository bug rather than a state of the checkout, so it is a failure
+    // where the update rules are warnings.
+    let origin = BareRepo::new();
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "no-such-branch");
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+
+    assert!(
+        stderr_of(&assertion).contains("cannot follow `no-such-branch`"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn an_empty_ref_is_refused_as_the_manifest_is_read() {
+    // Read as an absent one it would silently mean "follow whatever branch the
+    // clone is on", which is not what a record asking for a ref meant.
     let tree = Tree::new();
     tree.write_manifest(
         "[[actions]]\n\
          type = \"git-clone\"\n\
          source = \"https://e.example/a.git\"\n\
          dest = \"~/.oh-my-zsh\"\n\
-         ref = \"refs/heads/main\"\n",
+         ref = \"\"\n",
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
 
     assert!(
-        stderr_of(&assertion).contains("unknown field `ref`"),
+        stderr_of(&assertion).contains("ref is empty"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_dry_run_names_the_ref_it_would_clone_at_without_resolving_one() {
+    // The ref on the line is the declared string, which is knowable without
+    // git; a dry run runs none, so nothing here was resolved.
+    let origin = BareRepo::new();
+    let tree = one_clone_at(&origin, "~/.oh-my-zsh", "no-such-branch");
+    let before = snapshot(&tree.path("home"));
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
+
+    assert_eq!(snapshot(&tree.path("home")), before);
+    assert!(
+        stderr_of(&assertion).contains(&format!(
+            "would clone {} from {} at no-such-branch",
+            display(&tree.home(".oh-my-zsh")),
+            display(&origin.origin())
+        )),
         "{}",
         stderr_of(&assertion)
     );

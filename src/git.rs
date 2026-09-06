@@ -26,8 +26,11 @@
 
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+use thiserror::Error as ThisError;
 
 use crate::directory;
 use crate::error::Error;
@@ -35,12 +38,87 @@ use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, ExistingNode, Occupancy, Repository};
 
+/// What can go wrong reaching a clone, as one enum a caller can match on.
+///
+/// Nested under [`Error::Git`] rather than spread flat through `error.rs`,
+/// because `git-clone-list` is the first caller that has to tell these apart:
+/// one repository it cannot have costs that entry, and a `git` it cannot run
+/// costs the run. Which of these is which is that action's to say, so nothing
+/// here classifies itself.
+///
+/// **None of the conservative update rules is in here.** A dirty worktree, a
+/// branch tracking nothing, and a history that has diverged are all `Ok` plus a
+/// warning, so a caller never sees one. What this enum holds is the failures.
+#[derive(Debug, ThisError)]
+pub(crate) enum Failure {
+    /// `git` could not be run at all, most often because it is not on `PATH`.
+    #[error(
+        "could not run git: {source}. batfiles runs the `git` on your PATH so that your \
+         gitconfig, credential helpers, and SSH agent apply"
+    )]
+    Unavailable { source: io::Error },
+
+    /// A `git` command ran and failed, carrying git's own diagnostic. The
+    /// message is built by [`complaint`] rather than at each call site, so it
+    /// stays a fact about a subprocess.
+    #[error("git {command} failed in {}: {message}", .path.display())]
+    Failed {
+        command: &'static str,
+        path: PathBuf,
+        message: String,
+    },
+
+    /// A clone destination holding a directory with no `.git` in it. Named
+    /// apart from [`Error::DestinationExists`] because the remedy is the same
+    /// but the reason is not one the node's kind gives away: it is a directory,
+    /// and the refusal is about what is missing inside it.
+    #[error(
+        "cannot update {}: it is a directory, and not a git clone; \
+         move it aside and run sync again",
+        .path.display()
+    )]
+    NotAClone { path: PathBuf },
+
+    /// A destination whose git directory is not its own: a `.git` that is a
+    /// symlink or a file rather than the directory `git clone` makes, or a real
+    /// one whose configured worktree is somewhere else. Refused because running
+    /// git here reaches a checkout batfiles never installed — a fetch and a
+    /// fast-forward would move *that* one's branch.
+    #[error(
+        "cannot update {}: its .git belongs to a checkout somewhere else, so updating it \
+         would change that one; move it aside and run sync again",
+        .path.display()
+    )]
+    CloneElsewhere { path: PathBuf },
+
+    /// A destination holding a `.git` whose `HEAD` names no commit: what an
+    /// interrupted clone leaves, and what a damaged one looks like. This is the
+    /// arm that stops a later run mistaking either for finished work, so it
+    /// carries git's own account of which it was.
+    #[error(
+        "cannot update {}: it has a .git but nothing checked out, so it is an incomplete \
+         or damaged clone ({message}); move it aside and run sync again",
+        .path.display()
+    )]
+    CloneIncomplete { path: PathBuf, message: String },
+
+    /// A declared `ref` that names nothing in the clone: a branch nobody
+    /// publishes, a tag spelled wrong, a commit that was rebased away. A
+    /// repository bug rather than a state of the checkout, which is why it is a
+    /// failure where the update rules are warnings.
+    #[error(
+        "cannot follow `{git_ref}` in {}: no branch, tag, or commit of that name is in the clone",
+        .path.display()
+    )]
+    RefUnresolvable { path: PathBuf, git_ref: String },
+}
+
 /// Put a repository at `dest`, whether or not one is there already.
 ///
 /// The clone-or-update decision, which is the branch this module reads
 /// [`RunMode`] in. Every caller that wants a worktree on disk comes through
-/// here: `git-clone` today, `git-clone-list` at 4.5, and remote materialization
-/// at 6.2.
+/// here: `git-clone` and `git-clone-list` today, and remote materialization at
+/// 6.2.
 ///
 /// Cloning writes straight into `dest` rather than into a staging sibling, which
 /// is the one place a rule-15 install is not built beside its destination. What
@@ -51,6 +129,7 @@ use crate::paths::{self, ExistingNode, Occupancy, Repository};
 pub(crate) fn clone_or_update(
     url: &str,
     dest: &Path,
+    git_ref: Option<&str>,
     repository: &Repository,
     mode: RunMode,
     reporter: &Reporter,
@@ -65,7 +144,7 @@ pub(crate) fn clone_or_update(
         // so a dry run does not find out.
         Occupancy::Unmanaged(ExistingNode::Directory) => {
             if mode.writes() {
-                return update(dest, reporter);
+                return update(dest, git_ref, reporter);
             }
             reporter.info(&format!("{} {}", Verb::Update.say(mode), dest.display()));
             Ok(())
@@ -88,14 +167,25 @@ pub(crate) fn clone_or_update(
                 dest.display(),
                 written.display()
             ));
-            clone(url, dest, mode, reporter)
+            clone(url, dest, git_ref, mode, reporter)
         }
-        Occupancy::Vacant => clone(url, dest, mode, reporter),
+        Occupancy::Vacant => clone(url, dest, git_ref, mode, reporter),
     }
 }
 
 /// Clone into a destination nothing is at.
-fn clone(url: &str, dest: &Path, mode: RunMode, reporter: &Reporter) -> Result<(), Error> {
+///
+/// A declared `ref` is checked out after the clone rather than passed as
+/// `--branch`, which refuses a raw commit — but the two are one act and report
+/// one line, because a clone that was never anywhere else has nothing to have
+/// switched from.
+fn clone(
+    url: &str,
+    dest: &Path,
+    git_ref: Option<&str>,
+    mode: RunMode,
+    reporter: &Reporter,
+) -> Result<(), Error> {
     // `git clone` would make the missing parents itself, but not the broken
     // symlink at an ancestor that rule 13 clears, and not the report that goes
     // with clearing one.
@@ -118,13 +208,28 @@ fn clone(url: &str, dest: &Path, mode: RunMode, reporter: &Reporter) -> Result<(
             ],
             dest,
         )?;
+        if let Some(git_ref) = git_ref {
+            // The outcome is not reported: whatever it took to get there, the
+            // line below is where this run put the repository.
+            follow(dest, git_ref, reporter)?;
+        }
     }
     reporter.info(&format!(
-        "{} {} from {url}",
+        "{} {} from {url}{}",
         Verb::Clone.say(mode),
-        dest.display()
+        dest.display(),
+        at(git_ref)
     ));
     Ok(())
+}
+
+/// ` at <ref>`, or nothing where none was declared.
+///
+/// The declared string rather than what it resolved to: what a reader can check
+/// against the manifest is what they wrote, and in a dry run nothing has been
+/// resolved at all.
+fn at(git_ref: Option<&str>) -> String {
+    git_ref.map(|it| format!(" at {it}")).unwrap_or_default()
 }
 
 /// Bring an existing clone up to date, conservatively, or say why it was left
@@ -139,12 +244,374 @@ fn clone(url: &str, dest: &Path, mode: RunMode, reporter: &Reporter) -> Result<(
 ///
 /// Only ever reached when the mode allows a write, so nothing below asks about
 /// it.
-fn update(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
+///
+/// Below this, two routines rather than one with a flag, because a declared
+/// `ref` changes
+/// what the steady state *is*: without one, an update follows whatever branch
+/// the clone is on and a detached `HEAD` is a skip; with one, detached at the
+/// right object is exactly right and the upstream is never consulted. What they
+/// share is the pair of gates above them — a dirty worktree blocks either.
+fn update(dest: &Path, git_ref: Option<&str>, reporter: &Reporter) -> Result<(), Error> {
     inspect(dest)?;
 
     if is_dirty(dest)? {
         return skip(reporter, dest, "it has uncommitted changes");
     }
+    match git_ref {
+        Some(git_ref) => update_to_ref(dest, git_ref, reporter),
+        None => update_tracking(dest, reporter),
+    }
+}
+
+/// Bring a clone to the `ref` its record declares, and say what that took.
+///
+/// One line per entry per run: `unchanged` where the checkout is already at
+/// what the ref resolved to, `updated` where it only moved forward on the
+/// branch it was already on, and `switched` where the checkout itself changed.
+/// A history that cannot be fast-forwarded has already warned and reports
+/// nothing more.
+fn update_to_ref(dest: &Path, git_ref: &str, reporter: &Reporter) -> Result<(), Error> {
+    // Before the ref is resolved, and the only command here that reaches the
+    // network: what `main` means is decided by what upstream published, not by
+    // what this clone last heard.
+    //
+    // `--all` rather than a bare fetch, because a bare one fetches the remote
+    // the *current branch* tracks and [`resolve`] searches every remote: on a
+    // clone with two, following a branch the second one publishes would
+    // otherwise resolve against whatever was last fetched, or report a branch
+    // that exists as one that does not. Every clone batfiles makes has exactly
+    // one remote, so this differs from a bare fetch only where the user added
+    // another.
+    run(Some(dest), "fetch", &["fetch", "--all"], dest)?;
+
+    match follow(dest, git_ref, reporter)? {
+        Followed::Unchanged => reporter.detail(1, &format!("unchanged {}", dest.display())),
+        Followed::Advanced => reporter.info(&format!(
+            "{} {}",
+            Verb::Update.say(RunMode::Perform),
+            dest.display()
+        )),
+        Followed::Switched => reporter.info(&format!(
+            "{} {} to {git_ref}",
+            Verb::SwitchRef.say(RunMode::Perform),
+            dest.display()
+        )),
+        Followed::Skipped => {}
+    }
+    Ok(())
+}
+
+/// What following a declared `ref` came to.
+enum Followed {
+    /// The checkout was already at what the ref resolved to.
+    Unchanged,
+    /// The branch the checkout was already on moved forward.
+    Advanced,
+    /// The checkout itself changed: another branch, or a detached object.
+    Switched,
+    /// Left alone, with a warning already reported.
+    Skipped,
+}
+
+/// Put the worktree on whatever `git_ref` names, having resolved it once.
+fn follow(dest: &Path, git_ref: &str, reporter: &Reporter) -> Result<Followed, Error> {
+    match resolve(dest, git_ref)? {
+        Target::Branch { remote } => branch(dest, git_ref, &remote, reporter),
+        Target::Object { commit } => detach(dest, &commit),
+    }
+}
+
+/// What a declared `ref` turned out to name.
+enum Target {
+    /// A branch on a remote, held here as its full `refs/remotes/…` name. A
+    /// local branch of the declared name follows it.
+    Branch { remote: String },
+    /// Anything else that resolves — a tag, a commit, a full ref name — held as
+    /// the commit it resolved to.
+    Object { commit: String },
+}
+
+/// Decide which of the two a declared `ref` is, **looking in the
+/// remote-tracking namespace first**.
+///
+/// Handing the bare string to `rev-parse` would be the obvious implementation
+/// and is wrong for the case the field exists for: in a clone, `main` names
+/// `refs/heads/main`, which a fetch never moves, so `ref=main` would pin the
+/// worktree to the commit it was first cloned at and report success from then
+/// on. Asking the remote-tracking namespace is what makes `ref=main` mean "what
+/// upstream publishes on main", which is what a plugin list is asking for.
+///
+/// Which remote is a question rather than a constant: a clone batfiles adopted
+/// rather than made need not spell its remote `origin`. Where more than one has
+/// the ref, `origin` decides, since that is the one `git clone` makes.
+fn resolve(dest: &Path, git_ref: &str) -> Result<Target, Error> {
+    // Both halves of the lookup refuse to evaluate the ref as an *expression*,
+    // and both are needed. A `ref` is a string the manifest wrote, so it can be
+    // `HEAD` or `main~1`, which git resolves and neither of which can be a
+    // branch: `refs/remotes/origin/HEAD` is a real ref in any ordinary clone,
+    // and `refs/remotes/origin/main~1` is something `rev-parse` evaluates
+    // happily. Either would enter the branch case here and then fail trying to
+    // make a local branch by that name.
+    if names_a_branch(dest, git_ref)? {
+        for remote in remotes(dest)? {
+            let candidate = format!("refs/remotes/{remote}/{git_ref}");
+            if has_ref(dest, &candidate)? {
+                return Ok(Target::Branch { remote: candidate });
+            }
+        }
+    }
+    // `^{commit}` peels an annotated tag, so what comes back is comparable with
+    // `HEAD` and is something a detached checkout can sit on.
+    match verify(dest, &format!("{git_ref}^{{commit}}"))? {
+        Some(commit) => Ok(Target::Object { commit }),
+        None => Err(Failure::RefUnresolvable {
+            path: dest.to_path_buf(),
+            git_ref: git_ref.to_owned(),
+        }
+        .into()),
+    }
+}
+
+/// The clone's remotes, `origin` first where it has one.
+fn remotes(dest: &Path) -> Result<Vec<String>, Error> {
+    let listed = run(Some(dest), "remote", &["remote"], dest)?;
+    let mut names: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    // A stable sort on one bit, so `origin` comes first and the rest keep the
+    // order git listed them in.
+    names.sort_by_key(|name| name != "origin");
+    Ok(names)
+}
+
+/// Follow a branch a remote publishes, on a local branch of the declared name.
+///
+/// The local branch is made to track the remote one even though nothing here
+/// reads that: it is what makes `git pull` inside the clone do what the manifest
+/// says, and what leaves 4.3's routine an upstream to follow if the `ref` is
+/// later dropped from the record.
+fn branch(
+    dest: &Path,
+    git_ref: &str,
+    remote: &str,
+    reporter: &Reporter,
+) -> Result<Followed, Error> {
+    let switching = head_branch(dest)?.as_deref() != Some(git_ref);
+    if switching {
+        if has_ref(dest, &format!("refs/heads/{git_ref}"))? {
+            // Spelled with a trailing `--` so a file of the same name in the
+            // worktree cannot be read as a path to check out instead.
+            run(
+                Some(dest),
+                "checkout",
+                &["checkout", KEEP_IGNORED, git_ref, "--"],
+                dest,
+            )?;
+        } else {
+            run(
+                Some(dest),
+                "checkout",
+                &["checkout", KEEP_IGNORED, "-b", git_ref, "--track", remote],
+                dest,
+            )?;
+        }
+    }
+
+    let advanced = advance(dest, remote, reporter)?;
+    // A switch is the more surprising of the two facts and is what the line
+    // reports; the fast-forward that may have followed it is implied.
+    Ok(if switching {
+        Followed::Switched
+    } else {
+        advanced
+    })
+}
+
+/// Fast-forward the checked-out branch onto `remote`, or say why it was left
+/// alone.
+fn advance(dest: &Path, remote: &str, reporter: &Reporter) -> Result<Followed, Error> {
+    if commit(dest, "HEAD")? == commit(dest, remote)? {
+        return Ok(Followed::Unchanged);
+    }
+    // The same question the tracking routine asks, for the same reason: this is
+    // what separates a history batfiles declines to touch from a merge that
+    // broke.
+    if !ancestor(dest, "HEAD", remote)? {
+        skip(
+            reporter,
+            dest,
+            &format!("it has commits that {} does not", named(remote)),
+        )?;
+        return Ok(Followed::Skipped);
+    }
+    if let Some(path) = overwritten_by(dest, remote)? {
+        skip(reporter, dest, &in_the_way(&path, named(remote)))?;
+        return Ok(Followed::Skipped);
+    }
+    run(Some(dest), "merge", &["merge", "--ff-only", remote], dest)?;
+    Ok(Followed::Advanced)
+}
+
+/// The first path a fast-forward would create that something is already at, if
+/// there is one.
+///
+/// **`git merge --ff-only` replaces an ignored file without a word**, and
+/// [`is_dirty`] cannot see one by design: ignored build output deliberately does
+/// not block an update. That is fine right up until upstream starts tracking a
+/// path the user keeps their own copy at, and then a fast-forward silently
+/// overwrites it. Git refuses this for an *untracked* file and not for an
+/// ignored one, so the question is asked here instead — [`KEEP_IGNORED`] is the
+/// same decision where git offers a flag for it, and merge offers none.
+///
+/// Only an added path can collide. One already tracked at `HEAD` would have made
+/// the worktree dirty, which is asked before this and answered by leaving the
+/// clone alone.
+///
+/// **`--no-renames` is what makes "added" mean it.** Rename detection is on by
+/// default, so a file upstream moved onto this path is an `R` rather than an
+/// `A` and a filter on additions passes straight over it — while the merge
+/// writes the path exactly as it would for an addition. Turning detection off
+/// splits every rename back into a delete and an add, which is the shape this
+/// question is about. Passed explicitly rather than left to the default for
+/// [`is_dirty`]'s reason: `diff.renames` is a user's display preference, and a
+/// safety decision must not turn on one.
+///
+/// The path is relative to the clone, which is how git prints it and how a
+/// reader will look for it. `-z` so an unusual name arrives as its own bytes
+/// rather than quoted.
+fn overwritten_by(dest: &Path, target: &str) -> Result<Option<PathBuf>, Error> {
+    let listed = run(
+        Some(dest),
+        "diff",
+        &[
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "--diff-filter=A",
+            "-z",
+            "HEAD",
+            target,
+        ],
+        dest,
+    )?;
+    for name in listed
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        let Some(relative) = as_path(name) else {
+            continue;
+        };
+        if fs::symlink_metadata(dest.join(&relative)).is_ok() {
+            return Ok(Some(relative));
+        }
+    }
+    Ok(None)
+}
+
+/// Why a clone holding its own copy of a file is left alone.
+fn in_the_way(path: &Path, publisher: &str) -> String {
+    format!(
+        "it has a file of its own at {}, which {publisher} now tracks",
+        path.display()
+    )
+}
+
+/// A remote-tracking ref as a reader writes it: `origin/main`, not
+/// `refs/remotes/origin/main`.
+fn named(remote: &str) -> &str {
+    remote.strip_prefix("refs/remotes/").unwrap_or(remote)
+}
+
+/// Sit the worktree on one object, detached.
+///
+/// Detached at the right object is the steady state for a tag or a commit, so
+/// being on a *branch* that happens to point there is still a switch: leaving it
+/// would let the next upstream push move a checkout the record pinned.
+fn detach(dest: &Path, commit_id: &str) -> Result<Followed, Error> {
+    if head_branch(dest)?.is_none() && commit(dest, "HEAD")? == commit_id {
+        return Ok(Followed::Unchanged);
+    }
+    run(
+        Some(dest),
+        "checkout",
+        &["checkout", KEEP_IGNORED, "--detach", commit_id, "--"],
+        dest,
+    )?;
+    Ok(Followed::Switched)
+}
+
+/// What stops a checkout replacing a file the user keeps and git ignores.
+///
+/// **Git protects an untracked file from being overwritten by a checkout and an
+/// ignored one it does not**, on the reasoning that ignored content is build
+/// output. That reasoning is right for the tool that made the file and wrong for
+/// batfiles, which did not: a `.gitignore` entry says "do not commit this", and
+/// what is at that path may be somebody's local notes or a machine-local config
+/// the branch being switched to happens to track. It is data batfiles did not
+/// create, so it is not batfiles' to replace (`guidance.md`, rule 13).
+///
+/// The refusal comes from git and names the path.
+const KEEP_IGNORED: &str = "--no-overwrite-ignore";
+
+/// What a revision resolves to, or `None` where it resolves to nothing.
+///
+/// `--verify --quiet` is git's own spelling of that question: exit 1 and no
+/// output for a name it does not have, which [`ask`] keeps apart from the 128 it
+/// uses for a repository it cannot read.
+///
+/// **This resolves revision expressions**, which is what it is for on the object
+/// path and exactly what must not decide a branch. [`has_ref`] is the question to
+/// ask about a ref by name.
+fn verify(dest: &Path, revision: &str) -> Result<Option<String>, Error> {
+    ask(
+        dest,
+        "rev-parse",
+        &["rev-parse", "--verify", "--quiet", revision],
+    )
+}
+
+/// Whether a ref exists under exactly that name.
+///
+/// `show-ref --verify` takes a full ref name and evaluates nothing: no `~`, no
+/// `@{…}`, no shorthand. That is the whole reason it is here rather than a
+/// second [`verify`].
+fn has_ref(dest: &Path, name: &str) -> Result<bool, Error> {
+    Ok(ask(dest, "show-ref", &["show-ref", "--verify", "--quiet", name])?.is_some())
+}
+
+/// Whether a declared `ref` is a name a local branch could have.
+///
+/// The gate in front of the remote-tracking lookup. `check-ref-format` rejects
+/// `HEAD`, `main~1`, and a leading dash, which is precisely the set that
+/// resolves to something and cannot be branched.
+///
+/// Not asked through [`ask`], and this is the one place that is right: the
+/// command validates a string and opens no repository, so a non-zero status
+/// cannot mean "this clone cannot be read" — the distinction `ask` exists to
+/// keep. It spells its refusal 128 all the same.
+fn names_a_branch(dest: &Path, git_ref: &str) -> Result<bool, Error> {
+    let output = git(Some(dest), &["check-ref-format", "--branch", git_ref])?;
+    Ok(output.status.success())
+}
+
+/// The branch `HEAD` is on, or `None` where it is detached.
+fn head_branch(dest: &Path) -> Result<Option<String>, Error> {
+    // Exit 1 is a detached HEAD, which is not on a branch. Anything else
+    // non-zero is trouble reading the repository.
+    ask(
+        dest,
+        "symbolic-ref",
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+    )
+}
+
+/// Bring an existing clone up to date on the branch it is already on, or say
+/// why it was left alone.
+fn update_tracking(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
     let Some(upstream) = upstream(dest)? else {
         return skip(reporter, dest, "it is not on a branch that tracks a remote");
     };
@@ -166,6 +633,11 @@ fn update(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
             dest,
             &format!("it has commits that {upstream} does not"),
         );
+    }
+    // A file the clone keeps and upstream has started tracking. Ignored content
+    // does not block an update, but it is not batfiles' to overwrite either.
+    if let Some(path) = overwritten_by(dest, &upstream)? {
+        return skip(reporter, dest, &in_the_way(&path, &upstream));
     }
     run(
         Some(dest),
@@ -224,14 +696,16 @@ fn skip(reporter: &Reporter, dest: &Path, because: &str) -> Result<(), Error> {
 fn inspect(dest: &Path) -> Result<(), Error> {
     match own_git_directory(dest)? {
         GitDirectory::Missing => {
-            return Err(Error::NotAClone {
+            return Err(Failure::NotAClone {
                 path: dest.to_path_buf(),
-            });
+            }
+            .into());
         }
         GitDirectory::Indirect => {
-            return Err(Error::CloneElsewhere {
+            return Err(Failure::CloneElsewhere {
                 path: dest.to_path_buf(),
-            });
+            }
+            .into());
         }
         GitDirectory::Own => {}
     }
@@ -245,18 +719,20 @@ fn inspect(dest: &Path) -> Result<(), Error> {
     match line_as_path(&toplevel.stdout) {
         Some(root) if paths::resolved(&root) == paths::resolved(dest) => {}
         _ => {
-            return Err(Error::CloneElsewhere {
+            return Err(Failure::CloneElsewhere {
                 path: dest.to_path_buf(),
-            });
+            }
+            .into());
         }
     }
 
     let output = git(Some(dest), &["rev-parse", "--verify", "HEAD"])?;
     if !output.status.success() {
-        return Err(Error::CloneIncomplete {
+        return Err(Failure::CloneIncomplete {
             path: dest.to_path_buf(),
             message: complaint(&output),
-        });
+        }
+        .into());
     }
     Ok(())
 }
@@ -293,18 +769,21 @@ fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
 /// is not valid UTF-8 would be mangled into the same mistake.
 fn line_as_path(printed: &[u8]) -> Option<PathBuf> {
     let line = printed.strip_suffix(b"\n").unwrap_or(printed);
-    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    as_path(line.strip_suffix(b"\r").unwrap_or(line))
+}
 
+/// One path git printed, as a path.
+fn as_path(printed: &[u8]) -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        Some(PathBuf::from(OsStr::from_bytes(line)))
+        Some(PathBuf::from(OsStr::from_bytes(printed)))
     }
     // Where a path is not bytes, git prints UTF-8; anything else is not a path
     // this can compare, and a comparison it cannot make must not pass.
     #[cfg(not(unix))]
     {
-        std::str::from_utf8(line).ok().map(PathBuf::from)
+        std::str::from_utf8(printed).ok().map(PathBuf::from)
     }
 }
 
@@ -332,10 +811,9 @@ fn is_dirty(dest: &Path) -> Result<bool, Error> {
 /// The remote-tracking branch the checked-out branch follows, if it follows one.
 ///
 /// `None` covers a detached `HEAD` and a branch with no upstream configured
-/// alike: in both, there is nothing the declared configuration says to move
-/// towards, and until `ref` arrives at 4.5 there is nothing to move it to
-/// either.
-/// The remote-tracking branch the checked-out branch follows, if it follows one.
+/// alike: in both, there is nothing this routine could move the worktree
+/// towards, which is why both are skips. A record declaring a `ref` says where
+/// to move it and never reaches here.
 ///
 /// **Not one `rev-parse @{upstream}`**, because that command exits 128 for every
 /// way of having no upstream *and* for a `branch.<name>.merge` that names
@@ -348,14 +826,8 @@ fn is_dirty(dest: &Path) -> Result<bool, Error> {
 /// then goes through [`run`] — by the time it is reached the branch is known to
 /// have an upstream configured, so anything it says is a failure really is one.
 fn upstream(dest: &Path) -> Result<Option<String>, Error> {
-    // Exit 1 is a detached HEAD, which is not on a branch and so follows
-    // nothing. Anything else non-zero is trouble reading the repository.
-    let Some(branch) = ask(
-        dest,
-        "symbolic-ref",
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-    )?
-    else {
+    // A detached HEAD is not on a branch and so follows nothing.
+    let Some(branch) = head_branch(dest)? else {
         return Ok(None);
     };
 
@@ -405,11 +877,12 @@ fn ancestor(dest: &Path, earlier: &str, later: &str) -> Result<bool, Error> {
     match output.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
-        _ => Err(Error::GitFailed {
+        _ => Err(Failure::Failed {
             command: "merge-base",
             path: dest.to_path_buf(),
             message: complaint(&output),
-        }),
+        }
+        .into()),
     }
 }
 
@@ -425,11 +898,12 @@ fn run<S: AsRef<OsStr>>(
     if output.status.success() {
         Ok(output)
     } else {
-        Err(Error::GitFailed {
+        Err(Failure::Failed {
             command,
             path: dest.to_path_buf(),
             message: complaint(&output),
-        })
+        }
+        .into())
     }
 }
 
@@ -447,11 +921,12 @@ fn ask(dest: &Path, command: &'static str, args: &[&str]) -> Result<Option<Strin
             String::from_utf8_lossy(&output.stdout).trim().to_owned(),
         )),
         Some(1) => Ok(None),
-        _ => Err(Error::GitFailed {
+        _ => Err(Failure::Failed {
             command,
             path: dest.to_path_buf(),
             message: complaint(&output),
-        }),
+        }
+        .into()),
     }
 }
 
@@ -554,7 +1029,7 @@ fn git<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Error>
     }
     command
         .output()
-        .map_err(|source| Error::GitUnavailable { source })
+        .map_err(|source| Failure::Unavailable { source }.into())
 }
 
 /// What git said about a failure, or the status it exited with when it said

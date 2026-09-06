@@ -1,9 +1,10 @@
-//! `git-clone-list`: what the list may say, and when it is read.
+//! `git-clone-list`: what the list may say, when it is read, and what a run
+//! does with the repositories it names.
 //!
-//! Nothing here clones — that is step 4.5 — so what these assert is the half
-//! that runs today: the list is read and checked as the repository is loaded,
-//! before any action has touched the home, and a fault in it names the file and
-//! the line it is on.
+//! Every repository here is a local bare one (`guidance.md`, "Test
+//! environments"). The parsing tests name `e.example` and never reach the
+//! action: a list with a fault in it stops the run as the repository is loaded,
+//! which is half of what these assert.
 
 use std::fs;
 
@@ -24,26 +25,146 @@ fn one_list(list: &str) -> Tree {
     tree
 }
 
-#[test]
-fn a_valid_list_is_read_and_the_action_says_what_it_cannot_do_yet() {
-    // The whole of what 4.4 built, end to end: the fixture's list parses, and
-    // the action says it cloned nothing rather than passing over it in silence.
-    // A warning and not a failure, so the run carries on -- which is why the
-    // warning has to be there.
+/// The `clonelist` fixture with its two placeholder repositories filled in.
+fn clone_list(origin: &BareRepo) -> Tree {
     let tree = Tree::fixture("clonelist");
+    tree.point_file_at(
+        "manifests/zsh-plugins.txt",
+        "plugin",
+        &display(&origin.another("zsh-syntax-highlighting")),
+    );
+    tree.point_file_at(
+        "manifests/zsh-plugins.txt",
+        "prompt",
+        &display(&origin.another("powerlevel10k")),
+    );
+    tree
+}
+
+/// Where the fixture's clones go.
+fn plugins(tree: &Tree, name: &str) -> std::path::PathBuf {
+    tree.home(&format!(".oh-my-zsh/custom/plugins/{name}"))
+}
+
+#[test]
+fn every_repository_a_list_names_is_cloned_under_the_dest_dir() {
+    // The whole of the action, end to end, in the three shapes a real list is
+    // written in: a name derived from the repository, a `dest-name`, and a
+    // pinned entry.
+    let origin = BareRepo::new();
+    let tree = clone_list(&origin);
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    for name in ["zsh-syntax-highlighting", "p10k", "zsh-z"] {
+        assert!(
+            plugins(&tree, name).join("README.md").is_file(),
+            "{name} was not cloned"
+        );
+    }
+    // In list order, which is what makes a list an ordered document rather than
+    // a set.
+    let stderr = stderr_of(&assertion);
+    let at = |name: &str| {
+        stderr
+            .find(&display(&plugins(&tree, name)))
+            .unwrap_or_else(|| panic!("{name} is not in the report:\n{stderr}"))
+    };
+    assert!(at("zsh-syntax-highlighting") < at("p10k"), "{stderr}");
+    assert!(at("p10k") < at("zsh-z"), "{stderr}");
+}
+
+#[test]
+fn the_directory_the_clones_go_in_is_made_first() {
+    // Ahead of the first entry, so an empty list still leaves the directory a
+    // shell is configured to read.
+    let tree = one_list("");
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+
+    assert!(tree.home(".plugins").is_dir(), "the directory was not made");
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!("created {}", display(&tree.home(".plugins")))),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("no repositories to clone in plugins.txt"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_ref_on_an_entry_is_honored() {
+    let origin = BareRepo::new();
+    origin.publish_on("next", "next.zsh", "echo next\n", "on next");
+    let tree = one_list(&format!("{} ref=next\n", display(&origin.origin())));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    let clone = tree.home(".plugins/origin");
+    assert!(
+        clone.join("next.zsh").is_file(),
+        "the entry's ref was not followed"
+    );
+}
+
+#[test]
+fn an_entry_that_fails_costs_that_entry_and_not_the_run() {
+    // The decision a list has to make and one repository never did. The middle
+    // entry's directory is occupied by something batfiles did not put there, so
+    // it cannot be cloned into -- and the entry after it is a different
+    // repository, which can.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!(
+        "{origin} dest-name=first\n\
+         {origin} dest-name=taken\n\
+         {origin} dest-name=last\n",
+        origin = display(&origin.origin())
+    ));
+    fs::create_dir_all(tree.home(".plugins/taken")).expect("a directory in the way");
+    fs::write(tree.home(".plugins/taken/mine.zsh"), "echo mine\n").expect("someone's file");
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert!(tree.home(".plugins/first/README.md").is_file());
+    assert!(
+        tree.home(".plugins/last/README.md").is_file(),
+        "an entry after a failing one was stranded"
+    );
+    assert_eq!(
+        fs::read_to_string(tree.home(".plugins/taken/mine.zsh")).expect("the file in the way"),
+        "echo mine\n",
+        "the occupied destination was disturbed"
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "not cloning {} (plugins.txt line 2): ",
+            display(&origin.origin())
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("it is a directory, and not a git clone"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_failing_entry_names_its_id_where_it_has_one() {
+    // The name the entry answers to, beside the line a reader has to edit.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!(
+        "{} id=p10k dest-name=taken\n",
+        display(&origin.origin())
+    ));
+    fs::create_dir_all(tree.home(".plugins/taken")).expect("a directory in the way");
 
     let assertion = tree.batfiles().arg("sync").assert().success();
 
     assert!(
-        !tree.home(".oh-my-zsh").exists(),
-        "something was installed by an action that is not built"
-    );
-    assert!(
-        stderr_of(&assertion).contains(&format!(
-            "not cloning into {}: git-clone-list is read and checked, \
-             and cloning arrives at step 4.5",
-            display(&tree.home(".oh-my-zsh/custom/plugins"))
-        )),
+        stderr_of(&assertion).contains("(id=p10k, plugins.txt line 1)"),
         "{}",
         stderr_of(&assertion)
     );
@@ -51,8 +172,8 @@ fn a_valid_list_is_read_and_the_action_says_what_it_cannot_do_yet() {
 
 #[test]
 fn an_action_after_one_is_carried_out() {
-    // What a warning buys over a failure, and the reason the run continues: an
-    // action declared after a list must not be stranded by it.
+    // A list must not strand what follows it, whether its entries clone or not.
+    let origin = BareRepo::new();
     let tree = Tree::new();
     tree.repo_file("shell/zshrc", "# zshrc\n");
     tree.write_manifest(&format!(
@@ -63,10 +184,11 @@ fn an_action_after_one_is_carried_out() {
          \n{}",
         one_copy("shell/zshrc", "~/.zshrc")
     ));
-    tree.repo_file("plugins.txt", "https://e.example/a.git\n");
+    tree.repo_file("plugins.txt", &format!("{}\n", display(&origin.origin())));
 
     tree.batfiles().arg("sync").assert().success();
 
+    assert!(tree.home(".plugins/origin/README.md").is_file());
     assert!(
         tree.home(".zshrc").is_file(),
         "the later action was stranded"
@@ -74,16 +196,18 @@ fn an_action_after_one_is_carried_out() {
 }
 
 #[test]
-fn what_is_not_cloned_is_said_at_a_volume_quiet_does_not_hide() {
+fn what_was_not_cloned_is_said_at_a_volume_quiet_does_not_hide() {
     // `--quiet` drops what a run did; it does not drop a warning about what it
     // did not do. This is the one line standing between a successful `sync` and
-    // a user believing their plugins are installed.
-    let tree = one_list("https://e.example/a.git\n");
+    // a user believing every plugin is installed.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!("{} dest-name=taken\n", display(&origin.origin())));
+    fs::create_dir_all(tree.home(".plugins/taken")).expect("a directory in the way");
 
     let assertion = tree.batfiles().args(["sync", "--quiet"]).assert().success();
 
     assert!(
-        stderr_of(&assertion).contains("not cloning into"),
+        stderr_of(&assertion).contains("not cloning"),
         "{}",
         stderr_of(&assertion)
     );
@@ -155,28 +279,56 @@ fn a_list_belonging_to_an_action_the_run_passes_over_is_not_read() {
 }
 
 #[test]
-fn a_dry_run_reads_the_list_and_says_the_same_thing_a_real_run_does() {
-    // Reading is a read, so it happens in both modes. The warning carries no
-    // tense because there is nothing to put in one: this action does the same
-    // nothing either way, which is what makes the two runs word for word alike
-    // rather than alike but for a verb.
-    let tree = one_list("https://e.example/a.git\n");
+fn a_dry_run_says_one_line_per_entry_and_clones_none_of_them() {
+    // The entries are in hand in both modes -- the list was read with the
+    // repository -- so a dry run describes every one of them. It runs no git,
+    // so it resolves no ref and reaches no network.
+    let origin = BareRepo::new();
+    let tree = clone_list(&origin);
     let before = snapshot(&tree.path("home"));
 
-    let dry = tree
+    let assertion = tree
         .batfiles()
         .args(["sync", "--dry-run"])
         .assert()
         .success();
-    let real = tree.batfiles().arg("sync").assert().success();
 
     assert_eq!(snapshot(&tree.path("home")), before);
+    let stderr = stderr_of(&assertion);
+    for name in ["zsh-syntax-highlighting", "p10k", "zsh-z"] {
+        assert!(
+            stderr.contains(&format!("would clone {}", display(&plugins(&tree, name)))),
+            "{name} is not in the report:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_dry_run_over_clones_that_are_there_fetches_nothing() {
+    // The strong claim, asserted the way `cloning` asserts it: `FETCH_HEAD`
+    // staying absent is what says no git ran, where an unchanged tree would
+    // also pass for an implementation that fetched and declined to merge.
+    let origin = BareRepo::new();
+    let tree = clone_list(&origin);
+    tree.batfiles().arg("sync").assert().success();
+    let clone = plugins(&tree, "zsh-syntax-highlighting");
+    fs::remove_file(clone.join(".git/FETCH_HEAD")).ok();
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
+
     assert!(
-        stderr_of(&dry).contains("not cloning into"),
-        "{}",
-        stderr_of(&dry)
+        !clone.join(".git/FETCH_HEAD").exists(),
+        "a dry run reached the network"
     );
-    assert_eq!(stderr_of(&dry), stderr_of(&real));
+    assert!(
+        stderr_of(&assertion).contains(&format!("would update {}", display(&clone))),
+        "{}",
+        stderr_of(&assertion)
+    );
 }
 
 #[test]
@@ -267,7 +419,9 @@ fn the_list_is_a_repository_path_and_the_clone_directory_is_a_dest_dir() {
 fn a_list_is_read_from_the_repository_and_not_from_the_home() {
     // The list is a repository file, which is what makes reading it early
     // legitimate. A file of the same name in the home is not it.
-    let tree = one_list("https://e.example/a.git\n");
+    // The repository's list declares nothing, so a run that reads it clones
+    // nothing and reaches no network.
+    let tree = one_list("# no repositories yet\n");
     fs::write(
         tree.home("plugins.txt"),
         "https://e.example/b.git colour=blue\n",

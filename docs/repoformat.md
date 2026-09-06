@@ -971,6 +971,7 @@ dest = "~/.oh-my-zsh"
 |----------|--------|:--------:|---------------------------------------------------------------|
 | `source` | string |   yes    | A repository for git to clone. Not a repository path.         |
 | `dest`   | string |   yes    | The clone directory, exactly. Never empty; `~` is the home.   |
+| `ref`    | string |    no    | A branch, tag, or commit to follow. Never empty.              |
 
 **`source` is whatever `git` accepts**, and batfiles hands it over as written:
 an `https://` URL, an `scp`-style `git@github.com:user/repo.git`, `ssh://`,
@@ -996,9 +997,37 @@ transport is touched. [Variables passed on to
 `git`](environment.md#variables-passed-on-to-git) has the list and what each
 entry is doing there.
 
-`ref` — a branch, tag, or commit to follow — is specified in
-[`future/repoformat.md`](future/repoformat.md#git-clone) and is not built. A
-manifest that writes one is rejected.
+#### `ref`: following one branch, tag, or commit
+
+Without a `ref`, a clone follows whatever branch it is on and an update asks
+what that branch tracks. With one, the record says where the checkout should be
+and batfiles puts it there, on every run.
+
+**What the string names is decided after the fetch, and against the remote
+first.** Every remote is fetched, since any of them may be the one publishing
+what was asked for. Batfiles then looks for `ref` in the clone's remote-tracking
+branches — the clone's own `origin` first, where it has more than one remote — and anything
+that matches is followed as a branch: a local branch of that name is checked
+out, created to track the remote one where there is none, and fast-forwarded on
+every later run. So `ref = "main"` means the `main` that upstream publishes,
+which is the thing worth pinning; it deliberately does not mean the local
+`main` a clone happens to have, because a fetch never moves that and the clone
+would silently stop updating.
+
+Anything else that resolves — a tag, a commit, a full `refs/…` name, or an
+expression such as `main~1` — is checked out **detached**, which is what pins a
+clone to something that does not move. Only a name a branch could have is looked
+for among the remotes, so `HEAD` and `main~1` are read as the commits they
+resolve to rather than as branches nothing could create. A
+detached checkout sitting at the right object is the correct state rather than
+something to repair, so a later run reports it as unchanged and leaves it alone.
+A `ref` that resolves to nothing at all fails, naming what was asked for.
+
+The conservative rules below still apply in front of all of it: a worktree with
+uncommitted changes is never touched, and a declared branch holding commits the
+remote does not is warned about rather than reset. Changing which branch a clone
+is on is reported — `switched <dest> to <ref>` — and deletes nothing: the branch
+you were on, and its commits, stay where they are.
 
 #### A clone is the one thing batfiles comes back to
 
@@ -1016,7 +1045,9 @@ discards work.** Batfiles fetches, and then only fast-forwards:
 | Nothing                                   | Clones                     |
 | A clone that is already current           | Nothing; says so at `-v`   |
 | A clone the upstream has moved past       | Fetches and fast-forwards  |
+| A clone on something other than its `ref` | Switches to it, and says so |
 | A clone with uncommitted changes          | Warns, and leaves it alone |
+| A clone whose own file upstream now tracks | Warns, and leaves it alone |
 | A clone on no branch, or one tracking nothing | Warns, and leaves it alone |
 | A clone holding commits upstream does not | Warns, and leaves it alone |
 | Anything that is not a clone              | Fails, naming the path     |
@@ -1035,6 +1066,15 @@ explicitly, so a `status.showUntrackedFiles = no` in your gitconfig changes what
 disposable**: a worktree with no changes but with commits of its own is still
 skipped, because fast-forwarding it is impossible and anything stronger throws
 those commits away.
+
+**An ignored file is still yours.** Not blocking an update is not permission to
+overwrite one: where upstream starts tracking a path your clone already has its
+own file at — a local config a `.gitignore` covers, say — the update stops and
+says which file it was. Git protects an *untracked* file here and an ignored one
+it does not, on the reasoning that ignored content is build output; batfiles did
+not create it either way, so it does not replace it. The same holds when a
+declared `ref` moves the checkout to a branch that tracks the path: the switch is
+refused rather than made, and nothing is lost.
 
 **A skip is for a checkout that is fine and simply is not moving.** A detached
 `HEAD` and a branch with no upstream configured are skips; a branch whose
@@ -1132,18 +1172,36 @@ not a list this can read. A list belonging to an action the run passes over —
 disabled, or skipped for this run — is not read at all, for the same reason such
 an action's `source` need not exist.
 
-**Cloning the entries is not built yet.** The record is accepted, the list is
-read and checked, and a run that reaches the action **warns that it cloned
-nothing and carries on** — the same terms a clone batfiles declines to update
-gets, and for the same reason: stopping would strand every action after this
-one. Declaring one today gets you a repository and a list you can correct before
-there is anything to install from them; what a clone then does, and what it
-refuses, is [`git-clone`](#git-clone)'s and will not differ here.
+**The directory is made before the first entry**, so a list that declares no
+repositories still leaves the place they would go — a plugin directory a shell
+reads is worth having whether or not anything is in it yet. The entries are then
+cloned in list order, each into one child of it, and what a clone does and what
+it refuses is [`git-clone`](#git-clone)'s and does not differ here. An entry's
+`ref` follows [the same rules](#ref-following-one-branch-tag-or-commit).
 
-The consequence is worth knowing while it lasts: **a successful `sync` does not
-yet mean every repository your lists name is on disk.** The warning is the only
-thing that says so, and it is a warning rather than a note so that `--quiet`
-does not take it away.
+#### One entry that fails costs that entry
+
+A list is many repositories, and one of them being unreachable is not a reason
+to abandon the rest. So an entry that cannot be cloned is **warned about, and
+the entries after it are still installed**:
+
+- a destination holding something batfiles did not put there — a file, a
+  directory that is not a clone, a symlink to a checkout elsewhere, or what an
+  interrupted clone left;
+- a `git` that ran and failed: the clone, the fetch, the fast-forward, or a
+  `ref` that resolves to nothing.
+
+The warning names the repository as the list writes it, the list and the line it
+is on, and the entry's `id` where it has one, since that is what you have to open
+and edit.
+
+What is not survivable is a `git` that could not be run at all, a file that could
+not be read or written, and a `dest-dir` that could not be created: none of those
+is about one repository, and every entry after would fail the same way.
+
+**So a `sync` that exits 0 may still have entries that did not clone.** The
+warnings are the only thing that says so, and they are warnings rather than notes
+so that `--quiet` does not take them away.
 
 ## The clone list format
 

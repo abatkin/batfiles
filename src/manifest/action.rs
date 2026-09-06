@@ -8,9 +8,10 @@
 use serde::Deserialize;
 
 use super::{
-    Invalid, check_archive_root, check_dest, check_digest, check_git_source, check_source,
-    check_url,
+    Invalid, check_archive_root, check_dest, check_digest, check_git_ref, check_git_source,
+    check_source, check_url,
 };
+use crate::clone_list::Entry;
 use crate::item::ItemId;
 
 /// One entry of `[[actions]]`.
@@ -105,6 +106,7 @@ impl Action {
             // whatever `git` accepts as a repository to clone.
             Self::GitClone(action) => {
                 check_git_source(&action.source, number)?;
+                check_git_ref(action.git_ref.as_deref(), number)?;
                 check_dest(&action.dest, number)
             }
             // The one action whose `source` names a file in the repository and
@@ -355,11 +357,6 @@ pub(crate) struct FetchArchiveAction {
 /// the rules are in `docs/repoformat.md`, and every one of them decides between
 /// updating and leaving the clone exactly as it is.
 ///
-/// `ref` — a branch, tag, or commit to follow — is specified in
-/// `docs/future/repoformat.md` and refused by this closed record for now. It
-/// arrives at 4.5 with the `git-clone-list` manifest, whose per-entry `ref=` is
-/// the first thing that needs it; until then an update follows whatever branch
-/// the clone is on.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneAction {
@@ -376,6 +373,13 @@ pub(crate) struct GitCloneAction {
     /// Where the clone goes, exactly. Resolved against the selected home when
     /// the action runs, with missing parents created on the way.
     pub dest: String,
+    /// The branch, tag, or commit to follow. Absent, an update follows whatever
+    /// branch the clone is on.
+    ///
+    /// Spelled `ref` in the file, which `rename_all` would otherwise make
+    /// `git-ref`, and named `git_ref` here because `ref` is a keyword.
+    #[serde(rename = "ref")]
+    pub git_ref: Option<String>,
 }
 
 /// `git-clone-list`: every repository a list in the repository names, cloned
@@ -389,7 +393,7 @@ pub(crate) struct GitCloneAction {
 /// parser of its own.
 ///
 /// The list is read as the repository is loaded, so a malformed one fails before
-/// any action has run. Cloning its entries arrives at 4.5.
+/// any action has run, and what was read travels in the record: see `entries`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneListAction {
@@ -407,6 +411,21 @@ pub(crate) struct GitCloneListAction {
     /// install into a directory rather than at a name, because that is what it
     /// is: each entry contributes one child of it.
     pub dest_dir: String,
+
+    /// What the `source` list declared, filled in by
+    /// [`crate::execute`]'s read pass before the first action runs.
+    ///
+    /// **Not a field of the file.** The record is a closed mirror of one
+    /// otherwise, and `deny_unknown_fields` still rejects an `entries` key in a
+    /// manifest; this is here so that what was checked is what is cloned, rather
+    /// than the action reading the list a second time and installing from a
+    /// document nothing validated.
+    ///
+    /// `None` is "no pass read this", which is an ordinary state: a list
+    /// belonging to an action the run passes over is deliberately never read.
+    /// `Some(vec![])` is a list that declares no repositories.
+    #[serde(skip)]
+    pub entries: Option<Vec<Entry>>,
 }
 
 #[cfg(test)]

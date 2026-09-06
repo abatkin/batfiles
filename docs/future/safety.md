@@ -161,19 +161,21 @@ The conservative update policy was promoted at 4.3 to
 [`docs/repoformat.md`](../repoformat.md#a-clone-is-the-one-thing-batfiles-comes-back-to):
 fetch on every normal synchronization, fast-forward only, and skip with a
 warning where the worktree is dirty, tracks nothing, or holds commits of its
-own. What is left here is the half that needs a `ref` to mean anything.
+own. The branch half went at 4.5 to
+[`ref`](../repoformat.md#ref-following-one-branch-tag-or-commit): a clean
+worktree follows the declared configuration, batfiles may change which branch or
+object is checked out, the transition is reported because it may be surprising,
+and it needs no backup, since changing away from a branch deletes neither the
+branch nor its commits.
 
-A clean worktree allows batfiles to follow the declared configuration. It may
-change the checked-out branch or ref, and update the configured remote URL.
-Those transitions should be reported because they may be surprising, but they do
-not by themselves require a backup. Changing away from a branch does not delete
-that branch or its commits.
-
-Neither is built. `ref` is refused by the closed record until step 4.5 gives
-`git-clone-list` entries one, and until then an update follows whatever branch a
-clone is on; `source` is never compared against a clone's configured remote, so
-repointing an action at a different repository does not move an existing
-checkout.
+**The remote URL is the half that stays here, and deliberately so.** This
+section had a clean worktree's update also rewrite the configured remote, and
+4.5 promoted the opposite: `source` is never compared against a clone's
+configured remote or written over it, so pointing an existing action at a
+different repository does not move the checkout — delete it and let the next
+`sync` clone the new one. That is also why an update line names no URL where a
+clone line does. A clone list is the case that wants a rewrite least, an entry's
+repository and its directory name being derived from each other.
 
 Network and repository trust still apply. Batfiles does not guarantee signed
 commits or immutable branch contents. Updating a declared Git remote can

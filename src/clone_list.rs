@@ -25,20 +25,17 @@ use crate::item::{ItemId, ItemIdError};
 #[derive(Debug)]
 pub(crate) struct Entry {
     /// The repository, exactly as git is given it.
-    #[expect(dead_code, reason = "cloned at 4.5")]
     pub url: String,
     /// The one directory component the clone lands in.
     pub name: String,
     /// Makes the entry addressable as `<action>.<entry>`.
     pub id: Option<ItemId>,
     /// The branch, tag, or commit the entry follows.
-    #[expect(dead_code, reason = "honored at 4.5, with `ref` on `git-clone`")]
     pub git_ref: Option<String>,
     /// Which line of the list declared it, for a diagnostic that has to point
     /// at one. A fault found while reading carries its own line and does not
     /// come from here; this is for the entry that reads correctly and then
     /// fails to clone.
-    #[expect(dead_code, reason = "names a failing entry at 4.5")]
     pub line: usize,
 }
 
@@ -505,9 +502,9 @@ mod tests {
     }
 
     #[test]
-    fn a_ref_is_accepted_and_waits_for_the_step_that_follows_it() {
-        // Validated as the list is read, carried out at 4.5. Nothing here reads
-        // the value back, because nothing in this build does.
+    fn a_ref_is_accepted_in_the_shapes_git_resolves() {
+        // Validated as the list is read; what following one does is
+        // `crate::git`'s and is tested through the binary.
         assert_eq!(entries("https://e.example/a.git ref=main\n").len(), 1);
         assert_eq!(
             entries("https://e.example/a.git ref='refs/heads/main'\n").len(),

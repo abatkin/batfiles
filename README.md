@@ -65,7 +65,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   may not climb out past one.
 - **A repository can be cloned and kept up to date.** `git-clone` clones one
   where nothing is, and on later runs brings the clone it finds forward —
-  conservatively. It fetches, and fast-forwards only: a worktree with
+  conservatively. Write `ref` to follow a particular branch, tag, or commit;
+  without one it follows whatever branch the clone is on. It fetches, and
+  fast-forwards only: a worktree with
   uncommitted changes, one on a branch that tracks nothing, and one holding
   commits the upstream does not are each left exactly as they are, with a
   warning rather than a failed run. batfiles will not discard work you did in a
@@ -73,17 +75,16 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   — a file, a symlink to a checkout elsewhere, a directory somebody else filled,
   or what an interrupted clone left behind — is refused by name rather than
   cloned over or fetched into.
-- **A list of repositories is read and checked, and not yet cloned.**
-  `git-clone-list` names a plain text file in the repository — one repository
-  per line, `key=value` metadata beside it — and one directory to clone them
-  all under, which is how a vim or zsh plugin directory is usually kept. The
-  list is read and checked as the repository is loaded, so a malformed line
-  fails the run before the first action has touched anything; carrying the
-  action out arrives with the next slice, and until then reaching one warns
-  that nothing was cloned and the run continues. It is the second thing
-  accepted without being acted on, and like `[default-disabled]` it is named
-  here rather than left to be discovered — a `sync` that succeeds does not yet
-  mean every repository in your lists is on disk.
+- **Or a whole list of them.** `git-clone-list` names a plain text file in the
+  repository — one repository per line, `key=value` metadata beside it — and one
+  directory to clone them all under, which is how a vim or zsh plugin directory
+  is usually kept. The list is read and checked as the repository is loaded, so a
+  malformed line fails the run before the first action has touched anything. Each
+  entry is then cloned on `git-clone`'s terms, in list order, and **one entry that
+  cannot be cloned costs that entry rather than the run**: it is warned about by
+  name and line, and the repositories after it are still installed. Worth knowing
+  because of that: a `sync` that exits 0 may still have entries that did not
+  clone, and the warnings are what say so.
 - **Nothing else is replaced.** A destination holding a regular file, a
   directory, or a symlink pointing outside the repository is refused by name.
   Until there is a backup policy to give it back with, batfiles does not

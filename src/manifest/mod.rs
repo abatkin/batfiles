@@ -172,6 +172,12 @@ pub(crate) enum Invalid {
     #[error("action {action}: source is empty; a source names a repository for git to clone")]
     GitSourceEmpty { action: usize },
 
+    /// A `ref` written with nothing in it. Refused rather than read as an
+    /// absent one, which follows whatever branch the clone is on and is not
+    /// what a record asking for a ref meant.
+    #[error("action {action}: ref is empty; a ref names a branch, tag, or commit to follow")]
+    GitRefEmpty { action: usize },
+
     /// An `archive-root` no entry batfiles would unpack could ever match. An
     /// escaping entry is refused as the archive is read, so a prefix that only
     /// selects escaping entries selects nothing, and saying so here is better
@@ -309,6 +315,20 @@ fn check_url(source: &str, action: usize) -> Result<(), Invalid> {
 fn check_git_source(source: &str, action: usize) -> Result<(), Invalid> {
     if source.trim().is_empty() {
         return Err(Invalid::GitSourceEmpty { action });
+    }
+    Ok(())
+}
+
+/// The rules a `git-clone` ref satisfies as written, of which there is one.
+///
+/// Weak for [`check_git_source`]'s reason: a branch, a tag, a commit, and a full
+/// `refs/…` name are all things git resolves, and which of them a ref is — or
+/// whether the clone has one at all — cannot be decided from the string. What
+/// the string does have to be is something, since an empty one would silently
+/// mean "follow whatever branch the clone is on" rather than what it says.
+fn check_git_ref(git_ref: Option<&str>, action: usize) -> Result<(), Invalid> {
+    if git_ref.is_some_and(|value| value.trim().is_empty()) {
+        return Err(Invalid::GitRefEmpty { action });
     }
     Ok(())
 }

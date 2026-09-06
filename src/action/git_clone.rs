@@ -2,7 +2,7 @@
 //! already is.
 //!
 //! The whole of the action is resolving its destination: what to do at one is
-//! [`crate::git`]'s, because 4.5's list and 6.2's remotes want the same
+//! [`crate::git`]'s, because `git-clone-list` and 6.2's remotes want the same
 //! clone-or-update decision and none of the three should re-derive it.
 //!
 //! This is the one action that does not publish through [`crate::install`].
@@ -26,6 +26,7 @@ pub(super) fn git_clone(action: &GitCloneAction, context: &RunContext) -> Result
     git::clone_or_update(
         &action.source,
         &dest,
+        action.git_ref.as_deref(),
         // For classifying what is at the destination, which is the same
         // question every other action asks and gets the same answer to: a
         // symlink resolving into the repository is batfiles' to replace, and

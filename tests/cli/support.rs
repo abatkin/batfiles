@@ -127,17 +127,29 @@ impl Tree {
         self.fill_in("origin", &display(&origin.origin()));
     }
 
+    /// The same, for a placeholder in a repository file that is not the
+    /// manifest: a clone list names its repositories itself, so that is where
+    /// its `{origin}`s are written.
+    pub(crate) fn point_file_at(&self, relative: &str, placeholder: &str, value: &str) {
+        self.fill_in_file(relative, placeholder, value);
+    }
+
     /// Replace every `{placeholder}` in the leaf manifest, insisting there was
     /// one: a fixture that stopped carrying it would otherwise be driven against
     /// a source the test never set.
     fn fill_in(&self, placeholder: &str, value: &str) {
-        let manifest = fs::read_to_string(self.manifest()).expect("the fixture manifest");
+        self.fill_in_file("batfiles.toml", placeholder, value);
+    }
+
+    fn fill_in_file(&self, relative: &str, placeholder: &str, value: &str) {
+        let path = self.path("repo").join(relative);
+        let text = fs::read_to_string(&path).expect("the fixture file");
         let written = format!("{{{placeholder}}}");
         assert!(
-            manifest.contains(&written),
-            "the fixture has no `{written}` to point at anything"
+            text.contains(&written),
+            "{relative} has no `{written}` to point at anything"
         );
-        self.write_manifest(&manifest.replace(&written, value));
+        fs::write(&path, text.replace(&written, value)).expect("the fixture file");
     }
 
     /// Put a file in the leaf repository, and return where it landed.
@@ -219,10 +231,62 @@ impl BareRepo {
 
     /// Commit a file and push it, for the tests about what an update brings.
     pub(crate) fn publish(&self, name: &str, contents: &str, message: &str) {
-        fs::write(self.work().join(name), contents).expect("a file to commit");
-        git(&self.work(), &["add", "-A"]);
-        git(&self.work(), &["commit", "-m", message]);
-        git(&self.work(), &["push", "origin", "main"]);
+        self.publish_on("main", name, contents, message);
+    }
+
+    /// The same, on a branch other than `main`, for the tests about a declared
+    /// `ref`. The branch is created at whatever the working clone is standing on
+    /// the first time it is named, and extended after that.
+    pub(crate) fn publish_on(&self, branch: &str, name: &str, contents: &str, message: &str) {
+        self.commit(branch, name, contents, message, &["add", "-A"]);
+    }
+
+    /// Start tracking a file the repository's own `.gitignore` covers, which
+    /// `publish` cannot do — `git add -A` passes an ignored path over.
+    ///
+    /// This is the shape that lets an update overwrite somebody's own copy: a
+    /// clone that has the path ignored, and a commit that brings a file at it.
+    pub(crate) fn publish_ignored(&self, branch: &str, name: &str, contents: &str) {
+        self.commit(
+            branch,
+            name,
+            contents,
+            "start tracking it",
+            &["add", "-f", name],
+        );
+    }
+
+    /// Move a tracked file to another name and push it.
+    ///
+    /// Git records no rename — it infers one from content — so what a diff calls
+    /// the destination path depends on whether rename detection is on. That is
+    /// the whole point of this helper.
+    pub(crate) fn publish_renamed(&self, from: &str, to: &str) {
+        let work = self.work();
+        git(&work, &["checkout", "main"]);
+        git(&work, &["mv", from, to]);
+        git(&work, &["commit", "-m", &format!("rename {from} to {to}")]);
+        git(&work, &["push", "origin", "main"]);
+    }
+
+    fn commit(&self, branch: &str, name: &str, contents: &str, message: &str, add: &[&str]) {
+        let work = self.work();
+        if git_succeeds(&work, &["rev-parse", "--verify", "--quiet", &heads(branch)]) {
+            git(&work, &["checkout", branch]);
+        } else {
+            git(&work, &["checkout", "-b", branch]);
+        }
+        fs::write(work.join(name), contents).expect("a file to commit");
+        git(&work, add);
+        git(&work, &["commit", "-m", message]);
+        git(&work, &["push", "origin", branch]);
+    }
+
+    /// Tag what the working clone is standing on, and push the tag: a `ref` that
+    /// is not a branch and therefore never moves.
+    pub(crate) fn tag(&self, name: &str) {
+        git(&self.work(), &["tag", name]);
+        git(&self.work(), &["push", "origin", name]);
     }
 
     /// The bare repository, which is what a manifest names as a `source`.
@@ -230,9 +294,37 @@ impl BareRepo {
         self.dir.path().join("origin.git")
     }
 
+    /// A second bare repository beside the first, for a list that has to name
+    /// more than one.
+    ///
+    /// Named, because an entry's directory is derived from the last component
+    /// of its repository unless it says otherwise, so a list reads like a real
+    /// one only if its repositories are called what the plugins are called. It
+    /// holds what the first origin held when it was made, which is all these
+    /// tests ask of it: what tells two clones apart is where they landed.
+    pub(crate) fn another(&self, name: &str) -> PathBuf {
+        let bare = format!("{name}.git");
+        git(self.dir.path(), &["init", "--bare", "-b", "main", &bare]);
+        let origin = self.dir.path().join(&bare);
+        git(&self.work(), &["push", &display(&origin), "main"]);
+        origin
+    }
+
     fn work(&self) -> PathBuf {
         self.dir.path().join("work")
     }
+}
+
+/// A branch's full ref name, which is what a fixture asks about rather than the
+/// short name a tag of the same spelling would also answer to.
+fn heads(branch: &str) -> String {
+    format!("refs/heads/{branch}")
+}
+
+/// Whether a git command succeeded, for the one fixture question that has two
+/// legitimate answers: whether a branch is there yet.
+pub(crate) fn git_succeeds(dir: &Path, args: &[&str]) -> bool {
+    run_git(dir, args).status.success()
 }
 
 /// Run one `git` command while building a fixture, and insist it worked.
@@ -246,6 +338,19 @@ impl BareRepo {
 /// binary has too — it shells out rather than linking a library (`guidance.md`,
 /// rule 6).
 pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
+    let output = run_git(dir, args);
+    assert!(
+        output.status.success(),
+        "git {args:?} in {} failed: {}",
+        display(dir),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// The invocation both of the above share, with the identity and the cleared
+/// redirects that make a fixture build the same way on every machine.
+fn run_git(dir: &Path, args: &[&str]) -> std::process::Output {
     let mut command = std::process::Command::new("git");
     // The binary under test clears these for itself; a fixture built by the
     // suite needs the same, or a developer who has `GIT_DIR` exported in their
@@ -258,7 +363,7 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     ] {
         command.env_remove(redirect);
     }
-    let output = command
+    command
         .args([
             "-c",
             "user.name=batfiles tests",
@@ -270,14 +375,7 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
         .args(args)
         .current_dir(dir)
         .output()
-        .expect("git should be on PATH for the cloning tests");
-    assert!(
-        output.status.success(),
-        "git {args:?} in {} failed: {}",
-        display(dir),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        .expect("git should be on PATH for the cloning tests")
 }
 
 /// What the local server answers one path with.

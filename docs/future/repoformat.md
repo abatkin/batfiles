@@ -555,18 +555,11 @@ the whole of what was specified here.
 
 Built and specified in
 [`docs/repoformat.md`](../repoformat.md#git-clone-list), along with the [clone
-list format](../repoformat.md#the-clone-list-format) it reads. Two things about
-it are not built.
-
-**Cloning the entries.** The record and its list are read and checked as the
-repository is loaded; a run that reaches the action warns that it cloned nothing
-and carries on, naming step 4.5. Everything below about *what* is cloned is
-settled and specified there.
+list format](../repoformat.md#the-clone-list-format) it reads and the per-entry
+`ref=` it honors. One thing about it is not built.
 
 **Per-entry conditions.** `when` and `unless` are refused with the message that
-names step 5.6, on the same terms as the identical fields on an action. A
-`ref=`, unlike a condition, is accepted and checked today and is honored at 4.5
-with [`ref` on `git-clone`](#git-clone).
+names step 5.6, on the same terms as the identical fields on an action.
 
 Entries are not individually selectable yet either. An entry may carry an `id`,
 and an `<action>.<entry>` address may be written in `disabled.toml` or passed to
@@ -594,27 +587,9 @@ built and specified.
 
 Built and specified in
 [`docs/repoformat.md`](../repoformat.md#git-clone), including the conservative
-update policy a later `sync` applies to the clone it finds. One field of it is
-not built:
-
-| Field | Type   | Required | Description                      |
-|-------|--------|:--------:|----------------------------------|
-| `ref` | string |    no    | Branch, tag, or commit selector. |
-
-```toml
-[[actions]]
-type = "git-clone"
-source = "https://github.com/ohmyzsh/ohmyzsh.git"
-dest = "~/.oh-my-zsh"
-ref = "refs/heads/master"
-```
-
-Absent, an update follows whatever branch the clone is on. The closed record
-rejects it today rather than accepting a pin it would not honor. It arrives at
-step 4.5 with `git-clone-list`, whose per-entry `ref=` is the first thing that
-needs it, and it is what the rest of [`safety.md`](safety.md#git-repositories)'s
-"Git repositories" waits on: switching a clean worktree's branch means nothing
-until something declares which branch it should be on.
+update policy a later `sync` applies to the clone it finds and the
+[`ref`](../repoformat.md#ref-following-one-branch-tag-or-commit) that says which
+branch, tag, or commit it should be on. Nothing about it is deferred.
 
 ### `fetch-archive` entry filters
 
