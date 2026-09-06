@@ -987,6 +987,14 @@ Batfiles runs the `git` on your `PATH` rather than linking a library, so your
 `~/.gitconfig`, your credential helpers, and your SSH agent all apply. A
 repository you can clone by hand is one batfiles can clone.
 
+**Submodules are not cloned, initialized, or updated**, here or in a
+[`git-clone-list`](#git-clone-list). A clone that needs them is one you finish
+by hand — `git submodule update --init --recursive` in the destination — and a
+later `sync` leaves what that produced alone, since it fast-forwards the
+superproject and nothing else. Declaring them recursively is not on offer
+because there is no way to say it is wanted, and doing it for every clone would
+fetch a great deal that most repositories do not want.
+
 The one thing it does not inherit is a pointer to a *different* repository.
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of that family are
 cleared before `git` is run, so an action always acts on its own `dest` and

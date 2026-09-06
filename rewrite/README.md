@@ -12,7 +12,7 @@ Two real repositories are the target, and each is an acceptance test.
 
 **Personal** — symlinks and seeded copies, plus oh-my-zsh fetched over HTTP and
 vim plugins cloned from a manifest. Needs no variables, conditions, or remotes.
-Step 4.8 retires the shell script that does this today.
+Step 4.8 retired the shell script that used to do this.
 
 **Work** — reachable only from the work network. Composes the personal
 repository and a corporate-only one and assembles them, today by hand-written

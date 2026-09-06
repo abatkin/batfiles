@@ -119,91 +119,44 @@ Check `rewrite/README.md` for what happens once slice 8 is done: much of the
 - **3.8** ✅ Write the manifest for the local half of the personal repository —
   every installer step but the four that reach the network — and verify it
   against a scratch home. Landed on a branch rather than in use: running it
-  beside the script it half-replaces buys nothing, so adoption waits for 4.8,
-  which retires that script. What it found is the two Enhancements below.
+  beside the script it half-replaces buys nothing, so adoption waited for 4.8,
+  which retired that script. What it found is the two Enhancements below.
 
 ## Slice 4 — Fetching actions
 
-The first slice with a real acceptance test. Individually the hardest work so
-far, but it is what makes the tool usable, so it comes before the easier
-variable and condition slices.
-
-Dry-run needs one addition here and no rework. Both fetching actions publish
-through `install::seed`, which reads the mode, so they are dry-run correct as
-written; the git helper at 4.3 is the exception and reads the mode itself. The
-step that made them report unknown effects went with the effect type it was an
-artifact of (`guidance.md`, "Why there is no effect type"); 4.6 below is the
-number it left free, put back to use rather than kept as a gap.
-
 - **4.1** ✅ Add `fetch-file` for a single file, seeded only when missing, through
-  the same `install.rs` path `copy` uses. `fill` is now a parameter carried on an
-  `install::Seed` descriptor, and the fetcher joined 2.3's allowlist beside
-  `action/copy.rs` as a downstream entry. Landed as `fetch-url` and renamed
-  before 4.2: the transport is what the two fetching actions share, so naming the
-  built one after it left the ambiguous name on the specific member of the pair.
+  the same `install.rs` path `copy` uses. Landed as `fetch-url` and renamed
+  before 4.2, the transport being what the two fetching actions share.
 - **4.2** ✅ Add `fetch-archive`, refusing every entry that would be written
   outside its destination. Gzipped and plain tar, sniffed from the archive's own
-  bytes; `archive-root` built and the entry filters left in `docs/future/`, which
-  now holds only them. The archive is a third sibling of the destination —
-  downloaded whole, verified, then unpacked into the staging tree — so
-  `install.rs` grew `with_scratch` beside `seed`, and that is where the rule-15
-  discipline for it lives.
+  bytes, with `archive-root` built and the entry filters left to the Enhancement
+  below.
 - **4.3** ✅ Add `git-clone` for one repository, and the shared `src/git.rs` that
-  shells out to `git` — the fourth reader of `RunMode`, and the only one slice 4
-  adds. It clones where nothing is and fast-forwards where a clone is, which is
-  the whole of the conservative update policy that does not need a `ref`.
-- **4.4** ✅ Add the clone list format, and read it as the repository is loaded.
-  The record and `src/clone_list.rs` landed together, there being no artifact
-  separable from the parser that enforces it, and the load-time read is a change
-  of mind about `docs/future/`'s deferred manifest expansion that the future
-  document now records. Reaching the action warns that it cloned nothing and the
-  run carries on, on `git.rs`'s terms for a clone it declines to update rather
-  than rule 12's for an option — deliberately, the window being one step wide,
-  and the cost being that a successful `sync` does not mean the whole manifest
-  is installed. `action/git_clone_list.rs` holds the warning and the `CARRY`
-  marker; 4.5 replaces both.
+  shells out to `git`. It clones where nothing is and fast-forwards where a clone
+  is, which is the whole of the conservative update policy that does not need a
+  `ref`.
+- **4.4** ✅ Add the clone list format, and read it as the repository is loaded
+  rather than as the action runs — a change of mind about `docs/future/`'s
+  deferred manifest expansion that the future document now records.
 - **4.5** ✅ Add the cloning half of `git-clone-list`, and `ref` on `git-clone`
-  with it. The entries the read pass checks now travel on the record —
-  `Option<Vec<Entry>>` under `#[serde(skip)]`, `None` meaning no pass read this
-  one, which **7.2 keeps true by splicing included records ahead of that pass**
-  rather than after it. A `ref` is resolved after the fetch and **against the
-  remote-tracking namespace first**, `origin` deciding where several remotes
-  match: resolving the bare string finds the local branch a fetch never moves, so
-  `ref=main` would pin a plugin to the commit it was first cloned at and report
-  success forever. That is the one way to get this wrong, and
-  `docs/repoformat.md` now says so where a reader of the format will find it. A
-  clone at a ref reports `cloned <dest> from <url> at <ref>` rather than a clone
-  line and a switch; `Verb::SwitchRef` belongs to the clone that was already
-  there and moves. The git failures nest as `Error::Git(git::Failure)` —
-  `Failure`, not `Error`, because `git.rs` names the crate's `Error` throughout
-  and one module cannot have both — and `action/git_clone_list.rs` holds the
-  private predicate deciding whether a failure costs one entry or the run.
+  with it. A `ref` resolves after the fetch and against the remote-tracking
+  namespace first, which `docs/repoformat.md` explains at length because it is
+  the one way to get this wrong.
 - **4.6** ✅ Make rule 1's within-slice reading mechanical: `tests/hygiene.rs`
   rejects an `expect(dead_code)` whose `reason` names a step `steps.md` marks ✅,
-  names a step it does not define, or names no step at all. The scan had to move
-  off the line and onto the `dead_code` token first: rustfmt breaks a long
-  attribute across lines and leaves that token on one of its own, and three of
-  the five annotations under `src/` were in that form and so invisible to the
-  line-oriented check that was meant to be requiring their `reason` since 0.11.
-  Anchoring there and joining the attribute back together needs no lexer, since
-  what would fool a bracket counter is a string literal and the reason is prose
-  we write. `step_state` is now the one place all three checks ask `steps.md`
-  its two questions, this being the third caller.
+  names a step it does not define, or names no step at all.
 - **4.7** ✅ Finish the git fixtures for a *list* of repositories, in the shapes
   only a list can be in: an entry that fails on its `ref`, a `dest-dir` that is
-  somebody else's directory — kept, refused, or followed through a link — and a
-  list half of whose entries are already cloned, in a real run and under
-  `--dry-run`. Every one of them needed bespoke home state, so they are written
-  inline and `tests/fixtures/clonelist` stays the one realistic list; two
-  `BareRepo`s rather than a publishable `BareRepo::another`, this being the
-  second caller and not the third (rule 3). The ref case pinned a residue nothing
-  had asserted: a `ref` is resolved after the fetch, so a failing entry's clone
-  is already at its destination and stays there, warned about on every run — the
-  rule-15-satisfying half of the two, and now `docs/repoformat.md`'s. The
-  strong-claim technique and the unresolvable-host convention were both worth
-  more than one step and went to `guidance.md`, "Test environments".
-- **4.8** **Acceptance: your personal dotfiles are fully managed by `sync`, and
-  the personal shell script is retired.**
+  somebody else's directory, and a list half of whose entries are already cloned,
+  in a real run and under `--dry-run`. `tests/fixtures/clonelist` stays the one
+  realistic list; each of the others needed bespoke home state and is written
+  inline.
+- **4.8** ✅ **Acceptance: the personal repository declares every installer step,
+  and `install.sh`, its seven numbered installers, and `lib.sh` are deleted.**
+  The four network steps became a `git-clone`, a `fetch-file`, and two
+  `git-clone-list`s over the plugin lists unedited. **Outstanding: that branch is
+  dry-run correct against a scratch home and has not been rebased onto
+  `~/dotfiles` or run against the real one.**
 
 ## Slice 5 — Variables and conditions
 
@@ -311,7 +264,11 @@ The hard slice. Everything it composes over is real by now.
   paragraph of `docs/future/cmdline.md`'s dry-run section here — both halves,
   staleness and partiality — into the `docs/cmdline.md` section 2.4 created.
 - **7.2** Splice its actions into the leaf's single ordered action list, in
-  place, preserving order. **This is where `ItemAddress::names` stops being
+  place, preserving order. **Splice ahead of the pass that reads a
+  `git-clone-list`'s file, not after it**: 4.5 put the checked entries on the
+  record as `Option<Vec<Entry>>` under `#[serde(skip)]`, where `None` means no
+  pass has read this one, and splicing afterwards would leave an included list
+  looking unread. **This is also where `ItemAddress::names` stops being
   string equality.** 3.7 widened every list that holds a name to an address, so
   a qualified one already parses, is already recorded, and already reports that
   it matched nothing; what that one method says is the whole of why. A spliced
@@ -397,20 +354,28 @@ before.
   against a concurrent writer, which is the honest version of the status quo.
   Do not close it for one action and leave the wider ones open.
 
-- **9.6** Report a prospective removal once per run. A dry run does not remove a
-  broken symlink, so anything that inspects the same path again finds it again
-  and says again that it would go. The reachable case is a `-dir` action whose
-  `dest-dir` is a broken link: `for_each_child` reports it, then every child's
-  `create_parents` rediscovers it, so twelve children produce thirteen lines
-  where a real run produces one.
+- **9.6** Report a prospective creation or removal once per run. A dry run does
+  not carry out the work, so anything that inspects the same path again finds it
+  unchanged and says again what it would do. Two reachable cases, and the second
+  is why this is worth more than it first looked:
+
+  - A `-dir` action whose `dest-dir` is a broken link: `for_each_child` reports
+    it, then every child's `create_parents` rediscovers it, so twelve children
+    produce thirteen removal lines where a real run produces one.
+  - **Two actions declaring the same `dest-dir`**, which both report `would
+    create` where a real run creates it once and the second says nothing. 4.8
+    found this in the personal repository rather than in a fixture:
+    `omz-plugins` and `zsh-bundles` both install into
+    `~/.oh-my-zsh/custom/plugins`, one linking children in and the other cloning
+    them, which is an ordinary thing for a manifest to want.
 
   The fix is a set of already-reported paths on `action::RunContext`, consulted in
-  `DryRun` only — about ten lines, and not a simulated filesystem, since it
-  changes what is *said* rather than what is *found*. It waits here because the
-  cost is duplicated output in a narrow case, and because a `Context` carrying
-  mutable state is a real change to a value slice 2 wants to keep boring. Do it
-  when the noise is worth ten lines, or when a second reporter needs the same
-  set.
+  `DryRun` only — about ten lines, covering both cases unchanged, and not a
+  simulated filesystem, since it changes what is *said* rather than what is
+  *found*. It waits here because the cost is duplicated output in narrow cases,
+  and because a `Context` carrying mutable state is a real change to a value
+  slice 2 wants to keep boring. Do it when the noise is worth ten lines, or when
+  a second reporter needs the same set.
 
 ## Slice 10 — Distribution
 
@@ -459,6 +424,17 @@ step numbers, so an entry written that way would become an open step that a
   against the enhancement: what is left afterwards is a genuinely broken run
   wanting to say everything it found.
 
+  **4.8 added a second reason, and it is not one 9.4 removes.** A `git-clone`
+  or a fetching action that fails stops the run, so a `sync` with no network
+  dies at the first one and installs none of the local half — which has nothing
+  to do with the network and would have succeeded. The shell script 4.8 retired
+  never had that failure mode: it guarded its four network steps behind
+  `LOCAL_ONLY` and let everything else run regardless. A list's entries already
+  behave the way this wants (`git-clone-list`, "One entry that fails costs that
+  entry"), so the question is not whether continuing is ever right but which
+  failures qualify — and an unreachable network is the clearest candidate there
+  is, since it is a fact about the machine rather than about the manifest.
+
 - **Archive entry filters.** `include` and `exclude` on `fetch-archive`, matched
   against an entry's path with `archive-root` already stripped. Specified in
   `docs/future/repoformat.md`, refused by the closed record today, and left
@@ -503,8 +479,9 @@ step numbers, so an entry written that way would become an open step that a
   parses today, `disabled.toml` and `--skip-action` already record one, and both
   already report that it matched nothing. What is missing is only the lookup.
 
-  The personal repository is the acceptance. `BLACKLIST_VIM_MODULES`, read from
-  a sourced `~/.dotfiles-local`, is per-machine skipping of individual vim
-  bundles — which is `disable-action vim-bundles.YouCompleteMe` and nothing
-  else. Until then the shell variable has no equivalent, and 4.8 retires the
-  script that reads it.
+  The personal repository is the acceptance, and 4.8 turned it from a
+  hypothetical into a regression. `BLACKLIST_VIM_MODULES`, read from a sourced
+  `~/.dotfiles-local`, was per-machine skipping of individual vim bundles —
+  which is `disable-action vim-bundles.YouCompleteMe` and nothing else. 4.8
+  deleted the script that read it, so that repository has no way to express it
+  at all until this lands.

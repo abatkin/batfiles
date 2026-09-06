@@ -118,9 +118,11 @@ things happen in order:
    first time a caller genuinely matches, which is likelier to come first than
    it sounds: 4.5 has to tell a dirty clone from a network failure to decide
    whether to skip or fail. Then that subsystem's failures become one
-   `Error::Git(git::Error)` variant, with the sub-enum in the module that raises
-   it rather than in `error.rs`, for the same reason `ItemId` lives in
-   `item.rs`.
+   `Error::Git(git::Failure)` variant, with the sub-enum in the module that
+   raises it rather than in `error.rs`, for the same reason `ItemId` lives in
+   `item.rs`. Note the name: a module that refers to the crate's own `Error`
+   cannot also call its sub-enum `Error`, so the first one built is
+   `git::Failure`, and the next subsystem should read the same way.
 
 Do not carve categories any earlier. `Read` and `Write` are the proof: they
 serve documents, actions, and state files alike, so any category cut made today
@@ -240,9 +242,13 @@ created**, never on one that was already there: "it is probably ours" in front o
 a recursive delete is how a tool destroys data it was written to protect.
 
 `copy` at 1.3 is the worked example, and `src/install.rs` is where it lives —
-`build_and_publish`, `publish`, and `discard` in particular. Slice 4 inherits all of it — `fetch-file` and
-`fetch-archive` are seeds with the same destinations and the same failure —
-so reuse that path rather than deriving it again.
+`build_and_publish`, `publish`, and `discard` in particular, plus `with_scratch`
+for an action that has to have the whole thing on disk before it can build
+anything: `fetch-archive` at 4.2 downloads and verifies a third sibling of the
+destination before it unpacks a single entry into the staging tree. Slice 4
+inherits all of it — `fetch-file` and `fetch-archive` are seeds with the same
+destinations and the same failure — so reuse that path rather than deriving it
+again.
 
 **Building elsewhere is the mechanism, not the rule.** What the rule is about is
 the *convergence*: a later run that finds the path occupied, calls the work done,

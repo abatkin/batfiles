@@ -8,15 +8,22 @@ in your home directory, and `batfiles sync` makes the home directory match.
 There is no hidden ownership database, no per-repository install hook, and
 nothing in the repository you cannot read with `cat`.
 
-> **Status: early, and not yet useful as a dotfiles manager.**
+> **Status: early, but it installs a real repository.**
 >
-> Batfiles is being rebuilt from scratch. Three of the plan's eleven slices are
-> done. `sync` installs a repository, `--dry-run` says what it would install,
-> what you have disabled or asked to skip is left out, and `apply-action` and
-> `apply-group` install one piece of it on its own.
-> Every other command parses its arguments and then exits saying it is not
-> implemented yet. The plan, and the reason there is a rewrite, are in
-> [`rewrite/README.md`](rewrite/README.md).
+> Batfiles is being rebuilt from scratch. Four of the plan's eleven slices are
+> done, and the author's own dotfiles are declared entirely in a
+> `batfiles.toml` — links, seeded copies, a downloaded file, and the plugin
+> repositories a shell script used to clone. `sync` installs a repository,
+> `--dry-run` says what it would install, what you have disabled or asked to
+> skip is left out, and `apply-action` and `apply-group` install one piece of it
+> on its own.
+>
+> What is not built is the composition: variables and conditions, git remotes,
+> and including one repository's actions into another. `init` and `clone` are
+> not built either, so a fresh machine still clones its repository by hand.
+> Every command but the ones named above parses its arguments and then exits
+> saying it is not implemented yet. The plan, and the reason there is a rewrite,
+> are in [`rewrite/README.md`](rewrite/README.md).
 
 > [!NOTE]
 > There is a sample repository to read and install:

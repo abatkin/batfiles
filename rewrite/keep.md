@@ -168,17 +168,6 @@ caller. Do not.
 - **The 17 error types and their 24 `Display` impls**, wherever they appear. See
   `guidance.md`, rule 5.
 
-## Nothing exists yet for slice 4
-
-The old crate has serde records for `fetch-url` — since split and renamed into
-`fetch-file` and `fetch-archive` — `git-clone`, and
-`git-clone-list`, and **no implementation of any of them**. `Cargo.toml` has no
-HTTP client and no archive reader. Slice 4 is therefore the first genuinely new
-code in the rewrite and the first new dependencies — expect to add one HTTP
-client and one archive reader, and to justify each in the manifest the way the
-existing entries are. Budget accordingly: it is a bigger slice than its position
-suggests.
-
 ## Structure of the new crate
 
 Start flat and let slices add depth:
