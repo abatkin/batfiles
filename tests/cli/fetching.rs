@@ -365,7 +365,7 @@ fn a_digest_that_is_not_one_is_refused_before_anything_is_fetched() {
     tree.write_manifest(
         "[[actions]]\n\
          type = \"fetch-file\"\n\
-         source = \"https://example.com/a\"\n\
+         source = \"https://e.example/a\"\n\
          sha256 = \"abc123\"\n\
          dest = \"~/.a\"\n",
     );
@@ -399,7 +399,7 @@ fn the_archive_fields_are_not_fields_of_a_plain_download() {
         tree.write_manifest(&format!(
             "[[actions]]\n\
              type = \"fetch-file\"\n\
-             source = \"https://example.com/a.tar.gz\"\n\
+             source = \"https://e.example/a.tar.gz\"\n\
              dest = \"~/.local/tool\"\n\
              {field}\n",
         ));
@@ -418,7 +418,7 @@ fn the_entry_filters_are_not_built_yet() {
         tree.write_manifest(&format!(
             "[[actions]]\n\
              type = \"fetch-archive\"\n\
-             source = \"https://example.com/a.tar.gz\"\n\
+             source = \"https://e.example/a.tar.gz\"\n\
              dest = \"~/.local/tool\"\n\
              {field}\n",
         ));
@@ -856,7 +856,7 @@ fn an_archive_root_that_names_nothing_inside_is_refused_before_anything_is_fetch
         tree.write_manifest(&format!(
             "[[actions]]\n\
              type = \"fetch-archive\"\n\
-             source = \"https://example.com/a.tar.gz\"\n\
+             source = \"https://e.example/a.tar.gz\"\n\
              dest = \"~/.local/tool\"\n\
              archive-root = \"{root}\"\n",
         ));
@@ -984,7 +984,7 @@ fn an_archive_root_that_climbs_is_refused_before_anything_is_fetched() {
     tree.write_manifest(
         "[[actions]]\n\
          type = \"fetch-archive\"\n\
-         source = \"https://example.com/a.tar.gz\"\n\
+         source = \"https://e.example/a.tar.gz\"\n\
          dest = \"~/.local/tool\"\n\
          archive-root = \"releases/../tool\"\n",
     );

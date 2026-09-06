@@ -1195,6 +1195,14 @@ The warning names the repository as the list writes it, the list and the line it
 is on, and the entry's `id` where it has one, since that is what you have to open
 and edit.
 
+**An entry that failed on its `ref` keeps the clone it made.** A `ref` is
+resolved after the fetch, so a repository whose `ref` names nothing is already
+at its destination by the time the entry fails, sitting on whatever the clone
+came down on. It is left there: every later run finds it, tries the `ref` again,
+and warns again, so the state is one you are told about on every `sync` rather
+than one a run passes over as installed. Fixing the `ref` moves the clone onto
+it; removing the entry leaves the directory to you.
+
 What is not survivable is a `git` that could not be run at all, a file that could
 not be read or written, and a `dest-dir` that could not be created: none of those
 is about one repository, and every entry after would fail the same way.

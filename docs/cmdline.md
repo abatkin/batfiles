@@ -455,6 +455,14 @@ the clone at a destination holding a directory, and it runs no git to decide
 which. So nothing reaches the network and no checkout is touched, not even by
 the read-only commands that would tell batfiles whether an update is possible.
 
+`git-clone-list` says one line per entry on the same terms. Its list is a file
+in the repository, read as the repository is loaded and therefore in hand in
+both modes, so a dry run describes every entry from a document it already
+holds rather than from anything it goes and asks for: it would clone the ones
+whose directories are empty and update the ones already holding something,
+whichever mixture a list happens to be in. A declared `ref` is reported as the
+list writes it, since nothing resolved it.
+
 What is *at* a destination is a filesystem question, so it is answered the same
 in both modes: a dry run refuses a `dest` holding a regular file or a symlink
 out of the repository exactly as a real run does. What it gives up is one

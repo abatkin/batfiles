@@ -189,32 +189,19 @@ number it left free, put back to use rather than kept as a gap.
   what would fool a bracket counter is a string literal and the reason is prose
   we write. `step_state` is now the one place all three checks ask `steps.md`
   its two questions, this being the third caller.
-- **4.7** Finish the git fixtures for a *list* of repositories; no step in the
-  suite may reach the network. 4.5 took the minimum — `BareRepo` making more than
-  one origin, and `tests/fixtures/clonelist` pointing at local bare repositories
-  the way `cloning` does — because a step may leave a behavior unfinished and
-  never leave one untested. What is left here is the strong-claim pass, and a dry
-  run is most of it: `git-clone-list` says one line per entry without reaching
-  the network, and an existing clone is left exactly as it was, unfetched.
-
-  Most of the apparatus is already there. 4.1 gave `tests/cli/support.rs` a
-  `tiny_http` `Server` that counts requests, and 4.3 gave it `BareRepo`, a bare
-  repository with a working clone beside it for publishing a second commit, plus
-  a `git` helper that forces an identity and no signing. 4.3's `cloning` tests
-  are the pattern for asserting the strong claim rather than the weak one: an
-  existing clone's `.git/FETCH_HEAD` staying absent is what says no git ran, the
-  way `Server::requests` says nothing was asked of the server. 4.5 wrote one list
-  test that way — a dry run over clones that are already there — and landed the
-  case one repository could not have: an entry that fails leaves the entries after
-  it cloned. What is left is the rest of that pass, and the shapes only a list can
-  be in: an entry that fails on its `ref`, one whose clone is already there beside
-  one that is not, and a `dest-dir` that is somebody else's directory.
-
-  Promote what is left of `docs/future/cmdline.md`'s "Remote content is
-  described, not retrieved" paragraph into the section 2.4 created — 4.1 took
-  `fetch-file`'s share and the digest sentence beside it, and 4.3 took
-  `git-clone`'s along with the no-git-under-dry-run rule the list inherits —
-  minus its second half about inclusions, which waits for 7.1.
+- **4.7** ✅ Finish the git fixtures for a *list* of repositories, in the shapes
+  only a list can be in: an entry that fails on its `ref`, a `dest-dir` that is
+  somebody else's directory — kept, refused, or followed through a link — and a
+  list half of whose entries are already cloned, in a real run and under
+  `--dry-run`. Every one of them needed bespoke home state, so they are written
+  inline and `tests/fixtures/clonelist` stays the one realistic list; two
+  `BareRepo`s rather than a publishable `BareRepo::another`, this being the
+  second caller and not the third (rule 3). The ref case pinned a residue nothing
+  had asserted: a `ref` is resolved after the fetch, so a failing entry's clone
+  is already at its destination and stays there, warned about on every run — the
+  rule-15-satisfying half of the two, and now `docs/repoformat.md`'s. The
+  strong-claim technique and the unresolvable-host convention were both worth
+  more than one step and went to `guidance.md`, "Test environments".
 - **4.8** **Acceptance: your personal dotfiles are fully managed by `sync`, and
   the personal shell script is retired.**
 

@@ -396,7 +396,18 @@ Use the cheapest environment that still exercises the real thing.
   and `install.sh` at 10.3. Keep it a separate CI task, not part of `task test`.
 
 **No test may reach the network.** A suite that fails on a plane, or on the work
-network, is a suite that gets skipped.
+network, is a suite that gets skipped. Where a test names a host it never
+reaches, write one that cannot resolve — `e.example`, `example.invalid` — so
+that a test which starts reaching the network fails in the suite rather than in
+somebody's DNS.
+
+**Assert the evidence, not the absence of change.** An unchanged tree passes for
+an implementation that fetched and then declined to write, which is most of what
+a dry-run test is trying to rule out. So assert the thing only the work produces:
+`Server::requests` staying at zero, a clone's `.git/FETCH_HEAD` staying absent.
+Reach for the weaker claim only where there is no such artifact — a destination
+that was never created leaves nothing behind to check — and pair it with the
+whole-tree snapshot.
 
 **Platform gating is one place, not scattered.** The execution tests that need a
 working `symlink` are a single `#[cfg(unix)] mod linking;` in

@@ -171,6 +171,138 @@ fn a_failing_entry_names_its_id_where_it_has_one() {
 }
 
 #[test]
+fn an_entry_whose_ref_resolves_to_nothing_costs_that_entry_and_keeps_the_clone() {
+    // A `ref` is resolved after the fetch, so the clone is already at the
+    // destination by the time the entry fails -- a whole repository at the
+    // wrong ref. It is left there rather than taken away: what rule 15 forbids
+    // is a later run mistaking wreckage for finished work, and this converges on
+    // a warning instead, said again on every run until the list is fixed.
+    //
+    // On `git-clone` the same failure stops the run (`cloning`). Here it is one
+    // repository out of a list of them, so the entries after it still install.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!(
+        "{origin} dest-name=first\n\
+         {origin} dest-name=pinned ref=no-such-branch\n\
+         {origin} dest-name=last\n",
+        origin = display(&origin.origin())
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert!(tree.home(".plugins/first/README.md").is_file());
+    assert!(
+        tree.home(".plugins/last/README.md").is_file(),
+        "an entry after a failing ref was stranded"
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("cannot follow `no-such-branch`"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("(plugins.txt line 2)"), "{stderr}");
+    // The clone the failing entry made, and the line it never got to say.
+    let pinned = tree.home(".plugins/pinned");
+    assert!(pinned.join("README.md").is_file());
+    assert!(
+        !stderr.contains(&format!("cloned {}", display(&pinned))),
+        "an entry that failed reported a clone: {stderr}"
+    );
+
+    // The steady state, which is the half worth pinning: the run still
+    // succeeds, the clone stays where it is, and the warning comes back.
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert!(pinned.join("README.md").is_file());
+    assert!(
+        stderr_of(&assertion).contains("cannot follow `no-such-branch`"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_dest_dir_somebody_else_keeps_is_installed_into_and_left_alone() {
+    // The shape the personal repository has: a plugin directory that already
+    // holds checkouts and files batfiles did not make. A `dest-dir` is a
+    // container rather than a destination (`docs/repoformat.md`), so entries
+    // land beside what is there and nothing is replaced.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!("{} dest-name=ours\n", display(&origin.origin())));
+    fs::create_dir_all(tree.home(".plugins/theirs")).expect("a directory of their own");
+    fs::write(tree.home(".plugins/theirs/mine.zsh"), "echo mine\n").expect("someone's file");
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert!(tree.home(".plugins/ours/README.md").is_file());
+    assert_eq!(
+        fs::read_to_string(tree.home(".plugins/theirs/mine.zsh")).expect("their file"),
+        "echo mine\n",
+        "a directory the list does not name was disturbed"
+    );
+}
+
+#[test]
+fn a_dest_dir_that_is_not_a_directory_stops_the_run_before_any_entry() {
+    // The other half of the container rule, and the row of the failure table
+    // that is not survivable: a `dest-dir` that could not be made is not about
+    // one repository, so no entry is attempted rather than every one of them
+    // failing the same way.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!("{}\n", display(&origin.origin())));
+    fs::write(tree.home(".plugins"), "not a directory\n").expect("a file in the way");
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+
+    assert_eq!(
+        fs::read_to_string(tree.home(".plugins")).expect("the file in the way"),
+        "not a directory\n",
+        "the occupied dest-dir was disturbed"
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "{} already exists and is a regular file",
+            display(&tree.home(".plugins"))
+        )),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("not cloning"),
+        "an entry was attempted under a dest-dir that could not be made: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dest_dir_reached_through_a_symlink_is_installed_into() {
+    // A container follows its final symlink where a destination never does
+    // (`docs/repoformat.md`), and this is where that costs something: the
+    // clones land in a directory somebody else made, through a link batfiles
+    // did not make either. It is safe for the reason the rule gives -- nothing
+    // here replaces what it finds -- and a home whose plugin directory is a link
+    // onto another volume is an ordinary arrangement rather than one to refuse.
+    use std::os::unix::fs::symlink;
+
+    let origin = BareRepo::new();
+    let tree = one_list(&format!("{}\n", display(&origin.origin())));
+    let elsewhere = tree.home("volume/plugins");
+    fs::create_dir_all(&elsewhere).expect("a directory of their own");
+    symlink(&elsewhere, tree.home(".plugins")).expect("a link to it");
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert!(
+        elsewhere.join("origin/README.md").is_file(),
+        "the clone did not land at the far end of the link"
+    );
+    assert!(
+        tree.home(".plugins").is_symlink(),
+        "the link itself was disturbed"
+    );
+}
+
+#[test]
 fn an_action_after_one_is_carried_out() {
     // A list must not strand what follows it, whether its entries clone or not.
     let origin = BareRepo::new();
@@ -305,14 +437,19 @@ fn a_dry_run_says_one_line_per_entry_and_clones_none_of_them() {
 
 #[test]
 fn a_dry_run_over_clones_that_are_there_fetches_nothing() {
-    // The strong claim, asserted the way `cloning` asserts it: `FETCH_HEAD`
-    // staying absent is what says no git ran, where an unchanged tree would
-    // also pass for an implementation that fetched and declined to merge.
+    // The strong claim, asserted the way `cloning` asserts it and over every
+    // entry rather than one: `FETCH_HEAD` staying absent is what says no git
+    // ran, where an unchanged tree would also pass for an implementation that
+    // fetched and declined to merge.
     let origin = BareRepo::new();
     let tree = clone_list(&origin);
     tree.batfiles().arg("sync").assert().success();
-    let clone = plugins(&tree, "zsh-syntax-highlighting");
-    fs::remove_file(clone.join(".git/FETCH_HEAD")).ok();
+    let clones = ["zsh-syntax-highlighting", "p10k", "zsh-z"].map(|name| plugins(&tree, name));
+    for clone in &clones {
+        // Absent already where the entry was cloned at a `ref`, which resolves
+        // without fetching.
+        fs::remove_file(clone.join(".git/FETCH_HEAD")).ok();
+    }
 
     let assertion = tree
         .batfiles()
@@ -320,14 +457,118 @@ fn a_dry_run_over_clones_that_are_there_fetches_nothing() {
         .assert()
         .success();
 
+    let stderr = stderr_of(&assertion);
+    for clone in &clones {
+        assert!(
+            !clone.join(".git/FETCH_HEAD").exists(),
+            "a dry run reached the network for {}",
+            display(clone)
+        );
+        assert!(
+            stderr.contains(&format!("would update {}", display(clone))),
+            "{stderr}"
+        );
+    }
+}
+
+/// A list whose first entry has been cloned and whose second has not, with the
+/// first origin one commit ahead of that clone.
+///
+/// The state a list is in whenever a repository grows one: the list is edited by
+/// pasting a URL onto the end of it, and the run after that finds everything
+/// before the new line already installed.
+fn half_installed(first: &BareRepo, second: &BareRepo) -> Tree {
+    let entry =
+        |origin: &BareRepo, name| format!("{} dest-name={name}\n", display(&origin.origin()));
+    let tree = one_list(&entry(first, "already"));
+    tree.batfiles().arg("sync").assert().success();
+
+    tree.repo_file(
+        "plugins.txt",
+        &format!("{}{}", entry(first, "already"), entry(second, "missing")),
+    );
+    first.publish("plugin.zsh", "echo hello\n", "second");
+    tree
+}
+
+#[test]
+fn a_list_clones_what_is_missing_and_updates_what_is_there() {
+    // The shape one repository could not be in. Two origins rather than one, so
+    // that what tells the entries apart is where they came from as well as
+    // where they landed.
+    let first = BareRepo::new();
+    let second = BareRepo::new();
+    let tree = half_installed(&first, &second);
+    let already = tree.home(".plugins/already");
+    let before = git(&already, &["rev-parse", "HEAD"]);
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_ne!(
+        git(&already, &["rev-parse", "HEAD"]),
+        before,
+        "the clone that was already there was not updated"
+    );
+    assert_eq!(
+        fs::read_to_string(already.join("plugin.zsh")).expect("the new file"),
+        "echo hello\n"
+    );
+    let missing = tree.home(".plugins/missing");
     assert!(
-        !clone.join(".git/FETCH_HEAD").exists(),
+        missing.join("README.md").is_file(),
+        "the entry with no clone was not cloned"
+    );
+    let stderr = stderr_of(&assertion);
+    let updated = format!("updated {}", display(&already));
+    let cloned = format!(
+        "cloned {} from {}",
+        display(&missing),
+        display(&second.origin())
+    );
+    assert!(stderr.contains(&updated), "{stderr}");
+    assert!(stderr.contains(&cloned), "{stderr}");
+    // Still list order, whichever of the two an entry needed.
+    assert!(
+        stderr.find(&updated) < stderr.find(&cloned),
+        "the entries were not reported in list order:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_dry_run_over_a_half_installed_list_says_both_and_runs_no_git() {
+    // The same list under `--dry-run`: one line per entry in the tense the mode
+    // dictates, from occupancy alone. Nothing is fetched for the clone that is
+    // there and nothing is cloned for the entry that has none.
+    let first = BareRepo::new();
+    let second = BareRepo::new();
+    let tree = half_installed(&first, &second);
+    let already = tree.home(".plugins/already");
+    fs::remove_file(already.join(".git/FETCH_HEAD")).ok();
+    let before = snapshot(&tree.path("home"));
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
+
+    assert_eq!(snapshot(&tree.path("home")), before);
+    assert!(
+        !already.join(".git/FETCH_HEAD").exists(),
         "a dry run reached the network"
     );
+    let stderr = stderr_of(&assertion);
     assert!(
-        stderr_of(&assertion).contains(&format!("would update {}", display(&clone))),
-        "{}",
-        stderr_of(&assertion)
+        stderr.contains(&format!("would update {}", display(&already))),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "would clone {} from {}",
+            display(&tree.home(".plugins/missing")),
+            display(&second.origin())
+        )),
+        "{stderr}"
     );
 }
 

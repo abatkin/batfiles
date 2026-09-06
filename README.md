@@ -254,7 +254,6 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 4     | Cloning a list of Git repositories from a manifest                  |
 | 5     | Variables, and `when`/`unless` conditions                           |
 | 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
 | 8     | `init` and `clone` for new machines, with default-disabled adoption |
