@@ -178,16 +178,17 @@ number it left free, put back to use rather than kept as a gap.
   `Failure`, not `Error`, because `git.rs` names the crate's `Error` throughout
   and one module cannot have both — and `action/git_clone_list.rs` holds the
   private predicate deciding whether a failure costs one entry or the run.
-- **4.6** Make rule 1's within-slice reading mechanical: `tests/hygiene.rs`
+- **4.6** ✅ Make rule 1's within-slice reading mechanical: `tests/hygiene.rs`
   rejects an `expect(dead_code)` whose `reason` names a step `steps.md` marks ✅,
-  names a step it does not define, or names no step at all. Today the reason is
-  prose the check only requires to be non-empty, and the compiler covers only the
-  half where the caller lands; an item whose step is done and whose caller never
-  arrived is the other half, and it is the one rot path that letting code sit
-  unused between two steps opens. Reuse `recorded_steps`, `is_step`, and the
-  three-case shape the `CARRY` check already has — a step-shaped token anywhere
-  in the reason is the step, since these read `"cloned at 4.5"` rather than a bare
-  number (`guidance.md`, rule 1).
+  names a step it does not define, or names no step at all. The scan had to move
+  off the line and onto the `dead_code` token first: rustfmt breaks a long
+  attribute across lines and leaves that token on one of its own, and three of
+  the five annotations under `src/` were in that form and so invisible to the
+  line-oriented check that was meant to be requiring their `reason` since 0.11.
+  Anchoring there and joining the attribute back together needs no lexer, since
+  what would fool a bracket counter is a string literal and the reason is prose
+  we write. `step_state` is now the one place all three checks ask `steps.md`
+  its two questions, this being the third caller.
 - **4.7** Finish the git fixtures for a *list* of repositories; no step in the
   suite may reach the network. 4.5 took the minimum — `BareRepo` making more than
   one origin, and `tests/fixtures/clonelist` pointing at local bare repositories

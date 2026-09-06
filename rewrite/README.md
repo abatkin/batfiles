@@ -66,9 +66,9 @@ not-built-yet table, which cites `steps.md` — so move 3 repoints both at
 wherever the remaining steps land. It is the one document with an audience
 outside the project, and a dead link is what a first-time reader hits first.
 
-Two checks in `tests/hygiene.rs` read `steps.md` for its ✅ marks, so move 3
+Three checks in `tests/hygiene.rs` read `steps.md` for its ✅ marks, so move 3
 either repoints them at wherever the remaining steps land or retires them along
-with the directory. The `CARRY` marker check only opens the file when a marker
-exists, so a tree with none does not force the choice. The rule 12 check does
-force it: `src/cli/unsupported.rs` still withholds the options that arrive at
+with the directory. The `CARRY` marker check and rule 1's dead-code check only
+open the file when there is a marker or an annotation to judge, so a tree with
+neither does not force the choice. The rule 12 check does force it: `src/cli/unsupported.rs` still withholds the options that arrive at
 9.1, 9.3, and 9.4, so it must be repointed at the roadmap those steps move to.

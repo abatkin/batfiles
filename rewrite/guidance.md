@@ -56,14 +56,19 @@ annotation becomes an unfulfilled expectation, which is a warning, which under
 carry-forward note that cannot rot, because the compiler is holding the list.
 
 It is self-enforcing: `tests/hygiene.rs` fails if `allow(dead_code)` appears
-anywhere under `src/`, or if any `expect(dead_code)` is missing its `reason`.
-Step 4.6 closes the gap the by-the-end-of-the-slice reading opens, which is an
-expectation whose step is done and whose item is still unread: the compiler
-deletes the note when the caller lands and says nothing when it never does, so
-the check rejects a reason naming a step `steps.md` marks ✅, exactly as it
-rejects a spent `CARRY` marker. This is the rule that can be checked
-mechanically, and the old crate is the proof that the honor-system version of it
-loses.
+anywhere under `src/`, if an `expect(dead_code)` is missing its `reason`, or if
+that reason names a step `steps.md` marks ✅, names one it does not define, or
+names none at all. The last three close the gap the by-the-end-of-the-slice
+reading opens: the compiler deletes the note when the caller lands and says
+nothing when it never does, so an expectation whose step is done and whose item
+is still unread is invisible to it, and the check rejects one exactly as it
+rejects a spent `CARRY` marker.
+
+What no check enforces is the same-slice bound above, because nothing textual
+can tell a serde record's field — the one exception allowed to reach into a
+later slice — from an ordinary one. That half stays yours to hold. The rest is
+the rule that can be checked mechanically, and the old crate is the proof that
+the honor-system version of it loses.
 
 **2. Vertical slices, never horizontal layers.** Every slice ends with a
 `batfiles` binary that does something a user can run, and a test in

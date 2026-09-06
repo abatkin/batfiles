@@ -6,8 +6,11 @@
 //! done's requirement that the documents keep saying what the binary actually
 //! does.
 //!
-//! The scans are textual and line-oriented, so an attribute or a marker split
-//! across lines is not seen. None of it is worth a parser.
+//! The scans are textual and line-oriented, with one exception: the dead-code
+//! scan anchors on the `dead_code` token, which rustfmt leaves on a line of its
+//! own when it breaks a long attribute up, and joins the attribute back together
+//! from there. A `CARRY` marker split across lines is still not seen. None of it
+//! is worth a parser.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -170,37 +173,163 @@ fn display(path: &Path) -> String {
         .to_string()
 }
 
-/// Rule 1, as line numbers and messages: `allow(dead_code)` never appears under
-/// `src/`, and every `expect(dead_code)` names the step that reads the field.
-fn dead_code_violations(source: &str) -> Vec<(usize, &'static str)> {
-    let mut violations = Vec::new();
-    for (index, line) in source.lines().enumerate() {
-        // Whitespace is stripped so the check does not depend on how the
-        // attribute happens to be spaced.
-        let packed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-        if packed.contains("allow(dead_code") {
-            violations.push((
-                index + 1,
-                "`allow(dead_code)` is not permitted under `src/`: code with no caller \
-                 reachable from `main` does not get committed",
-            ));
-        }
-        if packed.contains("expect(dead_code") && !reason_is_filled(&packed) {
-            violations.push((
-                index + 1,
-                "`expect(dead_code)` must carry a `reason` naming the step that reads the \
-                 field; without one it is an `allow` that gets past this check",
-            ));
-        }
-    }
-    violations
+/// A `dead_code` annotation found in a source file.
+///
+/// Anchored on the `dead_code` token rather than on `#[expect(`, because rustfmt
+/// breaks a long attribute across lines and leaves that token on one of its own.
+/// Three of the five annotations under `src/` are in that form, and a scan
+/// looking for the opening instead sees none of them.
+#[derive(Debug)]
+enum DeadCode {
+    /// `allow(dead_code)`, which rule 1 permits nowhere under `src/`.
+    Allowed { line: usize },
+    /// `expect(dead_code)` with no `reason`, or an empty one.
+    Unexplained { line: usize },
+    /// `expect(dead_code, reason = "…")`, with every step-shaped token the
+    /// reason names.
+    Expected { line: usize, named: Vec<String> },
 }
 
-/// Whether a whitespace-stripped attribute carries a non-empty `reason = "…"`.
-fn reason_is_filled(packed: &str) -> bool {
-    packed
-        .split_once("reason=\"")
-        .is_some_and(|(_, rest)| !rest.starts_with('"'))
+impl DeadCode {
+    fn line(&self) -> usize {
+        match self {
+            Self::Allowed { line } | Self::Unexplained { line } | Self::Expected { line, .. } => {
+                *line
+            }
+        }
+    }
+}
+
+/// How far the scan looks either side of a `dead_code` for the attribute it
+/// sits in. rustfmt's broken-up form puts the token on the line after the `#[`
+/// and the reason on the line after that, so this is generous.
+const ATTRIBUTE_LINES: usize = 6;
+
+/// Every `dead_code` annotation in `source`.
+fn dead_code_mentions(source: &str) -> Vec<DeadCode> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut found = Vec::new();
+    for (index, text) in lines.iter().enumerate() {
+        if !text.contains("dead_code") {
+            continue;
+        }
+        // A `dead_code` outside an attribute is prose about one, not one.
+        let Some(attribute) = attribute_around(&lines, index) else {
+            continue;
+        };
+        // Whitespace is stripped so the check does not depend on how the
+        // attribute happens to be spaced, or on where rustfmt broke it.
+        let packed: String = attribute.chars().filter(|c| !c.is_whitespace()).collect();
+        let line = index + 1;
+        if packed.contains("allow(dead_code") {
+            found.push(DeadCode::Allowed { line });
+        }
+        if packed.contains("expect(dead_code") {
+            found.push(match reason_of(&attribute) {
+                None => DeadCode::Unexplained { line },
+                Some(reason) => DeadCode::Expected {
+                    line,
+                    named: reason_steps(reason),
+                },
+            });
+        }
+    }
+    found
+}
+
+/// The whole attribute the `dead_code` on `lines[anchor]` belongs to, joined
+/// into one string; `None` where the token is in no attribute at all.
+fn attribute_around(lines: &[&str], anchor: usize) -> Option<String> {
+    let start = (anchor.saturating_sub(ATTRIBUTE_LINES)..=anchor)
+        .rev()
+        .find(|&index| opens_attribute(lines[index]))?;
+    let mut joined = String::new();
+    let mut end = start;
+    for (offset, line) in lines.iter().skip(start).take(ATTRIBUTE_LINES).enumerate() {
+        joined.push_str(line);
+        joined.push(' ');
+        end = start + offset;
+        if line.contains(")]") {
+            break;
+        }
+    }
+    // The attribute has to be the one the token is in, and not one that closed
+    // a few lines above prose mentioning it.
+    (anchor <= end).then_some(joined)
+}
+
+/// Whether a line opens an attribute, inner (`#![…]`) or outer (`#[…]`).
+fn opens_attribute(line: &str) -> bool {
+    line.contains("#[") || line.contains("#![")
+}
+
+/// The `reason = "…"` an attribute carries, if it carries a non-empty one.
+fn reason_of(attribute: &str) -> Option<&str> {
+    let (_, rest) = attribute.split_once("reason")?;
+    let (_, rest) = rest.split_once('"')?;
+    let (reason, _) = rest.split_once('"')?;
+    (!reason.is_empty()).then_some(reason)
+}
+
+/// Every step-shaped token a `reason` names, in the order it names them.
+///
+/// A reason is prose — `"adopted at 8.3, by the bootstrap that reads it"` — so
+/// the step is found rather than parsed: split on everything a step number is
+/// not, then shed the sentence punctuation a number at the end of a clause
+/// wears. A version like `1.0.107` is not step-shaped and does not survive.
+fn reason_steps(reason: &str) -> Vec<String> {
+    reason
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .map(|token| token.trim_matches('.'))
+        .filter(|token| is_step(token))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Why a `dead_code` annotation is not one rule 1 permits, if it is not.
+fn dead_code_reason(mention: &DeadCode, steps: &BTreeMap<String, bool>) -> Option<String> {
+    match mention {
+        DeadCode::Allowed { .. } => Some(
+            "`allow(dead_code)` is not permitted under `src/`: code with no caller reachable \
+             from `main` does not get committed"
+                .to_string(),
+        ),
+        DeadCode::Unexplained { .. } => Some(
+            "`expect(dead_code)` must carry a `reason` naming the step that reads the item; \
+             without one it is an `allow` that gets past this check"
+                .to_string(),
+        ),
+        DeadCode::Expected { named, .. } if named.is_empty() => Some(format!(
+            "this `reason` names no step, so nothing in {STEPS} clears it: name the step that \
+             reads the item, as `reason = \"read at <step>\"`"
+        )),
+        DeadCode::Expected { named, .. } => {
+            let undefined = named
+                .iter()
+                .filter(|step| matches!(step_state(step, steps), Some(Spent::Undefined)))
+                .cloned()
+                .collect::<Vec<String>>();
+            if !undefined.is_empty() {
+                return Some(format!(
+                    "this `reason` names {}, which {STEPS} does not define, so nothing will \
+                     ever clear the annotation",
+                    undefined.join(" and ")
+                ));
+            }
+            // Every step named is defined, so the annotation is live while any
+            // one of them is still open to read the item.
+            named
+                .iter()
+                .all(|step| step_state(step, steps).is_some())
+                .then(|| {
+                    format!(
+                        "step {} is done and the item is still unread: the caller never \
+                         arrived, so delete the item, or name the step that does read it",
+                        named.join(" and ")
+                    )
+                })
+        }
+    }
 }
 
 /// Every way a line names the filesystem, with what it named.
@@ -318,6 +447,28 @@ fn step_status(steps: &str) -> BTreeMap<String, bool> {
         .collect()
 }
 
+/// Why a step named by an annotation can no longer clear it.
+///
+/// Three checks ask [`STEPS`] the same two questions — the `CARRY` markers, rule
+/// 12's withheld options, and rule 1's expectations — so the questions are asked
+/// once here and each caller says what its own remedy is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Spent {
+    /// [`STEPS`] defines no such step, so nothing will ever clear the note.
+    Undefined,
+    /// The step is marked ✅, so whatever it was going to do, it did.
+    Done,
+}
+
+/// Why `step` is no longer an open step in [`STEPS`], if it is not.
+fn step_state(step: &str, steps: &BTreeMap<String, bool>) -> Option<Spent> {
+    match steps.get(step) {
+        None => Some(Spent::Undefined),
+        Some(true) => Some(Spent::Done),
+        Some(false) => None,
+    }
+}
+
 /// Why `mention` is not a live carry-forward note, if it is not one.
 fn spent_reason(mention: &Mention, steps: &BTreeMap<String, bool>) -> Option<String> {
     match mention {
@@ -326,12 +477,11 @@ fn spent_reason(mention: &Mention, steps: &BTreeMap<String, bool>) -> Option<Str
              clear it"
                 .to_string(),
         ),
-        Mention::Marker { step, .. } => match steps.get(step) {
-            None => Some(format!("`CARRY({step})` names no step in {STEPS}")),
-            Some(true) => Some(format!(
+        Mention::Marker { step, .. } => match step_state(step, steps)? {
+            Spent::Undefined => Some(format!("`CARRY({step})` names no step in {STEPS}")),
+            Spent::Done => Some(format!(
                 "step {step} is done: route the note to whoever reads it next, or delete it"
             )),
-            Some(false) => None,
         },
     }
 }
@@ -359,13 +509,12 @@ fn step_literals(source: &str) -> Vec<(usize, String)> {
 /// Why a step named by [`UNSUPPORTED`] is no longer one to withhold an option
 /// for, if it is not.
 fn live_step_reason(step: &str, steps: &BTreeMap<String, bool>) -> Option<String> {
-    match steps.get(step) {
-        None => Some(format!("`{step}` names no step in {STEPS}")),
-        Some(true) => Some(format!(
+    match step_state(step, steps)? {
+        Spent::Undefined => Some(format!("`{step}` names no step in {STEPS}")),
+        Spent::Done => Some(format!(
             "step {step} is done, so the option it withholds is live: delete the entry, or \
              the option is refused after it works"
         )),
-        Some(false) => None,
     }
 }
 
@@ -451,13 +600,28 @@ fn recorded_steps() -> BTreeMap<String, bool> {
 
 #[test]
 fn src_dead_code_annotations_follow_rule_one() {
-    let mut failures = Vec::new();
+    let mut found = Vec::new();
     for path in rust_sources("src") {
         let source = fs::read_to_string(&path).expect("a readable source file");
-        for (line, message) in dead_code_violations(&source) {
-            failures.push(format!("{}:{line}: {message}", display(&path)));
+        for mention in dead_code_mentions(&source) {
+            found.push((path.clone(), mention));
         }
     }
+
+    // With no annotations there is no step to judge, which is also what lets
+    // this check outlive `rewrite/` — see that directory's README.
+    if found.is_empty() {
+        return;
+    }
+
+    let steps = recorded_steps();
+    let failures: Vec<String> = found
+        .iter()
+        .filter_map(|(path, mention)| {
+            let reason = dead_code_reason(mention, &steps)?;
+            Some(format!("{}:{}: {reason}", display(path), mention.line()))
+        })
+        .collect();
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
 }
 
@@ -469,22 +633,141 @@ fn allow_dead_code_is_rejected_however_it_is_spelled() {
         "#[allow( dead_code )]",
         "#[allow(dead_code, unused)]",
         "#[cfg_attr(test, allow(dead_code))]",
+        "#[allow(\n    dead_code\n)]",
     ] {
-        assert_eq!(dead_code_violations(source).len(), 1, "{source}");
+        let mentions = dead_code_mentions(source);
+        assert!(
+            matches!(&mentions[..], [DeadCode::Allowed { .. }]),
+            "{source}: {mentions:?}"
+        );
+        assert!(
+            dead_code_reason(&mentions[0], &fixture_steps()).is_some(),
+            "{source}"
+        );
     }
 }
 
 #[test]
-fn expect_dead_code_is_accepted_only_with_a_filled_reason() {
-    let live = r#"#[expect(dead_code, reason = "5.6 gates on conditions")]"#;
-    assert!(dead_code_violations(live).is_empty(), "{live}");
+fn an_annotation_is_seen_however_rustfmt_broke_it_up() {
+    // Copied from `src/manifest/mod.rs`, where rustfmt broke the attribute up
+    // because the reason made it too long to fit. Three of the five annotations
+    // under `src/` are in this form, and the line-oriented scan 4.6 replaced saw
+    // none of them.
+    let wrapped = "    #[expect(\n\
+                   \x20       dead_code,\n\
+                   \x20       reason = \"walked at 1.3, to reject an entry setting both \
+                   conditions\"\n\
+                   \x20   )]\n";
+    let mentions = dead_code_mentions(wrapped);
+    assert!(
+        matches!(&mentions[..], [DeadCode::Expected { line: 2, named }] if *named == ["1.3"]),
+        "{mentions:?}"
+    );
+    assert_eq!(dead_code_reason(&mentions[0], &fixture_steps()), None);
+}
 
+#[test]
+fn expect_dead_code_is_accepted_only_with_a_filled_reason() {
     for source in [
         "#[expect(dead_code)]",
         r#"#[expect(dead_code, reason = "")]"#,
+        "#[expect(\n    dead_code\n)]",
     ] {
-        assert_eq!(dead_code_violations(source).len(), 1, "{source}");
+        let mentions = dead_code_mentions(source);
+        assert!(
+            matches!(&mentions[..], [DeadCode::Unexplained { .. }]),
+            "{source}: {mentions:?}"
+        );
+        assert!(
+            dead_code_reason(&mentions[0], &fixture_steps()).is_some(),
+            "{source}"
+        );
     }
+}
+
+#[test]
+fn an_expectation_is_live_while_the_step_that_reads_the_item_is_open() {
+    let live = r#"#[expect(dead_code, reason = "read at 1.3, by the caller it is written for")]"#;
+    let mentions = dead_code_mentions(live);
+    assert_eq!(dead_code_reason(&mentions[0], &fixture_steps()), None);
+}
+
+#[test]
+fn an_expectation_whose_step_is_done_is_rejected() {
+    // The gap the by-the-end-of-the-slice reading opens: the compiler deletes
+    // the note when the caller lands and says nothing when it never does.
+    let stale = r#"#[expect(dead_code, reason = "read at 0.13, which the fixture marks done")]"#;
+    let mentions = dead_code_mentions(stale);
+    assert!(
+        dead_code_reason(&mentions[0], &fixture_steps()).is_some(),
+        "{mentions:?}"
+    );
+}
+
+#[test]
+fn an_expectation_naming_no_step_at_all_is_rejected() {
+    let prose = r#"#[expect(dead_code, reason = "the bootstrap will want this one day")]"#;
+    let mentions = dead_code_mentions(prose);
+    assert!(
+        matches!(&mentions[..], [DeadCode::Expected { named, .. }] if named.is_empty()),
+        "{mentions:?}"
+    );
+    assert!(dead_code_reason(&mentions[0], &fixture_steps()).is_some());
+}
+
+#[test]
+fn an_expectation_naming_a_step_that_does_not_exist_is_rejected() {
+    // 0.10 absorbed 0.9, so no bullet defines it and nothing would ever clear
+    // an expectation pointing at it.
+    let orphan = r#"#[expect(dead_code, reason = "read at 0.9, a step that no longer exists")]"#;
+    let mentions = dead_code_mentions(orphan);
+    assert!(
+        dead_code_reason(&mentions[0], &fixture_steps()).is_some(),
+        "{mentions:?}"
+    );
+}
+
+#[test]
+fn an_expectation_naming_two_steps_is_live_while_either_is_open() {
+    let both = r#"#[expect(dead_code, reason = "read at 0.13 and again at 1.3")]"#;
+    let mentions = dead_code_mentions(both);
+    assert!(
+        matches!(&mentions[..], [DeadCode::Expected { named, .. }] if *named == ["0.13", "1.3"]),
+        "{mentions:?}"
+    );
+    // 1.3 is still open, so a step is still coming that reads the item.
+    assert_eq!(dead_code_reason(&mentions[0], &fixture_steps()), None);
+}
+
+#[test]
+fn a_step_is_found_in_a_reason_however_it_is_punctuated() {
+    // The two forms in the tree today, a step ending a sentence, and a version
+    // number, which is not step-shaped.
+    assert_eq!(
+        reason_steps("adopted at 8.3, by the bootstrap that reads it"),
+        ["8.3"]
+    );
+    assert_eq!(
+        reason_steps("walked at 5.6, to reject an entry setting both conditions"),
+        ["5.6"]
+    );
+    assert_eq!(reason_steps("the caller lands at 4.5."), ["4.5"]);
+    assert!(reason_steps("wanted by proc-macro2 1.0.107").is_empty());
+}
+
+#[test]
+fn a_dead_code_outside_an_attribute_is_not_an_annotation() {
+    // Rule 1 is discussed in prose in the modules it governs, and a doc comment
+    // saying `dead_code` is not one.
+    let prose = "//! `allow(dead_code)` is what the old crate carried eight of.\n";
+    assert!(dead_code_mentions(prose).is_empty(), "{prose}");
+
+    // The same prose below an annotation that has already closed, which the
+    // backward search would otherwise reach and count twice.
+    let below = "#[expect(dead_code, reason = \"read at 1.3\")]\n\
+                 pub struct Entry;\n\
+                 /// Not to be confused with allow(dead_code).\n";
+    assert_eq!(dead_code_mentions(below).len(), 1, "{below}");
 }
 
 #[test]
