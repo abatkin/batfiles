@@ -62,7 +62,7 @@ pub(crate) struct GlobalOptions {
     #[arg(long, global = true, value_name = "WHEN", value_enum)]
     pub color: Option<ColorChoice>,
 
-    /// Select the leaf repository (defaults to dotfiles under the selected home)
+    /// Select the leaf repository (defaults to the current repository, then home/dotfiles)
     #[arg(long, global = true, value_name = "PATH")]
     pub batfiles_dir: Option<PathBuf>,
 

@@ -58,9 +58,12 @@ fn a_location_option_outranks_its_variable() {
 fn the_leaf_repository_defaults_under_the_selected_home() {
     let tree = Tree::new();
     let default = tree.repository("home/dotfiles");
+    let working = tree.path("working");
+    std::fs::create_dir(&working).expect("a working directory");
     let assertion = tree
         .batfiles()
         .env_remove("BATFILES_DIR")
+        .current_dir(working)
         .args(["sync", "-v"])
         .assert()
         .success();
@@ -68,6 +71,134 @@ fn the_leaf_repository_defaults_under_the_selected_home() {
     assert!(
         stderr.contains(&format!("repository: {}", display(&default))),
         "unexpected default:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_manifest_in_the_working_directory_selects_that_repository() {
+    let tree = Tree::new();
+    let working = tree.repository("working");
+    let assertion = tree
+        .batfiles()
+        .env_remove("BATFILES_DIR")
+        .current_dir(&working)
+        .args(["sync", "-v"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!("repository: {}", display(&working))),
+        "the working directory was not selected:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_repository_option_outranks_the_working_directory() {
+    let tree = Tree::new();
+    let working = tree.repository("working");
+    let selected = tree.repository("selected");
+    let assertion = tree
+        .batfiles()
+        .env_remove("BATFILES_DIR")
+        .current_dir(working)
+        .args(["sync", "-v", "--batfiles-dir"])
+        .arg(&selected)
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!("repository: {}", display(&selected))),
+        "--batfiles-dir did not win:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_repository_variable_outranks_the_working_directory() {
+    let tree = Tree::new();
+    let working = tree.repository("working");
+    let selected = tree.path("repo");
+    let assertion = tree
+        .batfiles()
+        .current_dir(working)
+        .args(["sync", "-v"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!("repository: {}", display(&selected))),
+        "BATFILES_DIR did not win:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_invalid_working_directory_manifest_does_not_fall_through() {
+    let tree = Tree::new();
+    tree.repository("home/dotfiles");
+    let working = tree.repository("working");
+    std::fs::write(working.join("batfiles.toml"), "[").expect("an invalid manifest");
+    let assertion = tree
+        .batfiles()
+        .env_remove("BATFILES_DIR")
+        .current_dir(&working)
+        .arg("sync")
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&display(&working.join("batfiles.toml")))
+            && stderr.contains("invalid TOML"),
+        "the working repository did not fail by name:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_command_that_does_not_use_the_repository_works_from_a_deleted_directory() {
+    let tree = Tree::new();
+    let working = tree.path("deleted-working-directory");
+    std::fs::create_dir(&working).expect("a working directory");
+    let assertion = assert_cmd::Command::new("sh")
+        .args([
+            "-c",
+            "cd \"$1\" && rmdir \"$1\" && exec \"$2\" disable-action vim",
+            "batfiles-deleted-cwd",
+        ])
+        .arg(&working)
+        .arg(env!("CARGO_BIN_EXE_batfiles"))
+        .env_remove("BATFILES_COLOR")
+        .env_remove("NO_COLOR")
+        .env("BATFILES_HOME", tree.path("home"))
+        .env_remove("BATFILES_DIR")
+        .env("BATFILES_CONFIG_DIR", tree.path("config"))
+        .env("BATFILES_CACHE_DIR", tree.path("cache"))
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("disabled action `vim`"),
+        "the state-only command did not run:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_command_that_does_not_use_the_repository_does_not_report_one() {
+    let tree = Tree::new();
+    let working = tree.repository("working");
+    let assertion = tree
+        .batfiles()
+        .env_remove("BATFILES_DIR")
+        .current_dir(working)
+        .args(["disable-action", "vim", "-v"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        !stderr.contains("repository:"),
+        "an unused repository was reported:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("config:     {}", display(&tree.path("config")))),
+        "the command's config root was not reported:\n{stderr}"
     );
 }
 

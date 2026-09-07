@@ -193,7 +193,8 @@ dest-dir = "~"
 dot-prefix = true
 ```
 
-With that repository at `~/dotfiles`, which is where batfiles looks by default:
+With that repository at `~/dotfiles`, which is the fallback when the current
+directory has no `batfiles.toml`:
 
 ```console
 $ batfiles sync
@@ -208,6 +209,11 @@ linked /home/you/.ackrc -> /home/you/dotfiles/files/ackrc
 linked /home/you/.curlrc -> /home/you/dotfiles/files/curlrc
 linked /home/you/.inputrc -> /home/you/dotfiles/files/inputrc
 ```
+
+You can also run `batfiles sync` from the root of any repository containing a
+`batfiles.toml`; explicit `--batfiles-dir` and `BATFILES_DIR` selections take
+precedence. The full order is documented under
+[location selection](docs/environment.md#location-selection).
 
 Missing parent directories are created. Run it again and it says nothing at
 all, because nothing changed; `-v` reports what it looked at, and heads each

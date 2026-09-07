@@ -84,7 +84,10 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
   entries. Validate the default-disabled lists and remove the expectations
   naming this step; entry IDs remain unread until adoption at 8.3.
 - **5.7** Make unevaluable conditions close the gate and warn, in both spellings.
-- **5.8** Add `vars list`.
+- **5.8** Add `vars list`. Separate repository-required roots from state-only
+  roots so a state-only resolution cannot carry an unselected batfiles
+  directory; normal listing reads the leaf repository while `--machine-only`
+  does not.
 
 ## Slice 6 — Git remotes, materialization only
 

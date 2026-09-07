@@ -20,16 +20,17 @@ Only `batfiles.toml` has intrinsic meaning. Every other name in the tree becomes
 meaningful when an action references it, and means nothing on its own.
 
 The **leaf repository** is the one a command works on, selected by
-`--batfiles-dir` or `BATFILES_DIR` and defaulting to `<selected-home>/dotfiles`;
-see [location selection](environment.md#location-selection). A remote repository
-may carry its own `batfiles.toml`, and nothing reads one yet.
+`--batfiles-dir` or `BATFILES_DIR`, then by a `batfiles.toml` in the current
+directory, and finally by `<selected-home>/dotfiles`; see
+[location selection](environment.md#location-selection). A remote repository may
+carry its own `batfiles.toml`, and nothing reads one yet.
 
 ## Reading the manifest
 
-`sync` reads the leaf manifest, and it is the only command that does. A command
-that never opens it cannot be failed by it: a malformed manifest does not stop
-an enable, a disable, or a `vars` lookup, all of which work on machine-local
-state instead.
+`sync`, `apply-action`, and `apply-group` read the leaf manifest. A command that
+never opens it cannot be failed by it: a malformed manifest does not stop an
+enable, a disable, or a `vars` lookup, all of which work on machine-local state
+instead.
 
 The rules below are written for the manifest, and every document batfiles reads
 follows them — with one exception, noted where it applies: a missing [state

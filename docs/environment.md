@@ -29,11 +29,12 @@ command still reads or acts on only the roots it needs, and a command that needs
 none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
-Three of the four are live so far. `sync` opens the `batfiles.toml` in the leaf
-repository and the [`disabled.toml`](state.md) under the config directory, and
-installs into the selected home; the enable and disable commands rewrite
-`disabled.toml` and open nothing else. Only the cache directory is still an
-answer to where a command *would* work. All four roots are resolved together.
+Three of the four are live so far. `sync` and the two apply commands open the
+`batfiles.toml` in the leaf repository and the
+[`disabled.toml`](state.md) under the config directory, and install into the
+selected home; the enable and disable commands rewrite `disabled.toml` and open
+nothing else. Only the cache directory is still an answer to where a command
+*would* work. All four roots are resolved together.
 
 ## Run-only skips
 
@@ -65,13 +66,30 @@ entry; on Windows `%USERPROFILE%` when it is set and non-empty, otherwise the
 user's profile directory as reported by the OS.
 
 Failure to determine a home directory for a command that needs one is fatal.
-Batfiles does not silently use the current directory.
+Batfiles does not silently use the current directory as the destination home.
 
 The leaf repository is selected in this order:
 
 ```text
---batfiles-dir > BATFILES_DIR > <selected-home>/dotfiles
+--batfiles-dir
+> BATFILES_DIR
+> current directory when it contains batfiles.toml
+> <selected-home>/dotfiles
 ```
+
+Working-directory discovery checks only `./batfiles.toml`; it does not search
+parent directories or test whether the manifest is valid. Once that file
+selects the repository, a command that reads it reports an unreadable,
+malformed, or invalid manifest instead of falling through to
+`<selected-home>/dotfiles`. Changing the working directory can therefore change
+the selected repository when neither explicit repository input is set.
+
+Only commands that read the leaf repository perform this discovery. An enable
+or disable command, for example, does not inspect the working directory. When a
+command does need the repository and has no explicit repository selection,
+failure to determine the working directory or inspect `./batfiles.toml` is
+fatal: batfiles cannot tell whether the working-directory precedence entry
+applies, so it does not silently choose `<selected-home>/dotfiles`.
 
 The config directory is selected in this order:
 
@@ -94,8 +112,8 @@ The cache directory is selected independently in this order:
 The config and cache directories hold batfiles' own machine-local state rather
 than installed content, so their home-based fallbacks use the invoking user's OS
 home directory (`<os-home>`, the same home used when `--home-dir` is absent) and
-do **not** follow `--home-dir` or `BATFILES_HOME`. Only the leaf-repository
-default, `<selected-home>/dotfiles`, tracks the selected home. To root config or
+do **not** follow `--home-dir` or `BATFILES_HOME`. The leaf repository's final
+fallback, `<selected-home>/dotfiles`, tracks the selected home. To root config or
 cache under an alternate install home, set `--config-dir`/`--cache-dir` or the
 corresponding `XDG_*`/`BATFILES_*` variable explicitly.
 
@@ -106,8 +124,11 @@ The OS home is consulted only when a root still needs it. Selecting every root
 explicitly — including by way of `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME` —
 therefore works even where no home directory can be determined at all.
 
-`batfiles <command> -v` prints the four resolved roots, which is the way to
-check what a given combination of options and variables selected.
+`batfiles <command> -v` prints the resolved roots. Commands that read a leaf
+repository include a `repository:` line; commands that do not read one omit the
+line because working-directory discovery did not select a repository. This is
+the way to check what a given combination of options and variables selected for
+that command.
 
 ## Color
 

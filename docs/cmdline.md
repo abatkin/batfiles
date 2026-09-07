@@ -73,13 +73,14 @@ directory and does not use any selected roots.
 | `-v`, `--verbose`               | Increase diagnostic detail. May be repeated, such as `-vv`.                                                       |
 | `-q`, `--quiet`                 | Suppress informational output and leave errors or explicitly requested data. Mutually exclusive with `--verbose`. |
 | `--color <auto\|always\|never>` | Control colored output. Defaults to `auto`; see [color selection](environment.md#color).                          |
-| `--batfiles-dir <path>`         | Select the leaf repository. Defaults to `<selected-home>/dotfiles`.                                               |
+| `--batfiles-dir <path>`         | Select the leaf repository. See [location selection](environment.md#location-selection) for its fallbacks.                         |
 | `--home-dir <path>`             | Select the destination home directory. Defaults to the current user's home directory.                             |
 | `--config-dir <path>`           | Select the directory containing `vars.toml` and `disabled.toml`. Defaults to the XDG config location.             |
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
 
 `--color` and the four location options have their full effect. `--verbose` at
-one level prints the resolved roots, and the destinations `sync` left alone
+one level prints the resolved roots; the `repository:` line appears only for a
+command that reads one. It also prints the destinations `sync` left alone
 because they were already correct. `--quiet` suppresses the lines saying what
 `sync` did, and nothing else.
 
@@ -411,7 +412,7 @@ That is a promise about the plan and not about a directory: batfiles' own
 bookkeeping runs in both modes, so a dry run is not a promise that the process
 writes nothing anywhere — it is a promise that none of the plan it prints is
 carried out. "Nothing under the home changes" would be both weaker and false,
-since the repository defaults to `<selected-home>/dotfiles`.
+since the repository can default to `<selected-home>/dotfiles`.
 
 A dry run's lines are the real run's lines in a different tense: `would link`
 and `would copy` where a real run reports `linked` and `copied`. Order and

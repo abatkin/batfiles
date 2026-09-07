@@ -12,7 +12,10 @@ use crate::disabled::{self, Change, DisabledList};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::execute;
-use crate::location::{LocationInputs, Roots, detect_os_home, resolve_roots};
+use crate::location::{
+    LocationInputs, RepositoryUse, Roots, detect_os_home, discover_working_repository,
+    resolve_roots,
+};
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
 
@@ -81,7 +84,7 @@ fn dispatch(
         // `init` works on the current directory, so it resolves no roots either.
         Command::Init(_) => Ok(unimplemented(reporter, name)),
         Command::Sync(args) => {
-            let roots = locate(cli, env, reporter)?;
+            let roots = locate_repository(cli, env, reporter)?;
             execute::sync(
                 &roots,
                 RunMode::new(args.dry_run),
@@ -93,12 +96,12 @@ fn dispatch(
             Ok(ExitCode::SUCCESS)
         }
         Command::ApplyAction(args) => {
-            let roots = locate(cli, env, reporter)?;
+            let roots = locate_repository(cli, env, reporter)?;
             execute::apply_action(&roots, RunMode::new(args.dry_run), &args.id, env, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::ApplyGroup(args) => {
-            let roots = locate(cli, env, reporter)?;
+            let roots = locate_repository(cli, env, reporter)?;
             execute::apply_group(
                 &roots,
                 RunMode::new(args.dry_run),
@@ -141,7 +144,7 @@ fn dispatch(
             DisabledList::Groups,
             Change::Enable,
         ),
-        _ => {
+        Command::Clone(_) | Command::Vars(_) => {
             locate(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }
@@ -164,8 +167,30 @@ fn edit_disabled_list(
 
 /// Resolve the roots a command works in, and report them at `-v`.
 fn locate(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
-    let roots = resolve_roots(&locations(&cli.global), env, detect_os_home)?;
-    report_roots(reporter, &roots);
+    locate_with_repository_use(cli, env, reporter, RepositoryUse::Unused)
+}
+
+/// Resolve roots for a command that reads the leaf repository.
+fn locate_repository(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
+    locate_with_repository_use(cli, env, reporter, RepositoryUse::Required)
+}
+
+/// Resolve and report roots, discovering the working repository only for a
+/// command that uses it.
+fn locate_with_repository_use(
+    cli: &Cli,
+    env: &Environment,
+    reporter: &Reporter,
+    repository_use: RepositoryUse,
+) -> Result<Roots, Error> {
+    let roots = resolve_roots(
+        &locations(&cli.global),
+        env,
+        repository_use,
+        discover_working_repository,
+        detect_os_home,
+    )?;
+    report_roots(reporter, &roots, repository_use);
     Ok(roots)
 }
 
@@ -180,12 +205,17 @@ fn locations(global: &GlobalOptions) -> LocationInputs {
     }
 }
 
-/// Report where a command decided to work. Four inputs with four fallbacks
-/// apiece are hard to reason about from the outside, so `-v` shows the answer
-/// rather than leaving it to be inferred.
-fn report_roots(reporter: &Reporter, roots: &Roots) {
+/// Report where a command decided to work. The location precedence is hard to
+/// reason about from the outside, so `-v` shows the answer rather than leaving
+/// it to be inferred.
+fn report_roots(reporter: &Reporter, roots: &Roots, repository_use: RepositoryUse) {
+    if matches!(repository_use, RepositoryUse::Required) {
+        reporter.detail(
+            1,
+            &format!("{:<12}{}", "repository:", roots.batfiles_dir.display()),
+        );
+    }
     for (label, path) in [
-        ("repository:", &roots.batfiles_dir),
         ("home:", &roots.home),
         ("config:", &roots.config_dir),
         ("cache:", &roots.cache_dir),
