@@ -21,6 +21,7 @@ mod output;
 mod paths;
 mod selection;
 mod tomlfile;
+mod var;
 
 use std::process::ExitCode;
 

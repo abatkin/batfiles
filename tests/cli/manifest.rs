@@ -69,11 +69,98 @@ fn rejected(manifest: &str) -> String {
 fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
     // The document is closed, so a section batfiles will understand later is an
     // error now rather than something that looks as though it took effect.
-    let stderr = rejected("[vars]\nwork = \"true\"\n");
+    // `[remotes]` arrives at 6.1 and is the last of the two this covered.
+    let stderr = rejected("[remotes]\ncore = { type = \"git\" }\n");
     assert!(
-        stderr.contains("vars"),
+        stderr.contains("remotes"),
         "the section was not named:\n{stderr}"
     );
+}
+
+// `[vars]`: static values a later step reads. The section is accepted and
+// checked as the manifest is read, and nothing reads it yet, so the tests below
+// are about what the document will and will not take.
+
+#[test]
+fn a_vars_section_is_accepted_and_changes_nothing() {
+    // Variables feed conditions and nothing else, and conditions arrive at 5.6.
+    // So a run over a manifest declaring them installs exactly what it would
+    // have installed without them.
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        "[vars]\nwork = \"false\"\nprofile = \"personal\"\n_rank = \"3\"\nempty = \"\"\n\n{}",
+        one_create_dir("~/.config")
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert!(
+        tree.home(".config").is_dir(),
+        "the run did not install what the manifest asked for"
+    );
+}
+
+#[test]
+fn a_variable_name_follows_its_own_rule_rather_than_the_id_rule() {
+    // The two rules genuinely differ, and a manifest author holding the ID rule
+    // in mind is the one who needs telling: `oh-my-zsh` is a fine action ID and
+    // not a variable name.
+    for name in ["oh-my-zsh", "1up", "has.dot"] {
+        let stderr = rejected(&format!("[vars]\n\"{name}\" = \"x\"\n"));
+        for expected in [name, "a variable name must start with"] {
+            assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+        }
+    }
+}
+
+#[test]
+fn a_name_the_expression_language_owns_is_rejected() {
+    // Reserving these is what keeps 5.5's namespace lookup unambiguous, and the
+    // refusal has to land now: a name accepted here and refused there would
+    // break a manifest that already loaded.
+    for reserved in ["facts", "env", "vars", "true", "false"] {
+        let stderr = rejected(&format!("[vars]\n{reserved} = \"x\"\n"));
+        assert!(
+            stderr.contains("reserved by the expression language"),
+            "`{reserved}` was accepted:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_value_that_is_not_a_string_is_rejected_where_it_is_written() {
+    // Every variable value is a string, so the types a TOML author reaches for
+    // are refused rather than converted. The diagnostic is serde's, and what
+    // makes it enough is the position: it underlines the value itself.
+    for (document, line) in [
+        ("[vars]\nwork = true\n", "line 2"),
+        ("[vars]\nrank = 3\n", "line 2"),
+        ("[vars]\nnames = [\"a\"]\n", "line 2"),
+    ] {
+        let stderr = rejected(document);
+        for expected in ["expected a string", line] {
+            assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+        }
+    }
+}
+
+// CARRY(9.1): dynamic variables are declared as a table under `[vars]`, so this
+// is the assertion that step replaces.
+#[test]
+fn a_dynamic_variable_declaration_is_rejected_in_both_spellings() {
+    // A table under `[vars]` is a dynamic-variable declaration, which arrives at
+    // 9.1. Until then it is refused as the non-string value it is, rather than
+    // parsed into a record nothing would ever run.
+    for document in [
+        "[vars.has_op]\ncommand = [\"sh\", \"-c\", \"command -v op\"]\ncache = \"1h\"\n",
+        "[vars]\nhas_op = { command = [\"sh\", \"-c\", \"command -v op\"] }\n",
+    ] {
+        let stderr = rejected(document);
+        assert!(
+            stderr.contains("expected a string"),
+            "the declaration was accepted:\n{stderr}"
+        );
+    }
 }
 
 // `[default-disabled]`: candidates a later bootstrap adopts. The section is

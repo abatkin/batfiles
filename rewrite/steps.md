@@ -66,8 +66,7 @@ See [retirement](docs.md#retirement-at-slice-8) for the slice 8 transition.
 Use one flat scope, as specified under [Variables](guidance.md#variables).
 Reference paths and reusable parsers are listed in [keep.md](keep.md).
 
-- **5.1** Add static string `[vars]` values and `VarName`. Update the manifest
-  schema's list of rejected sections.
+- **5.1** ✅ Add static string `[vars]` values and `VarName`.
 - **5.2** Add `vars.toml` and `vars set`, `get`, and `unset`. Add requested-data
   output to `Reporter`: stdout, unlabeled, uncolored, and unaffected by quiet.
 - **5.3** Add `BATFILES_VAR_*` and `--var`. Ignore a bare `BATFILES_VAR_`, preserve

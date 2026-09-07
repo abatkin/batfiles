@@ -4,7 +4,8 @@ These documents describe unbuilt features and bind no implementation. Use them
 as context when a current task requires the behavior. Promote completed sections
 according to [documentation ownership](../../rewrite/docs.md).
 
-- [Repository format](repoformat.md): remotes, conditions, variables, and filters.
+- [Repository format](repoformat.md): remotes, conditions, dynamic variables,
+  and filters.
 - [Command-line surface](cmdline.md): unimplemented commands and options,
   additional address forms, and future dry-run behavior.
 - [Environment](environment.md): variable and bootstrap precedence.

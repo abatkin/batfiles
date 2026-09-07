@@ -9,7 +9,8 @@ defines promotion and placement during the rewrite.
 - [Command-line surface](cmdline.md): commands, options, selection, output,
   dry-run, and exit statuses.
 - [Environment](environment.md): environment parsing and location/color precedence.
-- [Repository format](repoformat.md): manifest schema, action fields, clone lists.
+- [Repository format](repoformat.md): manifest schema, action fields, static
+  variables, clone lists.
 - [Installation safety](safety.md): path resolution, destination handling,
   staging, permissions, archive validation, and Git updates.
 - [Local state](state.md): state schemas, lifecycle, and atomic replacement.

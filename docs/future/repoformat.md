@@ -44,9 +44,9 @@ single materialization at that path.
 
 The part of this section that runs — every section optional, no format-version
 field, and known records closed — is specified in
-[`docs/repoformat.md`](../repoformat.md), along with `[[actions]]` and
-`[default-disabled]`. The other two sections below parse in no repository yet:
-declaring one is an error until the code that reads it exists.
+[`docs/repoformat.md`](../repoformat.md), along with `[[actions]]`, `[vars]`, and
+`[default-disabled]`. `[remotes]` parses in no repository yet: declaring it is an
+error until the code that reads it exists.
 
 All top-level sections are optional:
 
@@ -76,31 +76,18 @@ The schema uses these reusable value shapes.
 
 ### String-valued variables
 
-**Variables exist only to feed conditions.** A variable is read by a `when` or
-an `unless` and nowhere else: no field of any action, remote, or manifest entry
-interpolates one, and the format has no interpolation syntax at all. Every rule
-below follows from that, and so does the tool's freedom to build actions long
-before it builds variables.
-
-Every variable value exposed by batfiles remains a string. This includes static
-repository values, per-inclusion overrides, persisted and one-shot overrides,
-dynamic-command results, facts, and host environment values. Batfiles does not
-infer types from their contents.
+That a variable is read only by a condition, and that a static `[vars]` value is
+a string and nothing else, are specified in
+[`docs/repoformat.md`](../repoformat.md#variables). The rule extends to every
+other layer that can produce a variable, none of which is built: per-inclusion
+overrides, persisted and one-shot overrides, dynamic-command results, facts, and
+host environment values are strings too, and batfiles does not infer types from
+their contents.
 
 There is one exception, and it is enumerated rather than heuristic: a
 [condition](#condition) is where a string has to become a decision, so a value
 used in a boolean context is read through the fixed
 [truthiness table](#truthiness). Nothing else re-types a value.
-
-A static repository value is therefore a TOML string:
-
-```text
-VariableValue = string
-```
-
-Booleans, integers, floats, dates, arrays, and arbitrary tables are not static
-variable values. A table under `[vars]` is interpreted as a dynamic-variable
-declaration rather than a value.
 
 ### Condition
 
@@ -269,21 +256,18 @@ exclude = ["private/*", "*.bak"]
 
 ### Names and IDs
 
-The ID rule itself, and action-ID uniqueness, are specified in
-[`docs/repoformat.md`](../repoformat.md#names-and-ids). The variable-name rule
-below and remote IDs are not built. Clone-list entry IDs follow the current
+The ID rule, action-ID uniqueness, and the variable-name rule are specified in
+[`docs/repoformat.md`](../repoformat.md#names-and-ids). Remote IDs are not built.
+Clone-list entry IDs follow the current
 [entry format](../repoformat.md#the-clone-list-format).
 
 ```text
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ```
 
-- User variable names match `[A-Za-z_][A-Za-z0-9_]*` and cannot be `facts`,
-  `env`, `vars`, `true`, or `false`. Reserving all five is what makes a
-  [condition](#condition)'s namespace lookup unambiguous without a precedence
-  rule: no user variable can shadow a namespace. The consequence to know about
-  is in `vars.toml`, whose keys are user variable names — a key literally named
-  `vars` there makes the whole file fail to load, not just that one entry.
+- The variable-name rule reaches one place that is not built: `vars.toml`, whose
+  keys are variable names, so a key literally named `vars` there makes the whole
+  file fail to load rather than just that one entry.
 - IDs and group names match `[A-Za-z0-9][A-Za-z0-9_-]*`. This rule applies to
   action IDs, `include-remote` IDs, manifest-entry IDs, remote IDs, and group
   names. In particular, an ID cannot contain whitespace, `.`, or `,`; dots are
@@ -360,8 +344,11 @@ and where its content is installed.
 
 ## Variables
 
-`[vars]` is a map from variable name to either a static string or a dynamic
-variable record.
+The static half of `[vars]` — the map, its name rule, and its string-only
+values — is specified in
+[`docs/repoformat.md`](../repoformat.md#variables). What is not built is the
+other value shape: a table is a dynamic variable record, which arrives at step
+9.1 and is rejected as a non-string value meanwhile.
 
 ```toml
 [vars]

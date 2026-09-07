@@ -5,6 +5,13 @@
 # The actions that need no symlink come first, so a platform that cannot make
 # one still runs them before the refusal stops the list.
 
+# What this repository would answer a condition with. Nothing reads them yet —
+# conditions arrive at 5.6 — so every action below runs whatever these say, and
+# the fixture's installed tree is the same with them as without them.
+[vars]
+work = "false"
+profile = "personal"
+
 # The shell writes its history here, and writing it is what fails if the
 # directory is missing — a directory nothing else in the manifest creates.
 [[actions]]

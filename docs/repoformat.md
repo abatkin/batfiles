@@ -1,8 +1,9 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, and the six kinds of action it can declare. The rest of the
-schema — remotes, variables, conditions, and the other action types — is in
+it is read, the static variables it can declare, and the nine kinds of action it
+can declare. The rest of the schema — remotes, conditions, dynamic variables,
+and the other action types — is in
 [`future/repoformat.md`](future/repoformat.md) until those records parse.
 
 ## Repository layout
@@ -61,11 +62,13 @@ batfiles owns is replaced when it changes is specified alongside that one, under
 
 ## Top-level schema
 
-There is no format-version field, and every top-level section is optional. Two
+There is no format-version field, and every top-level section is optional. Three
 sections exist:
 
 ```toml
 [[actions]]                # ordered list<Action>
+
+[vars]                     # map<variable name, string>
 
 [default-disabled]         # leaf bootstrap policy
 [[default-disabled.actions]]
@@ -74,10 +77,9 @@ sections exist:
 
 Known records are closed: an unknown key, in the document or in an action, is
 invalid. That is what a section from an unbuilt part of the format runs into.
-`[remotes]` and `[vars]` are specified in
-[`future/repoformat.md`](future/repoformat.md) and are rejected until the code
-that reads them exists, so a manifest declaring one fails rather than appearing
-to have been understood.
+`[remotes]` is specified in [`future/repoformat.md`](future/repoformat.md) and is
+rejected until the code that reads it exists, so a manifest declaring one fails
+rather than appearing to have been understood.
 
 ## Names and IDs
 
@@ -93,8 +95,20 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
   which was meant.
 - Group names and action IDs occupy distinct namespaces.
 
-User variable names follow a deliberately different rule, which arrives with
-variables.
+```text
+variable name = string matching [A-Za-z_][A-Za-z0-9_]*
+```
+
+- [Variable names](#variables) follow that deliberately different rule. An
+  underscore may start one and a hyphen may not appear in one, which is the
+  reverse of the ID rule on both counts: `_hidden` is a name and not an ID,
+  while `9front` and `oh-my-zsh` are IDs and not names. Neither rule stands in
+  for the other, and a manifest uses both.
+- `facts`, `env`, `vars`, `true`, and `false` cannot name a variable. They are
+  the expression language's own identifiers, and reserving all five is what
+  keeps a [condition](future/repoformat.md#condition)'s namespace lookup
+  unambiguous without a precedence rule: no variable can shadow a namespace.
+- Names are case-sensitive, so `editor` and `EDITOR` are two variables.
 
 ## Sources and destinations
 
@@ -835,6 +849,42 @@ collide, and a clone still lands under the name exactly as it is written.
 Every fault names the file, the line, and what is wrong with it, and the first
 one stops the run — a list with two mistakes reports the earlier one and the
 next run reports the rest, which is how the manifest's own rules behave.
+
+## Variables
+
+`[vars]` is a map from a [variable name](#names-and-ids) to a string:
+
+```toml
+[vars]
+work = "false"
+profile = "personal"
+rank = "3"
+```
+
+**Variables exist only to feed conditions.** A variable is read by a `when` or an
+`unless` and nowhere else: no field of any action interpolates one, and the
+format has no interpolation syntax at all. That is why a repository can declare
+them long before batfiles can act on them.
+
+**Every value is a string, and only a string.** Booleans, integers, floats,
+dates, and arrays are not variable values, so `work = true` and `rank = 3` are
+errors naming the line they are written on rather than values converted to
+`"true"` and `"3"`. Write the string. An empty value is a legitimate one. A
+*table* is not a value either: it is a dynamic-variable declaration, specified in
+[`future/repoformat.md`](future/repoformat.md#dynamic-variable-record) and
+rejected on the same terms until batfiles can run one.
+
+**Nothing reads the section yet, so declaring it changes no run.** Batfiles
+accepts it and checks it as the manifest is read; what consults a variable is a
+condition, and conditions are specified in
+[`future/repoformat.md`](future/repoformat.md#condition). Until they arrive, a
+`sync` over a manifest declaring variables installs exactly what it would have
+installed without them.
+
+What is checked is the name and the type of the value, both while the document is
+being read. The other three layers that can set a variable — `vars.toml`,
+`BATFILES_VAR_*`, and `--var` — are not built, so a name declared here is the
+only kind there is today.
 
 ## Default-disabled bootstrap entries
 

@@ -14,6 +14,7 @@ use crate::item::ItemId;
 use crate::manifest::action::Action;
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::tomlfile;
+use crate::var::VarName;
 
 /// A parsed `batfiles.toml`.
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,14 @@ pub(crate) struct Manifest {
     /// section that is a sequence rather than a map.
     #[serde(default)]
     pub actions: Vec<Action>,
+
+    /// Static variable values, keyed by name. Every value is a string: serde
+    /// settles both rules as the document is read, so a name that breaks the
+    /// rule and a value that is not a string each fail the document at the line
+    /// they are written on, and nothing here re-checks either.
+    #[expect(dead_code, reason = "merged at 5.4")]
+    #[serde(default)]
+    pub vars: BTreeMap<VarName, String>,
 
     /// What a fresh machine starts with switched off. Accepted and checked as
     /// the document is read; nothing acts on it.
