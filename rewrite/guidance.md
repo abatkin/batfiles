@@ -104,10 +104,14 @@ Every change goes on a branch; never commit directly to `main`. Name a branch
 for its step when applicable. Commit completed changes as you work, including
 corrections.
 
-Merge to `main` with a squash merge unless instructed otherwise. Describe the
-final behavior and rationale in the squash message, without recounting the
-branch's intermediate work. Delete the branch after merging unless instructed
-to keep it. A squash-merged branch may require `git branch -D`.
+**Merging is asked for, never assumed.** Finished work stops on its branch and
+says so; review may still be owed, and merging is what forecloses it. Do not
+merge because a step passed `task ci` or because the work reads as complete.
+
+When a merge is requested, squash it. Describe the final behavior and rationale
+in the squash message, without recounting the branch's intermediate work. Delete
+the branch after merging unless instructed to keep it. A squash-merged branch may
+require `git branch -D`.
 
 Do not merge from the salvage tag in [keep.md](keep.md).
 

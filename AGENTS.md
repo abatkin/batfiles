@@ -26,8 +26,10 @@ documents. Keep development history and design rationale in commit messages.
 ## Workflow
 
 Follow [How a slice lands](rewrite/guidance.md#how-a-slice-lands): work on a
-branch, commit completed changes, squash when merging to `main`, and remove the
-branch after merging unless instructed otherwise.
+branch and commit completed changes as you go. Leave finished work on its
+branch — merging to `main` happens only when it is asked for, since review may
+be owed first. A requested merge is squashed, and the branch is removed after it
+unless instructed otherwise.
 
 ## Canonical commands
 
