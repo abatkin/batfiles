@@ -177,9 +177,18 @@ mod tests {
         let Command::Sync(args) = cli.command else {
             panic!("expected sync");
         };
+        // Both survive, in the order they were written: the last-value-wins
+        // rule belongs to the merge, which needs to see them all to apply it.
         assert_eq!(
-            args.action.vars,
-            vec!["profile=work".to_owned(), "profile=home".to_owned()]
+            args.action
+                .vars
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("profile".to_owned(), "work".to_owned()),
+                ("profile".to_owned(), "home".to_owned())
+            ]
         );
     }
 

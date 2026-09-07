@@ -274,7 +274,7 @@ fn each_command_withholds_the_options_it_does_not_honor_yet() {
         (
             &["apply-group", "--group", "gui", "--var", "profile=work"],
             "--var",
-            "5.3",
+            "5.4",
         ),
         (&["vars", "list", "--no-refresh"], "--no-refresh", "9.1"),
     ] {
@@ -287,6 +287,42 @@ fn each_command_withholds_the_options_it_does_not_honor_yet() {
             );
         }
     }
+}
+
+#[test]
+fn an_invalid_var_key_fails_before_any_file_is_read() {
+    // No repository at all, so anything that got as far as reading one would
+    // say so. The control below is what makes that assertion mean something.
+    let tree = Tree::roots();
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--var", "1up=x"])
+        .assert()
+        .failure()
+        .code(2);
+    let stderr = stderr_of(&assertion);
+    for expected in ["`1up`", "must start with a letter"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert!(
+        !stderr.contains("batfiles.toml"),
+        "the manifest was read after all:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_same_run_without_the_var_does_read_the_repository() {
+    // The control for the case above: the missing manifest is reported when
+    // nothing stops the run before it, and it fails at 1 rather than 2 because
+    // the command did start work.
+    let tree = Tree::roots();
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("batfiles.toml"),
+        "unexpected stderr:\n{stderr}"
+    );
 }
 
 // Batfiles' own diagnostics, as opposed to the ones clap renders.

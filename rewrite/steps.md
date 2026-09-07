@@ -68,13 +68,11 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
 
 - **5.1** ✅ Add static string `[vars]` values and `VarName`.
 - **5.2** ✅ Add `vars.toml` and the machine-local variable commands.
-- **5.3** Add `BATFILES_VAR_*` and `--var`. Ignore a bare `BATFILES_VAR_`, preserve
-  empty values, and warn with the full environment name for invalid suffixes.
-  Parse CLI values at the first `=`, checking that delimiter before key validity.
-  Invalid CLI keys must fail as usage errors before root resolution or file reads.
-  Adapt the reference parser and its CLI tests.
+- **5.3** ✅ Read `BATFILES_VAR_*` and parse `--var`.
 - **5.4** Merge manifest, state file, environment, and CLI values in one function,
-  in that precedence order. Record origins for `vars list`.
+  in that precedence order. Record origins for `vars list`. A `--var` is honored
+  once it takes its place in that set, so retire its unsupported entry here and
+  promote the one-shot variable and precedence documentation with it.
 - **5.5** Add truthiness, `facts` / `env` / `vars` namespace binding, and captured
   environment enumeration. Use the reference coercion policy.
 - **5.6** Gate actions and groups on `when` and `unless`; reject both on one

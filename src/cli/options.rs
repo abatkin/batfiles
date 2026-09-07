@@ -1,14 +1,23 @@
 //! The option groups shared between several commands.
 //!
-//! Every value here stays a `String`. For the options that are still rejected
-//! wholesale (`guidance.md`, rule 12) that is because a rejected option needs no
-//! parsed type, and pulling `VarName` or an address type forward to hold a value
-//! nothing reads is how the previous implementation grew its unreachable half.
-//! For the two skip lists, which are live, it is because an unusable name warns
-//! and is dropped rather than failing the run — a decision that needs the
-//! reporter, which clap's value parsers do not have.
+//! Values here stay `String` unless something is decided by parsing them. For
+//! the options still rejected wholesale (`guidance.md`, rule 12) that is because
+//! a rejected option needs no parsed type, and pulling an address type forward
+//! to hold a value nothing reads is how the previous implementation grew its
+//! unreachable half. For the two skip lists, which are live, it is because an
+//! unusable name warns and is dropped rather than failing the run — a decision
+//! that needs the reporter, which clap's value parsers do not have.
+//!
+//! `--var` is the exception, and the reason is the opposite one: an unusable key
+//! *does* fail the command, and parsing it here is what makes that failure a
+//! usage error raised before the location roots are resolved and before any file
+//! is opened. Validating it where the layers are merged would be too late —
+//! `vars.toml` has been read off disk by then — and the environment's half of
+//! the same rule, which warns instead, is [`crate::env_vars`]'.
 
 use clap::Args;
+
+use crate::var::VarName;
 
 /// Controls accepted by every command that executes actions.
 ///
@@ -18,8 +27,12 @@ use clap::Args;
 #[command(next_help_heading = "Action Execution Options")]
 pub(crate) struct ActionOptions {
     /// Set a one-shot variable; repeatable, last value for a key wins
-    #[arg(long = "var", value_name = "KEY=VALUE")]
-    pub vars: Vec<String>,
+    ///
+    /// Kept in the order it was written, duplicate keys included: which value a
+    /// repeated key ends up with is settled with the rest of the precedence,
+    /// where every layer's within-layer rule can be read in one place.
+    #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_var)]
+    pub vars: Vec<(VarName, String)>,
 
     /// Recompute allowed dynamic variables even when cached values are fresh
     #[arg(long)]
@@ -66,6 +79,25 @@ pub(crate) struct SkipGroupOptions {
     pub skip_groups: Vec<String>,
 }
 
+/// Split `KEY=VALUE` at the first `=` and validate the key.
+///
+/// An empty value is significant: `--var profile=` sets `profile` to the empty
+/// string, which is a value like any other.
+///
+/// The shape is checked before the name, so `--var profile` reports the missing
+/// `=` rather than complaining that the whole argument breaks the name rule. An
+/// empty key is the same mistake read from the other side — nothing was written
+/// where the key goes — so `--var =work` reports the shape too.
+fn parse_var(raw: &str) -> Result<(VarName, String), String> {
+    match raw.split_once('=') {
+        Some((key, value)) if !key.is_empty() => match VarName::try_from(key.to_owned()) {
+            Ok(key) => Ok((key, value.to_owned())),
+            Err(error) => Err(format!("`{key}` is not a valid variable name: {error}")),
+        },
+        _ => Err(format!("expected `KEY=VALUE`, found `{raw}`")),
+    }
+}
+
 /// Bootstrap-only enable/disable adoption, honored by `clone`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Bootstrap Options")]
@@ -85,4 +117,59 @@ pub(crate) struct BootstrapOptions {
     /// Add a group address to persisted disabled state; repeatable
     #[arg(long = "disable-group", value_name = "GROUP")]
     pub disable_groups: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(text: &str) -> VarName {
+        VarName::try_from(text.to_owned()).expect("valid name")
+    }
+
+    #[test]
+    fn a_var_splits_at_the_first_equals_sign() {
+        // Only the key is a name, so the rest of the argument is the value
+        // whatever it contains.
+        assert_eq!(parse_var("a=b=c"), Ok((name("a"), "b=c".to_owned())));
+    }
+
+    #[test]
+    fn an_empty_var_value_is_significant() {
+        assert_eq!(parse_var("profile="), Ok((name("profile"), String::new())));
+    }
+
+    #[test]
+    fn the_shape_is_checked_before_the_name() {
+        // `--var profile` is a missing `=`, not a variable named `profile` that
+        // broke a rule, and the message has to say the former.
+        assert_eq!(
+            parse_var("profile"),
+            Err("expected `KEY=VALUE`, found `profile`".to_owned())
+        );
+        assert_eq!(
+            parse_var("=work"),
+            Err("expected `KEY=VALUE`, found `=work`".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_var_key_must_be_a_valid_variable_name() {
+        let error = parse_var("1up=x").expect_err("names do not start with a digit");
+        assert!(
+            error.contains("`1up` is not a valid variable name"),
+            "{error}"
+        );
+        assert!(error.contains("must start with a letter"), "{error}");
+    }
+
+    #[test]
+    fn a_reserved_var_key_is_rejected_like_any_other_invalid_one() {
+        let error = parse_var("env=x").expect_err("reserved");
+        assert!(
+            error.contains("`env` is not a valid variable name"),
+            "{error}"
+        );
+        assert!(error.contains("reserved"), "{error}");
+    }
 }

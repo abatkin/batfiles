@@ -55,7 +55,10 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
 /// whichever of the four commands accepted it.
 fn action(options: &ActionOptions) -> Option<Unsupported> {
     first_given([
-        (!options.vars.is_empty(), "--var", "5.3"),
+        // Not 5.3, which parses the option: a `--var` value is honored once it
+        // takes its place in the merged variable set, as a `[vars]` or
+        // `vars.toml` value already does.
+        (!options.vars.is_empty(), "--var", "5.4"),
         (options.refresh_vars, "--refresh-vars", "9.1"),
         (options.refresh_content, "--refresh-content", "9.4"),
         (options.no_overwrite, "--no-overwrite", "9.4"),

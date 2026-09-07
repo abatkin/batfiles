@@ -8,6 +8,7 @@ mod clone_list;
 mod directory;
 mod disabled;
 mod env;
+mod env_vars;
 mod error;
 mod execute;
 mod fetch;
