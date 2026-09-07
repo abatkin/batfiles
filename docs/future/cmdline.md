@@ -122,35 +122,13 @@ that needs something to refer to:
   `<action-id>.<entry-id>` when that action exists.
 - `include-remote` is never directly applyable, whatever its address.
 
-### `vars set`
+### `vars set`, `vars get`, and `vars unset`
 
-```text
-batfiles vars set <key> <value>
-```
-
-Set one persisted machine-local variable. The value is stored verbatim as a
-string, the empty string included; `vars get`'s absent-key failure is what keeps
-an empty value distinguishable from no value.
-
-The confirmation line names the key and never the value. A value may be a token
-or a path that identifies a machine, and an informational line would put it in
-terminal scrollback and in a calling script's logs. `vars get` is the way to
-read a value back.
-
-### `vars get`
-
-```text
-batfiles vars get <key>
-```
-
-Print the stored machine-local string for one variable on standard output. It
-does not resolve repository defaults, dynamic values, facts, or environment
-values.
-
-A key with no machine-local value is a failure: nothing is written to standard
-output, and the diagnostic naming the key goes to standard error. Printing an
-empty line and exiting successfully would be indistinguishable from a key stored
-as the empty string.
+All three are built, and are specified in
+[`docs/cmdline.md`](../cmdline.md#vars-set). What is not built is every reader
+of the values they maintain: nothing resolves a machine-local value into a run
+until conditions are evaluated. The two `vars` commands below are the rest of
+the family.
 
 ### `vars list`
 
@@ -169,15 +147,6 @@ environment values are also resolved through the read-only `env.*` namespace.
 
 The two options may be combined; `--no-refresh` has no additional effect when
 `--machine-only` is used.
-
-### `vars unset`
-
-```text
-batfiles vars unset <key>
-```
-
-Remove one persisted machine-local variable. An absent key is an idempotent
-success.
 
 ### `vars refresh`
 

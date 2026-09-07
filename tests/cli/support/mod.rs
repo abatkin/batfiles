@@ -44,3 +44,7 @@ pub(crate) fn batfiles() -> Command {
 pub(crate) fn stderr_of(assertion: &assert_cmd::assert::Assert) -> String {
     String::from_utf8_lossy(&assertion.get_output().stderr).into_owned()
 }
+
+pub(crate) fn stdout_of(assertion: &assert_cmd::assert::Assert) -> String {
+    String::from_utf8_lossy(&assertion.get_output().stdout).into_owned()
+}

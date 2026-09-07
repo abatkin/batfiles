@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
+use crate::machine_vars::MachineVars;
 use crate::manifest::Manifest;
 use crate::paths;
 
@@ -50,6 +51,12 @@ impl Roots {
     /// repository, so selecting a different home does not move them.
     pub fn disabled(&self) -> PathBuf {
         self.config_dir.join(Disabled::FILE_NAME)
+    }
+
+    /// The machine-local variable values, alongside the disabled lists and for
+    /// the same reason: they describe this machine rather than this repository.
+    pub fn machine_vars(&self) -> PathBuf {
+        self.config_dir.join(MachineVars::FILE_NAME)
     }
 }
 

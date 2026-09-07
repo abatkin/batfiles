@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::unsupported::{self, Unsupported};
-use crate::cli::{Cli, Command, GlobalOptions, color};
+use crate::cli::{Cli, Command, GlobalOptions, VarsCommand, color};
 use crate::disabled::{self, Change, DisabledList};
 use crate::env::Environment;
 use crate::error::Error;
@@ -16,6 +16,7 @@ use crate::location::{
     LocationInputs, RepositoryUse, Roots, detect_os_home, discover_working_repository,
     resolve_roots,
 };
+use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
 
@@ -144,7 +145,26 @@ fn dispatch(
             DisabledList::Groups,
             Change::Enable,
         ),
-        Command::Clone(_) | Command::Vars(_) => {
+        // The three machine-local variable commands read and write `vars.toml`
+        // and nothing else, so they resolve roots without discovering a
+        // repository.
+        Command::Vars(VarsCommand::Set { key, value }) => {
+            let roots = locate(cli, env, reporter)?;
+            machine_vars::set(key, value, &roots, reporter)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Vars(VarsCommand::Get { key }) => {
+            let roots = locate(cli, env, reporter)?;
+            machine_vars::get(key, &roots, reporter)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Vars(VarsCommand::Unset { key }) => {
+            let roots = locate(cli, env, reporter)?;
+            machine_vars::unset(key, &roots, reporter)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Clone(_)
+        | Command::Vars(VarsCommand::List { .. } | VarsCommand::Refresh { .. }) => {
             locate(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }

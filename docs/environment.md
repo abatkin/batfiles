@@ -33,8 +33,10 @@ Three of the four are live so far. `sync` and the two apply commands open the
 `batfiles.toml` in the leaf repository and the
 [`disabled.toml`](state.md) under the config directory, and install into the
 selected home; the enable and disable commands rewrite `disabled.toml` and open
-nothing else. Only the cache directory is still an answer to where a command
-*would* work. All four roots are resolved together.
+nothing else, as the three machine-local variable commands do for
+[`vars.toml`](state.md#varstoml-machine-local-variables). Only the cache
+directory is still an answer to where a command *would* work. All four roots are
+resolved together.
 
 ## Run-only skips
 

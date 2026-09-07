@@ -11,6 +11,7 @@ use crate::git;
 use crate::item::{ItemAddress, ItemAddressError};
 use crate::manifest;
 use crate::paths::ExistingNode;
+use crate::var::{VarName, VarNameError};
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -59,6 +60,17 @@ pub(crate) enum Error {
     /// A command-line argument that is not a well-formed address.
     #[error(transparent)]
     InvalidAddress(#[from] ItemAddressError),
+
+    /// A command-line argument that is not a well-formed variable name. The key
+    /// is quoted here because [`VarNameError`] states the rule alone: that is
+    /// what a serde key error wants, where TOML supplies the position, and it
+    /// leaves a diagnostic about an argument with nothing to point at.
+    #[error("invalid variable name `{key}`: {source}")]
+    InvalidVarName { key: String, source: VarNameError },
+
+    /// A `vars get` naming a variable this machine has no value for.
+    #[error("`{key}` has no machine-local value")]
+    VarNotSet { key: VarName },
 
     // Naming what to apply.
     /// An `apply-action` naming an address no record in the manifest answers to.

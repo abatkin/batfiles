@@ -650,19 +650,13 @@ fn a_repeated_action_id_is_rejected_and_both_uses_located() {
 #[test]
 fn a_command_that_does_not_need_the_manifest_does_not_read_it() {
     // Reading is the responsibility of the commands that use the manifest, so
-    // one that never looks at it is unaffected by a broken one.
+    // one that never looks at it is unaffected by a broken one. `vars set`
+    // writes machine-local state and does its whole job here.
     let tree = Tree::new();
     fs::write(tree.manifest(), "[[actions]\n").expect("a malformed manifest");
 
-    let assertion = tree
-        .batfiles()
-        .args(["vars", "get", "profile"])
+    tree.batfiles()
+        .args(["vars", "set", "profile", "work"])
         .assert()
-        .failure()
-        .code(2);
-    let stderr = stderr_of(&assertion);
-    assert!(
-        stderr.contains("`vars get` is not implemented yet"),
-        "unexpected stderr:\n{stderr}"
-    );
+        .success();
 }

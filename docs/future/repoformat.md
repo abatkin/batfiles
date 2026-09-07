@@ -78,9 +78,11 @@ The schema uses these reusable value shapes.
 
 That a variable is read only by a condition, and that a static `[vars]` value is
 a string and nothing else, are specified in
-[`docs/repoformat.md`](../repoformat.md#variables). The rule extends to every
-other layer that can produce a variable, none of which is built: per-inclusion
-overrides, persisted and one-shot overrides, dynamic-command results, facts, and
+[`docs/repoformat.md`](../repoformat.md#variables). The persisted machine-local
+layer follows the same rule and is built; its document is specified in
+[`docs/state.md`](../state.md#varstoml-machine-local-variables). The rule extends
+to every remaining layer that can produce a variable, none of which is built:
+per-inclusion overrides, one-shot overrides, dynamic-command results, facts, and
 host environment values are strings too, and batfiles does not infer types from
 their contents.
 
@@ -265,9 +267,6 @@ Clone-list entry IDs follow the current
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ```
 
-- The variable-name rule reaches one place that is not built: `vars.toml`, whose
-  keys are variable names, so a key literally named `vars` there makes the whole
-  file fail to load rather than just that one entry.
 - IDs and group names match `[A-Za-z0-9][A-Za-z0-9_-]*`. This rule applies to
   action IDs, `include-remote` IDs, manifest-entry IDs, remote IDs, and group
   names. In particular, an ID cannot contain whitespace, `.`, or `,`; dots are

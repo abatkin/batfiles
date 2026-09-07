@@ -12,10 +12,10 @@ Unimplemented commands, options, and additional address forms are described in
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Only `version`, `sync`, `apply-action`, `apply-group`, and the four
-enable/disable commands do any work.** Every other command resolves the location
-roots it needs and then reports that it is not implemented yet, exiting 2 having
-written nothing.
+**Only `version`, `sync`, `apply-action`, `apply-group`, the four enable/disable
+commands, and `vars set`, `vars get`, and `vars unset` do any work.** Every
+other command resolves the location roots it needs and then reports that it is
+not implemented yet, exiting 2 having written nothing.
 
 `sync` executes the action types that exist, `--dry-run` reports what it
 would execute without doing any of it, and `--skip-action`/`--skip-group` leave
@@ -28,6 +28,10 @@ semantics and the same `--dry-run`.
 The enable and disable commands write machine-local state rather than anything in
 the home directory, and `sync` acts on it: an action or group recorded in
 [`disabled.toml`](state.md) is passed over.
+
+`vars set`, `vars get`, and `vars unset` maintain the other machine-local
+document, [`vars.toml`](state.md#varstoml-machine-local-variables). Nothing acts
+on it yet: variables feed conditions, and no command evaluates one.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -88,8 +92,9 @@ Three of the four resolved roots are live. `sync` and the two apply commands
 read the leaf repository and
 [`disabled.toml`](state.md) and write into the selected home; the enable and
 disable commands read and rewrite `disabled.toml` under the config directory,
-and touch neither of the other two. Nothing reads or writes anything under the
-cache directory yet. See
+and the three machine-local variable commands do the same for `vars.toml`
+beside it. Neither kind touches the repository or the home. Nothing reads or
+writes anything under the cache directory yet. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -108,8 +113,8 @@ Every command follows one rule for where its output goes:
   adds detail.
 
 Most commands produce no requested data at all and therefore write nothing to
-standard output. `version` is the only one that does today; `vars get` and
-`vars list` join it when they are built.
+standard output. `version` and `vars get` are the two that do today; `vars list`
+joins them when it is built.
 
 Errors and warnings batfiles raises itself are labeled `error:` and `warning:`,
 and the label alone is colored when color is enabled — bold red and bold yellow
@@ -253,6 +258,78 @@ holds for `apply-action` too, which waives both lists and reads them anyway: a
 state file that cannot be read fails any command that executes actions.
 
 Every other option they accept is [refused for now](#unimplemented-options).
+
+### `vars set`
+
+```text
+batfiles vars set <key> <value>
+```
+
+Set one machine-local variable. The value is stored verbatim as a string, the
+empty string included; `vars get`'s absent-key failure is what keeps an empty
+value distinguishable from no value.
+
+One line on standard error reports what the edit did:
+
+```console
+$ batfiles vars set editor nvim
+set `editor`
+```
+
+The line names the key and never the value. A value may be a token or a path
+that identifies a machine, and an informational line would put it in terminal
+scrollback and in a calling script's logs. `vars get` is the way to read a value
+back. The other two lines are ``changed `editor` (it had a different value)``
+and ``` `editor` was already set to that value ```; the second changes nothing
+and does not rewrite the document.
+
+### `vars get`
+
+```text
+batfiles vars get <key>
+```
+
+Print the stored machine-local string for one variable on standard output. It
+resolves nothing else: not the repository's `[vars]`, not the environment, not
+host facts.
+
+```console
+$ batfiles vars get editor
+nvim
+```
+
+A key with no machine-local value is a failure: nothing is written to standard
+output, and the diagnostic naming the key goes to standard error. Printing an
+empty line and exiting successfully would be indistinguishable from a key stored
+as the empty string.
+
+### `vars unset`
+
+```text
+batfiles vars unset <key>
+```
+
+Remove one machine-local variable. An absent key is an idempotent success,
+reported as ``` `editor` was not set ```, and writes nothing at all — it creates
+neither a `vars.toml` nor its directory. Removing the last key leaves an empty
+`vars.toml` rather than deleting it.
+
+### What the three of them share
+
+They read and write [`vars.toml`](state.md#varstoml-machine-local-variables) and
+nothing else. They do not load the leaf repository, so a `batfiles.toml` that is
+malformed, or missing altogether, cannot fail one.
+
+Each key is validated as a [variable
+name](repoformat.md#names-and-ids) — which is not the rule an ID follows — and
+an invalid one fails with status 1 before the document is opened. `--quiet`
+suppresses the lines describing an edit and not the edit itself; it never
+suppresses what `vars get` was asked for, which is the general rule for
+[requested data](#output-streams).
+
+Nothing else reads these values yet. Variables feed `when` and `unless`
+conditions, and no command evaluates one, so setting a variable today changes
+what `vars get` answers and nothing about what a `sync` installs.
 
 ## Selecting What a Run Does
 
@@ -530,13 +607,14 @@ never had.
 
 Status 1 covers a command that needs a home directory and cannot determine one,
 a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
-`disabled.toml` is malformed, and an
+`disabled.toml` is malformed, a `vars get` naming a variable this machine has no
+value for, an argument that is not a well-formed address or variable name, and an
 action that could not be carried out — a source the repository does not contain,
 a destination holding something batfiles will not replace, or a write the
 operating system refused. In each case the invocation was well-formed and
 something outside it did not hold up.
 
-The first two of those happen before anything is written; the third may not.
+All but the last of those happen before anything is written; the last may not.
 `sync` stops at the first action that fails, so an earlier action's symlink is
 still there. That is what status 1 means and status 2 does not: the filesystem
 may have been touched, and the fix is to look rather than to retype the command.

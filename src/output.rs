@@ -128,10 +128,23 @@ impl Reporter {
 
     /// What a command did, printed at normal verbosity and suppressed by
     /// `--quiet`.
+    ///
+    /// This is a diagnostic rather than requested data: it says what happened
+    /// instead of answering a question, so it goes to standard error.
     pub fn info(&self, message: &str) {
         if self.verbosity.shows_info() {
             eprintln!("{message}");
         }
+    }
+
+    /// Data the user asked for. Printed to standard output, unlabeled and
+    /// uncolored, and never gated by verbosity: `--quiet` suppresses what a
+    /// command *did*, not what it was *asked for*.
+    ///
+    /// Nothing is added around the value, so `$(batfiles vars get editor)`
+    /// yields the stored string and nothing else.
+    pub fn data(&self, message: &str) {
+        println!("{message}");
     }
 
     /// Extra detail, printed only at `-v` repeated at least `level` times.

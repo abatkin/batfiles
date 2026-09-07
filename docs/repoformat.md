@@ -882,9 +882,12 @@ condition, and conditions are specified in
 installed without them.
 
 What is checked is the name and the type of the value, both while the document is
-being read. The other three layers that can set a variable — `vars.toml`,
-`BATFILES_VAR_*`, and `--var` — are not built, so a name declared here is the
-only kind there is today.
+being read. One other layer that can set a variable is built: machine-local
+values in [`vars.toml`](state.md#varstoml-machine-local-variables), maintained
+by [`vars set` and `vars unset`](cmdline.md#vars-set). It is a separate document
+with the same name rule, and nothing merges the two layers yet, so a value stored
+there does not override a name declared here. `BATFILES_VAR_*` and `--var` are
+not built.
 
 ## Default-disabled bootstrap entries
 

@@ -1,18 +1,19 @@
 # Local state files
 
 Batfiles keeps machine-local state outside the leaf repository, in documents it
-owns and rewrites. One exists today:
+owns and rewrites. Two exist today:
 
 | File            | Default location                                                                                | Classification                   | Regenerable? |
 |-----------------|-------------------------------------------------------------------------------------------------|----------------------------------|--------------|
 | `disabled.toml` | `$XDG_CONFIG_HOME/batfiles/disabled.toml`, otherwise `<os-home>/.config/batfiles/disabled.toml` | Machine-local user configuration | No           |
+| `vars.toml`     | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<os-home>/.config/batfiles/vars.toml`         | Machine-local user configuration | No           |
 
-`vars.toml` and the `dynamic-vars.toml` cache are specified in
-[`future/state.md`](future/state.md) and are not built.
+The `dynamic-vars.toml` cache is specified in
+[`future/state.md`](future/state.md) and is not built.
 
 The config directory holds the non-regenerable state. It defaults under the
 invoking user's OS home and is independent of `--home-dir`, so selecting a
-different home moves the repository and the destinations but not this file. The
+different home moves the repository and the destinations but not these files. The
 authoritative rules are in [location selection](environment.md#location-selection).
 
 ## `disabled.toml`: disabled actions and groups
@@ -68,6 +69,61 @@ run-only skips can still exclude actions.
 define argument validation and output.
 [Selection](cmdline.md#selecting-what-a-run-does) defines when each command
 honors these lists and how they combine with run-only skips.
+
+## `vars.toml`: machine-local variables
+
+`vars.toml` stores deliberate, non-regenerable variable values for one machine.
+It is maintained by `vars set` and `vars unset`, and it may also be edited by
+hand.
+
+Nothing else reads it yet. Variables feed `when` and `unless` conditions, and no
+command evaluates one, so a value stored here changes what `vars get` answers and
+nothing about what a `sync` installs. The precedence layer it will contribute,
+once variables are resolved into a run, is specified in
+[`future/state.md`](future/state.md#varstoml-the-parts-that-are-not-built).
+
+### Schema
+
+The whole document is a TOML map from user-variable name to string value:
+
+```toml
+editor = "nvim"
+profile = "work"
+work = "true"
+```
+
+- Top-level keys are data, not a fixed set of schema fields. Each key must
+  follow the repository format's shared [user-variable name
+  rules](repoformat.md#names-and-ids), which are not the rules an ID follows: an
+  underscore may start a name and not an ID, a hyphen may appear in an ID and not
+  a name.
+- A key that breaks that rule fails the whole document rather than just its own
+  entry, so a hand-written `has-dash` or a key named `vars` — one of the five
+  reserved identifiers — makes the file fail to load. An entry that can never
+  become live is not junk worth preserving.
+- Every value is a string. A bare `work = true` is invalid rather than coerced,
+  the same way it is under a manifest's `[vars]`.
+- The document may be empty. Removing the final key leaves a valid empty
+  `vars.toml`; batfiles does not delete the file.
+- Batfiles writes the map sorted by key, which is the serializer's order rather
+  than the order the values were set in.
+
+### Semantics and lifecycle
+
+The three commands that maintain it are specified in
+[`vars set`, `vars get`, and `vars unset`](cmdline.md#vars-set); what is here is
+the document.
+
+- A key is validated before the file is opened, so an invalid name reads and
+  writes nothing — including when the existing document is malformed.
+- Any string is a value, the empty string included. `vars get` fails on a key
+  with no value rather than reporting an empty one, which would be
+  indistinguishable from a key stored as the empty string.
+- Setting a key to the value it already holds succeeds without rewriting the
+  file. Unsetting an absent key is likewise idempotent: it does not rewrite the
+  document, and does not create a `vars.toml` that was not there before.
+- Deleting `vars.toml` removes the machine-local values. It does not remove or
+  otherwise alter installed home-directory content.
 
 ## Writing
 

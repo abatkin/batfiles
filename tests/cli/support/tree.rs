@@ -134,6 +134,22 @@ impl Tree {
         fs::write(self.disabled(), document).expect("a disabled document");
     }
 
+    /// The machine-local variable values, which need not exist.
+    pub(crate) fn machine_vars(&self) -> PathBuf {
+        self.path("config").join("vars.toml")
+    }
+
+    /// `vars.toml` as it stands, which a command must have written.
+    pub(crate) fn machine_vars_document(&self) -> String {
+        fs::read_to_string(self.machine_vars()).expect("vars.toml should exist")
+    }
+
+    /// Put a `vars.toml` in place verbatim, including shapes batfiles would
+    /// never write itself.
+    pub(crate) fn write_machine_vars(&self, document: &str) {
+        fs::write(self.machine_vars(), document).expect("a vars document");
+    }
+
     /// A command with all four roots selected inside this tree.
     pub(crate) fn batfiles(&self) -> Command {
         let mut command = batfiles();

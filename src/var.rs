@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// A validated user-variable name.
@@ -19,7 +19,10 @@ use thiserror::Error;
 /// Deserializing goes through the same check, which is what makes it the key
 /// type of the `[vars]` map: an invalid name fails the document that holds it,
 /// and the TOML error underlines the offending key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+///
+/// Serialization writes the name back as the bare string, so a name that was
+/// read as a map key is written as one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(try_from = "String")]
 pub(crate) struct VarName(String);
 

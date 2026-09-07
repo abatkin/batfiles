@@ -15,6 +15,7 @@ mod git;
 mod install;
 mod item;
 mod location;
+mod machine_vars;
 mod manifest;
 mod mode;
 mod output;

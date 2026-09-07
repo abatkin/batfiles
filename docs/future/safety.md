@@ -71,7 +71,7 @@ operation remains predictable and backup-first by default, while
 Tool-owned materializations, temporary files, and disposable caches may be
 replaced without user-content backups. Machine-local configuration such as
 `vars.toml` and `disabled.toml` is not disposable and follows the atomic write
-rules in [Local state and cache files](state.md#shared-read-and-write-rules).
+rules in [`docs/state.md`](../state.md#writing).
 
 ## Installed permissions
 

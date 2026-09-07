@@ -1,81 +1,51 @@
 # Local state and cache files that are not built yet
 
-`disabled.toml` and the shared write path are built, and are specified in
-[`docs/state.md`](../state.md). Two things stay here: the two documents that do
-not exist yet, and the parts of `disabled.toml` that need remotes or bootstrap to
-mean anything.
+`disabled.toml`, `vars.toml`, and the shared write path are built, and are
+specified in [`docs/state.md`](../state.md). Two things stay here: the one
+document that does not exist yet, and the parts of the two that do which need
+remotes, conditions, or bootstrap to mean anything.
 
 | File                | Default location                                                                                      | Classification                    | Regenerable? |
 |---------------------|-------------------------------------------------------------------------------------------------------|-----------------------------------|--------------|
-| `vars.toml`         | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<os-home>/.config/batfiles/vars.toml`               | Machine-local user configuration  | No           |
 | `dynamic-vars.toml` | `$XDG_CACHE_HOME/batfiles/dynamic-vars.toml`, otherwise `<os-home>/.cache/batfiles/dynamic-vars.toml` | Disposable dynamic-variable cache | Yes          |
 
 ## Directory selection
 
-The config directory contains the non-regenerable files, while the cache
-directory independently contains `dynamic-vars.toml`. Both default under the
+The cache directory independently contains `dynamic-vars.toml`, apart from the
+config directory holding the non-regenerable files. Both default under the
 invoking user's OS home (`<os-home>`) and are independent of `--home-dir`. The
 environment specification defines the authoritative [location selection
 rules](environment.md#location-selection).
 
-## `vars.toml`: machine-local variables
+## `vars.toml`: the parts that are not built
 
-`vars.toml` stores deliberate, non-regenerable variable overrides for one
-machine. It may be edited by hand or through `batfiles vars set` and
-`batfiles vars unset`.
+The document, its schema, and the three commands that maintain it are specified
+in [`docs/state.md`](../state.md#varstoml-machine-local-variables). What is
+missing is every reader of the values.
 
-### Schema
+**The precedence layer.** Machine-local values will contribute the persisted
+layer of the authoritative [runtime variable
+precedence](environment.md#runtime-variable-precedence), and every stored value
+follows the [string-valued variable
+model](repoformat.md#string-valued-variables). Until conditions are evaluated,
+nothing resolves a stored value into a run.
 
-The whole document is a TOML map from user-variable name to string value:
+**`vars list`**, the one `vars` command that reads more than this file.
+`--machine-only` reads only this file and bypasses repository and cache I/O.
+Normal `vars list` combines it with leaf `[vars]` and the captured process
+environment. `BATFILES_VAR_*` values participate at their normal precedence, and
+host environment values are available through the read-only `env.*` namespace.
+Remote variables and `--var` are not included.
 
-```toml
-editor = "nvim"
-profile = "work"
-work = "true"
-```
-
-Top-level keys are data, not a fixed set of schema fields. Each key must follow
-the repository format's shared [user-variable name
-rules](repoformat.md#names-and-ids), and every stored value follows its
-[string-valued variable model](repoformat.md#string-valued-variables).
-
-The document may be empty. Removing the final key leaves a valid empty
-`vars.toml`; batfiles does not delete the file.
-
-### Semantics and lifecycle
-
-Machine-local values contribute the persisted layer of the authoritative
-[runtime variable precedence](environment.md#runtime-variable-precedence).
-
-- `vars set` validates the key before filesystem access. Setting a key to its
-  existing value succeeds without rewriting the file. Any string is a value,
-  the empty string included.
-- `vars get` reads only the persisted string. It does not resolve repository
-  defaults, environment inputs, dynamic cache entries, or one-shot values.
-- `vars get` fails when the key has no persisted value, rather than reporting an
-  empty value, which would be indistinguishable from a key stored as the empty
-  string.
-- `vars unset` is idempotent. An absent key does not cause a rewrite, and does
-  not create a `vars.toml` that was not there before.
-- `vars list --machine-only` reads only this file and bypasses repository and
-  cache I/O.
-- Normal `vars list` combines this file with leaf `[vars]` and the captured
-  process environment. `BATFILES_VAR_*` values participate at their normal
-  precedence, and host environment values are available through the read-only
-  `env.*` namespace. Remote variables and `--var` are not included.
-- `vars refresh` reads this file, but only as an input to
-  [reachability](#reachability). It evaluates the `[remotes]` and
-  `include-remote` gates to decide which remotes are in play; those gates read
-  the leaf scope, and machine-local values are one of that scope's layers.
-  Reachability has one implementation for every command, so a `vars refresh`
-  that skipped this file could refresh a different set of remotes than the
-  `sync` it is meant to prepare for. The file has no other role here: dynamic
-  command arguments are not interpolated, and — unlike `vars list` — a
-  machine-local value does not suppress the refresh of the declaration it
-  shadows.
-
-Deleting `vars.toml` removes machine-local overrides. It does not remove or
-otherwise alter installed home-directory content.
+**`vars refresh`** reads this file, but only as an input to
+[reachability](#reachability). It evaluates the `[remotes]` and `include-remote`
+gates to decide which remotes are in play; those gates read the leaf scope, and
+machine-local values are one of that scope's layers. Reachability has one
+implementation for every command, so a `vars refresh` that skipped this file
+could refresh a different set of remotes than the `sync` it is meant to prepare
+for. The file has no other role here: dynamic command arguments are not
+interpolated, and — unlike `vars list` — a machine-local value does not suppress
+the refresh of the declaration it shadows.
 
 ## `disabled.toml`: the parts that are not built
 
@@ -244,8 +214,9 @@ producer command.
 
 ## Shared read and write rules
 
-Both files use the same state-file write path as `disabled.toml`, which is built
-and specified in [`docs/state.md`](../state.md#writing).
+`dynamic-vars.toml` uses the same state-file write path as the two documents
+that are built, which is specified in
+[`docs/state.md`](../state.md#writing).
 
 ### Reading and validation
 
@@ -253,9 +224,9 @@ The rules that run — parse the whole document before using any of it, treat a
 malformed one as fatal and leave it untouched, treat a missing one as empty, and
 name the file and the position in the diagnostic — are specified in
 [`docs/state.md`](../state.md#writing) and
-[`docs/repoformat.md`](../repoformat.md#reading-the-manifest). They apply to
-these files too once anything reads them. What stays here is the ordering
-between documents, which needs remotes and dynamic variables to mean anything.
+[`docs/repoformat.md`](../repoformat.md#reading-the-manifest). They apply to the
+cache too once anything reads it. What stays here is the ordering between
+documents, which needs remotes and dynamic variables to mean anything.
 
 - A manifest is fully parsed and schema-validated before anything in it is used
   — before its values enter input precedence, and before any dynamic command it

@@ -16,6 +16,7 @@ mod locations;
 mod manifest;
 mod selection;
 mod surface;
+mod vars;
 
 #[cfg(unix)]
 mod dry_run;

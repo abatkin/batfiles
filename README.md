@@ -127,6 +127,15 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   declaring them changes no run today. It is the one section that is accepted
   without being acted on, and it is named here rather than left to be
   discovered.
+- **Variables can be set on a machine, and nothing reads them yet.** `vars set`,
+  `vars get`, and `vars unset` maintain a machine-local `vars.toml` the same way
+  the disable commands maintain `disabled.toml`, and a manifest may declare its
+  own `[vars]` defaults. Variables exist to feed `when` and `unless` conditions,
+  and no command evaluates one, so what you store today changes what `vars get`
+  answers and nothing about what a `sync` installs. `vars get` writes the value
+  alone to standard output, so `$(batfiles vars get editor)` is the value and
+  not a sentence about it; the lines describing an edit name the key and never
+  the value, which may be a token or a path that identifies a machine.
 - **One action or one group can be applied on its own.** `apply-action --id
   zshrc` and `apply-group --group shell` carry out part of the same manifest,
   named rather than filtered — the same actions in the same order, with the same
@@ -143,7 +152,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   everywhere, so a Windows run can create directories and seed copies but cannot
   install a link.
 
-Everything else — `init`, `clone`, and `vars` — parses its arguments and exits 2.
+Everything else — `init`, `clone`, `vars list`, and `vars refresh` — parses its
+arguments and exits 2.
 
 ## Example
 
