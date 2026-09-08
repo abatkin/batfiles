@@ -27,6 +27,18 @@ pub(crate) fn batfiles() -> Command {
     let mut command = Command::cargo_bin("batfiles").expect("the batfiles binary should be built");
     // The tests must not inherit the developer's own color environment.
     command.env_remove("BATFILES_COLOR").env_remove("NO_COLOR");
+    // Nor their one-shot variables, which would join the set every run
+    // resolves. The prefix is open-ended, so the removals are read off the
+    // environment the test itself is running in. Enumerated as OS strings,
+    // because `std::env::vars` panics on an environment holding any key or
+    // value that is not UTF-8, and one unrelated variable should not take the
+    // whole suite down with it — batfiles itself reads the environment the
+    // same way, with `vars_os`.
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("BATFILES_VAR_") {
+            command.env_remove(&key);
+        }
+    }
     // Keep fixture requests on the loopback interface.
     for proxy in [
         "HTTP_PROXY",

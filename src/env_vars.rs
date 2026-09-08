@@ -3,7 +3,7 @@
 //! This is the environment's layer of the variable set, as
 //! [`crate::machine_vars`] is `vars.toml`'s. It reads the captured environment
 //! and produces validated names; where its values sit relative to the other
-//! layers is the merge's answer at 5.4, not this module's.
+//! layers is [`crate::var_set`]'s answer, not this module's.
 //!
 //! Only the `BATFILES_VAR_` prefix makes a user variable. The raw environment
 //! is a separate channel that condition evaluation will expose read-only as
@@ -22,11 +22,16 @@
 //! That is the default rather than a prohibition: a command whose whole job is
 //! to show variables, such as `vars list`, may print values because that is what
 //! it was asked for.
+//!
+//! The name it does print is a rejected one, so it is arbitrary text off the
+//! environment rather than a checked [`VarName`]: it goes through
+//! [`quoted_value`], which is what keeps a suffix containing a newline from
+//! writing a second line that reads like batfiles'.
 
 use std::collections::BTreeMap;
 
 use crate::env::Environment;
-use crate::output::Reporter;
+use crate::output::{Reporter, quoted_value};
 use crate::var::VarName;
 
 /// The one-shot variables `BATFILES_VAR_*` sets, keyed by name.
@@ -34,9 +39,9 @@ use crate::var::VarName;
 /// A suffix that is not a usable variable name — including a reserved one, so
 /// `BATFILES_VAR_env` — is reported and left out; the rest of the environment is
 /// still read, and the run continues.
-// The tests below are callers, so under `cfg(test)` the expectation would go
-// unfulfilled and become a warning of its own.
-#[cfg_attr(not(test), expect(dead_code, reason = "merged at 5.4"))]
+///
+/// This is the third layer of the [variable set](crate::var_set) a run
+/// resolves, above `vars.toml` and below `--var`.
 pub(crate) fn one_shot(env: &Environment, reporter: &Reporter) -> BTreeMap<VarName, String> {
     let mut values = BTreeMap::new();
     for (name, value) in env.one_shot_vars() {
@@ -45,8 +50,8 @@ pub(crate) fn one_shot(env: &Environment, reporter: &Reporter) -> BTreeMap<VarNa
                 values.insert(name, value.to_owned());
             }
             Err(error) => reporter.warn(&format!(
-                "ignoring `{}{name}`: {error}",
-                Environment::VAR_PREFIX
+                "ignoring {}: {error}",
+                quoted_value(&format!("{}{name}", Environment::VAR_PREFIX))
             )),
         }
     }

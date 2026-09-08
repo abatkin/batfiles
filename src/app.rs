@@ -91,6 +91,7 @@ fn dispatch(
                 RunMode::new(args.dry_run),
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
+                &args.action.vars,
                 env,
                 reporter,
             )?;
@@ -98,7 +99,14 @@ fn dispatch(
         }
         Command::ApplyAction(args) => {
             let roots = locate_repository(cli, env, reporter)?;
-            execute::apply_action(&roots, RunMode::new(args.dry_run), &args.id, env, reporter)?;
+            execute::apply_action(
+                &roots,
+                RunMode::new(args.dry_run),
+                &args.id,
+                &args.action.vars,
+                env,
+                reporter,
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::ApplyGroup(args) => {
@@ -108,6 +116,7 @@ fn dispatch(
                 RunMode::new(args.dry_run),
                 &args.group,
                 &args.selection.skip_actions,
+                &args.action.vars,
                 env,
                 reporter,
             )?;

@@ -272,9 +272,9 @@ fn each_command_withholds_the_options_it_does_not_honor_yet() {
             "9.4",
         ),
         (
-            &["apply-group", "--group", "gui", "--var", "profile=work"],
-            "--var",
-            "5.4",
+            &["apply-group", "--group", "gui", "--refresh-vars"],
+            "--refresh-vars",
+            "9.1",
         ),
         (&["vars", "list", "--no-refresh"], "--no-refresh", "9.1"),
     ] {

@@ -29,7 +29,9 @@ pub(crate) struct Manifest {
     /// settles both rules as the document is read, so a name that breaks the
     /// rule and a value that is not a string each fail the document at the line
     /// they are written on, and nothing here re-checks either.
-    #[expect(dead_code, reason = "merged at 5.4")]
+    ///
+    /// This is the lowest layer of the [variable set](crate::var_set) a run
+    /// resolves.
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
 

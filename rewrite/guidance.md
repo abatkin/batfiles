@@ -194,15 +194,17 @@ code review and behavioral tests. Keep the scanner small.
 ## Variables
 
 Variables feed `when` and `unless`; they do not interpolate paths or strings.
-Slice 5 merges the four sources into one flat map. Add per-inclusion scopes
-only with remote inclusion at 7.5. Conditions, precedence, and dynamic-variable
-proposals live in `docs/future/` until implemented.
+Slice 5 resolves the four sources into one flat scope: one namespace, in which
+a name resolves the same way whatever declared it. The representation is not
+prescribed; the seam below is. Add per-inclusion scopes only with remote
+inclusion at 7.5. Conditions, precedence, and dynamic-variable proposals live
+in `docs/future/` until implemented.
 
 ## Seams the late slices need
 
 Keep each decision centralized without building future abstractions:
 
-1. Effective variable values and their origins are produced by one merge function.
+1. Effective variable values and their origins are produced by one function.
 2. Run settings are carried by `RunContext`; write helpers consult the mode.
 3. Execution captures selection once, prepares selected clone lists, and uses
    one loop over those action positions.

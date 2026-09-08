@@ -22,11 +22,13 @@ that contract.
 ## Shared Action Execution Options
 
 These controls are accepted by every command that executes actions. `clone`
-accepts them because it forwards them to its follow-up synchronization.
+accepts them because it forwards them to its follow-up synchronization. The
+section and its one built option, `--var`, are specified in
+[`docs/cmdline.md`](../cmdline.md#shared-action-execution-options); the rest are
+proposed here.
 
 | Option                | Purpose                                                                                          |
 |-----------------------|--------------------------------------------------------------------------------------------------|
-| `--var <key=value>`   | Set a one-shot string variable. Repeatable; the last value for a key wins.                       |
 | `--refresh-vars`      | Recompute allowed dynamic variables instead of using fresh cached values.                        |
 | `--refresh-content`   | Refresh existing [seed content](safety.md#seed-actions-and-deletion).                            |
 | `--no-overwrite`      | Skip unmanaged destination conflicts instead of backing them up and replacing them.             |
@@ -36,18 +38,13 @@ accepts them because it forwards them to its follow-up synchronization.
 batfiles backs up conflicting unmanaged destinations and proceeds. Interactive
 overwrite is an explicit waiver of the backup for that conflict only.
 
-A `--var` key must be a valid [user-variable
-name](repoformat.md#names-and-ids). An invalid one fails the command as a usage
-error, before the location roots are resolved and before any file is read.
-
-`sync`, `clone`, `apply-action`, and `apply-group` all use the same
-variable resolution when evaluating conditions, which is the only thing
-variables feed — see [string-valued
-variables](repoformat.md#string-valued-variables).
-One-shot `--var` values participate at their normal highest precedence. Dynamic
-variables use fresh cached values and automatically resolve stale or missing
-values; `--refresh-vars` instead forces allowed dynamic variables to be
-recomputed even when their cached values are fresh.
+`sync`, `clone`, `apply-action`, and `apply-group` already merge the same
+[effective variable set](../environment.md#variable-precedence); what is not
+built is the evaluation it feeds — see [string-valued
+variables](repoformat.md#string-valued-variables). Dynamic variables will use
+fresh cached values and automatically resolve stale or missing ones;
+`--refresh-vars` instead forces allowed dynamic variables to be recomputed even
+when their cached values are fresh.
 
 ## Shared Selection Options
 

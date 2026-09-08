@@ -1,8 +1,10 @@
-//! The machine-local variable commands.
+//! The machine-local variable commands, and the set a run merges out of the
+//! four layers that can declare a variable.
 //!
-//! They read and write `vars.toml` and nothing else, so what these tests pin
-//! down is the document, the account of the edit, and which stream a value
-//! comes back on. Nothing yet reads these values into a run.
+//! What the command tests pin down is the document, the account of the edit,
+//! and which stream a value comes back on. What the merge tests pin down is
+//! which layer wins, since no condition reads a value yet: `-vv` is where a run
+//! says what it resolved.
 
 use crate::support::*;
 use std::fs;
@@ -344,7 +346,7 @@ fn a_hand_written_key_that_is_not_a_variable_name_fails_the_document() {
 // What these commands do not touch.
 
 #[test]
-fn the_repository_and_the_disabled_lists_are_left_alone() {
+fn the_repository_and_the_disabled_lists_are_left_alone_by_the_commands() {
     // These commands resolve roots and open one file. A malformed manifest is
     // the check that costs nothing to make and would catch a stray read.
     let tree = Tree::new();
@@ -356,4 +358,235 @@ fn the_repository_and_the_disabled_lists_are_left_alone() {
         .success();
 
     assert!(!tree.disabled().exists());
+}
+
+// The set a run merges.
+
+/// A tree whose manifest declares `[vars]` and whose `vars.toml` overrides part
+/// of it: the two documents, ready for the environment and the command line to
+/// be layered on top.
+fn with_two_documents() -> Tree {
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[vars]\n\
+         editor = \"vi\"\n\
+         profile = \"personal\"\n\
+         rank = \"3\"\n\
+         \n\
+         # One action, so the commands that apply part of a manifest have\n\
+         # something to apply while they resolve the same set.\n\
+         [[actions]]\n\
+         type = \"create-dir\"\n\
+         id = \"zsh-cache\"\n\
+         group = \"shell\"\n\
+         dest = \"~/.cache/zsh\"\n",
+    );
+    tree.write_machine_vars("editor = 'nvim'\nprofile = 'work'\n");
+    tree
+}
+
+#[test]
+fn every_layer_overrides_the_one_below_it() {
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_editor", "code")
+        .args(["-vv", "sync", "--var", "editor=emacs"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    for line in [
+        "  editor  = \"emacs\" (--var; over BATFILES_VAR_*, vars.toml, batfiles.toml)",
+        "  profile = \"work\" (vars.toml; over batfiles.toml)",
+        "  rank    = \"3\" (batfiles.toml)",
+    ] {
+        assert!(stderr.contains(line), "no `{line}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn a_repeated_var_takes_the_last_value_written() {
+    let tree = Tree::new();
+    let assertion = tree
+        .batfiles()
+        .args(["-vv", "sync", "--var", "p=first", "--var", "p=last"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("  p = \"last\" (--var)"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_empty_value_still_overrides_the_layers_below_it() {
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .args(["-vv", "sync", "--var", "profile="])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("  profile = \"\" (--var; over vars.toml, batfiles.toml)"),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn every_command_that_executes_actions_resolves_the_same_set() {
+    // Including a dry run, which resolves variables like any other: the set
+    // describes the run rather than changing the home directory.
+    let tree = with_two_documents();
+    for args in [
+        &["-vv", "sync"][..],
+        &["-vv", "sync", "--dry-run"],
+        &["-vv", "apply-group", "--group", "shell"],
+    ] {
+        let assertion = tree.batfiles().args(args).assert().success();
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains("  editor  = \"nvim\" (vars.toml; over batfiles.toml)"),
+            "no merged set for `{args:?}` in:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn the_set_is_shown_at_the_second_verbose_level_and_not_before() {
+    let tree = with_two_documents();
+    for args in [&["sync"][..], &["-v", "sync"], &["--quiet", "sync"]] {
+        let assertion = tree.batfiles().args(args).assert().success();
+        let stderr = stderr_of(&assertion);
+        assert!(
+            !stderr.contains("variables:"),
+            "`{args:?}` showed the set:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_run_with_no_variables_anywhere_shows_nothing() {
+    // The heading is not printed over an empty list, so `-vv` on a repository
+    // that declares no variables says nothing about them at all.
+    let tree = Tree::new();
+    let assertion = tree.batfiles().args(["-vv", "sync"]).assert().success();
+    assert!(
+        !stderr_of(&assertion).contains("variables:"),
+        "unexpected stderr"
+    );
+}
+
+#[test]
+fn an_unusable_environment_name_is_warned_about_and_the_run_goes_on() {
+    // The environment is ambient and may predate any interest in batfiles, so
+    // one bad name in it drops that variable rather than stopping the run.
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_1up", "x")
+        .env("BATFILES_VAR_env", "x")
+        .env("BATFILES_VAR_rank", "9")
+        .args(["-vv", "sync"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    for expected in [
+        "ignoring \"BATFILES_VAR_1up\"",
+        "ignoring \"BATFILES_VAR_env\"",
+        "reserved",
+        // The usable one in the same environment still lands.
+        "  rank    = \"9\" (BATFILES_VAR_*; over batfiles.toml)",
+    ] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn a_warning_about_an_environment_name_never_echoes_its_value() {
+    let tree = Tree::new();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_1up", "s3cr3t")
+        .arg("sync")
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(!stderr.contains("s3cr3t"), "the value leaked:\n{stderr}");
+    assert!(
+        stderr.contains("ignoring \"BATFILES_VAR_1up\""),
+        "unexpected stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_value_cannot_forge_a_line_of_batfiles_own() {
+    // A value is whatever a repository, a hand-edited state file, or the
+    // environment put there. Printed raw, one holding a newline would end the
+    // line it sits on and start one that reads like a batfiles diagnostic.
+    let tree = Tree::new();
+    tree.write_manifest("[vars]\nmischief = \"ok\\nerror: forged\"\n");
+
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_terminal", "\u{1b}[31mred")
+        .args(["-vv", "sync"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    for line in [
+        "  mischief = \"ok\\nerror: forged\" (batfiles.toml)",
+        "  terminal = \"\\u{1b}[31mred\" (BATFILES_VAR_*)",
+    ] {
+        assert!(stderr.contains(line), "no `{line}` in:\n{stderr}");
+    }
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("error:")),
+        "a value forged a diagnostic:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains('\u{1b}'),
+        "an escape sequence reached the terminal:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_rejected_environment_name_cannot_forge_one_either() {
+    // The same rule for the other half: a warning names a suffix that failed
+    // the name check, so it is arbitrary text off the environment.
+    let tree = Tree::new();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_1up\nerror: forged", "x")
+        .arg("sync")
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("ignoring \"BATFILES_VAR_1up\\nerror: forged\""),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("error:")),
+        "a variable name forged a diagnostic:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_malformed_machine_document_fails_a_run_that_merges_it() {
+    // `vars.toml` is read by every command that executes actions now, so a
+    // document that cannot be parsed stops one the way a bad manifest does.
+    let tree = with_document("editor = \n");
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+
+    let stderr = stderr_of(&assertion);
+    assert!(stderr.contains("vars.toml"), "unexpected stderr:\n{stderr}");
 }

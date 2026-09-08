@@ -1,8 +1,9 @@
 # Environment variables
 
-This document proposes variable overrides, bootstrap adoption, and condition
-inputs. Current environment capture, location selection, run-only skips, color,
-and Git inheritance are specified in [the environment reference](../environment.md).
+This document proposes bootstrap adoption and condition inputs. Current
+environment capture, location selection, run-only skips, one-shot variables and
+their precedence, color, and Git inheritance are specified in
+[the environment reference](../environment.md).
 
 ## General precedence
 
@@ -12,9 +13,11 @@ follow the more detailed [runtime precedence](#runtime-variable-precedence).
 
 ## Batfiles configuration variables
 
+The built one-shot variables are specified in
+[the environment reference](../environment.md#one-shot-variables-batfiles_var_name).
+
 | Variable | Equivalent option | Effect |
 | --- | --- | --- |
-| `BATFILES_VAR_<NAME>` | `--var <NAME>=<value>` | Defines a one-shot user variable. |
 | `BATFILES_ENABLE_ACTIONS` | `clone --enable-action` | Removes action addresses from bootstrap-disabled state. |
 | `BATFILES_DISABLE_ACTIONS` | `clone --disable-action` | Adds action addresses to bootstrap-disabled state. |
 | `BATFILES_ENABLE_GROUPS` | `clone --enable-group` | Removes group addresses from bootstrap-disabled state. |
@@ -25,37 +28,14 @@ follow the more detailed [runtime precedence](#runtime-variable-precedence).
 `batfiles clone` uses the selected leaf-repository path as its initial destination.
 Existing [location rules](../environment.md#location-selection) apply.
 
-### One-shot variables: `BATFILES_VAR_<NAME>`
-
-Every environment key beginning with `BATFILES_VAR_` defines a candidate
-one-shot variable:
-
-- The suffix after `BATFILES_VAR_` is the variable name exactly as written and
-  is case-sensitive on Unix. On Windows the whole name is uppercased at capture
-  (see [environment capture](../environment.md)), so `BATFILES_VAR_editor` defines the user variable `EDITOR`; name
-  the matching `[vars]`/`vars.toml` keys in uppercase for Windows.
-- A bare `BATFILES_VAR_` with an empty suffix is ignored.
-- An empty value is significant: `BATFILES_VAR_PROFILE=` defines `PROFILE` as
-  the empty string.
-- Names must follow the repository format's shared [user-variable name
-  rules](repoformat.md#names-and-ids). An invalid suffix — including a reserved
-  identifier, so `BATFILES_VAR_env` on a case-sensitive system — is reported as
-  a warning naming the whole environment variable, and that one variable is
-  ignored; the command continues. This is deliberately not the rule for an
-  invalid [`--var` key](cmdline.md#shared-action-execution-options), which fails
-  the command: an environment variable is ambient and may predate any interest
-  in batfiles, while a `--var` was typed for this run.
-- The override lasts only for the current invocation and is not written to
-  `vars.toml`.
-
-#### Two distinct destinations
+### Two distinct destinations
 
 `BATFILES_VAR_<NAME>` and the `env` namespace are separate channels, and the
 same underlying environment variable can appear in both:
 
 - `BATFILES_VAR_FOO` defines the **user variable** `FOO`, referenced in
-  expressions as a bare identifier (`FOO`) and subject to the runtime variable
-  precedence below.
+  expressions as a bare identifier (`FOO`) and subject to the built [variable
+  precedence](../environment.md#variable-precedence).
 - The read-only [`env` namespace](#host-environment-in-conditions) exposes the
   *raw* process environment under `env.*` (for example `env.FOO`, and also
   `env["BATFILES_VAR_FOO"]`). It does not participate in user-variable
@@ -68,16 +48,13 @@ system's case sensitivity: on Unix `env.FOO` and `env.foo` are different keys,
 while on Windows names are uppercased at capture, so reference them as `env.FOO`
 (a lowercase reference resolves to the empty string like any absent key).
 
-#### Runtime variable precedence
+### Runtime variable precedence
 
-Leaf variable precedence is:
-
-```text
-leaf [vars]
-< persisted machine-local vars.toml
-< BATFILES_VAR_*
-< one-shot --var
-```
+The four leaf layers and the order they override each other in are built, and
+specified in [the environment
+reference](../environment.md#variable-precedence). What is proposed here is the
+rest: the layers an included remote adds, and how a declaration that yields no
+value behaves.
 
 For actions spliced from an included remote, precedence is:
 

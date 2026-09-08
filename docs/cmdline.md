@@ -30,8 +30,12 @@ the home directory, and `sync` acts on it: an action or group recorded in
 [`disabled.toml`](state.md) is passed over.
 
 `vars set`, `vars get`, and `vars unset` maintain the other machine-local
-document, [`vars.toml`](state.md#varstoml-machine-local-variables). Nothing acts
-on it yet: variables feed conditions, and no command evaluates one.
+document, [`vars.toml`](state.md#varstoml-machine-local-variables). Every
+command that executes actions merges it with the repository's `[vars]`,
+`BATFILES_VAR_*`, and `--var` into one [effective
+set](environment.md#variable-precedence), and `-vv` prints what that came to.
+Nothing acts on a value yet: variables feed conditions, and no command evaluates
+one.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -85,18 +89,46 @@ directory and does not use any selected roots.
 `--color` and the four location options have their full effect. `--verbose` at
 one level prints the resolved roots; the `repository:` line appears only for a
 command that reads one. It also prints the destinations `sync` left alone
-because they were already correct. `--quiet` suppresses the lines saying what
-`sync` did, and nothing else.
+because they were already correct. A second level, `-vv`, adds the [effective
+variables](environment.md#variable-precedence) a run resolved. `--quiet`
+suppresses the lines saying what `sync` did, and nothing else.
 
 Three of the four resolved roots are live. `sync` and the two apply commands
-read the leaf repository and
-[`disabled.toml`](state.md) and write into the selected home; the enable and
-disable commands read and rewrite `disabled.toml` under the config directory,
-and the three machine-local variable commands do the same for `vars.toml`
-beside it. Neither kind touches the repository or the home. Nothing reads or
-writes anything under the cache directory yet. See
+read the leaf repository, [`disabled.toml`](state.md), and
+[`vars.toml`](state.md#varstoml-machine-local-variables), and write into the
+selected home; the enable and disable commands read and rewrite `disabled.toml`
+under the config directory, and the three machine-local variable commands do the
+same for `vars.toml` beside it. Neither kind touches the repository or the home.
+Nothing reads or writes anything under the cache directory yet. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
+
+## Shared Action Execution Options
+
+These options are accepted by every command that executes actions: `sync`,
+`apply-action`, `apply-group`, and `clone`, which forwards them to its follow-up
+synchronization. One of them is honored so far; the rest are
+[refused for now](#unimplemented-options).
+
+| Option              | Purpose                                                                    |
+|---------------------|-----------------------------------------------------------------------------|
+| `--var <key=value>` | Set a one-shot variable. Repeatable; the last value for a key wins.        |
+
+A `--var` key must be a valid [user-variable name](repoformat.md#names-and-ids).
+An invalid one fails the command as a usage error, before the location roots are
+resolved and before any file is read. An invalid `BATFILES_VAR_*` name is
+deliberately treated differently — it warns and is dropped — for the reason
+given with [one-shot
+variables](environment.md#one-shot-variables-batfiles_var_name).
+
+An empty value is significant: `--var profile=` sets `profile` to the empty
+string, which is a value like any other and overrides the layers below it. Where
+a `--var` sits relative to the other three layers is
+[variable precedence](environment.md#variable-precedence).
+
+Variables exist only to feed `when` and `unless` conditions, and no command
+evaluates one yet, so a `--var` changes nothing about what a run installs.
+`-vv` prints the set it produced.
 
 ## Output Streams
 
@@ -574,9 +606,9 @@ the command exists.
 
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                        | `--refresh-remotes`, `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive` |
+| `sync`                        | `--refresh-remotes`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive` |
 | `clone`                       | `sync`'s list plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`. `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all |
-| `apply-action`, `apply-group` | `--var`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
+| `apply-action`, `apply-group` | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
 | `vars list`                   | `--no-refresh`                                                                                                                             |
 | everything else               | none                                                                                                                                       |
 

@@ -1,9 +1,9 @@
 # Environment variables
 
 The environment inputs batfiles reads today: the four location variables that
-select where it works, the two run-only skip lists, and the color selection.
-There is also one family it deliberately does *not* pass on, covered at the end.
-The rest — one-shot variable overrides, bootstrap adoption, and the host facts
+select where it works, the two run-only skip lists, the one-shot user variables,
+and the color selection. There is also one family it deliberately does *not*
+pass on, covered at the end. The rest — bootstrap adoption and the host facts
 conditions use — are in [`future/environment.md`](future/environment.md), along
 with the table naming every variable in the intended set.
 
@@ -30,13 +30,13 @@ none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
 Three of the four are live so far. `sync` and the two apply commands open the
-`batfiles.toml` in the leaf repository and the
-[`disabled.toml`](state.md) under the config directory, and install into the
+`batfiles.toml` in the leaf repository and both documents under the config
+directory — [`disabled.toml`](state.md) and
+[`vars.toml`](state.md#varstoml-machine-local-variables) — and install into the
 selected home; the enable and disable commands rewrite `disabled.toml` and open
-nothing else, as the three machine-local variable commands do for
-[`vars.toml`](state.md#varstoml-machine-local-variables). Only the cache
-directory is still an answer to where a command *would* work. All four roots are
-resolved together.
+nothing else, as the three machine-local variable commands do for `vars.toml`.
+Only the cache directory is still an answer to where a command *would* work. All
+four roots are resolved together.
 
 ## Run-only skips
 
@@ -53,6 +53,86 @@ precedence of reported exclusions, and unmatched-address diagnostics.
 ```console
 $ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
 ```
+
+## One-shot variables: `BATFILES_VAR_<NAME>`
+
+| Variable              | Equivalent option        | Effect                             |
+|-----------------------|--------------------------|-------------------------------------|
+| `BATFILES_VAR_<NAME>` | `--var <NAME>=<value>`   | Defines a one-shot user variable.  |
+
+Every environment key beginning with `BATFILES_VAR_` defines a candidate
+one-shot variable:
+
+- The suffix after `BATFILES_VAR_` is the variable name exactly as written and
+  is case-sensitive on Unix. On Windows the whole name is uppercased at capture,
+  so `BATFILES_VAR_editor` defines the user variable `EDITOR`; name the matching
+  `[vars]` and `vars.toml` keys in uppercase for Windows.
+- A bare `BATFILES_VAR_` with an empty suffix is ignored.
+- An empty value is significant: `BATFILES_VAR_PROFILE=` defines `PROFILE` as
+  the empty string.
+- Names must follow the repository format's shared [user-variable name
+  rules](repoformat.md#names-and-ids). An invalid suffix — including a reserved
+  identifier, so `BATFILES_VAR_env` on a case-sensitive system — is reported as
+  a warning naming the whole environment variable, and that one variable is
+  ignored; the command continues. This is deliberately not the rule for an
+  invalid [`--var` key](cmdline.md#shared-action-execution-options), which fails
+  the command: an environment variable is ambient and may predate any interest
+  in batfiles, while a `--var` was typed for this run.
+- The override lasts only for the current invocation and is not written to
+  `vars.toml`.
+
+A warning names the environment variable and not its value, which may be a
+token. The one listing that prints values is the one asked for them: `-vv`,
+below.
+
+Conditions will read these variables under a second, unrelated name as well:
+`BATFILES_VAR_FOO` will be readable as the raw environment entry
+`env.BATFILES_VAR_FOO`, which is a separate channel that does not participate in
+the precedence below. That namespace is not built; it is specified in
+[`future/environment.md`](future/environment.md#two-distinct-destinations).
+
+## Variable precedence
+
+Four layers can declare a user variable. Each overrides the ones before it:
+
+```text
+leaf [vars]
+< persisted machine-local vars.toml
+< BATFILES_VAR_*
+< one-shot --var
+```
+
+The layers are merged into one flat set for every command that executes actions
+— `sync`, `apply-action`, and `apply-group` — in both real and dry runs. Every
+value is a string, and an empty string is a value like any other: a higher
+layer's empty value overrides a lower layer's non-empty one. Repeating `--var`
+for one key is the same rule applied within a layer, so the last value written
+wins.
+
+Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables),
+a malformed or unreadable one now fails these commands as a malformed manifest
+does.
+
+**Nothing consults a merged value yet.** Variables exist to feed `when` and
+`unless` conditions, and no command evaluates one, so the set a run resolves
+changes nothing about what it installs. What it does do is answer questions
+about itself: `batfiles <command> -vv` prints the effective set, each variable
+with the value in force, the layer that supplied it, and the layers that value
+overrode.
+
+```console
+$ BATFILES_VAR_editor=code batfiles sync -vv --var editor=emacs
+variables:
+  editor  = "emacs" (--var; over BATFILES_VAR_*, vars.toml, batfiles.toml)
+  profile = "work" (vars.toml; over batfiles.toml)
+```
+
+Unlike the machine-local variable commands, whose outcome lines deliberately
+name a key and never its value, this listing prints values: it exists to show
+which layer won, and `-vv` is a request for exactly that.
+
+Actions spliced from an included remote will add layers of their own, specified
+in [`future/environment.md`](future/environment.md#runtime-variable-precedence).
 
 ## Location selection
 

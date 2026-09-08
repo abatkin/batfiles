@@ -23,12 +23,13 @@ The document, its schema, and the three commands that maintain it are specified
 in [`docs/state.md`](../state.md#varstoml-machine-local-variables). What is
 missing is every reader of the values.
 
-**The precedence layer.** Machine-local values will contribute the persisted
-layer of the authoritative [runtime variable
-precedence](environment.md#runtime-variable-precedence), and every stored value
+**A reader of the merged value.** Machine-local values already contribute the
+persisted layer of the built [variable
+precedence](../environment.md#variable-precedence), and every stored value
 follows the [string-valued variable
-model](repoformat.md#string-valued-variables). Until conditions are evaluated,
-nothing resolves a stored value into a run.
+model](repoformat.md#string-valued-variables). What is missing is the condition
+evaluation that consults the merged set; until it lands, a run resolves a stored
+value and does nothing with it.
 
 **`vars list`**, the one `vars` command that reads more than this file.
 `--machine-only` reads only this file and bypasses repository and cache I/O.

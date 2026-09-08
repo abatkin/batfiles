@@ -874,7 +874,7 @@ errors naming the line they are written on rather than values converted to
 [`future/repoformat.md`](future/repoformat.md#dynamic-variable-record) and
 rejected on the same terms until batfiles can run one.
 
-**Nothing reads the section yet, so declaring it changes no run.** Batfiles
+**No value is consulted yet, so declaring the section changes no run.** Batfiles
 accepts it and checks it as the manifest is read; what consults a variable is a
 condition, and conditions are specified in
 [`future/repoformat.md`](future/repoformat.md#condition). Until they arrive, a
@@ -882,12 +882,14 @@ condition, and conditions are specified in
 installed without them.
 
 What is checked is the name and the type of the value, both while the document is
-being read. One other layer that can set a variable is built: machine-local
-values in [`vars.toml`](state.md#varstoml-machine-local-variables), maintained
-by [`vars set` and `vars unset`](cmdline.md#vars-set). It is a separate document
-with the same name rule, and nothing merges the two layers yet, so a value stored
-there does not override a name declared here. `BATFILES_VAR_*` and `--var` are
-not built.
+being read.
+
+**This is the lowest of four layers.** Machine-local values in
+[`vars.toml`](state.md#varstoml-machine-local-variables), the `BATFILES_VAR_*`
+environment, and `--var` each override a name declared here, in that order.
+Every command that executes actions merges all four into one flat set and prints
+it at `-vv`; the rule is [variable
+precedence](environment.md#variable-precedence).
 
 ## Default-disabled bootstrap entries
 

@@ -12,6 +12,8 @@ use crate::manifest::action::Action;
 use crate::mode::RunMode;
 use crate::output::Reporter;
 use crate::selection::{Selection, Target};
+use crate::var::VarName;
+use crate::var_set::VarSet;
 
 /// `sync`: bring the home directory to the state the whole manifest describes.
 pub(crate) fn sync(
@@ -19,6 +21,7 @@ pub(crate) fn sync(
     mode: RunMode,
     skip_actions: &[String],
     skip_groups: &[String],
+    vars: &[(VarName, String)],
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -33,7 +36,7 @@ pub(crate) fn sync(
     );
     // An empty manifest, and one whose every action is disabled, are both
     // ordinary successful runs that did nothing, so the count is not consulted.
-    run(&mut manifest, &selection, roots, mode, reporter)?;
+    run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
     Ok(())
 }
 
@@ -43,6 +46,7 @@ pub(crate) fn apply_action(
     roots: &Roots,
     mode: RunMode,
     id: &str,
+    vars: &[(VarName, String)],
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -51,7 +55,7 @@ pub(crate) fn apply_action(
     // The command accepts neither run-only option, and naming one action waives
     // every exclusion either document holds.
     let selection = Selection::new(Target::Action(&id), &[], &[], env, disabled, reporter);
-    run(&mut manifest, &selection, roots, mode, reporter)?;
+    run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
     Ok(())
 }
 
@@ -62,6 +66,7 @@ pub(crate) fn apply_group(
     mode: RunMode,
     group: &str,
     skip_actions: &[String],
+    vars: &[(VarName, String)],
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -77,7 +82,7 @@ pub(crate) fn apply_group(
         disabled,
         reporter,
     );
-    let carried_out = run(&mut manifest, &selection, roots, mode, reporter)?;
+    let carried_out = run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
 
     if carried_out == 0 {
         reporter.info("nothing to apply: every action in the group is disabled or skipped");
@@ -124,11 +129,18 @@ fn run(
     selection: &Selection<'_>,
     roots: &Roots,
     mode: RunMode,
+    vars: &[(VarName, String)],
+    env: &Environment,
     reporter: &Reporter,
 ) -> Result<usize, Error> {
     // A complaint about the invocation, so it comes before any of the work —
     // including the context, whose own failure would otherwise swallow it.
     selection.warn_unmatched(&manifest.actions, reporter);
+    // Resolved for every run, in both modes: it describes the run rather than
+    // changing the home directory. Nothing reads a value until conditions
+    // arrive at 5.6, so for now `-vv` is the whole of what it feeds.
+    let variables = VarSet::resolve(&manifest.vars, roots, env, vars, reporter)?;
+    variables.report(reporter);
     let context = RunContext::new(roots, mode, reporter)?;
     let selected_actions: Vec<SelectedAction> = manifest
         .actions

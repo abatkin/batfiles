@@ -69,10 +69,7 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
 - **5.1** ✅ Add static string `[vars]` values and `VarName`.
 - **5.2** ✅ Add `vars.toml` and the machine-local variable commands.
 - **5.3** ✅ Read `BATFILES_VAR_*` and parse `--var`.
-- **5.4** Merge manifest, state file, environment, and CLI values in one function,
-  in that precedence order. Record origins for `vars list`. A `--var` is honored
-  once it takes its place in that set, so retire its unsupported entry here and
-  promote the one-shot variable and precedence documentation with it.
+- **5.4** ✅ Merge the four variable layers in one function, with origins.
 - **5.5** Add truthiness, `facts` / `env` / `vars` namespace binding, and captured
   environment enumeration. Use the reference coercion policy.
 - **5.6** Gate actions and groups on `when` and `unless`; reject both on one
@@ -115,7 +112,9 @@ No inclusion of remote actions yet.
   distinction between an unread list and a validated empty list.
 - **7.3** Add inclusion action/group selection filters.
 - **7.4** Add per-inclusion variable overrides.
-- **7.5** Add per-inclusion scopes and layered precedence.
+- **7.5** Add per-inclusion scopes and layered precedence. A reported variable
+  origin must tell one inclusion's `[vars]` from another's and from the leaf's,
+  which the bare document name no longer does; use 7.7's display label.
 - **7.6** Enforce one-level inclusion: ignore an included remote's own remotes
   and inclusions.
 - **7.7** Give every inclusion a stable, unique display label.

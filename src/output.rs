@@ -62,6 +62,36 @@ impl Verb {
     }
 }
 
+/// A value batfiles is repeating back, quoted and made safe to print.
+///
+/// Everything batfiles has to show that it did not choose the wording of goes
+/// through this: a variable's value, and the environment variable names it
+/// warns about. Both come from outside — a repository, a hand-edited state
+/// file, the ambient environment — and a raw one can end a line and start a
+/// convincing `error:` of its own, or carry the escape sequences that move a
+/// terminal's cursor around.
+///
+/// Control characters, backslashes, and the surrounding quote are escaped the
+/// way Rust's own debug output escapes them, so the result is one line. The
+/// apostrophe is left alone: it needs no escaping inside double quotes, and
+/// `don't` is worth more than the consistency of writing `don\'t`. Printable
+/// text of any script passes through as itself.
+///
+/// The quotes are always written, which is what keeps an empty value visible as
+/// `""` rather than as a gap where a value should be.
+pub(crate) fn quoted_value(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '\'' => quoted.push(character),
+            _ => quoted.extend(character.escape_debug()),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 /// Verbosity derived from `--quiet` and repeated `--verbose`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verbosity {
@@ -200,6 +230,40 @@ mod tests {
         // suffix.
         assert_eq!(Verb::Copy.say(RunMode::Perform), "copied");
         assert_eq!(Verb::Keep.say(RunMode::Perform), "kept");
+    }
+
+    #[test]
+    fn an_ordinary_value_is_quoted_and_otherwise_left_alone() {
+        assert_eq!(quoted_value("nvim"), "\"nvim\"");
+        assert_eq!(quoted_value(""), "\"\"");
+        assert_eq!(quoted_value("it's"), "\"it's\"");
+        // Printable text of any script is the value, not a threat.
+        assert_eq!(quoted_value("café"), "\"café\"");
+    }
+
+    #[test]
+    fn a_value_cannot_forge_a_line_of_its_own() {
+        // The point of the escaping: a newline in a value would otherwise end
+        // the line it is printed on and start one that reads like batfiles'.
+        assert_eq!(
+            quoted_value("ok\nerror: forged"),
+            "\"ok\\nerror: forged\"",
+            "a value must not be able to write a second line"
+        );
+        assert_eq!(quoted_value("a\r\tb"), "\"a\\r\\tb\"");
+    }
+
+    #[test]
+    fn a_value_cannot_steer_the_terminal() {
+        assert_eq!(quoted_value("\u{1b}[31mred"), "\"\\u{1b}[31mred\"");
+        // Non-printable and direction-changing characters go the same way.
+        assert_eq!(quoted_value("a\u{202e}b"), "\"a\\u{202e}b\"");
+    }
+
+    #[test]
+    fn a_value_cannot_close_its_own_quotes() {
+        assert_eq!(quoted_value("quote\"d"), "\"quote\\\"d\"");
+        assert_eq!(quoted_value("back\\slash"), "\"back\\\\slash\"");
     }
 
     #[test]

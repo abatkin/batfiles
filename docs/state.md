@@ -76,10 +76,16 @@ honors these lists and how they combine with run-only skips.
 It is maintained by `vars set` and `vars unset`, and it may also be edited by
 hand.
 
-Nothing else reads it yet. Variables feed `when` and `unless` conditions, and no
-command evaluates one, so a value stored here changes what `vars get` answers and
-nothing about what a `sync` installs. The precedence layer it will contribute,
-once variables are resolved into a run, is specified in
+Every command that executes actions reads it, as the second of the four layers
+[variable precedence](environment.md#variable-precedence) merges: a value stored
+here overrides the repository's `[vars]` and is overridden by `BATFILES_VAR_*`
+and `--var`. A malformed or unreadable document therefore fails those commands
+as a malformed manifest does.
+
+No condition evaluates a merged value yet, so a value stored here still changes
+nothing about what a `sync` installs. What it changes is what `vars get` answers
+and what a run reports at `-vv`. The parts of this document that remain unbuilt
+are specified in
 [`future/state.md`](future/state.md#varstoml-the-parts-that-are-not-built).
 
 ### Schema
