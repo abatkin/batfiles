@@ -5,6 +5,7 @@ mod app;
 mod archive;
 mod cli;
 mod clone_list;
+mod condition;
 mod directory;
 mod disabled;
 mod env;

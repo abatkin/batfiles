@@ -18,6 +18,17 @@ toml = "1"
 # Error messages derived from variants.
 thiserror = "2"
 
+# The expression language `when` and `unless` are written in. 0.4.1 is a floor
+# rather than a preference: 0.4 added `Coercions`, which is what applies
+# batfiles' truthiness to a condition's result and to every `&&`, `||`, and `!`
+# operand alike, and 0.4.1 made integer arithmetic checked, so a manifest --
+# including a third-party remote's -- reports an overflow instead of aborting.
+simple-expressions = "0.4.1"
+
+# `facts.hostname`, which has no equivalent in std: `uname`'s nodename on Unix,
+# `GetComputerNameExW` on Windows. Infallible by signature.
+gethostname = "1"
+
 # Blocking HTTP with OS certificate roots; automatic decompression is disabled.
 ureq = { version = "3.4", default-features = false, features = [
     "rustls",

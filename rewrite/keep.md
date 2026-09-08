@@ -10,8 +10,7 @@ layers or tests for unbuilt behavior.
 | 5.1 | `src/var.rs` | Small `VarName` validator and reserved names |
 | 5.2 | `src/state/vars.rs`, variable command tests in `tests/cli.rs` | State editing; requested data stays on stdout, even with quiet output |
 | 5.3 | `src/config/env.rs`, `src/cli/options.rs` | One-shot variables and `NAME=VALUE` validation |
-| 5.5 | `src/condition.rs` | Coercion policy and `facts` / `env` / `vars` binding |
-| 5.6 | `src/repo/value.rs`, `src/repo/default_disabled.rs` | Condition parsing and condition fields on bootstrap entries |
+| 5.6 | `src/repo/default_disabled.rs` | Condition fields on bootstrap entries |
 | 6.1 | `src/repo/remote.rs` | Git remote record |
 | 6.3 | `src/repo/value.rs` | Parsed repository paths |
 | 7.3 | `src/repo/value.rs` | `GlobFilter` and `ItemIdList` |
@@ -20,9 +19,7 @@ layers or tests for unbuilt behavior.
 | 9.3 | `src/repo/remote.rs` | File and archive remote records |
 
 Preserve hand-written serde visitors for short/long value forms: choose the
-form by TOML type and retain specific errors and locations. An undeclared bare
-condition identifier is an error; `vars.x` is total. Reserved names keep
-namespace dispatch unambiguous.
+form by TOML type and retain specific errors and locations.
 
 Use the existing `Reporter`, TOML read/write helpers, Git launcher, selection,
 and execution loop. Add data output when the variable commands need it. The

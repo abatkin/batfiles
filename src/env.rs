@@ -2,18 +2,22 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 /// The captured process environment as a decoded `String` map.
+///
+/// The map is shared rather than owned outright, because the `env` namespace a
+/// condition reads must own what it reads. See [`Self::entries`].
 #[derive(Debug)]
 pub(crate) struct Environment {
-    entries: BTreeMap<String, String>,
+    entries: Rc<BTreeMap<String, String>>,
 }
 
 impl Environment {
     /// Capture the process environment exactly once, lossily decoding each name
     /// and value to `String`.
     pub fn capture() -> Self {
-        let entries = std::env::vars_os()
+        let entries: BTreeMap<String, String> = std::env::vars_os()
             .map(|(key, value)| {
                 let key = key.to_string_lossy().into_owned();
                 #[cfg(windows)]
@@ -21,7 +25,9 @@ impl Environment {
                 (key, value.to_string_lossy().into_owned())
             })
             .collect();
-        Self { entries }
+        Self {
+            entries: Rc::new(entries),
+        }
     }
 
     /// Build an environment from explicit pairs, for tests.
@@ -33,16 +39,29 @@ impl Environment {
         V: Into<String>,
     {
         Self {
-            entries: pairs
-                .into_iter()
-                .map(|(key, value)| (key.into(), value.into()))
-                .collect(),
+            entries: Rc::new(
+                pairs
+                    .into_iter()
+                    .map(|(key, value)| (key.into(), value.into()))
+                    .collect(),
+            ),
         }
     }
 
     /// Raw lookup of a single variable's value.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.entries.get(key).map(String::as_str)
+    }
+
+    /// The whole capture, shared rather than copied.
+    ///
+    /// The `env` namespace a condition reads is an owned object, since the
+    /// expression language requires one, so it takes a share of the capture
+    /// instead of a copy of it. Every namespace built during a run therefore
+    /// reads the same map, and the promise that every lookup during a run sees
+    /// the same values holds for `env.HOME` as it does for [`Self::get`].
+    pub fn entries(&self) -> Rc<BTreeMap<String, String>> {
+        Rc::clone(&self.entries)
     }
 
     /// A location variable's value as a path.

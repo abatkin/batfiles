@@ -166,15 +166,24 @@ true, so the record it gates is silently skipped on exactly the machines it was
 written for. The same shape of mistake applies to any misspelling; see the
 missing-key rule above.
 
-**`facts.hostname` is the host's configured name verbatim, and is not truncated
-at the first dot.** On a machine configured with a fully qualified name it is
-`silver.example.net`; on one configured with a short name it is `silver`. The
-cost is real: `facts.hostname == 'silver'` works on the second machine and
+**`facts.hostname` is the name the platform reports, and batfiles never truncates
+it at the first dot.** On a Unix machine configured with a fully qualified name
+it is `silver.example.net`; on one configured with a short name it is `silver`.
+The cost is real: `facts.hostname == 'silver'` works on the second machine and
 silently fails on the first, because a mismatch is a false condition rather than
-an error. It is stated rather than fixed because truncating would discard the
-domain, which is what distinguishes work from home on some fleets, and would
-lose it just as silently. Write the name your machines actually report, or
-compare against the qualified form.
+an error. Batfiles does not truncate, because the domain is what distinguishes
+work from home on some fleets and truncating would lose it just as silently.
+Write the name your machines actually report, or compare against the qualified
+form.
+
+**Windows reports the short name, even on a domain-joined machine.** The value
+comes from `GetComputerNameExW(ComputerNamePhysicalDnsHostname)`, which is the
+host component with the DNS suffix excluded, so a machine whose fully qualified
+name is `silver.example.net` has `facts.hostname == 'silver'` there while the
+same name on Unix compares equal to the qualified form. A condition that must
+work on both writes the short form, or tests the domain separately. Reporting
+the qualified Windows name is possible — it is a different call to the same API
+— and is tracked as an enhancement.
 
 ## Host environment in conditions
 

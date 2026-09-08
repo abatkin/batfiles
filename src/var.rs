@@ -1,5 +1,6 @@
 //! User-variable names.
 
+use std::borrow::Borrow;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,23 @@ fn validate(name: &str) -> Result<(), VarNameError> {
         return Err(VarNameError::Reserved);
     }
     Ok(())
+}
+
+impl VarName {
+    /// The name itself.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Borrowing as `str` is what lets a map keyed by a name be looked up with text
+/// that has not been through [`validate`], which is every lookup a condition
+/// makes: an expression can name anything. The ordering the map relies on is
+/// the inner `String`'s, so the two agree as [`Borrow`] requires.
+impl Borrow<str> for VarName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
 }
 
 impl TryFrom<String> for VarName {

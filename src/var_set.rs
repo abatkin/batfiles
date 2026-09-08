@@ -100,7 +100,7 @@ impl VarSet {
     ///
     /// Separate from [`Self::resolve`] because which layers a command reads is
     /// the command's question: `vars list --machine-only` will read one of them.
-    fn stack(
+    pub fn stack(
         manifest: BTreeMap<VarName, String>,
         machine: BTreeMap<VarName, String>,
         environment: BTreeMap<VarName, String>,
@@ -128,10 +128,28 @@ impl VarSet {
         }
     }
 
+    /// The value in force for `name`, or `None` where no layer declares it.
+    ///
+    /// This is the precedence rule itself rather than a lookup into a flattened
+    /// copy of it, so a condition reading a variable and a `-vv` line reporting
+    /// one cannot disagree. `None` is what an undeclared identifier is
+    /// diagnosed from; it is not the same answer as a declared empty value.
+    ///
+    /// The value borrows from `name` as well as from the set, because
+    /// [`Self::declaring`] holds the name while it walks. Callers read the
+    /// answer immediately, so the shorter borrow costs them nothing.
+    pub fn get<'a>(&'a self, name: &'a str) -> Option<&'a str> {
+        let layer = self.declaring(name).next()?;
+        Some(&layer.values[name])
+    }
+
     /// The layers declaring `name`, highest precedence first: the first is the
     /// value in force and the rest are the ones it overrode. An empty iterator
     /// means no layer declared the name at all.
-    fn declaring<'a>(&'a self, name: &'a VarName) -> impl Iterator<Item = &'a Layer> {
+    ///
+    /// The name is arbitrary text, because a condition can index the `vars`
+    /// namespace with anything at all.
+    fn declaring<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Layer> {
         self.layers
             .iter()
             .rev()
@@ -170,7 +188,7 @@ impl VarSet {
         let names = self.names();
         let width = names
             .iter()
-            .map(|name| name.to_string().len())
+            .map(|name| name.as_str().len())
             .max()
             .unwrap_or_default();
         names
@@ -187,6 +205,7 @@ impl VarSet {
     /// whatever a repository, a state file, or the environment put there, so it
     /// goes through [`quoted_value`].
     fn line(&self, name: &VarName, width: usize) -> Option<String> {
+        let name = name.as_str();
         let mut declaring = self.declaring(name);
         let winner = declaring.next()?;
         let value = quoted_value(&winner.values[name]);
@@ -197,7 +216,6 @@ impl VarSet {
         } else {
             format!("; over {}", shadowed.join(", "))
         };
-        let name = name.to_string();
         Some(format!("  {name:<width$} = {value} ({label}{over})"))
     }
 }
@@ -254,18 +272,17 @@ mod tests {
 
     /// The value in force and where it came from.
     fn winner(set: &VarSet, key: &str) -> (String, Origin) {
-        let key = name(key);
         let layer = set
-            .declaring(&key)
+            .declaring(key)
             .next()
             .expect("some layer should declare it");
-        (layer.values[&key].clone(), layer.origin)
+        // The same value `get` answers with, which is asserted below.
+        (layer.values[key].clone(), layer.origin)
     }
 
     /// The layers that value overrode, highest first.
     fn shadowed(set: &VarSet, key: &str) -> Vec<Origin> {
-        let key = name(key);
-        set.declaring(&key)
+        set.declaring(key)
             .skip(1)
             .map(|layer| layer.origin)
             .collect()
@@ -323,7 +340,42 @@ mod tests {
     #[test]
     fn a_name_no_layer_declares_is_declared_by_no_layer() {
         let set = stacked([("a", "1")], [], [], []);
-        assert_eq!(set.declaring(&name("absent")).count(), 0);
+        assert_eq!(set.declaring("absent").count(), 0);
+        assert_eq!(set.get("absent"), None);
+    }
+
+    #[test]
+    fn get_answers_with_the_value_in_force() {
+        // What a condition reads, and the reason it cannot disagree with a
+        // `-vv` line: both are the same walk down the layers.
+        let set = stacked(
+            [("a", "manifest"), ("b", "manifest")],
+            [("a", "machine")],
+            [],
+            [],
+        );
+        assert_eq!(set.get("a"), Some("machine"));
+        assert_eq!(set.get("b"), Some("manifest"));
+    }
+
+    #[test]
+    fn get_tells_a_declared_empty_value_from_an_undeclared_name() {
+        // `""` and `None` are the two answers a bare identifier turns into a
+        // false condition and an undeclared-identifier error respectively, so
+        // collapsing them here would collapse them there.
+        let set = stacked([], [], [], [("empty", "")]);
+        assert_eq!(set.get("empty"), Some(""));
+        assert_eq!(set.get("missing"), None);
+    }
+
+    #[test]
+    fn get_accepts_text_that_is_not_a_valid_name() {
+        // The `vars` namespace can be indexed with anything, and no layer can
+        // hold a key like this, so the answer is always that nothing declares
+        // it -- not a panic on the way to finding out.
+        let set = stacked([("a", "1")], [], [], []);
+        assert_eq!(set.get("has-dash"), None);
+        assert_eq!(set.get(""), None);
     }
 
     #[test]

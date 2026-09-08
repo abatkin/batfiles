@@ -70,11 +70,14 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
 - **5.2** ✅ Add `vars.toml` and the machine-local variable commands.
 - **5.3** ✅ Read `BATFILES_VAR_*` and parse `--var`.
 - **5.4** ✅ Merge the four variable layers in one function, with origins.
-- **5.5** Add truthiness, `facts` / `env` / `vars` namespace binding, and captured
-  environment enumeration. Use the reference coercion policy.
+- **5.5** ✅ Parse a condition, bind `facts` / `env` / `vars`, and evaluate one.
 - **5.6** Gate actions and groups on `when` and `unless`; reject both on one
   record. Extend `Action::common`, default-disabled entries, and clone-list
-  entries. Validate the default-disabled lists and remove the expectations
+  entries, all of which parse through `Condition`. Capture one `Host` per run
+  and share the `VarSet` the bindings read. Promote the condition, identifier,
+  `vars`, and truthiness sections of `docs/future/repoformat.md` and the `facts`
+  and `env` sections of `docs/future/environment.md`, none of which a user can
+  reach until a record accepts a condition. Validate the default-disabled lists and remove the expectations
   naming this step; entry IDs remain unread until adoption at 8.3.
 - **5.7** Make unevaluable conditions close the gate and warn, in both spellings.
 - **5.8** Add `vars list`. Separate repository-required roots from state-only
@@ -191,6 +194,15 @@ carry markers and withheld options cannot refer to them as implementation steps.
 - **Personal installation adoption.** Verify the complete personal manifest on
   the real home when deployment is requested; scratch-home validation alone
   does not establish live adoption.
+- **Fully qualified Windows host name.** `facts.hostname` comes from
+  `gethostname`, which calls `GetComputerNameExW` with
+  `ComputerNamePhysicalDnsHostname` on Windows and so drops the DNS suffix a
+  domain-joined machine is configured with. Reporting the qualified name means
+  calling the same API with `ComputerNameDnsFullyQualified` directly, which adds
+  a Windows dependency and unsafe FFI to a crate that has neither, and cannot be
+  tested on a runner that only cross-compiles for Windows. Weigh a second fact
+  against changing this one, since a manifest comparing the short form would
+  break. `docs/future/environment.md` documents the current difference.
 - **Git command-local overrides.** Review support for `GIT_CONFIG_COUNT` values
   such as one-off proxy/header settings. Current behavior clears these values;
   any change must preserve destination isolation and update environment docs.
