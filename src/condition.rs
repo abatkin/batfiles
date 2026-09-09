@@ -9,8 +9,8 @@
 //! 5.6 promotes them.
 //!
 //! [`eval`] is pure: no filesystem, no clock, no subprocess. The one part of
-//! evaluation that reads the host is [`Host::capture`], which a run performs
-//! once.
+//! evaluation that reads the host is [`HostNamespaces::capture`], which a run
+//! performs once.
 #![cfg_attr(not(test), expect(dead_code, reason = "read at 5.6"))]
 
 use std::any::Any;
@@ -162,21 +162,27 @@ impl fmt::Display for ConditionError {
 
 impl std::error::Error for ConditionError {}
 
-/// The namespaces that are the same for every condition in one invocation:
-/// `facts` and `env`.
+/// The two namespaces sourced from outside the repository, prepared for
+/// evaluation: the host facts and the host environment
+/// [`docs/future/environment.md`](../docs/future/environment.md#host-facts-in-conditions)
+/// specifies.
+///
+/// These are the same for every condition in one invocation, which is what
+/// separates them from the `vars` namespace [`Bindings`] builds: that one
+/// varies with the variable set, and will vary per inclusion at 7.5.
 ///
 /// Captured once because [`facts`] is not as cheap as it looks — three of the
 /// four are compile-time constants, but the host name is a syscall — and
 /// because a namespace is an owned object, so rebuilding one per condition
 /// would rebuild what it reads too.
-pub(crate) struct Host {
+pub(crate) struct HostNamespaces {
     facts: Value,
     env: Value,
 }
 
-impl Host {
-    /// Read the host once: `std::env::consts`, the host name, and the already
-    /// captured environment.
+impl HostNamespaces {
+    /// Build both namespaces, reading the host once: `std::env::consts`, the
+    /// host name, and the already captured environment.
     ///
     /// The [`Environment`] arrives as a parameter rather than being captured
     /// here because batfiles reads the process environment exactly once, at
@@ -221,23 +227,26 @@ fn facts() -> BTreeMap<String, String> {
     ])
 }
 
-/// One variable set, prepared for evaluation: the bare-identifier lookup and the
-/// `vars` namespace over the same variables, plus the invocation's [`Host`].
+/// One variable set, prepared for evaluation: the bare-identifier lookup and
+/// the `vars` namespace over the same variables, plus the invocation's
+/// [`HostNamespaces`].
 pub(crate) struct Bindings<'a> {
     vars: Rc<VarSet>,
-    host: &'a Host,
+    /// Kept as `host` rather than `namespaces`, because `total` below is a
+    /// namespace too and only these two come from the host.
+    host: &'a HostNamespaces,
     /// The `vars` namespace, built once because it is handed out by value.
     total: Value,
 }
 
 impl<'a> Bindings<'a> {
-    /// Bind `vars` for evaluation against the host `host` captured.
+    /// Bind `vars` for evaluation alongside the namespaces `host` captured.
     ///
     /// The variable set is shared rather than borrowed because a namespace owns
     /// what it reads. Sharing it, rather than copying the variables into the
     /// namespace, is what keeps one answer to what a name is worth: both
     /// spellings walk the same layers in the same precedence order.
-    pub fn new(vars: &Rc<VarSet>, host: &'a Host) -> Self {
+    pub fn new(vars: &Rc<VarSet>, host: &'a HostNamespaces) -> Self {
         let total = Rc::clone(vars);
         Self {
             vars: Rc::clone(vars),
@@ -522,8 +531,8 @@ mod tests {
         ))
     }
 
-    fn host(environment: &[(&str, &str)]) -> Host {
-        Host::capture(&Environment::from_pairs(environment.iter().copied()))
+    fn host(environment: &[(&str, &str)]) -> HostNamespaces {
+        HostNamespaces::capture(&Environment::from_pairs(environment.iter().copied()))
     }
 
     fn condition(source: &str) -> Condition {
