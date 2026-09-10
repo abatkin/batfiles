@@ -181,7 +181,10 @@ fn a_command_that_does_not_use_the_repository_works_from_a_deleted_directory() {
 }
 
 #[test]
-fn a_command_that_does_not_use_the_repository_does_not_report_one() {
+fn a_command_that_does_not_use_the_repository_resolves_only_its_own_state() {
+    // A state-only command reports the two roots it may read and no others.
+    // A repository is not merely unreported: none was resolved, so the manifest
+    // in the working directory is not selected by a command with no use for it.
     let tree = Tree::new();
     let working = tree.repository("working");
     let assertion = tree
@@ -195,6 +198,10 @@ fn a_command_that_does_not_use_the_repository_does_not_report_one() {
     assert!(
         !stderr.contains("repository:"),
         "an unused repository was reported:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("home:"),
+        "a destination home was reported by a command that installs nothing:\n{stderr}"
     );
     assert!(
         stderr.contains(&format!("config:     {}", display(&tree.path("config")))),

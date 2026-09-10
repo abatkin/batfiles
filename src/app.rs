@@ -13,12 +13,13 @@ use crate::env::Environment;
 use crate::error::Error;
 use crate::execute;
 use crate::location::{
-    LocationInputs, RepositoryUse, Roots, detect_os_home, discover_working_repository,
-    resolve_roots,
+    LocationInputs, Roots, StateRoots, detect_os_home, discover_working_repository, resolve_roots,
+    resolve_state_roots,
 };
 use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
+use crate::var_set;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -172,8 +173,20 @@ fn dispatch(
             machine_vars::unset(key, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Clone(_)
-        | Command::Vars(VarsCommand::List { .. } | VarsCommand::Refresh { .. }) => {
+        // The only `vars` command that reads more than `vars.toml`, and the only
+        // command whose roots depend on an option: `--machine-only` answers from
+        // machine-local state alone, so it resolves no repository to read.
+        Command::Vars(VarsCommand::List { machine_only, .. }) => {
+            if *machine_only {
+                let state = locate(cli, env, reporter)?;
+                var_set::list_machine(&state, reporter)?;
+            } else {
+                let roots = locate_repository(cli, env, reporter)?;
+                var_set::list(&roots, env, reporter)?;
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Clone(_) | Command::Vars(VarsCommand::Refresh { .. }) => {
             locate(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }
@@ -194,32 +207,30 @@ fn edit_disabled_list(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Resolve the roots a command works in, and report them at `-v`.
-fn locate(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
-    locate_with_repository_use(cli, env, reporter, RepositoryUse::Unused)
+/// Resolve the state roots a command works in, and report them at `-v`.
+///
+/// A command routed here installs nothing and reads no repository, so it never
+/// discovers a working repository and is never handed one that nothing selected.
+fn locate(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<StateRoots, Error> {
+    let state = resolve_state_roots(&locations(&cli.global), env, detect_os_home)?;
+    report_state_roots(reporter, &state);
+    Ok(state)
 }
 
-/// Resolve roots for a command that reads the leaf repository.
+/// Resolve every root, for a command that reads the leaf repository.
 fn locate_repository(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
-    locate_with_repository_use(cli, env, reporter, RepositoryUse::Required)
-}
-
-/// Resolve and report roots, discovering the working repository only for a
-/// command that uses it.
-fn locate_with_repository_use(
-    cli: &Cli,
-    env: &Environment,
-    reporter: &Reporter,
-    repository_use: RepositoryUse,
-) -> Result<Roots, Error> {
     let roots = resolve_roots(
         &locations(&cli.global),
         env,
-        repository_use,
         discover_working_repository,
         detect_os_home,
     )?;
-    report_roots(reporter, &roots, repository_use);
+    reporter.detail(
+        1,
+        &format!("{:<12}{}", "repository:", roots.batfiles_dir.display()),
+    );
+    reporter.detail(1, &format!("{:<12}{}", "home:", roots.home.display()));
+    report_state_roots(reporter, &roots.state);
     Ok(roots)
 }
 
@@ -234,21 +245,15 @@ fn locations(global: &GlobalOptions) -> LocationInputs {
     }
 }
 
-/// Report where a command decided to work. The location precedence is hard to
-/// reason about from the outside, so `-v` shows the answer rather than leaving
-/// it to be inferred.
-fn report_roots(reporter: &Reporter, roots: &Roots, repository_use: RepositoryUse) {
-    if matches!(repository_use, RepositoryUse::Required) {
-        reporter.detail(
-            1,
-            &format!("{:<12}{}", "repository:", roots.batfiles_dir.display()),
-        );
-    }
-    for (label, path) in [
-        ("home:", &roots.home),
-        ("config:", &roots.config_dir),
-        ("cache:", &roots.cache_dir),
-    ] {
+/// Report where a command decided to keep its own state. The location
+/// precedence is hard to reason about from the outside, so `-v` shows the
+/// answer rather than leaving it to be inferred.
+///
+/// Every command reports these two. A command reading the leaf repository
+/// reports its repository and home ahead of them; one that does not has neither
+/// to report.
+fn report_state_roots(reporter: &Reporter, state: &StateRoots) {
+    for (label, path) in [("config:", &state.config_dir), ("cache:", &state.cache_dir)] {
         reporter.detail(1, &format!("{label:<12}{}", path.display()));
     }
 }

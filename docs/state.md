@@ -84,8 +84,10 @@ as a malformed manifest does.
 
 A value stored here is read by every [condition](repoformat.md#conditions) a run
 decides, which is how one machine says it wants what a shared repository declares
-conditionally. It is also what `vars get` answers and what a run reports at
-`-vv`. The parts of this document that remain unbuilt are specified in
+conditionally. It is also what `vars get` answers, what a run reports at `-vv`,
+and what [`vars list`](cmdline.md#vars-list) shows in its place among the layers
+— alone, under `--machine-only`, which is the one listing that reads this file
+and nothing else. The parts of this document that remain unbuilt are specified in
 [`future/state.md`](future/state.md#varstoml-the-parts-that-are-not-built).
 
 ### Schema

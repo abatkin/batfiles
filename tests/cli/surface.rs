@@ -66,13 +66,13 @@ fn an_unimplemented_subcommand_is_named_in_full() {
     let tree = Tree::new();
     let assertion = tree
         .batfiles()
-        .args(["vars", "list"])
+        .args(["vars", "refresh"])
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("`vars list` is not implemented yet"),
+        stderr.contains("`vars refresh` is not implemented yet"),
         "unexpected stderr:\n{stderr}"
     );
 }

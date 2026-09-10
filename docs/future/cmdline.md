@@ -119,31 +119,20 @@ that needs something to refer to:
   `<action-id>.<entry-id>` when that action exists.
 - `include-remote` is never directly applyable, whatever its address.
 
-### `vars set`, `vars get`, and `vars unset`
+### `vars set`, `vars get`, `vars list`, and `vars unset`
 
-All three are built, and are specified in
-[`docs/cmdline.md`](../cmdline.md#vars-set). What is not built is every reader
-of the values they maintain: nothing resolves a machine-local value into a run
-until conditions are evaluated. The two `vars` commands below are the rest of
-the family.
+All four are built, and are specified in
+[`docs/cmdline.md`](../cmdline.md#vars-set). What is not built is the dynamic
+layer they would have to account for:
 
-### `vars list`
+- `vars list --no-refresh` is [refused for now](../cmdline.md#unimplemented-options).
+  It says not to run dynamic commands or write the cache, and to show available
+  cached state as fresh, stale, or missing — none of which exists to be shown.
+  It has no additional effect alongside `--machine-only`, which reads neither.
+- A listing shows the leaf repository's variables. A remote's arrive with
+  per-inclusion scopes at 7.5, whose labels a line would have to name.
 
-```text
-batfiles vars list [--machine-only] [--no-refresh]
-```
-
-List the effective variables from the selected leaf repository after applying
-persisted machine-local values and `BATFILES_VAR_*` environment overrides. Host
-environment values are also resolved through the read-only `env.*` namespace.
-
-| Option           | Purpose                                                                                                  |
-|------------------|----------------------------------------------------------------------------------------------------------|
-| `--machine-only` | List only persisted machine-local variables without reading the repository or dynamic-variable cache.    |
-| `--no-refresh`   | Do not run dynamic commands or write the cache; show available cached state as fresh, stale, or missing. |
-
-The two options may be combined; `--no-refresh` has no additional effect when
-`--machine-only` is used.
+`vars refresh`, below, is the rest of the family.
 
 ### `vars refresh`
 

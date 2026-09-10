@@ -13,9 +13,12 @@ The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
 **Only `version`, `sync`, `apply-action`, `apply-group`, the four enable/disable
-commands, and `vars set`, `vars get`, and `vars unset` do any work.** Every
-other command resolves the location roots it needs and then reports that it is
-not implemented yet, exiting 2 having written nothing.
+commands, and `vars set`, `vars get`, `vars list`, and `vars unset` do any
+work.** `clone` and `vars refresh` resolve the [state-only
+roots](environment.md#location-selection) — the roots they can resolve without
+work to do — and then report that they are not implemented yet, exiting 2 having
+written nothing. `init` operates on the current directory, so it resolves no
+roots before saying the same.
 
 `sync` executes the action types that exist, `--dry-run` reports what it
 would execute without doing any of it, and `--skip-action`/`--skip-group` leave
@@ -34,7 +37,7 @@ document, [`vars.toml`](state.md#varstoml-machine-local-variables). Every
 command that executes actions merges it with the repository's `[vars]`,
 `BATFILES_VAR_*`, and `--var` into one [effective
 set](environment.md#variable-precedence), and `-vv` prints what that came to.
-That set is what a record's [`when` or
+`vars list` asks for that set on its own. It is what a record's [`when` or
 `unless`](repoformat.md#conditions) is decided against, which is the only thing
 that reads a variable.
 
@@ -88,19 +91,22 @@ directory and does not use any selected roots.
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
 
 `--color` and the four location options have their full effect. `--verbose` at
-one level prints the resolved roots; the `repository:` line appears only for a
-command that reads one. It also prints the destinations `sync` left alone
-because they were already correct. A second level, `-vv`, adds the [effective
+one level prints the roots that command resolved, which is not always all four:
+the `repository:` and `home:` lines appear only for a command that reads the
+leaf repository, as [location selection](environment.md#location-selection)
+specifies. It also prints the destinations `sync` left alone because they were
+already correct. A second level, `-vv`, adds the [effective
 variables](environment.md#variable-precedence) a run resolved. `--quiet`
 suppresses the lines saying what `sync` did, and nothing else.
 
 Three of the four resolved roots are live. `sync` and the two apply commands
 read the leaf repository, [`disabled.toml`](state.md), and
 [`vars.toml`](state.md#varstoml-machine-local-variables), and write into the
-selected home; the enable and disable commands read and rewrite `disabled.toml`
-under the config directory, and the three machine-local variable commands do the
-same for `vars.toml` beside it. Neither kind touches the repository or the home.
-Nothing reads or writes anything under the cache directory yet. See
+selected home; `vars list` reads the first and the last of those and writes
+nothing. The enable and disable commands read and rewrite `disabled.toml`
+under the config directory, and the machine-local variable commands do the
+same for `vars.toml` beside it. Neither kind resolves the repository or the
+home at all. Nothing reads or writes anything under the cache directory yet. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -146,8 +152,8 @@ Every command follows one rule for where its output goes:
   adds detail.
 
 Most commands produce no requested data at all and therefore write nothing to
-standard output. `version` and `vars get` are the two that do today; `vars list`
-joins them when it is built.
+standard output. `version`, `vars get`, and `vars list` are the three that do
+today.
 
 Errors and warnings batfiles raises itself are labeled `error:` and `warning:`,
 and the label alone is colored when color is enabled — bold red and bold yellow
@@ -373,6 +379,51 @@ What a stored value goes on to decide is a record's [`when` or
 `unless`](repoformat.md#conditions), read at its place in the [variable
 precedence](environment.md#variable-precedence). A manifest whose records carry
 no condition is unaffected by anything these three commands do.
+
+### `vars list`
+
+```text
+batfiles vars list [--machine-only]
+```
+
+List the effective variables on standard output, one per line: the value in
+force, the layer that decided it, and the layers it overrode.
+
+```console
+$ batfiles vars list
+editor  = "nvim" (vars.toml; over batfiles.toml)
+profile = "work" (vars.toml; over batfiles.toml)
+rank    = "9" (BATFILES_VAR_*; over batfiles.toml)
+```
+
+These are the lines `-vv` prints for a run that executes actions, produced by
+the same resolution, so a listing and a run cannot disagree about what a
+variable is worth or which layer decided it. Precedence is the reason to ask,
+which is why each line names its origin rather than being shaped for a shell to
+parse; `vars get` is what answers with a bare value.
+
+Three of the four layers of the [variable
+precedence](environment.md#variable-precedence) are listed: the leaf
+repository's `[vars]`, `vars.toml`, and `BATFILES_VAR_*`. The fourth is not,
+because `vars list` does not accept `--var` — a listing of an invocation that
+set one would describe the invocation rather than the machine. Host facts and
+the environment are not listed either: `facts.*` and `env.*` are namespaces a
+[condition](repoformat.md#conditions) reads, not variables anything declared.
+
+| Option           | Purpose                                                          |
+|------------------|--------------------------------------------------------------------|
+| `--machine-only` | List `vars.toml` alone, reading no repository and no environment. |
+
+`--machine-only` answers with what this machine has persisted, so every line it
+prints names a variable `vars unset` would remove and nothing can be shown as
+overriding anything. It is also how to list variables where no repository is
+selected: a normal listing reads the leaf `batfiles.toml` and fails when there
+is none, as every command that reads the manifest does.
+
+A value is quoted, so an empty value is visible as `""` rather than reading as a
+variable with no value. An empty set writes nothing to standard output — an
+empty set is not data — and reports that there is nothing to list on standard
+error, where `--quiet` suppresses it.
 
 ## Selecting What a Run Does
 
@@ -648,8 +699,8 @@ the command exists.
 | everything else               | none                                                                                                                                       |
 
 An option that arrives together with the command that takes it is not listed —
-`init`'s `--no-git-init` and `vars list`'s `--machine-only` — because the
-command's own not-implemented message already covers it. Neither is an option
+`init`'s `--no-git-init` — because the command's own not-implemented message
+already covers it. Neither is an option
 that is live elsewhere and is waiting only on the command: `clone
 --skip-group gui` reports `clone`, because `--skip-group` is not the part of
 that invocation batfiles cannot do yet.

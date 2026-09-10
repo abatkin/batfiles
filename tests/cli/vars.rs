@@ -590,3 +590,140 @@ fn a_malformed_machine_document_fails_a_run_that_merges_it() {
     let stderr = stderr_of(&assertion);
     assert!(stderr.contains("vars.toml"), "unexpected stderr:\n{stderr}");
 }
+
+// The listing.
+
+#[test]
+fn a_listing_shows_every_layer_with_the_value_in_force_first() {
+    // The same account `-vv` gives a run, asked for on its own: the value, the
+    // layer that decided it, and the layers it overrode.
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_rank", "9")
+        .args(["vars", "list"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        stdout_of(&assertion),
+        "editor  = \"nvim\" (vars.toml; over batfiles.toml)\n\
+         profile = \"work\" (vars.toml; over batfiles.toml)\n\
+         rank    = \"9\" (BATFILES_VAR_*; over batfiles.toml)\n"
+    );
+}
+
+#[test]
+fn a_listing_is_data_and_goes_to_standard_output_alone() {
+    // `--quiet` suppresses what a command did, never what it was asked for, so
+    // the listing survives it while everything else on standard error does not.
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .args(["--quiet", "vars", "list"])
+        .assert()
+        .success();
+
+    assert!(stdout_of(&assertion).contains("editor  = \"nvim\""));
+    assert_eq!(stderr_of(&assertion), "");
+}
+
+#[test]
+fn a_listing_never_shows_the_command_line_layer() {
+    // `vars list` does not take `--var`: the set it reports describes the
+    // machine, and one an invocation invented would describe the invocation.
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .args(["vars", "list", "--var", "editor=emacs"])
+        .assert()
+        .failure()
+        .code(2);
+
+    assert_eq!(stdout_of(&assertion), "");
+    assert!(
+        stderr_of(&assertion).contains("--var"),
+        "the rejected option was not named"
+    );
+}
+
+#[test]
+fn machine_only_lists_the_persisted_document_and_nothing_else() {
+    // Both other layers declare `editor`, and neither reaches the listing: what
+    // comes back is what this machine stored and could unset.
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_editor", "code")
+        .args(["vars", "list", "--machine-only"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        stdout_of(&assertion),
+        "editor  = \"nvim\" (vars.toml)\n\
+         profile = \"work\" (vars.toml)\n"
+    );
+}
+
+#[test]
+fn machine_only_reads_no_repository_and_a_normal_listing_needs_one() {
+    // The pair is the point of separating the two resolutions: one command has
+    // a repository to read and the other has no use for one, so a missing
+    // manifest stops only the first.
+    let tree = Tree::roots();
+    tree.write_machine_vars("editor = 'nvim'\n");
+
+    let assertion = tree
+        .batfiles()
+        .args(["vars", "list", "--machine-only"])
+        .assert()
+        .success();
+    assert_eq!(stdout_of(&assertion), "editor = \"nvim\" (vars.toml)\n");
+
+    let assertion = tree.batfiles().args(["vars", "list"]).assert().failure();
+    assert_eq!(stdout_of(&assertion), "");
+    assert!(
+        stderr_of(&assertion).contains("batfiles.toml"),
+        "the missing manifest was not named"
+    );
+}
+
+#[test]
+fn a_listing_with_nothing_to_show_writes_no_data() {
+    // Standard output carries data, and an empty set is not data; the account
+    // of that is a line about what the command did, on standard error.
+    let tree = Tree::new();
+    let assertion = tree.batfiles().args(["vars", "list"]).assert().success();
+
+    assert_eq!(stdout_of(&assertion), "");
+    assert!(
+        stderr_of(&assertion).contains("no variables are set"),
+        "unexpected stderr:\n{}",
+        stderr_of(&assertion)
+    );
+
+    let assertion = tree
+        .batfiles()
+        .args(["--quiet", "vars", "list"])
+        .assert()
+        .success();
+    assert_eq!(stderr_of(&assertion), "");
+}
+
+#[test]
+fn an_unusable_environment_name_warns_without_disturbing_the_listing() {
+    let tree = with_two_documents();
+    let assertion = tree
+        .batfiles()
+        .env("BATFILES_VAR_1up", "x")
+        .args(["vars", "list"])
+        .assert()
+        .success();
+
+    assert!(stdout_of(&assertion).starts_with("editor "));
+    assert!(
+        stderr_of(&assertion).contains("ignoring \"BATFILES_VAR_1up\""),
+        "the unusable name was not warned about"
+    );
+}

@@ -1,7 +1,8 @@
 # Rewrite
 
-Slices 0–4 provide local installation, selection, dry-run, fetching, and Git
-clone actions. [steps.md](steps.md) tracks remaining implementation work.
+Slices 0–5 provide local installation, selection, dry-run, fetching, Git clone
+actions, and the variables and conditions that decide which records a machine
+takes. [steps.md](steps.md) tracks remaining implementation work.
 
 ## Acceptance repositories
 

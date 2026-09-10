@@ -19,14 +19,18 @@
 //! A [`Condition`](crate::condition::Condition) is the only thing that consults
 //! a value. The set is worked out on every run whether or not any record carries
 //! one, and shown at `-vv`, so precedence can be read off a real invocation.
+//! `vars list` asks for the same set on its own, and is here rather than with
+//! the [machine-local commands](crate::machine_vars) because the set, not the
+//! document, is what it answers with.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::env::Environment;
 use crate::env_vars;
 use crate::error::Error;
-use crate::location::Roots;
+use crate::location::{Roots, StateRoots};
 use crate::machine_vars::MachineVars;
+use crate::manifest::Manifest;
 use crate::output::{Reporter, quoted_value};
 use crate::var::VarName;
 
@@ -82,7 +86,7 @@ impl VarSet {
     /// which is [`env_vars`]' rule rather than this function's.
     pub fn resolve(
         manifest: &BTreeMap<VarName, String>,
-        roots: &Roots,
+        roots: &StateRoots,
         env: &Environment,
         cli: &[(VarName, String)],
         reporter: &Reporter,
@@ -99,7 +103,7 @@ impl VarSet {
     /// Stack four layers that have already been read, lowest precedence first.
     ///
     /// Separate from [`Self::resolve`] because which layers a command reads is
-    /// the command's question: `vars list --machine-only` will read one of them.
+    /// the command's question: [`list_machine`] reads one of them.
     pub fn stack(
         manifest: BTreeMap<VarName, String>,
         machine: BTreeMap<VarName, String>,
@@ -172,6 +176,10 @@ impl VarSet {
     /// which deliberately name a key and never its value. The difference is what
     /// was asked for: `-vv` is a request for exactly this, and a listing that
     /// withheld the values could not show which layer won.
+    ///
+    /// Indented under a heading, which is what separates it from [`Self::list`]:
+    /// here the set is detail about a run doing something else, and there it is
+    /// the whole of what was asked for.
     pub fn report(&self, reporter: &Reporter) {
         let lines = self.lines();
         if lines.is_empty() {
@@ -179,7 +187,28 @@ impl VarSet {
         }
         reporter.detail(2, "variables:");
         for line in lines {
-            reporter.detail(2, &line);
+            reporter.detail(2, &format!("  {line}"));
+        }
+    }
+
+    /// Answer `vars list` with the set, on standard output.
+    ///
+    /// The same lines `-vv` reports, from the same walk down the layers, so the
+    /// command and the run cannot disagree about what a variable is worth or
+    /// which layer decided it. Precedence is the reason to run the command, so
+    /// each line carries its origin rather than being made shell-parseable.
+    ///
+    /// A set with nothing in it prints nothing at all, since standard output
+    /// carries data and there is none; the account of that goes to standard
+    /// error like every other line describing what a command did.
+    pub fn list(&self, reporter: &Reporter) {
+        let lines = self.lines();
+        if lines.is_empty() {
+            reporter.info("no variables are set");
+            return;
+        }
+        for line in lines {
+            reporter.data(&line);
         }
     }
 
@@ -216,8 +245,31 @@ impl VarSet {
         } else {
             format!("; over {}", shadowed.join(", "))
         };
-        Some(format!("  {name:<width$} = {value} ({label}{over})"))
+        Some(format!("{name:<width$} = {value} ({label}{over})"))
     }
+}
+
+/// Answer `vars list` for the selected leaf repository.
+///
+/// Every layer a run resolves except the command line, which `vars list` does
+/// not accept: listing the variables of an invocation that set one would say
+/// less about the machine than about the invocation.
+pub(crate) fn list(roots: &Roots, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
+    let manifest = Manifest::load(&roots.manifest())?;
+    VarSet::resolve(&manifest.vars, &roots.state, env, &[], reporter)?.list(reporter);
+    Ok(())
+}
+
+/// Answer `vars list --machine-only` from `vars.toml` alone.
+///
+/// One layer, so nothing here can be overridden and no repository or process
+/// environment is consulted: the answer is what this machine has persisted, and
+/// every line of it names a variable [`vars unset`](crate::machine_vars::unset)
+/// would remove.
+pub(crate) fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
+    let machine = MachineVars::load(&state.machine_vars())?;
+    VarSet::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
+    Ok(())
 }
 
 /// The command line as a layer.
@@ -452,8 +504,8 @@ mod tests {
         assert_eq!(
             set.lines(),
             [
-                "  editor  = \"emacs\" (--var; over vars.toml, batfiles.toml)",
-                "  profile = \"personal\" (batfiles.toml)",
+                "editor  = \"emacs\" (--var; over vars.toml, batfiles.toml)",
+                "profile = \"personal\" (batfiles.toml)",
             ]
         );
     }
@@ -463,7 +515,7 @@ mod tests {
         // Quoted for exactly this: an unquoted empty value would read as a
         // variable with no value at all, which is a different thing.
         let set = stacked([], [], [], [("profile", "")]);
-        assert_eq!(set.lines(), ["  profile = \"\" (--var)"]);
+        assert_eq!(set.lines(), ["profile = \"\" (--var)"]);
     }
 
     #[test]

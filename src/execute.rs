@@ -99,7 +99,7 @@ pub(crate) fn apply_group(
 /// Read the two documents every one of these commands works from.
 fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
     let manifest = Manifest::load(&roots.manifest())?;
-    let disabled = Disabled::load(&roots.disabled())?;
+    let disabled = Disabled::load(&roots.state.disabled())?;
     Ok((manifest, disabled))
 }
 
@@ -173,7 +173,13 @@ fn run(
     // changing the home directory. Shared rather than copied, because the
     // `vars` namespace answers from these layers rather than from a flattened
     // copy of them.
-    let variables = Rc::new(VarSet::resolve(&manifest.vars, roots, env, vars, reporter)?);
+    let variables = Rc::new(VarSet::resolve(
+        &manifest.vars,
+        &roots.state,
+        env,
+        vars,
+        reporter,
+    )?);
     variables.report(reporter);
     // The host is read once for the whole run, and every condition in it is
     // decided against these bindings.

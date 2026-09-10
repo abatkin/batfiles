@@ -194,11 +194,13 @@ code review and behavioral tests. Keep the scanner small.
 ## Variables
 
 Variables feed `when` and `unless`; they do not interpolate paths or strings.
-Slice 5 resolves the four sources into one flat scope: one namespace, in which
+Slice 5 resolved the four sources into one flat scope: one namespace, in which
 a name resolves the same way whatever declared it. The representation is not
 prescribed; the seam below is. Add per-inclusion scopes only with remote
-inclusion at 7.5. Conditions, precedence, and dynamic-variable proposals live
-in `docs/future/` until implemented.
+inclusion at 7.5. Conditions and precedence are specified in
+[`docs/repoformat.md`](../docs/repoformat.md#conditions) and
+[`docs/environment.md`](../docs/environment.md#variable-precedence); the
+dynamic-variable proposals stay in `docs/future/` until implemented.
 
 ## Seams the late slices need
 

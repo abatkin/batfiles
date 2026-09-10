@@ -63,9 +63,6 @@ See [retirement](docs.md#retirement-at-slice-8) for the slice 8 transition.
 
 ## Slice 5 — Variables and conditions
 
-Use one flat scope, as specified under [Variables](guidance.md#variables).
-Reference paths and reusable parsers are listed in [keep.md](keep.md).
-
 - **5.1** ✅ Add static string `[vars]` values and `VarName`.
 - **5.2** ✅ Add `vars.toml` and the machine-local variable commands.
 - **5.3** ✅ Read `BATFILES_VAR_*` and parse `--var`.
@@ -73,10 +70,7 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
 - **5.5** ✅ Parse a condition, bind `facts` / `env` / `vars`, and evaluate one.
 - **5.6** ✅ Gate actions and clone-list entries on `when` and `unless`.
 - **5.7** ✅ Close the gate and warn where a condition cannot be evaluated.
-- **5.8** Add `vars list`. Separate repository-required roots from state-only
-  roots so a state-only resolution cannot carry an unselected batfiles
-  directory; normal listing reads the leaf repository while `--machine-only`
-  does not.
+- **5.8** ✅ Add `vars list` and separate state-only roots from repository roots.
 
 ## Slice 6 — Git remotes, materialization only
 

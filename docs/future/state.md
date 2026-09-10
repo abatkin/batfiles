@@ -19,19 +19,18 @@ rules](environment.md#location-selection).
 
 ## `vars.toml`: the parts that are not built
 
-The document, its schema, and the three commands that maintain it are specified
-in [`docs/state.md`](../state.md#varstoml-machine-local-variables). Stored values
-already contribute the persisted layer of the built [variable
+The document, its schema, and the four commands that read or maintain it are
+specified in [`docs/state.md`](../state.md#varstoml-machine-local-variables).
+Stored values already contribute the persisted layer of the built [variable
 precedence](../environment.md#variable-precedence) and are read by every
-[condition](../repoformat.md#conditions) a run decides. One command that reads
-them is missing.
+[condition](../repoformat.md#conditions) a run decides. What is missing is the
+dynamic layer and the command that refreshes it.
 
-**`vars list`**, the one `vars` command that reads more than this file.
-`--machine-only` reads only this file and bypasses repository and cache I/O.
-Normal `vars list` combines it with leaf `[vars]` and the captured process
-environment. `BATFILES_VAR_*` values participate at their normal precedence, and
-host environment values are available through the read-only `env.*` namespace.
-Remote variables and `--var` are not included.
+**`vars list`** is built, and is specified in
+[`docs/cmdline.md`](../cmdline.md#vars-list). What it does not yet show is the
+dynamic-variable cache below, or a remote's variables; `--no-refresh` is
+[refused for now](../cmdline.md#unimplemented-options) because there is nothing
+it could decline to refresh.
 
 **`vars refresh`** reads this file, but only as an input to
 [reachability](#reachability). It evaluates the `[remotes]` and `include-remote`

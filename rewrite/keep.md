@@ -7,9 +7,6 @@ layers or tests for unbuilt behavior.
 
 | Step | Reference | Useful contract |
 | --- | --- | --- |
-| 5.1 | `src/var.rs` | Small `VarName` validator and reserved names |
-| 5.2 | `src/state/vars.rs`, variable command tests in `tests/cli.rs` | State editing; requested data stays on stdout, even with quiet output |
-| 5.3 | `src/config/env.rs`, `src/cli/options.rs` | One-shot variables and `NAME=VALUE` validation |
 | 6.1 | `src/repo/remote.rs` | Git remote record |
 | 6.3 | `src/repo/value.rs` | Parsed repository paths |
 | 7.3 | `src/repo/value.rs` | `GlobFilter` and `ItemIdList` |
@@ -21,8 +18,8 @@ Preserve hand-written serde visitors for short/long value forms: choose the
 form by TOML type and retain specific errors and locations.
 
 Use the existing `Reporter`, TOML read/write helpers, Git launcher, selection,
-and execution loop. Add data output when the variable commands need it. The
-`install.sh` template belongs to slice 10, separate from `init` in slice 8.
+and execution loop. The `install.sh` template belongs to slice 10, separate from
+`init` in slice 8.
 
 Design remote loading and per-inclusion variable scopes around their current
 callers. Do not import the reference `reach`, `scope`, `dynamic`, or repository

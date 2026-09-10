@@ -29,14 +29,15 @@ command still reads or acts on only the roots it needs, and a command that needs
 none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
-Three of the four are live so far. `sync` and the two apply commands open the
-`batfiles.toml` in the leaf repository and both documents under the config
-directory — [`disabled.toml`](state.md) and
-[`vars.toml`](state.md#varstoml-machine-local-variables) — and install into the
-selected home; the enable and disable commands rewrite `disabled.toml` and open
-nothing else, as the three machine-local variable commands do for `vars.toml`.
-Only the cache directory is still an answer to where a command *would* work. All
-four roots are resolved together.
+Three of the four are live so far. `sync`, the two apply commands, and a normal
+`vars list` open the `batfiles.toml` in the leaf repository and both documents
+under the config directory — [`disabled.toml`](state.md) and
+[`vars.toml`](state.md#varstoml-machine-local-variables); the first three also
+install into the selected home. The enable and disable commands rewrite
+`disabled.toml` and open nothing else, as the machine-local variable commands do
+for `vars.toml`. Only the cache directory is still an answer to where a command
+*would* work. Which of the four a given command resolves is settled under
+[location selection](#location-selection).
 
 ## Run-only skips
 
@@ -227,6 +228,25 @@ reads the same values.
 
 ## Location selection
 
+A command resolves only the roots its own work needs, and there are two sets. A
+command that installs nothing and reads no repository resolves the **config and
+cache directories alone**: the four enable and disable commands, `vars set`,
+`vars get`, `vars unset`, and `vars list --machine-only`. A command that reads
+the leaf repository resolves those two and also selects the destination home and
+the leaf repository: `sync`, `apply-action`, `apply-group`, and a normal `vars
+list`. `version` and `init` resolve no roots at all.
+
+The two sets are separate resolutions rather than one with parts left unread, so
+a command in the first set has no destination home and no leaf repository at all
+— not an unused default standing in for one.
+
+A command that is [not implemented yet](cmdline.md#what-runs-today) has no work
+to need roots for, and resolves the first set: `clone` and `vars refresh` print
+`config:` and `cache:` at `-v` and then report that they do not exist. That is
+what they resolve today rather than what they will resolve — `clone` writes a
+repository into the selected home and synchronizes it — so do not read this
+paragraph as a contract about either command's finished behavior.
+
 The destination home is selected in this order:
 
 ```text
@@ -240,6 +260,9 @@ user's profile directory as reported by the OS.
 
 Failure to determine a home directory for a command that needs one is fatal.
 Batfiles does not silently use the current directory as the destination home.
+A command that resolves the config and cache directories alone selects no
+destination home, so `--home-dir` and `BATFILES_HOME` do not apply to it and no
+home has to be determined for it.
 
 The leaf repository is selected in this order:
 
@@ -293,15 +316,19 @@ corresponding `XDG_*`/`BATFILES_*` variable explicitly.
 An absent or empty location variable is treated as unset. Location values are
 not trimmed; whitespace is part of the path value.
 
-The OS home is consulted only when a root still needs it. Selecting every root
-explicitly — including by way of `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME` —
-therefore works even where no home directory can be determined at all.
+The OS home is consulted only when a root still needs it. Selecting every root a
+command resolves — including by way of `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME`
+— therefore works even where no home directory can be determined at all. For a
+command that resolves the config and cache directories alone, those two are
+every root it resolves: `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME` alone are
+enough to run it on a machine with no determinable home.
 
-`batfiles <command> -v` prints the resolved roots. Commands that read a leaf
-repository include a `repository:` line; commands that do not read one omit the
-line because working-directory discovery did not select a repository. This is
-the way to check what a given combination of options and variables selected for
-that command.
+`batfiles <command> -v` prints the roots that command resolved, which is the way
+to check what a given combination of options and variables selected for it. A
+command that reads the leaf repository prints `repository:` and `home:` ahead of
+`config:` and `cache:`. A command that resolves the config and cache directories
+alone prints those two and nothing else: it has no home and no repository to
+report, rather than a resolved value withheld from the report.
 
 ## Color
 

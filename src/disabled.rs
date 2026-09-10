@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 use crate::item::ItemAddress;
-use crate::location::Roots;
+use crate::location::StateRoots;
 use crate::output::Reporter;
 use crate::tomlfile;
 
@@ -27,7 +27,7 @@ pub(crate) struct Disabled {
 
 impl Disabled {
     /// The document's name. Which directory it sits in is
-    /// [`Roots`]' answer, not this type's.
+    /// [`StateRoots`]' answer, not this type's.
     pub const FILE_NAME: &'static str = "disabled.toml";
 
     /// Load the document, treating a missing file as an empty disabled set.
@@ -60,7 +60,7 @@ pub(crate) fn run(
     names: &[String],
     list: DisabledList,
     change: Change,
-    roots: &Roots,
+    roots: &StateRoots,
     reporter: &Reporter,
 ) -> Result<(), Error> {
     // Every name is validated before the document is touched, so an invocation

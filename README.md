@@ -134,12 +134,13 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   manifest's `[vars]` defaults, the machine-local `vars.toml` that `vars set`,
   `vars get`, and `vars unset` maintain, `BATFILES_VAR_*` in the environment,
   and `--var` on the command line are merged into one set, each overriding the
-  ones before it. `sync -vv` prints the set it worked out, each variable with the
-  value in force and the layers it overrode, which is how you check a precedence
-  question. `vars get` writes a stored value alone to standard output, so
-  `$(batfiles vars get editor)` is the value and not a sentence about it; the
-  lines describing an edit name the key and never the value, which may be a token
-  or a path that identifies a machine.
+  ones before it. `vars list` prints the set, each variable with the value in
+  force and the layers it overrode, which is how you check a precedence question;
+  `sync -vv` prints the same lines for a run, and `vars list --machine-only`
+  narrows it to what this machine has stored. `vars get` writes a stored value
+  alone to standard output, so `$(batfiles vars get editor)` is the value and not
+  a sentence about it; the lines describing an edit name the key and never the
+  value, which may be a token or a path that identifies a machine.
 - **A record can say which machines it belongs to.** `when = "work"` runs an
   action only where the condition holds and `unless` is the other way round; a
   line of a plugin list takes the same two keys, which is how one list serves
@@ -149,8 +150,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   parsed when the manifest is read, so a malformed one is a load error rather
   than a surprise partway through a run, and `sync -v` says which condition
   passed a record over. A condition that cannot be evaluated at all — a name
-  nothing declares, a value that is not a boolean — stops the run for now;
-  closing the gate with a warning instead arrives with the next step.
+  nothing declares, a value that is not a boolean — closes the gate it was
+  written on and warns, so one bad condition costs that record and the run goes
+  on.
 - **One action or one group can be applied on its own.** `apply-action --id
   zshrc` and `apply-group --group shell` carry out part of the same manifest,
   named rather than filtered — the same actions in the same order, with the same
@@ -167,8 +169,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   everywhere, so a Windows run can create directories and seed copies but cannot
   install a link.
 
-Everything else — `init`, `clone`, `vars list`, and `vars refresh` — parses its
-arguments and exits 2.
+Everything else — `init`, `clone`, and `vars refresh` — parses its arguments and
+exits 2.
 
 ## Example
 

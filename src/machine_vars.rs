@@ -22,7 +22,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
-use crate::location::Roots;
+use crate::location::StateRoots;
 use crate::output::Reporter;
 use crate::tomlfile;
 use crate::var::VarName;
@@ -40,7 +40,7 @@ pub(crate) struct MachineVars {
 
 impl MachineVars {
     /// The document's name. Which directory it sits in is
-    /// [`Roots`]' answer, not this type's.
+    /// [`StateRoots`]' answer, not this type's.
     pub const FILE_NAME: &'static str = "vars.toml";
 
     /// Load the document, treating a missing file as no values.
@@ -61,7 +61,12 @@ impl MachineVars {
 ///
 /// The value is stored verbatim, the empty string included: values are opaque
 /// strings, so there is no separate value rule to check.
-pub(crate) fn set(key: &str, value: &str, roots: &Roots, reporter: &Reporter) -> Result<(), Error> {
+pub(crate) fn set(
+    key: &str,
+    value: &str,
+    roots: &StateRoots,
+    reporter: &Reporter,
+) -> Result<(), Error> {
     // The key is validated before the document is touched, so a bad name reads
     // and writes nothing.
     let key = parse(key)?;
@@ -79,7 +84,7 @@ pub(crate) fn set(key: &str, value: &str, roots: &Roots, reporter: &Reporter) ->
 }
 
 /// Print the machine-local value of `key`, or fail because it has none.
-pub(crate) fn get(key: &str, roots: &Roots, reporter: &Reporter) -> Result<(), Error> {
+pub(crate) fn get(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let key = parse(key)?;
     let vars = MachineVars::load(&roots.machine_vars())?;
 
@@ -95,7 +100,7 @@ pub(crate) fn get(key: &str, roots: &Roots, reporter: &Reporter) -> Result<(), E
 }
 
 /// Remove the machine-local value of `key`, if it has one.
-pub(crate) fn unset(key: &str, roots: &Roots, reporter: &Reporter) -> Result<(), Error> {
+pub(crate) fn unset(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let key = parse(key)?;
 
     let path = roots.machine_vars();
