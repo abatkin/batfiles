@@ -238,9 +238,10 @@ for one invocation, without editing what the next `sync` does.
 
 The condition is waived rather than merely satisfied, so it is not evaluated at
 all: `apply-action` reaches its record even where the same condition [cannot be
-evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) and stops a
-`sync`. Nothing is finer-grained than the one record the command was given, which
-is the same rule the two lists are waived under.
+evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) and a `sync` over
+the same manifest passes the record over. Nothing is finer-grained than the one
+record the command was given, which is the same rule the two lists are waived
+under.
 
 An `--id` that no action answers to is a failure: the command resolved nothing,
 so it exits 1 naming the address and the manifest, and writes nothing. That
@@ -475,6 +476,17 @@ out the option or the variable rather than saying only that a skip applied. A
 condition names itself instead, in the spelling the record used — `unless "gui"
 is true` rather than the verdict alone, because `unless` is the one a reader gets
 backwards.
+
+**A condition that [cannot be
+evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) is the one
+exception**, and it is a warning rather than detail: it closes the gate like any
+other reason, but nobody asked for it, so it is printed at every verbosity and
+without the `- skipped:` frame, the reason having already said what is not
+happening.
+
+```text
+warning: symlink gitconfig-work (group git): when "work" cannot be evaluated, so it is not installed: `work` is not declared. Add ...
+```
 
 When more than one reason applies, one is reported, in this order: a disable
 ahead of a run-only skip, because it is the one still in force tomorrow when the

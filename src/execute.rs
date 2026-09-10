@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::action::{self, RunContext};
 use crate::clone_list;
-use crate::condition::{Bindings, HostNamespaces};
+use crate::condition::{Bindings, HostNamespaces, Skip};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
@@ -108,7 +108,7 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
 struct SelectedAction {
     index: usize,
     heading: String,
-    skip_reason: Option<String>,
+    skip: Option<Skip>,
 }
 
 /// Read every executable clone list from the captured selection before writes,
@@ -124,13 +124,13 @@ fn prepare_clone_lists(
     bindings: &Bindings<'_>,
 ) -> Result<(), Error> {
     for selected in selected_actions {
-        if selected.skip_reason.is_some() {
+        if selected.skip.is_some() {
             continue;
         }
         if let Action::GitCloneList(list) = &mut manifest.actions[selected.index] {
             let mut entries = clone_list::read(&context.source(&list.source)?)?;
             for entry in &mut entries {
-                entry.skip_reason = closed(entry, &list.source, bindings)?;
+                entry.skip = closed(entry, bindings);
             }
             list.entries = Some(entries);
         }
@@ -140,21 +140,18 @@ fn prepare_clone_lists(
 
 /// The verdict of one entry's condition, or `None` where this run clones it —
 /// including where it declares no condition at all.
-fn closed(
-    entry: &clone_list::Entry,
-    list: &str,
-    bindings: &Bindings<'_>,
-) -> Result<Option<String>, Error> {
-    let Some(gate) = entry.gate() else {
-        return Ok(None);
-    };
-    let admits = gate
-        .admits(bindings)
-        .map_err(|source| Error::ConditionFailed {
-            record: entry.written_at(list),
-            source,
-        })?;
-    Ok((!admits).then(|| gate.to_string()))
+///
+/// A condition that cannot be decided closes the entry rather than stopping the
+/// run, so the entries around it are cloned as they would have been. No
+/// consequence clause: the line the caller writes it into opens with `not
+/// cloning`.
+fn closed(entry: &clone_list::Entry, bindings: &Bindings<'_>) -> Option<Skip> {
+    let gate = entry.gate()?;
+    match gate.admits(bindings) {
+        Ok(true) => None,
+        Ok(false) => Some(Skip::AsAsked(gate.to_string())),
+        Err(error) => Some(Skip::Unevaluable(gate.unevaluable(None, &error))),
+    }
 }
 
 /// Capture selection once, prepare executable clone lists, and execute in
@@ -189,20 +186,13 @@ fn run(
         if !selection.wants(action) {
             continue;
         }
-        // Settled here because a condition that cannot be decided is reported
-        // against the record's own heading.
-        let heading = action.describe(index + 1);
-        let skip_reason = selection
-            .skipped(action, &bindings)
-            .map_err(|source| Error::ConditionFailed {
-                record: heading.clone(),
-                source,
-            })?
-            .map(|reason| reason.to_string());
+        // Settled here, and reported below, so that a condition batfiles cannot
+        // decide warns under the record's own heading and in manifest order
+        // rather than ahead of the run.
         selected_actions.push(SelectedAction {
             index,
-            heading,
-            skip_reason,
+            heading: action.describe(index + 1),
+            skip: selection.skipped(action, &bindings),
         });
     }
 
@@ -211,8 +201,12 @@ fn run(
 
     for selected in &selected_actions {
         let heading = &selected.heading;
-        match &selected.skip_reason {
-            Some(why) => reporter.detail(1, &format!("{heading} - skipped: {why}")),
+        match &selected.skip {
+            Some(Skip::AsAsked(why)) => reporter.detail(1, &format!("{heading} - skipped: {why}")),
+            // Without the "skipped" frame the other reasons take: the reason
+            // says what is not happening, and this one is printed whether or
+            // not the run asked for detail.
+            Some(Skip::Unevaluable(why)) => reporter.warn(&format!("{heading}: {why}")),
             None => {
                 reporter.detail(1, heading);
                 action::run(&manifest.actions[selected.index], &context)?;

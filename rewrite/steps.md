@@ -72,12 +72,7 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
 - **5.4** ✅ Merge the four variable layers in one function, with origins.
 - **5.5** ✅ Parse a condition, bind `facts` / `env` / `vars`, and evaluate one.
 - **5.6** ✅ Gate actions and clone-list entries on `when` and `unless`.
-- **5.7** Make unevaluable conditions close the gate and warn, in both
-  spellings, in place of the failure 5.6 leaves. A clone-list entry's condition
-  is settled during preparation rather than at the gate, so it needs the same
-  treatment from a second place. Update the promoted [when a condition cannot be
-  evaluated](../docs/repoformat.md#when-a-condition-cannot-be-evaluated) section
-  and retire the proposal it links to.
+- **5.7** ✅ Close the gate and warn where a condition cannot be evaluated.
 - **5.8** Add `vars list`. Separate repository-required roots from state-only
   roots so a state-only resolution cannot carry an unselected batfiles
   directory; normal listing reads the leaf repository while `--machine-only`

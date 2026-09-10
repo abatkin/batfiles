@@ -323,28 +323,47 @@ fn a_malformed_condition_is_a_load_error_rather_than_a_surprise_partway_through(
 // What a condition batfiles cannot decide costs.
 
 #[test]
-fn an_undeclared_name_fails_the_run_and_names_the_record() {
+fn an_undeclared_name_closes_the_gate_and_warns_rather_than_stopping() {
+    // No `-v`: a warning is the one line about a passed-over record that a run
+    // prints whether or not detail was asked for, because nothing about it was
+    // asked for.
     let tree = Tree::new();
     gated(&tree, "when", "work", "");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree.batfiles().arg("sync").assert().success();
     let stderr = stderr_of(&assertion);
     for expected in [
         "create-dir gated (group shell)",
-        "the condition \"work\" cannot be evaluated",
+        "when \"work\" cannot be evaluated, so it is not installed",
         "`work` is not declared",
         "batfiles vars set work",
     ] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
-    assert!(
-        entries(&tree.path("home")).is_empty(),
-        "a run that could not decide a condition installed something anyway"
-    );
+    // The gate closed, and the record after it was carried out all the same:
+    // one bad identifier costs its own record and nothing else.
+    assert_eq!(entries(&tree.path("home")), ["plain"]);
 }
 
 #[test]
-fn a_value_outside_the_truthiness_table_fails_without_repeating_the_value() {
+fn an_unless_that_cannot_be_decided_closes_rather_than_installing() {
+    // The asymmetry the two spellings hide. A false `unless` opens a gate, so
+    // treating a failure as false would install the very record the line was
+    // written to suppress.
+    let tree = Tree::new();
+    gated(&tree, "unless", "no_gui_", "");
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("unless \"no_gui_\" cannot be evaluated, so it is not installed"),
+        "the warning should name the spelling that decided it:\n{stderr}"
+    );
+    assert_eq!(entries(&tree.path("home")), ["plain"]);
+}
+
+#[test]
+fn a_value_outside_the_truthiness_table_closes_without_repeating_the_value() {
     // A condition is the one place a value reaches a diagnostic without having
     // been asked for, and a manifest batfiles evaluates is not always the
     // user's own.
@@ -356,7 +375,7 @@ fn a_value_outside_the_truthiness_table_fails_without_repeating_the_value() {
         "[vars]\ntoken = \"s3cret-value\"\n\n",
     );
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree.batfiles().arg("sync").assert().success();
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains("is not a boolean"),
@@ -366,6 +385,7 @@ fn a_value_outside_the_truthiness_table_fails_without_repeating_the_value() {
         !stderr.contains("s3cret-value"),
         "the value was echoed:\n{stderr}"
     );
+    assert_eq!(entries(&tree.path("home")), ["plain"]);
 }
 
 #[test]
@@ -385,18 +405,25 @@ fn a_condition_on_a_record_something_else_excludes_is_never_evaluated() {
 
 #[test]
 fn apply_action_reaches_a_record_whose_condition_cannot_be_decided() {
-    // The escape hatch the waiver leaves: naming one record reaches it even
-    // where a `sync` over the same manifest stops.
+    // The waiver, which is what a reader does about the warning: naming one
+    // record reaches it even where a `sync` over the same manifest passes it
+    // over, and the condition is not evaluated at all.
     let tree = Tree::new();
     gated(&tree, "when", "nothing_declares_this", "");
 
-    tree.batfiles().arg("sync").assert().failure().code(1);
-    tree.batfiles()
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&tree.path("home")), ["plain"]);
+
+    let assertion = tree
+        .batfiles()
         .args(["apply-action", "--id", "gated"])
         .assert()
         .success();
-
-    assert_eq!(entries(&tree.path("home")), ["gated"]);
+    assert!(
+        !stderr_of(&assertion).contains("cannot be evaluated"),
+        "a waived condition should not be evaluated at all"
+    );
+    assert_eq!(entries(&tree.path("home")), ["gated", "plain"]);
 }
 
 // A dry run decides conditions the way an ordinary one does.

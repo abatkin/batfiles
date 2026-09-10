@@ -6,7 +6,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::condition::{Condition, ConditionError, Gate};
+use crate::condition::{Condition, ConditionError, Gate, Skip};
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdError};
 
@@ -29,7 +29,7 @@ pub(crate) struct Entry {
     /// own condition, settled during execution preparation. A closed entry
     /// stays on the list rather than being dropped from it, so that the action
     /// can report it under its own heading instead of having it vanish.
-    pub skip_reason: Option<String>,
+    pub skip: Option<Skip>,
     /// Which line of the list declared it, for a diagnostic that has to point
     /// at one. A fault found while reading carries its own line and does not
     /// come from here; this is for the entry that reads correctly and then
@@ -185,7 +185,7 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
         when: condition(&metadata, "when")?,
         unless: condition(&metadata, "unless")?,
         // What a line says; what this run makes of it is settled later.
-        skip_reason: None,
+        skip: None,
         line,
     }))
 }
@@ -531,7 +531,7 @@ mod tests {
         assert!(parsed[0].when.is_none());
         assert!(parsed[0].unless.is_some());
         // Nothing has looked at it yet, so every entry reads as one to clone.
-        assert!(parsed[0].skip_reason.is_none());
+        assert!(parsed[0].skip.is_none());
     }
 
     #[test]

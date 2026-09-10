@@ -1,6 +1,7 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
 use super::RunContext;
+use crate::condition::Skip;
 use crate::error::Error;
 use crate::git::{self, Failure};
 use crate::manifest::action::GitCloneListAction;
@@ -29,15 +30,21 @@ pub(super) fn git_clone_list(
         // sits under the heading naming the action that holds the list. The
         // wording is the failure warning's below, since both say that one entry
         // of a list is not being cloned and why.
-        if let Some(why) = &entry.skip_reason {
-            context.reporter().detail(
-                1,
-                &format!(
-                    "not cloning {} ({}): {why}",
-                    entry.url,
-                    entry.written_at(&action.source)
-                ),
+        if let Some(skip) = &entry.skip {
+            let line = format!(
+                "not cloning {} ({}): {}",
+                entry.url,
+                entry.written_at(&action.source),
+                skip.reason()
             );
+            // One line, two severities: an entry this machine's variables close
+            // is the list working as written, and one whose condition batfiles
+            // could not decide is not, so the reader hears about it whether or
+            // not the run asked for detail.
+            match skip {
+                Skip::AsAsked(_) => context.reporter().detail(1, &line),
+                Skip::Unevaluable(_) => context.reporter().warn(&line),
+            }
             continue;
         }
 

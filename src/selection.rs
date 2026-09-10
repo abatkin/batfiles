@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::condition::{Bindings, EvalError, Gate};
+use crate::condition::{Bindings, EvalError, Gate, Skip};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
@@ -17,6 +17,11 @@ const SKIP_ACTIONS: &str = "BATFILES_SKIP_ACTIONS";
 
 /// The environment variable unioned with `--skip-group`.
 const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
+
+/// What the warning for an undecidable condition says the run did about it.
+/// A gate is closed either way, but without the clause an `unless` reads as
+/// though the record went in: a false one is what installs it.
+const NOT_INSTALLED: &str = "it is not installed";
 
 /// Which of the manifest's records a command asked for.
 #[derive(Debug)]
@@ -218,6 +223,22 @@ impl<'a> Selection<'a> {
         self.groups.warn_unmatched(&groups, "group", reporter);
     }
 
+    /// Why this run is passing the record over, or `None` where it carries it
+    /// out.
+    ///
+    /// A condition batfiles cannot decide closes the gate like any other
+    /// exclusion, and says so at every verbosity: the record is the one thing a
+    /// reader can act on, and it is named where the run reports it rather than
+    /// here.
+    pub fn skipped(&self, action: &Action, bindings: &Bindings<'_>) -> Option<Skip> {
+        match self.excluded(action, bindings) {
+            Ok(reason) => reason.map(|reason| Skip::AsAsked(reason.to_string())),
+            Err((gate, error)) => Some(Skip::Unevaluable(
+                gate.unevaluable(Some(NOT_INSTALLED), &error),
+            )),
+        }
+    }
+
     /// Return the first applicable exclusion, or None. Persistent disables precede
     /// run-only skips; action exclusions precede group exclusions within each source.
     /// The record's own condition is consulted last. The target determines which
@@ -226,12 +247,13 @@ impl<'a> Selection<'a> {
     /// Only the condition can fail, and only for a record nothing else already
     /// excludes: a manifest's conditions are all parsed as it is read, so what
     /// is left to go wrong here needs this machine's variables to go wrong
-    /// against.
-    pub fn skipped<'b>(
+    /// against. The gate comes back with the fault because the line reporting
+    /// it names the spelling the record used.
+    fn excluded<'b>(
         &self,
         action: &'b Action,
         bindings: &Bindings<'_>,
-    ) -> Result<Option<SkipReason<'b>>, EvalError> {
+    ) -> Result<Option<SkipReason<'b>>, (Gate<'b>, EvalError)> {
         let id = action.id().filter(|_| self.target.honors_actions());
         let group = action.group().filter(|_| self.target.honors_groups());
 
@@ -266,9 +288,12 @@ impl<'a> Selection<'a> {
         // reaches it whatever this machine makes of its condition.
         if self.target.honors_actions()
             && let Some(gate) = action.gate()
-            && !gate.admits(bindings)?
         {
-            return Ok(Some(SkipReason::Condition(gate)));
+            return match gate.admits(bindings) {
+                Ok(true) => Ok(None),
+                Ok(false) => Ok(Some(SkipReason::Condition(gate))),
+                Err(error) => Err((gate, error)),
+            };
         }
         Ok(None)
     }
@@ -345,16 +370,11 @@ mod tests {
     /// it. The bindings are empty, since most of the rules below decide a
     /// record that declares no condition at all.
     fn reason(selection: &Selection, action: &Action) -> Option<String> {
-        decided(selection, action, &[]).expect("the record should have a verdict")
+        decided(selection, action, &[]).map(|skip| skip.reason().to_owned())
     }
 
-    /// The same, against a variable set, and keeping the failure a condition
-    /// can produce.
-    fn decided(
-        selection: &Selection,
-        action: &Action,
-        vars: &[(&str, &str)],
-    ) -> Result<Option<String>, EvalError> {
+    /// The same, against a variable set, and keeping which kind of skip it is.
+    fn decided(selection: &Selection, action: &Action, vars: &[(&str, &str)]) -> Option<Skip> {
         let variables = Rc::new(VarSet::stack(
             vars.iter()
                 .map(|(name, value)| {
@@ -371,9 +391,17 @@ mod tests {
         let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
         let host = HostNamespaces::capture(&empty);
         let bindings = Bindings::new(&variables, &host);
-        Ok(selection
-            .skipped(action, &bindings)?
-            .map(|why| why.to_string()))
+        selection.skipped(action, &bindings)
+    }
+
+    /// The reason a record was passed over as asked, for a case that expects
+    /// one rather than a condition batfiles could not decide.
+    fn as_asked(selection: &Selection, action: &Action, vars: &[(&str, &str)]) -> Option<String> {
+        match decided(selection, action, vars) {
+            Some(Skip::AsAsked(reason)) => Some(reason),
+            Some(other) => panic!("expected an ordinary skip, got {other:?}"),
+            None => None,
+        }
     }
 
     /// A `create-dir` carrying one condition, in the spelling named.
@@ -527,24 +555,24 @@ mod tests {
         let vars = &[("work", "false")];
 
         assert_eq!(
-            decided(&selection, &conditioned("when", "work"), vars),
-            Ok(Some("when \"work\" is false".to_owned()))
+            as_asked(&selection, &conditioned("when", "work"), vars).as_deref(),
+            Some("when \"work\" is false")
         );
         assert_eq!(
-            decided(&selection, &conditioned("unless", "work"), vars),
-            Ok(None)
+            as_asked(&selection, &conditioned("unless", "work"), vars),
+            None
         );
 
         // And the other way around, so neither spelling is the negation of the
         // other by accident.
         let vars = &[("work", "true")];
         assert_eq!(
-            decided(&selection, &conditioned("when", "work"), vars),
-            Ok(None)
+            as_asked(&selection, &conditioned("when", "work"), vars),
+            None
         );
         assert_eq!(
-            decided(&selection, &conditioned("unless", "work"), vars),
-            Ok(Some("unless \"work\" is true".to_owned()))
+            as_asked(&selection, &conditioned("unless", "work"), vars).as_deref(),
+            Some("unless \"work\" is true")
         );
     }
 
@@ -555,16 +583,38 @@ mod tests {
         // already names. `nowhere` is declared by no layer.
         let skipping = selection(&["zshrc"], &[], &[], Disabled::default());
         assert_eq!(
-            decided(&skipping, &conditioned("when", "nowhere"), &[]),
-            Ok(Some("`zshrc` from --skip-action".to_owned()))
+            as_asked(&skipping, &conditioned("when", "nowhere"), &[]).as_deref(),
+            Some("`zshrc` from --skip-action")
         );
 
         // Reached, and failing, once nothing else has an opinion.
         let plain = selection(&[], &[], &[], Disabled::default());
         assert!(matches!(
             decided(&plain, &conditioned("when", "nowhere"), &[]),
-            Err(EvalError::Undeclared { .. })
+            Some(Skip::Unevaluable(_))
         ));
+    }
+
+    #[test]
+    fn a_condition_that_cannot_be_decided_closes_the_gate_in_either_spelling() {
+        // The asymmetry the spellings hide: a false `unless` opens a gate, so
+        // reading a failure as false would install the very record the line was
+        // written to suppress. Both close, and both say which field decided it.
+        let selection = selection(&[], &[], &[], Disabled::default());
+
+        for spelling in ["when", "unless"] {
+            let Some(Skip::Unevaluable(why)) =
+                decided(&selection, &conditioned(spelling, "nowhere"), &[])
+            else {
+                panic!("`{spelling}` should close on a condition nothing can decide");
+            };
+            assert!(why.starts_with(&format!("{spelling} \"nowhere\"")), "{why}");
+            assert!(why.contains("cannot be evaluated"), "{why}");
+            assert!(why.contains(NOT_INSTALLED), "{why}");
+            // The fix, which is the half of the line a reader acts on.
+            assert!(why.contains("`nowhere` is not declared"), "{why}");
+            assert!(why.contains("batfiles vars set nowhere"), "{why}");
+        }
     }
 
     #[test]
@@ -577,33 +627,31 @@ mod tests {
         let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
         assert_eq!(
             decided(&by_name, &conditioned("when", "work"), &[("work", "false")]),
-            Ok(None)
+            None
         );
         assert_eq!(
             decided(&by_name, &conditioned("when", "nowhere"), &[]),
-            Ok(None)
+            None
         );
 
         // A group is coarser than one record, so its members keep theirs.
         let shell = address("shell");
         let by_group = filter(Target::Group(&shell), &[], &[], &[], Disabled::default());
         assert_eq!(
-            decided(
+            as_asked(
                 &by_group,
                 &conditioned("when", "work"),
                 &[("work", "false")]
-            ),
-            Ok(Some("when \"work\" is false".to_owned()))
+            )
+            .as_deref(),
+            Some("when \"work\" is false")
         );
     }
 
     #[test]
     fn a_record_with_no_condition_is_decided_by_the_lists_alone() {
         let selection = selection(&[], &[], &[], Disabled::default());
-        assert_eq!(
-            decided(&selection, &action("zshrc", "shell"), &[]),
-            Ok(None)
-        );
+        assert_eq!(decided(&selection, &action("zshrc", "shell"), &[]), None);
     }
 
     #[test]
@@ -612,8 +660,7 @@ mod tests {
         // every other repeated value does.
         let selection = selection(&[], &[], &[], Disabled::default());
         let record = conditioned("when", "work && vars['a\\nb']");
-        let why = decided(&selection, &record, &[("work", "true")])
-            .expect("the condition should evaluate")
+        let why = as_asked(&selection, &record, &[("work", "true")])
             .expect("the condition should be false");
         assert!(!why.contains('\n'), "{why}");
         assert!(why.contains("\\n"), "{why}");

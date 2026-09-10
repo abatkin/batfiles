@@ -119,6 +119,41 @@ impl<'a> Gate<'a> {
             Self::Unless(condition) => Ok(!eval(condition, bindings)?),
         }
     }
+
+    /// The line a gate this run cannot decide produces: the spelling, the
+    /// condition as written, what the run is not doing about it, and the fault
+    /// itself, which is the half that teaches the fix.
+    ///
+    /// The spelling is named for the reason [`Display`](fmt::Display) names it,
+    /// and here it matters more: a reader who knows `unless` closed the gate
+    /// knows batfiles did not read the failure as false and install the record.
+    ///
+    /// `consequence` is the caller's because only the record knows what it was
+    /// going to do, and some lines have said it before they reach this: an
+    /// entry of a clone list opens with `not cloning`, so it passes `None`.
+    pub fn unevaluable(self, consequence: Option<&str>, error: &EvalError) -> String {
+        let condition = quoted_value(self.condition().source());
+        let consequence = consequence.map_or_else(String::new, |what| format!(", so {what}"));
+        format!(
+            "{} {condition} cannot be evaluated{consequence}: {error}",
+            self.spelling()
+        )
+    }
+
+    /// The field the record wrote.
+    fn spelling(self) -> &'static str {
+        match self {
+            Self::When(_) => "when",
+            Self::Unless(_) => "unless",
+        }
+    }
+
+    /// The condition itself, whichever field carried it.
+    fn condition(self) -> &'a Condition {
+        match self {
+            Self::When(condition) | Self::Unless(condition) => condition,
+        }
+    }
 }
 
 /// Why the gate is closed, which is the only state a report ever names: a
@@ -129,15 +164,42 @@ impl<'a> Gate<'a> {
 /// [`quoted_value`] like every other piece of repository text batfiles repeats.
 impl fmt::Display for Gate<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (spelling, verdict, condition) = match self {
-            Self::When(condition) => ("when", "false", condition),
-            Self::Unless(condition) => ("unless", "true", condition),
+        let verdict = match self {
+            Self::When(_) => "false",
+            Self::Unless(_) => "true",
         };
         write!(
             f,
-            "{spelling} {} is {verdict}",
-            quoted_value(condition.source())
+            "{} {} is {verdict}",
+            self.spelling(),
+            quoted_value(self.condition().source())
         )
+    }
+}
+
+/// Why a record is being passed over, and how loudly to say so.
+///
+/// The two are reported the same way — where the record is named, rather than
+/// where the reason was settled — and differ only in what they cost the reader.
+/// Every reason but one is the run doing as it was asked, and belongs with the
+/// rest of what `-v` reports; a condition batfiles cannot decide is nothing
+/// anyone asked for, so it is printed at every verbosity and nothing is
+/// silently ignored.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Skip {
+    /// A disable, a run-only skip, or a gate this machine closes.
+    AsAsked(String),
+    /// A condition this machine cannot decide, which closes the gate in either
+    /// spelling. Rendered by [`Gate::unevaluable`].
+    Unevaluable(String),
+}
+
+impl Skip {
+    /// The reason, for a caller composing the line that names the record.
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::AsAsked(reason) | Self::Unevaluable(reason) => reason,
+        }
     }
 }
 
@@ -465,103 +527,72 @@ fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalErro
     let evaluator = Evaluator::new_with_coercions(bindings, &COERCIONS);
     let value = evaluator
         .evaluate(&condition.expr)
-        .map_err(|error| EvalError::from_expression(condition, &error))?;
+        .map_err(|error| EvalError::from_expression(&error))?;
 
     // The finished value goes through the same policy the evaluator applied
     // inside `!`, `&&`, and `||`, so a whole condition and a subexpression of
     // one cannot disagree.
-    COERCIONS
-        .to_bool(&value)
-        .map_err(|_| EvalError::NotBoolean {
-            condition: condition.source().to_owned(),
-        })
+    COERCIONS.to_bool(&value).map_err(|_| EvalError::NotBoolean)
 }
 
 /// Why a condition could not be evaluated.
 ///
-/// Every variant carries the condition's source text: this is read long after
-/// the manifest was parsed, and "the condition failed" is not something a user
-/// can act on.
+/// No variant names the condition it is about: this is read long after the
+/// manifest was parsed, so the text a reader needs is the whole line
+/// [`Gate::unevaluable`] builds, which has the condition and the spelling that
+/// carried it. What is here is the fault clause of that line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EvalError {
     /// A bare identifier that no layer declares.
-    Undeclared { condition: String, name: String },
+    Undeclared { name: String },
     /// The condition's own value is outside the truthiness table.
-    NotBoolean { condition: String },
+    NotBoolean,
     /// Everything else the evaluator can produce — a divide by zero, an index
     /// out of bounds, a member on a value that has none, a truthiness failure
     /// inside an operator — flattened, because the crate's error is
     /// `#[non_exhaustive]` and batfiles has nothing to add to `index out of
-    /// bounds: 5 (len: 3)` beyond saying which condition raised it.
-    Failed { condition: String, message: String },
+    /// bounds: 5 (len: 3)`.
+    Failed { message: String },
 }
 
 impl EvalError {
-    fn from_expression(condition: &Condition, error: &ExpressionError) -> Self {
-        let condition = condition.source().to_owned();
+    fn from_expression(error: &ExpressionError) -> Self {
         match error {
-            ExpressionError::ResolveFailed(name) => Self::Undeclared {
-                condition,
-                name: name.clone(),
-            },
+            ExpressionError::ResolveFailed(name) => Self::Undeclared { name: name.clone() },
             // The inner string rather than the `Display`, which would prefix
             // "evaluation failed: ". This is the arm a truthiness failure inside
             // `&&`, `||`, or `!` arrives through, and its message is already
             // [`NOT_BOOLEAN`].
             ExpressionError::EvaluationFailed(message) => Self::Failed {
-                condition,
                 message: message.clone(),
             },
             other => Self::Failed {
-                condition,
                 message: other.to_string(),
             },
         }
     }
-
-    /// The condition this error is about, for a caller reporting it.
-    fn condition(&self) -> &str {
-        match self {
-            Self::Undeclared { condition, .. }
-            | Self::NotBoolean { condition, .. }
-            | Self::Failed { condition, .. } => condition,
-        }
-    }
 }
 
+/// The fault clause alone, which [`Gate::unevaluable`] writes after the
+/// condition it belongs to. Nothing renders one without that frame.
 impl fmt::Display for EvalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // One frame for all three, so the fault clause is the only thing that
-        // varies, which is what lets the two truthiness paths render alike.
-        //
-        // The source goes through the same escaping a parse failure gives a
-        // candidate, and for the same reason: a condition that parses can still
-        // hold a newline or a control character, from a TOML multi-line string
-        // or a `\u` escape inside a string literal, and this text is written
-        // where a second line would read as a diagnostic of batfiles' own.
-        write!(
-            f,
-            "the condition {} cannot be evaluated: ",
-            quoted_value(self.condition())
-        )?;
         match self {
             // Both messages do the teaching: these are the two errors a
             // well-formed manifest can still hit. An identifier needs no
             // escaping of its own -- the grammar admits only letters, digits,
             // and underscores -- so it is written as read.
-            Self::Undeclared { name, .. } => write!(
+            Self::Undeclared { name } => write!(
                 f,
                 "`{name}` is not declared. Add `{name} = \"false\"` to [vars] in batfiles.toml, \
                  run `batfiles vars set {name} <value>`, or write `vars.{name}` if the variable \
                  is meant to be optional"
             ),
-            Self::NotBoolean { .. } => f.write_str(NOT_BOOLEAN),
-            Self::Failed { message, .. } => f.write_str(message),
+            Self::NotBoolean => f.write_str(NOT_BOOLEAN),
+            Self::Failed { message } => f.write_str(message),
         }
     }
 }
-
-impl std::error::Error for EvalError {}
 
 #[cfg(test)]
 mod tests {
@@ -608,6 +639,17 @@ mod tests {
             Err(error) => error,
         }
     }
+
+    /// The whole line a reader sees for a condition that cannot be decided.
+    /// The fault clause names no condition on its own, so anything about how a
+    /// condition is repeated back is asserted here.
+    fn reported(source: &str, bindings: &Bindings<'_>) -> String {
+        let parsed = condition(source);
+        Gate::When(&parsed).unevaluable(Some(CONSEQUENCE), &failure(source, bindings))
+    }
+
+    /// Stands in for a caller's clause; the wording belongs to the caller.
+    const CONSEQUENCE: &str = "it is not installed";
 
     // Parsing, which happens where a document is read.
 
@@ -685,7 +727,6 @@ mod tests {
         assert_eq!(
             failure("undeclared", &bindings),
             EvalError::Undeclared {
-                condition: "undeclared".to_owned(),
                 name: "undeclared".to_owned(),
             }
         );
@@ -871,7 +912,7 @@ mod tests {
         }
         for neither in ["'personal'", "'True'", "'y'", "'2'"] {
             assert!(
-                matches!(failure(neither, &bindings), EvalError::NotBoolean { .. }),
+                matches!(failure(neither, &bindings), EvalError::NotBoolean),
                 "{neither} is outside the table"
             );
         }
@@ -914,11 +955,16 @@ mod tests {
         let host = host(&[]);
         let bindings = Bindings::new(&vars, &host);
 
-        let fault = format!(": {NOT_BOOLEAN}");
         for source in ["profile", "profile && work", "!profile"] {
-            let message = failure(source, &bindings).to_string();
-            assert!(message.ends_with(&fault), "{source}: {message}");
-            assert!(message.contains(&quoted_value(source)), "{message}");
+            assert_eq!(
+                failure(source, &bindings).to_string(),
+                NOT_BOOLEAN,
+                "{source}"
+            );
+            assert!(
+                reported(source, &bindings).contains(&quoted_value(source)),
+                "{source}"
+            );
         }
     }
 
@@ -933,12 +979,9 @@ mod tests {
         let bindings = Bindings::new(&vars, &host);
 
         for source in ["token", "token && work", "!token", "env.GITHUB_TOKEN"] {
-            let message = failure(source, &bindings).to_string();
-            assert!(!message.contains("s3cret-value"), "{source}: {message}");
-            assert!(
-                !message.contains("ghp_notarealtoken"),
-                "{source}: {message}"
-            );
+            let line = reported(source, &bindings);
+            assert!(!line.contains("s3cret-value"), "{source}: {line}");
+            assert!(!line.contains("ghp_notarealtoken"), "{source}: {line}");
         }
     }
 
@@ -953,13 +996,13 @@ mod tests {
 
         // A newline is whitespace to the grammar, so this parses and fails at
         // evaluation, which is the path the parse-time escaping never covers.
-        let message = failure("undeclared\n&& work", &bindings).to_string();
-        assert!(!message.contains('\n'), "{message}");
-        assert!(message.contains("\\n"), "{message}");
+        let line = reported("undeclared\n&& work", &bindings);
+        assert!(!line.contains('\n'), "{line}");
+        assert!(line.contains("\\n"), "{line}");
 
-        let message = failure("'\u{1b}[2Kforged'", &bindings).to_string();
-        assert!(!message.contains('\u{1b}'), "{message}");
-        assert!(message.contains("\\u{1b}"), "{message}");
+        let line = reported("'\u{1b}[2Kforged'", &bindings);
+        assert!(!line.contains('\u{1b}'), "{line}");
+        assert!(line.contains("\\u{1b}"), "{line}");
     }
 
     #[test]
@@ -968,10 +1011,7 @@ mod tests {
         let host = host(&[]);
         let bindings = Bindings::new(&vars, &host);
 
-        assert!(matches!(
-            failure("facts", &bindings),
-            EvalError::NotBoolean { .. }
-        ));
+        assert!(matches!(failure("facts", &bindings), EvalError::NotBoolean));
     }
 
     // What evaluation does with the rest of what can go wrong.
@@ -982,17 +1022,43 @@ mod tests {
         let host = host(&[]);
         let bindings = Bindings::new(&vars, &host);
 
-        let message = failure("work && facts.os == 'macos'", &bindings).to_string();
+        let line = reported("work && facts.os == 'macos'", &bindings);
         assert!(
-            message.contains(&quoted_value("work && facts.os == 'macos'")),
-            "{message}"
+            line.contains(&quoted_value("work && facts.os == 'macos'")),
+            "{line}"
         );
-        assert!(message.contains("`work = \"false\"`"), "{message}");
+        assert!(line.contains("`work = \"false\"`"), "{line}");
+        assert!(line.contains("`batfiles vars set work <value>`"), "{line}");
+        assert!(line.contains("`vars.work`"), "{line}");
+    }
+
+    #[test]
+    fn a_gate_that_cannot_be_decided_names_the_spelling_and_the_cost() {
+        // The line is built rather than the fault alone: `unless` is the
+        // spelling a reader gets backwards, and a failure read as false would
+        // open the gate instead of closing it.
+        let vars = vars(&[]);
+        let host = host(&[]);
+        let bindings = Bindings::new(&vars, &host);
+        let parsed = condition("nowhere");
+        let error = failure("nowhere", &bindings);
+
         assert!(
-            message.contains("`batfiles vars set work <value>`"),
-            "{message}"
+            Gate::When(&parsed)
+                .unevaluable(Some(CONSEQUENCE), &error)
+                .starts_with("when \"nowhere\" cannot be evaluated, so it is not installed: "),
         );
-        assert!(message.contains("`vars.work`"), "{message}");
+        assert!(
+            Gate::Unless(&parsed)
+                .unevaluable(Some(CONSEQUENCE), &error)
+                .starts_with("unless \"nowhere\" cannot be evaluated, so it is not installed: "),
+        );
+        // A caller whose line has already said what is not happening.
+        assert!(
+            Gate::Unless(&parsed)
+                .unevaluable(None, &error)
+                .starts_with("unless \"nowhere\" cannot be evaluated: "),
+        );
     }
 
     #[test]
@@ -1016,12 +1082,12 @@ mod tests {
         let host = host(&[]);
         let bindings = Bindings::new(&vars, &host);
 
-        let error = failure("vars.keys()", &bindings);
-        assert!(matches!(error, EvalError::Failed { .. }));
-        assert!(
-            error.to_string().contains(&quoted_value("vars.keys()")),
-            "{error}"
-        );
+        assert!(matches!(
+            failure("vars.keys()", &bindings),
+            EvalError::Failed { .. }
+        ));
+        let line = reported("vars.keys()", &bindings);
+        assert!(line.contains(&quoted_value("vars.keys()")), "{line}");
     }
 
     #[test]
@@ -1045,9 +1111,9 @@ mod tests {
                 matches!(error, EvalError::Failed { .. }),
                 "{source}: {error:?}"
             );
-            let message = error.to_string();
-            assert!(message.contains("integer overflow"), "{message}");
-            assert!(message.contains(&quoted_value(source)), "{message}");
+            let line = reported(source, &bindings);
+            assert!(line.contains("integer overflow"), "{line}");
+            assert!(line.contains(&quoted_value(source)), "{line}");
         }
 
         // Division promotes to floating point rather than overflowing, but the

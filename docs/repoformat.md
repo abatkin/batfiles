@@ -822,8 +822,10 @@ not cloning https://github.com/company/internal-zsh-tools.git (plugins.txt line 
 ```
 
 Conditions are settled when the list is read, which is before any entry is
-cloned, so one that [cannot be evaluated](#when-a-condition-cannot-be-evaluated)
-stops the run before the first clone rather than partway through the list.
+cloned. One that [cannot be evaluated](#when-a-condition-cannot-be-evaluated)
+closes its own entry, the same as anywhere else, and is warned about on the line
+that says the entry is not being cloned; the entries around it are cloned as
+they would have been.
 
 An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory
 name follows: `ack.vim` is a perfectly good directory and not a valid ID,
@@ -1013,30 +1015,36 @@ rather than heuristic for that reason.
 
 A condition that parses can still fail on the machine that evaluates it: on an
 identifier no layer declares, on a result outside the truthiness table, on
-arithmetic that overflows. **That failure stops the run**, naming the record and
-the condition:
+arithmetic that overflows. **The failure closes the gate**: the record is passed
+over, the run carries on, and a warning names the record, the field that decided
+it, and the fix:
 
 ```console
 $ batfiles sync
-error: symlink gitconfig-work: the condition "work" cannot be evaluated: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
+warning: symlink gitconfig-work: when "work" cannot be evaluated, so it is not installed: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
 ```
 
-The diagnostic never repeats the offending *value*, only the condition and the
-fix. A condition is the one place a value reaches a diagnostic without having
-been asked for — `when = "env.GITHUB_TOKEN"` puts a credential outside the table
-— and the manifest batfiles is evaluating is not always the reader's own.
+One bad identifier in one record costs that record and nothing else — which is
+what a run reading a third-party remote's manifest needs — and nothing is
+silently ignored, because the warning is printed whether or not the run asked
+for detail.
 
-Two things narrow what a failure costs. A condition is consulted only for a
-record nothing else already excludes, so one on an action this machine has
-disabled is never evaluated at all; and
-[`apply-action`](cmdline.md#apply-action) waives conditions along with every
-other reason a record would be passed over, so naming one record reaches it even
-where a `sync` over the same manifest stops.
+**Closing is the answer for `when` and `unless` alike**, which is why the
+warning names the spelling. The `unless` case looks like it should invert and
+does not: a false `unless` *opens* a gate, so reading an undecidable condition
+as false would make a misspelt `unless = "no_gui_"` install the very thing it
+was written to suppress.
 
-Closing the gate and warning, rather than stopping, is proposed in
-[`future/repoformat.md`](future/repoformat.md#condition): a run that has to read
-a third-party remote's manifest wants a different answer from one reading only
-its own.
+The warning never repeats the offending *value*, only the condition and the fix.
+A condition is the one place a value reaches a diagnostic without having been
+asked for — `when = "env.GITHUB_TOKEN"` puts a credential outside the table —
+and the manifest batfiles is evaluating is not always the reader's own.
+
+Two things narrow how often it is reached at all. A condition is consulted only
+for a record nothing else already excludes, so one on an action this machine has
+disabled is never evaluated; and [`apply-action`](cmdline.md#apply-action)
+waives conditions along with every other reason a record would be passed over,
+so naming one record reaches it whatever this machine makes of its condition.
 
 ## Default-disabled bootstrap entries
 

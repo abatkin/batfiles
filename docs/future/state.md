@@ -180,8 +180,8 @@ question, and this is the definition the rest of this section rests on.
   its variables from being resolved.
 
 What a condition that *cannot be evaluated* does — it closes its gate, and warns
-— is specified with the [condition
-grammar](repoformat.md#condition).
+— is built, and specified with [when a condition cannot be
+evaluated](../repoformat.md#when-a-condition-cannot-be-evaluated).
 
 ### Evaluation and refresh scope
 

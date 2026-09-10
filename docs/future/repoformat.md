@@ -93,22 +93,10 @@ has to become a decision. Nothing else re-types a value.
 
 Conditions are built and specified in
 [`docs/repoformat.md`](../repoformat.md#conditions), along with the two fields
-that spell one, the namespaces they read, the truthiness table, and the rule that
-a record writes one of the two or neither. Two things about them are not built.
-
-**Unevaluable conditions.** A condition that parses can still fail where it is
-evaluated, and today that [stops the
-run](../repoformat.md#when-a-condition-cannot-be-evaluated). It should instead
-**close its gate** — the record is excluded — with a warning naming the record
-and the condition, and the command should not fail. One bad identifier in one
-third-party remote must not cost the whole run, and nothing is silently ignored,
-because the warning says what happened.
-
-Closing is the direction for `when` and `unless` alike. That is worth stating,
-because the `unless` case looks like it should invert and does not: a false
-`unless` *opens* a gate, so treating an unevaluable condition as false would make
-a misspelt `unless = "no_gui_"` install the very thing it was written to
-suppress. Excluding the record is the safe answer in both spellings.
+that spell one, the namespaces they read, the truthiness table, the rule that a
+record writes one of the two or neither, and what [a condition that cannot be
+evaluated](../repoformat.md#when-a-condition-cannot-be-evaluated) does. One
+thing about them is not built.
 
 **The records that do not have them yet.** A remote and an `include-remote` take
 a condition too, and neither record exists; each is specified with its own schema

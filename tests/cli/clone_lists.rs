@@ -148,28 +148,32 @@ fn an_entry_carries_a_condition_of_its_own() {
 }
 
 #[test]
-fn an_entry_whose_condition_cannot_be_decided_stops_the_run_before_any_clone() {
-    // A list is read before writes, and its conditions are settled there, so a
-    // fault reaches the user without half a directory of plugins first.
+fn an_entry_whose_condition_cannot_be_decided_costs_that_entry_and_not_the_list() {
+    // The second place a gate is settled, and it answers the way the first
+    // does: the entry is passed over with a warning, and the entries around it
+    // are cloned as they would have been. No `-v`, since a warning is printed
+    // whether or not the run asked for detail.
     let origin = BareRepo::new();
     let tree = one_list(&format!(
         "{origin} dest-name=first\n\
-         {origin} dest-name=second when=\"nothing_declares_this\"\n",
+         {origin} dest-name=second when=\"nothing_declares_this\"\n\
+         {origin} dest-name=third\n",
         origin = display(&origin.origin())
     ));
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree.batfiles().arg("sync").assert().success();
     let stderr = stderr_of(&assertion);
     for expected in [
-        "plugins.txt line 2",
-        "the condition \"nothing_declares_this\" cannot be evaluated",
+        &format!(
+            "not cloning {} (plugins.txt line 2)",
+            display(&origin.origin())
+        ),
+        "when \"nothing_declares_this\" cannot be evaluated",
+        "batfiles vars set nothing_declares_this",
     ] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
-    assert!(
-        !tree.home(".plugins/first").exists(),
-        "an entry was cloned before the fault was reported"
-    );
+    assert_eq!(entries(&tree.home(".plugins")), ["first", "third"]);
 }
 
 #[test]
