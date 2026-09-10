@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::condition::{Bindings, EvalError, Gate};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
@@ -82,6 +83,10 @@ pub(crate) enum SkipReason<'a> {
         name: &'a ItemId,
         origin: &'static str,
     },
+    /// The record's own condition, which this machine closes. Unlike the other
+    /// two, this one names nothing the reader could go and edit for one run: it
+    /// is the repository saying the action does not belong here.
+    Condition(Gate<'a>),
 }
 
 impl fmt::Display for SkipReason<'_> {
@@ -89,6 +94,7 @@ impl fmt::Display for SkipReason<'_> {
         match self {
             Self::Disabled { noun, name } => write!(f, "{noun} `{name}` is disabled"),
             Self::Run { name, origin } => write!(f, "`{name}` from {origin}"),
+            Self::Condition(gate) => write!(f, "{gate}"),
         }
     }
 }
@@ -214,8 +220,18 @@ impl<'a> Selection<'a> {
 
     /// Return the first applicable exclusion, or None. Persistent disables precede
     /// run-only skips; action exclusions precede group exclusions within each source.
-    /// The target determines which exclusions are honored.
-    pub fn skipped<'b>(&self, action: &'b Action) -> Option<SkipReason<'b>> {
+    /// The record's own condition is consulted last. The target determines which
+    /// exclusions are honored.
+    ///
+    /// Only the condition can fail, and only for a record nothing else already
+    /// excludes: a manifest's conditions are all parsed as it is read, so what
+    /// is left to go wrong here needs this machine's variables to go wrong
+    /// against.
+    pub fn skipped<'b>(
+        &self,
+        action: &'b Action,
+        bindings: &Bindings<'_>,
+    ) -> Result<Option<SkipReason<'b>>, EvalError> {
         let id = action.id().filter(|_| self.target.honors_actions());
         let group = action.group().filter(|_| self.target.honors_groups());
 
@@ -224,31 +240,49 @@ impl<'a> Selection<'a> {
         };
 
         if let Some(name) = id.filter(|id| listed(&self.disabled.actions, id)) {
-            return Some(SkipReason::Disabled {
+            return Ok(Some(SkipReason::Disabled {
                 noun: "action",
                 name,
-            });
+            }));
         }
         if let Some(name) = group.filter(|group| listed(&self.disabled.groups, group)) {
-            return Some(SkipReason::Disabled {
+            return Ok(Some(SkipReason::Disabled {
                 noun: "group",
                 name,
-            });
+            }));
         }
         if let Some((name, origin)) = id.and_then(|id| Some((id, self.actions.origin(id)?))) {
-            return Some(SkipReason::Run { name, origin });
+            return Ok(Some(SkipReason::Run { name, origin }));
         }
         if let Some((name, origin)) = group.and_then(|g| Some((g, self.groups.origin(g)?))) {
-            return Some(SkipReason::Run { name, origin });
+            return Ok(Some(SkipReason::Run { name, origin }));
         }
-        None
+        // Last, so a record some list already excludes is never evaluated: a
+        // condition that cannot be evaluated then costs only the runs that
+        // would otherwise have carried the record out.
+        //
+        // Waived exactly where the action's own name is. `apply-action` names
+        // one record and nothing is finer-grained than that, so naming it
+        // reaches it whatever this machine makes of its condition.
+        if self.target.honors_actions()
+            && let Some(gate) = action.gate()
+            && !gate.admits(bindings)?
+        {
+            return Ok(Some(SkipReason::Condition(gate)));
+        }
+        Ok(None)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
+    use crate::condition::HostNamespaces;
     use crate::output::Verbosity;
+    use crate::var::VarName;
+    use crate::var_set::VarSet;
 
     fn quiet() -> Reporter {
         let mut reporter = Reporter::new(false);
@@ -308,9 +342,47 @@ mod tests {
     }
 
     /// What a selection says about one record, rendered the way a run reports
-    /// it.
+    /// it. The bindings are empty, since most of the rules below decide a
+    /// record that declares no condition at all.
     fn reason(selection: &Selection, action: &Action) -> Option<String> {
-        selection.skipped(action).map(|why| why.to_string())
+        decided(selection, action, &[]).expect("the record should have a verdict")
+    }
+
+    /// The same, against a variable set, and keeping the failure a condition
+    /// can produce.
+    fn decided(
+        selection: &Selection,
+        action: &Action,
+        vars: &[(&str, &str)],
+    ) -> Result<Option<String>, EvalError> {
+        let variables = Rc::new(VarSet::stack(
+            vars.iter()
+                .map(|(name, value)| {
+                    (
+                        VarName::try_from((*name).to_owned()).expect("valid name"),
+                        (*value).to_owned(),
+                    )
+                })
+                .collect(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        ));
+        let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
+        let host = HostNamespaces::capture(&empty);
+        let bindings = Bindings::new(&variables, &host);
+        Ok(selection
+            .skipped(action, &bindings)?
+            .map(|why| why.to_string()))
+    }
+
+    /// A `create-dir` carrying one condition, in the spelling named.
+    fn conditioned(spelling: &str, condition: &str) -> Action {
+        toml::from_str(&format!(
+            "type = \"create-dir\"\nid = \"zshrc\"\ngroup = \"shell\"\n\
+             dest = \"~/x\"\n{spelling} = \"{condition}\"\n"
+        ))
+        .expect("the record should parse")
     }
 
     #[test]
@@ -444,6 +516,107 @@ mod tests {
             disabled(&["zshrc"], &["shell"]),
         );
         assert_eq!(reason(&selection, &action("zshrc", "shell")), None);
+    }
+
+    // The record's own condition, which is the one exclusion the manifest
+    // rather than the machine declares.
+
+    #[test]
+    fn a_condition_decides_the_record_it_is_written_on() {
+        let selection = selection(&[], &[], &[], Disabled::default());
+        let vars = &[("work", "false")];
+
+        assert_eq!(
+            decided(&selection, &conditioned("when", "work"), vars),
+            Ok(Some("when \"work\" is false".to_owned()))
+        );
+        assert_eq!(
+            decided(&selection, &conditioned("unless", "work"), vars),
+            Ok(None)
+        );
+
+        // And the other way around, so neither spelling is the negation of the
+        // other by accident.
+        let vars = &[("work", "true")];
+        assert_eq!(
+            decided(&selection, &conditioned("when", "work"), vars),
+            Ok(None)
+        );
+        assert_eq!(
+            decided(&selection, &conditioned("unless", "work"), vars),
+            Ok(Some("unless \"work\" is true".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_condition_is_consulted_only_where_nothing_else_excludes_the_record() {
+        // The reason a run with one bad condition on a disabled action still
+        // works: the arm is last, so it is never reached for a record some list
+        // already names. `nowhere` is declared by no layer.
+        let skipping = selection(&["zshrc"], &[], &[], Disabled::default());
+        assert_eq!(
+            decided(&skipping, &conditioned("when", "nowhere"), &[]),
+            Ok(Some("`zshrc` from --skip-action".to_owned()))
+        );
+
+        // Reached, and failing, once nothing else has an opinion.
+        let plain = selection(&[], &[], &[], Disabled::default());
+        assert!(matches!(
+            decided(&plain, &conditioned("when", "nowhere"), &[]),
+            Err(EvalError::Undeclared { .. })
+        ));
+    }
+
+    #[test]
+    fn asking_for_one_action_waives_its_condition_too() {
+        // The waiver is the action tier's, and a condition sits in it: naming
+        // one record is the finest thing a command can ask for, so it reaches
+        // the record whatever this machine makes of its condition. A run that
+        // cannot decide the condition is not stopped by it either.
+        let zshrc = address("zshrc");
+        let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
+        assert_eq!(
+            decided(&by_name, &conditioned("when", "work"), &[("work", "false")]),
+            Ok(None)
+        );
+        assert_eq!(
+            decided(&by_name, &conditioned("when", "nowhere"), &[]),
+            Ok(None)
+        );
+
+        // A group is coarser than one record, so its members keep theirs.
+        let shell = address("shell");
+        let by_group = filter(Target::Group(&shell), &[], &[], &[], Disabled::default());
+        assert_eq!(
+            decided(
+                &by_group,
+                &conditioned("when", "work"),
+                &[("work", "false")]
+            ),
+            Ok(Some("when \"work\" is false".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_record_with_no_condition_is_decided_by_the_lists_alone() {
+        let selection = selection(&[], &[], &[], Disabled::default());
+        assert_eq!(
+            decided(&selection, &action("zshrc", "shell"), &[]),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_condition_is_repeated_back_as_written_and_cannot_forge_a_line() {
+        // Repository text reaching a report, so it goes through the escaping
+        // every other repeated value does.
+        let selection = selection(&[], &[], &[], Disabled::default());
+        let record = conditioned("when", "work && vars['a\\nb']");
+        let why = decided(&selection, &record, &[("work", "true")])
+            .expect("the condition should evaluate")
+            .expect("the condition should be false");
+        assert!(!why.contains('\n'), "{why}");
+        assert!(why.contains("\\n"), "{why}");
     }
 
     #[test]

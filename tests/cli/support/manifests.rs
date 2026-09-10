@@ -58,6 +58,10 @@ pub(crate) fn seeded_repository_in_the_home(tree: &Tree) -> PathBuf {
 /// ones made on the way to a destination.
 pub(crate) const LEAF_DIRS: [&str; 1] = [".cache/zsh"];
 
+/// The destination of the fixture's one gated action, whose condition is false
+/// as the repository stands.
+pub(crate) const LEAF_CLOSED_DEST: &str = ".cache/work-tools";
+
 /// Every file it seeds, and the repository file each one is a copy of, in the
 /// order it seeds them.
 pub(crate) const LEAF_SEEDS: [(&str, &str); 4] = [
@@ -84,6 +88,13 @@ pub(crate) fn assert_leaf_portable_actions(tree: &Tree) {
             "`{dest}` is not a directory that exists"
         );
     }
+    // The other half of the same rule: the gated action is the one record here
+    // that must *not* have run, and it is a `create-dir` like the first so that
+    // nothing but its condition separates them.
+    assert!(
+        !tree.home(LEAF_CLOSED_DEST).exists(),
+        "`{LEAF_CLOSED_DEST}` was installed by an action whose condition is false"
+    );
     for (source, dest) in LEAF_SEEDS {
         let installed = tree.home(dest);
         // A seed is the user's copy, not a view of the repository's file: what

@@ -62,6 +62,11 @@ fn every_repository_a_list_names_is_cloned_under_the_dest_dir() {
             "{name} was not cloned"
         );
     }
+    // And the fourth shape: the entry this machine's variables close.
+    assert!(
+        !plugins(&tree, "work-tools").exists(),
+        "the gated entry was cloned anyway"
+    );
     // In list order, which is what makes a list an ordered document rather than
     // a set.
     let stderr = stderr_of(&assertion);
@@ -106,6 +111,64 @@ fn a_ref_on_an_entry_is_honored() {
     assert!(
         clone.join("next.zsh").is_file(),
         "the entry's ref was not followed"
+    );
+}
+
+#[test]
+fn an_entry_carries_a_condition_of_its_own() {
+    // Per-machine plugin selection, which is what a condition on an entry is
+    // for: one list, and the machine decides which of its repositories it
+    // wants. The closed entry is reported where the rest of the list is.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!(
+        "{origin} dest-name=everywhere\n\
+         {origin} dest-name=only-at-work when=\"work\" id=at-work\n\
+         {origin} dest-name=not-on-windows unless=\"facts.family == 'windows'\"\n",
+        origin = display(&origin.origin())
+    ));
+    tree.write_manifest(&format!(
+        "[vars]\nwork = \"false\"\n\n{}",
+        fs::read_to_string(tree.manifest()).expect("the manifest")
+    ));
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+
+    assert_eq!(
+        entries(&tree.home(".plugins")),
+        ["everywhere", "not-on-windows"]
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "not cloning {} (id=at-work, plugins.txt line 2): when \"work\" is false",
+            display(&origin.origin())
+        )),
+        "the closed entry should say why it was passed over:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_entry_whose_condition_cannot_be_decided_stops_the_run_before_any_clone() {
+    // A list is read before writes, and its conditions are settled there, so a
+    // fault reaches the user without half a directory of plugins first.
+    let origin = BareRepo::new();
+    let tree = one_list(&format!(
+        "{origin} dest-name=first\n\
+         {origin} dest-name=second when=\"nothing_declares_this\"\n",
+        origin = display(&origin.origin())
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+    for expected in [
+        "plugins.txt line 2",
+        "the condition \"nothing_declares_this\" cannot be evaluated",
+    ] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+    assert!(
+        !tree.home(".plugins/first").exists(),
+        "an entry was cloned before the fault was reported"
     );
 }
 
@@ -582,8 +645,12 @@ fn every_fault_names_what_is_wrong_with_the_line() {
             "which is not `key=value` metadata",
         ),
         (
-            "https://e.example/a.git when=\"os == 'linux'\"\n",
-            "conditions arrive at step 5.6",
+            "https://e.example/a.git when=\"work &&\"\n",
+            "is not a valid condition",
+        ),
+        (
+            "https://e.example/a.git when=\"work\" unless=\"work\"\n",
+            "writes both `when` and `unless`",
         ),
         (
             "https://e.example/a.git dest-name=../elsewhere\n",

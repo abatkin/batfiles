@@ -16,9 +16,9 @@
 //! twice, because a map cannot hold a key twice, and the layers a value
 //! overrode are still there to be reported, because nothing collapsed them.
 //!
-//! Nothing consults a value yet: conditions arrive at 5.6, and they are the only
-//! thing variables feed. Until then the set is worked out on every run and shown
-//! at `-vv`, so precedence can be read off a real invocation.
+//! A [`Condition`](crate::condition::Condition) is the only thing that consults
+//! a value. The set is worked out on every run whether or not any record carries
+//! one, and shown at `-vv`, so precedence can be read off a real invocation.
 
 use std::collections::{BTreeMap, BTreeSet};
 

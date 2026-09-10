@@ -1,6 +1,6 @@
 # Every shape a real list is written in, in one file: a repository whose
-# directory name is derived from it, one that says what to call itself, and one
-# pinned to a ref.
+# directory name is derived from it, one that says what to call itself, one
+# pinned to a ref, and one only some machines want.
 #
 # The placeholders are local bare repositories the test creates, because no test
 # may reach the network (`guidance.md`, "Test environments"). A real list of
@@ -9,3 +9,7 @@
 {prompt} dest-name=p10k id=p10k  # the prompt
 
 {plugin} ref=main dest-name=zsh-z
+
+# The plugin that belongs on one machine and not the others, which is what a
+# condition on an entry is for.
+{plugin} dest-name=work-tools when="work"

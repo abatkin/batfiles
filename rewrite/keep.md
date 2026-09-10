@@ -10,7 +10,6 @@ layers or tests for unbuilt behavior.
 | 5.1 | `src/var.rs` | Small `VarName` validator and reserved names |
 | 5.2 | `src/state/vars.rs`, variable command tests in `tests/cli.rs` | State editing; requested data stays on stdout, even with quiet output |
 | 5.3 | `src/config/env.rs`, `src/cli/options.rs` | One-shot variables and `NAME=VALUE` validation |
-| 5.6 | `src/repo/default_disabled.rs` | Condition fields on bootstrap entries |
 | 6.1 | `src/repo/remote.rs` | Git remote record |
 | 6.3 | `src/repo/value.rs` | Parsed repository paths |
 | 7.3 | `src/repo/value.rs` | `GlobFilter` and `ItemIdList` |

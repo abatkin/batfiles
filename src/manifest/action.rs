@@ -7,6 +7,7 @@ use super::{
     check_source, check_url,
 };
 use crate::clone_list::Entry;
+use crate::condition::{Condition, Gate};
 use crate::item::ItemId;
 
 /// One entry of `[[actions]]`.
@@ -27,21 +28,23 @@ pub(crate) enum Action {
 impl Action {
     /// What every record carries, whichever variant it is.
     pub fn common(&self) -> Common<'_> {
-        let (kind, id, group) = match self {
-            Self::Symlink(action) => ("symlink", &action.id, &action.group),
-            Self::SymlinkDir(action) => ("symlink-dir", &action.id, &action.group),
-            Self::CreateDir(action) => ("create-dir", &action.id, &action.group),
-            Self::Copy(action) => ("copy", &action.id, &action.group),
-            Self::CopyDir(action) => ("copy-dir", &action.id, &action.group),
-            Self::FetchFile(action) => ("fetch-file", &action.id, &action.group),
-            Self::FetchArchive(action) => ("fetch-archive", &action.id, &action.group),
-            Self::GitClone(action) => ("git-clone", &action.id, &action.group),
-            Self::GitCloneList(action) => ("git-clone-list", &action.id, &action.group),
+        let (kind, id, group, when, unless) = match self {
+            Self::Symlink(it) => ("symlink", &it.id, &it.group, &it.when, &it.unless),
+            Self::SymlinkDir(it) => ("symlink-dir", &it.id, &it.group, &it.when, &it.unless),
+            Self::CreateDir(it) => ("create-dir", &it.id, &it.group, &it.when, &it.unless),
+            Self::Copy(it) => ("copy", &it.id, &it.group, &it.when, &it.unless),
+            Self::CopyDir(it) => ("copy-dir", &it.id, &it.group, &it.when, &it.unless),
+            Self::FetchFile(it) => ("fetch-file", &it.id, &it.group, &it.when, &it.unless),
+            Self::FetchArchive(it) => ("fetch-archive", &it.id, &it.group, &it.when, &it.unless),
+            Self::GitClone(it) => ("git-clone", &it.id, &it.group, &it.when, &it.unless),
+            Self::GitCloneList(it) => ("git-clone-list", &it.id, &it.group, &it.when, &it.unless),
         };
         Common {
             kind,
             id: id.as_ref(),
             group: group.as_ref(),
+            when: when.as_ref(),
+            unless: unless.as_ref(),
         }
     }
 
@@ -105,10 +108,17 @@ impl Action {
         self.common().group
     }
 
+    /// The gate the action's condition makes, if it was written with one.
+    pub fn gate(&self) -> Option<Gate<'_>> {
+        self.common().gate()
+    }
+
     /// How the action introduces itself in a report: what kind it is, what it is
     /// called, and the group it is in.
     pub fn describe(&self, number: usize) -> String {
-        let Common { kind, id, group } = self.common();
+        let Common {
+            kind, id, group, ..
+        } = self.common();
         let name = match id {
             Some(id) => id.to_string(),
             None => format!("action {number}"),
@@ -120,7 +130,7 @@ impl Action {
     }
 }
 
-/// The `type` tag and the two fields every `[[actions]]` record carries,
+/// The `type` tag and the four fields every `[[actions]]` record carries,
 /// borrowed from one.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Common<'a> {
@@ -128,6 +138,23 @@ pub(crate) struct Common<'a> {
     pub kind: &'static str,
     pub id: Option<&'a ItemId>,
     pub group: Option<&'a ItemId>,
+    /// The two spellings of a condition, of which a record may write at most
+    /// one. Kept apart here rather than resolved, because the check that they
+    /// are not both written is the manifest's and needs to see both.
+    pub when: Option<&'a Condition>,
+    pub unless: Option<&'a Condition>,
+}
+
+impl<'a> Common<'a> {
+    /// The gate this record's condition makes, or `None` where it has none.
+    pub fn gate(self) -> Option<Gate<'a>> {
+        Gate::declared(self.when, self.unless)
+    }
+
+    /// Whether the record writes both spellings, which no record may.
+    pub fn writes_both_conditions(self) -> bool {
+        self.when.is_some() && self.unless.is_some()
+    }
 }
 
 /// `symlink`: one symlink, from a path in the repository to a destination.
@@ -138,6 +165,11 @@ pub(crate) struct SymlinkAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The source, relative to the repository root. A plain string until 6.3
     /// makes it a path that may also name a remote.
     pub source: String,
@@ -156,6 +188,11 @@ pub(crate) struct SymlinkDirAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The directory whose direct children are linked, relative to the
     /// repository root.
     pub source_dir: String,
@@ -176,6 +213,11 @@ pub(crate) struct CreateDirAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The directory to create, resolved against the selected home when the
     /// action runs. Missing parents are created with it.
     pub dest: String,
@@ -189,6 +231,11 @@ pub(crate) struct CopyAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The file or directory to copy, relative to the repository root.
     pub source: String,
     /// Where the copy goes, exactly. Resolved against the selected home when
@@ -205,6 +252,11 @@ pub(crate) struct CopyDirAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The directory whose direct children are copied, relative to the
     /// repository root.
     pub source_dir: String,
@@ -225,6 +277,11 @@ pub(crate) struct FetchFileAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The URL to fetch, as written. Not a `RepoPath` and never resolved
     /// against a root: what it names is not on this machine.
     pub source: String,
@@ -245,6 +302,11 @@ pub(crate) struct FetchArchiveAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The URL to fetch, as written. Not a `RepoPath` and never resolved
     /// against a root: what it names is not on this machine.
     pub source: String,
@@ -269,6 +331,11 @@ pub(crate) struct GitCloneAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The repository to clone, exactly as git is given it. Not a `RepoPath`
     /// and not checked as a URL: git accepts an `scp`-style `git@host:path`, a
     /// plain directory, and several schemes, and which of them a source is is
@@ -293,6 +360,11 @@ pub(crate) struct GitCloneListAction {
     pub id: Option<ItemId>,
     /// The one group the action belongs to.
     pub group: Option<ItemId>,
+    /// The condition admitting the action, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding the action, if it is written with one. A record
+    /// writes at most one of the two; see [`Common::gate`].
+    pub unless: Option<Condition>,
     /// The list, relative to the repository root. An ordinary repository path,
     /// unlike the sources of the two actions that reach the network: what is off
     /// this machine is named by the list's lines, not by this field.

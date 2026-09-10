@@ -82,49 +82,27 @@ a string and nothing else, are specified in
 layer follows the same rule and is built; its document is specified in
 [`docs/state.md`](../state.md#varstoml-machine-local-variables). The rule extends
 to every remaining layer that can produce a variable, none of which is built:
-per-inclusion overrides, one-shot overrides, dynamic-command results, facts, and
-host environment values are strings too, and batfiles does not infer types from
-their contents.
+per-inclusion overrides and dynamic-command results are strings too, and batfiles
+does not infer types from their contents.
 
-There is one exception, and it is enumerated rather than heuristic: a
-[condition](#condition) is where a string has to become a decision, so a value
-used in a boolean context is read through the fixed
-[truthiness table](#truthiness). Nothing else re-types a value.
+The one exception is built and specified with the
+[truthiness table](../repoformat.md#truthiness): a condition is where a string
+has to become a decision. Nothing else re-types a value.
 
 ### Condition
 
-```text
-Condition = string
-```
+Conditions are built and specified in
+[`docs/repoformat.md`](../repoformat.md#conditions), along with the two fields
+that spell one, the namespaces they read, the truthiness table, and the rule that
+a record writes one of the two or neither. Two things about them are not built.
 
-The string contains an expression, for example:
-
-```toml
-when = "work && facts.os == 'macos'"
-```
-
-Expressions use the
-[Simple Expressions](https://github.com/abatkin/expressions-rs) language.
-Batfiles makes user variables available as bare string-valued identifiers and
-provides reserved, string-valued `facts`, `env`, and `vars` resolvers. The
-resolvers accept member syntax for identifier-compatible keys, such as
-`facts.os` and `env.HOME`, and index syntax for any key, such as
-`env["XDG_CURRENT_DESKTOP"]`. A key missing from any of the three resolves to
-the empty string instead of producing an evaluation error.
-
-The string is parsed when the manifest is read, not when the condition is
-evaluated. A malformed condition is therefore a load error that names the file,
-the line the condition is written on, and the position within the condition —
-the same treatment every other malformed value in the file receives. Every
-condition in a manifest is parsed, including ones no evaluation will ever
-reach.
-
-Evaluation happens later, and can still fail: on an identifier no layer
-declares, on a result outside the truthiness table, or on arithmetic that
-overflows. A condition that cannot be evaluated **closes its gate** — the record
-is excluded — and a warning names the record and the condition. The command does
-not fail; one bad identifier in one third-party remote must not cost the whole
-run, and nothing is silently ignored, because the warning says what happened.
+**Unevaluable conditions.** A condition that parses can still fail where it is
+evaluated, and today that [stops the
+run](../repoformat.md#when-a-condition-cannot-be-evaluated). It should instead
+**close its gate** — the record is excluded — with a warning naming the record
+and the condition, and the command should not fail. One bad identifier in one
+third-party remote must not cost the whole run, and nothing is silently ignored,
+because the warning says what happened.
 
 Closing is the direction for `when` and `unless` alike. That is worth stating,
 because the `unless` case looks like it should invert and does not: a false
@@ -132,85 +110,14 @@ because the `unless` case looks like it should invert and does not: a false
 a misspelt `unless = "no_gui_"` install the very thing it was written to
 suppress. Excluding the record is the safe answer in both spellings.
 
-Condition inputs follow the shared [string-valued variable
-model](#string-valued-variables).
+**The records that do not have them yet.** A remote and an `include-remote` take
+a condition too, and neither record exists; each is specified with its own schema
+below. `[default-disabled]` entries accept one and nothing evaluates it, since
+nothing adopts the candidates.
 
-For concision, schema tables below list only `when`. Every TOML record or
-manifest entry that accepts `when` also accepts `unless` as its negated alias.
-The two fields are mutually exclusive; writing both on one record is a
-validation error. This convention applies even though `unless` is not repeated
-in each closed-record table.
-
-#### Identifiers
-
-A bare identifier is a user variable, and has three cases:
-
-| The name is | Resolves to |
-| --- | --- |
-| declared, with a value | that string |
-| declared, but its dynamic command produced no value | the empty string |
-| not declared in any layer | an evaluation error |
-
-"Declared" spans every layer that can contribute a variable: a repository's
-`[vars]`, a remote's `[vars]`, an inclusion's `vars`, `vars.toml`,
-`BATFILES_VAR_*`, and `--var`. The error fires only when nothing anywhere names
-the variable.
-
-This is deliberately asymmetric with `facts` and `env`, whose missing keys are
-the empty string. A namespace is extensible, so a key batfiles does not define
-yet is forward compatibility; a variable name is not extensible, so a name
-nothing declares is a typo. Left silent, a misspelt `unless` would read as false
-on every machine forever, and a false `unless` *installs* what it was written to
-suppress.
-
-#### The `vars` namespace
-
-`vars` reads the same bindings as a bare identifier, but totally: a missing key
-and a valueless variable are both the empty string.
-
-```toml
-when = "work"                     # an error if nothing declares `work`
-when = "vars.work"                # false if nothing declares it
-when = "vars.work || vars.school" # and it composes
-```
-
-Use it for a variable that is legitimately optional — one set with `vars set` on
-some machines only, one passed as `--var` on some runs only, or one a
-third-party remote's action reads and cannot require the leaf to define. For a
-variable that is always meant to exist, the bare identifier is the spelling that
-catches a typo.
-
-Member syntax always works here, because every user variable name is
-identifier-compatible by construction. Indexing (`vars["work"]`) is accepted for
-symmetry with `env`, where it is sometimes required, but is never necessary.
-
-#### Truthiness
-
-Wherever a boolean is wanted — the condition's own result, and every `&&`, `||`,
-and `!` operand alike — a value is read as true or false by this table:
-
-| Value | Reads as |
-| --- | --- |
-| a real boolean | itself |
-| a number | `false` at zero, `true` otherwise |
-| `"true"`, `"1"`, `"yes"`, `"on"` | `true` |
-| `"false"`, `"0"`, `"no"`, `"off"`, `""` | `false` |
-| anything else | an evaluation error naming the value |
-
-The table is closed on both sides. A value outside it is an error rather than
-silently true, because `profile = "personal"` written as `when = "profile"` is a
-bare identifier where a comparison was meant; reading it as true would make the
-gate permanently open with nothing on screen to say so.
-
-Comparison and `+` are unaffected: those keep Simple Expressions' own rules, so
-`==` behaves exactly as the language defines it. The table above governs boolean
-contexts only.
-
-This is the one place batfiles infers anything from a string's contents, and it
-is the stated exception to [string-valued
-variables](#string-valued-variables)' rule that it does not. A condition is
-where a string has to become a decision; the table is that conversion, and it is
-enumerated rather than heuristic for exactly that reason.
+For concision, schema tables below list only `when`. Every record that accepts
+`when` also accepts `unless` as its negated alias, on the terms the built
+[conditions](../repoformat.md#conditions) section gives them.
 
 ### Repository path
 
@@ -410,8 +317,9 @@ guaranteed to fail, so `command-timeout` must be greater than zero.
 
 The part of this section that runs — the two arrays of closed records, their
 required `id` and `group` fields, and what is checked as the manifest is read —
-is specified in [`docs/repoformat.md`](../repoformat.md#default-disabled-bootstrap-entries).
-Three things about it are not built.
+is specified in [`docs/repoformat.md`](../repoformat.md#default-disabled-bootstrap-entries),
+along with the `when` and `unless` an entry accepts. Two things about it are not
+built.
 
 **Adoption**, which is the whole point of the section. Nothing reads the
 candidates today. A bootstrap command resolves them against its own enable and
@@ -420,28 +328,18 @@ environment specification's [bootstrap adoption
 precedence](environment.md#bootstrap-enable-and-disable-lists); until that
 command exists, a manifest declaring candidates is accepted and has no effect.
 
-**Conditions.** Each entry also takes `when` and `unless`, so that a candidate
-is adopted only on the machines it suits. Both are rejected today, by the entry
-records being closed.
-
-```toml
-[[default-disabled.actions]]
-id = "core.work-tools"
-when = "work"
-
-[[default-disabled.groups]]
-group = "gui"
-unless = "facts.os == 'macos'"
-```
+**Evaluating an entry's condition**, which is part of the same command: a
+candidate is adopted only on the machines its condition suits. The conditions are
+parsed and checked today and decided nowhere, because there is no adoption for
+them to qualify.
 
 `[default-disabled]` in an included remote is structurally valid but ignored;
 bootstrap policy belongs to the leaf repository.
 
 ## Actions
 
-Current action types and their shared fields are specified in
-[`docs/repoformat.md`](../repoformat.md#actions). The proposed `when` and `unless`
-fields conditionally select any action; see [conditions](#condition).
+Current action types and their shared fields, `when` and `unless` included, are
+specified in [`docs/repoformat.md`](../repoformat.md#actions).
 
 ### `symlink-dir`
 
@@ -497,17 +395,17 @@ Built and specified in [`docs/repoformat.md`](../repoformat.md#create-dir).
 
 Built and specified in
 [`docs/repoformat.md`](../repoformat.md#git-clone-list), along with the [clone
-list format](../repoformat.md#the-clone-list-format) it reads and the per-entry
-`ref=` it honors. One thing about it is not built.
+list format](../repoformat.md#the-clone-list-format) it reads, the per-entry
+`ref=` it honors, and the per-entry `when=` and `unless=` it decides. One thing
+about it is not built.
 
-**Per-entry conditions.** `when` and `unless` are refused with the message that
-names step 5.6, on the same terms as the identical fields on an action.
-
-Entries are not individually selectable yet either. An entry may carry an `id`,
-and an `<action>.<entry>` address may be written in `disabled.toml` or passed to
+**Entries are not individually selectable.** An entry may carry an `id`, and an
+`<action>.<entry>` address may be written in `disabled.toml` or passed to
 `--skip-action`; nothing resolves one, which is the outcome every list holding
 an address already has a rule for. What has to happen for one to resolve is a
-step of its own, and it is per-machine plugin selection.
+step of its own. A per-entry condition now covers the case that motivated it —
+a plugin one machine wants and the others do not — so what is left is per-machine
+selection the machine states for itself rather than the repository.
 
 #### When the list is read
 
@@ -609,12 +507,6 @@ specified. `exclude-actions` may be used by itself or together with either
 `install-groups` or `exclude-groups`, allowing specific actions to be removed
 from the group-selected set. It cannot be combined with `install-actions`. No
 other combinations are valid.
-
-## Git Clone Manifest Format
-
-The current [clone-list format](../repoformat.md#the-clone-list-format) defines
-names, metadata, quoting, and collision handling. Proposed entry conditions use
-the shared [condition](#condition) type and are scheduled for 5.6.
 
 ## Serializer-Oriented Summary
 

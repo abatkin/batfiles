@@ -82,10 +82,10 @@ here overrides the repository's `[vars]` and is overridden by `BATFILES_VAR_*`
 and `--var`. A malformed or unreadable document therefore fails those commands
 as a malformed manifest does.
 
-No condition evaluates a merged value yet, so a value stored here still changes
-nothing about what a `sync` installs. What it changes is what `vars get` answers
-and what a run reports at `-vv`. The parts of this document that remain unbuilt
-are specified in
+A value stored here is read by every [condition](repoformat.md#conditions) a run
+decides, which is how one machine says it wants what a shared repository declares
+conditionally. It is also what `vars get` answers and what a run reports at
+`-vv`. The parts of this document that remain unbuilt are specified in
 [`future/state.md`](future/state.md#varstoml-the-parts-that-are-not-built).
 
 ### Schema

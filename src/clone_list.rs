@@ -6,6 +6,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
+use crate::condition::{Condition, ConditionError, Gate};
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdError};
 
@@ -20,11 +21,36 @@ pub(crate) struct Entry {
     pub id: Option<ItemId>,
     /// The branch, tag, or commit the entry follows.
     pub git_ref: Option<String>,
+    /// The condition admitting the entry, if it is written with one.
+    pub when: Option<Condition>,
+    /// The condition excluding it. An entry writes at most one of the two.
+    pub unless: Option<Condition>,
+    /// Why this run is not cloning the entry, if it is not: the verdict of its
+    /// own condition, settled during execution preparation. A closed entry
+    /// stays on the list rather than being dropped from it, so that the action
+    /// can report it under its own heading instead of having it vanish.
+    pub skip_reason: Option<String>,
     /// Which line of the list declared it, for a diagnostic that has to point
     /// at one. A fault found while reading carries its own line and does not
     /// come from here; this is for the entry that reads correctly and then
     /// fails to clone.
     pub line: usize,
+}
+
+impl Entry {
+    /// The gate the entry's condition makes, if it was written with one.
+    pub fn gate(&self) -> Option<Gate<'_>> {
+        Gate::declared(self.when.as_ref(), self.unless.as_ref())
+    }
+
+    /// Where the entry is written, for a diagnostic that has to send a reader
+    /// to it. `list` is the action's `source`, as the manifest spells it.
+    pub fn written_at(&self, list: &str) -> String {
+        match &self.id {
+            Some(id) => format!("id={id}, {list} line {}", self.line),
+            None => format!("{list} line {}", self.line),
+        }
+    }
 }
 
 /// Read and check one list.
@@ -105,16 +131,7 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
             return Err(Invalid::NotMetadata { field });
         };
         match key {
-            "id" | "ref" | "dest-name" => {}
-            // Specified, and refused until the step that evaluates one, rather
-            // than accepted and quietly never consulted.
-            // CARRY(5.6): conditions arrive with `when` and `unless` on an
-            // action; delete this arm and let the two keys through.
-            "when" | "unless" => {
-                return Err(Invalid::ConditionNotYet {
-                    key: key.to_owned(),
-                });
-            }
+            "id" | "ref" | "dest-name" | "when" | "unless" => {}
             _ => {
                 return Err(Invalid::UnknownKey {
                     key: key.to_owned(),
@@ -131,6 +148,12 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
                 key: key.to_owned(),
             });
         }
+    }
+
+    // The same rule a manifest record follows, checked here because a line is
+    // where a reader would go and fix it.
+    if metadata.contains_key("when") && metadata.contains_key("unless") {
+        return Err(Invalid::BothConditions);
     }
 
     let name = match metadata.get("dest-name") {
@@ -159,8 +182,23 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
             .map(|id| ItemId::try_from(id.clone()))
             .transpose()?,
         git_ref: metadata.get("ref").cloned(),
+        when: condition(&metadata, "when")?,
+        unless: condition(&metadata, "unless")?,
+        // What a line says; what this run makes of it is settled later.
+        skip_reason: None,
         line,
     }))
+}
+
+/// One of the two condition keys, parsed where the line is read so that a
+/// malformed one names the file and the line rather than surfacing partway
+/// through a run.
+fn condition(metadata: &BTreeMap<String, String>, key: &str) -> Result<Option<Condition>, Invalid> {
+    metadata
+        .get(key)
+        .map(|source| Condition::new(source))
+        .transpose()
+        .map_err(Invalid::from)
 }
 
 /// The directory an entry clones into when it does not name one.
@@ -256,12 +294,18 @@ pub(crate) enum Invalid {
     #[error("has `{field}` after the repository, which is not `key=value` metadata")]
     NotMetadata { field: String },
 
-    #[error("uses the unknown key `{key}`; the keys are id, ref, and dest-name")]
+    #[error("uses the unknown key `{key}`; the keys are id, ref, dest-name, when, and unless")]
     UnknownKey { key: String },
 
-    /// A condition on an entry, which the format specifies and nothing evaluates yet.
-    #[error("uses `{key}`, and conditions arrive at step 5.6")]
-    ConditionNotYet { key: String },
+    /// A `when` that is not a condition. The message is the parser's own, which
+    /// names the text and the character it stopped at.
+    #[error(transparent)]
+    Condition(#[from] ConditionError),
+
+    /// A line writing both spellings of a condition, refused on the same terms
+    /// as the manifest record that does.
+    #[error("writes both `when` and `unless`; a line has one condition or none")]
+    BothConditions,
 
     #[error("writes `{key}` twice")]
     RepeatedKey { key: String },
@@ -475,14 +519,46 @@ mod tests {
     }
 
     #[test]
-    fn a_condition_is_refused_until_something_can_evaluate_one() {
-        for key in ["when", "unless"] {
-            let written = format!("https://e.example/a.git {key}=\"os == 'linux'\"\n");
-            assert!(
-                matches!(fault(&written), (1, Invalid::ConditionNotYet { .. })),
-                "`{key}` should be refused"
-            );
-        }
+    fn an_entry_takes_one_condition_in_either_spelling() {
+        // Parsed as the list is read, like a manifest record's; what a run makes
+        // of one is settled during preparation and tested through the binary.
+        let parsed = entries("https://e.example/a.git when=\"work\"\n");
+        assert_eq!(
+            parsed[0].gate().expect("a gate").to_string(),
+            "when \"work\" is false"
+        );
+        let parsed = entries("https://e.example/a.git unless=\"facts.os == 'windows'\"\n");
+        assert!(parsed[0].when.is_none());
+        assert!(parsed[0].unless.is_some());
+        // Nothing has looked at it yet, so every entry reads as one to clone.
+        assert!(parsed[0].skip_reason.is_none());
+    }
+
+    #[test]
+    fn an_entry_writes_one_condition_or_none() {
+        assert!(matches!(
+            fault("https://e.example/a.git when=\"work\" unless=\"school\"\n"),
+            (1, Invalid::BothConditions)
+        ));
+    }
+
+    #[test]
+    fn a_malformed_condition_is_refused_where_the_line_is_read() {
+        // The alternative is a list that reads correctly and fails partway
+        // through a run, on a line nothing has named yet.
+        let (line, fault) = fault(
+            "https://e.example/a.git\n\
+             https://e.example/b.git when=\"work &&\"\n",
+        );
+        assert_eq!(line, 2);
+        assert!(
+            matches!(fault, Invalid::Condition(_)),
+            "{fault:?}: a condition that does not parse should be refused"
+        );
+        assert!(
+            fault.to_string().contains("is not a valid condition"),
+            "{fault}"
+        );
     }
 
     #[test]

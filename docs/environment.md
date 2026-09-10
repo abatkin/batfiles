@@ -85,11 +85,20 @@ A warning names the environment variable and not its value, which may be a
 token. The one listing that prints values is the one asked for them: `-vv`,
 below.
 
-Conditions will read these variables under a second, unrelated name as well:
-`BATFILES_VAR_FOO` will be readable as the raw environment entry
-`env.BATFILES_VAR_FOO`, which is a separate channel that does not participate in
-the precedence below. That namespace is not built; it is specified in
-[`future/environment.md`](future/environment.md#two-distinct-destinations).
+### Two distinct destinations
+
+`BATFILES_VAR_<NAME>` and the [`env` namespace](#host-environment-in-conditions)
+are separate channels, and one environment variable can appear in both:
+
+- `BATFILES_VAR_FOO` defines the **user variable** `FOO`, which a condition
+  reads as the bare identifier `FOO`, subject to the precedence below.
+- `env` exposes the *raw* process environment, so the same variable is also
+  `env["BATFILES_VAR_FOO"]`. It takes no part in user-variable precedence.
+
+Only the `BATFILES_VAR_` prefix creates a user variable. A raw `FOO` in the
+environment is reachable as `env.FOO` and does **not** become the user variable
+`FOO`; a condition writing a bare `FOO` for it gets an undeclared-identifier
+error.
 
 ## Variable precedence
 
@@ -113,12 +122,11 @@ Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables)
 a malformed or unreadable one now fails these commands as a malformed manifest
 does.
 
-**Nothing consults a merged value yet.** Variables exist to feed `when` and
-`unless` conditions, and no command evaluates one, so the set a run resolves
-changes nothing about what it installs. What it does do is answer questions
-about itself: `batfiles <command> -vv` prints the effective set, each variable
-with the value in force, the layer that supplied it, and the layers that value
-overrode.
+The merged set is what every [condition](repoformat.md#conditions) in the run is
+decided against, and the only thing that reads a variable. It also answers
+questions about itself: `batfiles <command> -vv` prints the effective set, each
+variable with the value in force, the layer that supplied it, and the layers that
+value overrode.
 
 ```console
 $ BATFILES_VAR_editor=code batfiles sync -vv --var editor=emacs
@@ -133,6 +141,89 @@ which layer won, and `-vv` is a request for exactly that.
 
 Actions spliced from an included remote will add layers of their own, specified
 in [`future/environment.md`](future/environment.md#runtime-variable-precedence).
+
+## Host facts in conditions
+
+The `facts` namespace is what batfiles knows about the machine it is running on.
+It is string-valued and read-only, like `env`, and takes no part in user-variable
+precedence.
+
+```toml
+when = "facts.os == 'macos'"
+unless = "facts.family == 'windows'"
+```
+
+It contains exactly these keys:
+
+| Key              | Value                                                        |
+|------------------|--------------------------------------------------------------|
+| `facts.os`       | The operating system: `linux`, `macos`, `windows`, and so on. |
+| `facts.arch`     | The target architecture: `x86_64`, `aarch64`, and so on.     |
+| `facts.family`   | The operating-system family: `unix` or `windows`.            |
+| `facts.hostname` | The host's configured name.                                  |
+
+- **A key batfiles does not define is the empty string**, not an error, matching
+  `env` and the [condition rule](repoformat.md#conditions). That is what makes
+  the set safely extensible — and equally what makes a typo quiet, since
+  `facts.arhc == 'arm64'` is simply false. The set is enumerated above so that
+  there is something to check a spelling against.
+- **The set is extensible.** A later batfiles may define more keys; adding one
+  is a non-breaking change, because a manifest cannot have relied on it resolving
+  to the empty string in any way that mattered.
+- Every key name is identifier-compatible, so member access always works.
+  Indexing (`facts["os"]`) is accepted for symmetry with `env` and is never
+  required.
+
+**macOS is `macos`, not `darwin`.** This is the value most likely to be guessed
+wrong: `uname -s` prints `Darwin` and the Rust target triple is
+`aarch64-apple-darwin`, but `facts.os` is `macos` on every Apple platform. A
+condition written as `facts.os == 'darwin'` is not an error — it is simply never
+true, so the record it gates is silently skipped on exactly the machines it was
+written for.
+
+**`facts.hostname` is the name the platform reports, and batfiles never truncates
+it at the first dot.** On a Unix machine configured with a fully qualified name
+it is `silver.example.net`; on one configured with a short name it is `silver`.
+The cost is real: `facts.hostname == 'silver'` works on the second machine and
+silently fails on the first, because a mismatch is a false condition rather than
+an error. Batfiles does not truncate, because the domain is what distinguishes
+work from home on some fleets and truncating would lose it just as silently.
+Write the name your machines actually report, or compare against the qualified
+form.
+
+**Windows reports the short name, even on a domain-joined machine.** The value
+comes from `GetComputerNameExW(ComputerNamePhysicalDnsHostname)`, the host
+component with the DNS suffix excluded, so a machine whose fully qualified name
+is `silver.example.net` has `facts.hostname == 'silver'` there while the same
+name on Unix compares equal to the qualified form. A condition that must work on
+both writes the short form, or tests the domain separately. Reporting the
+qualified Windows name is possible — a different call to the same API — and is
+tracked as an enhancement in [`rewrite/steps.md`](../rewrite/steps.md#enhancements).
+
+## Host environment in conditions
+
+The `env` namespace exposes arbitrary host environment variables to a condition.
+These values are separate from the `BATFILES_*` configuration inputs above.
+
+```toml
+when = "env.HOME != ''"
+when = "env[\"XDG_CONFIG_HOME\"] != ''"
+```
+
+- Names follow the host operating system's case sensitivity: verbatim on Unix,
+  uppercased at capture on Windows. Reference Windows host variables by their
+  uppercase form (`env.PATH`); a lowercase reference is the empty string.
+- A set variable resolves to its string value and is never re-typed as a boolean
+  or a number.
+- An unset variable is the empty string. A lookup never fails merely because a
+  key is absent.
+- Identifier-compatible names may use member access, such as `env.HOME`. Indexing
+  is available for those too and is required for other keys, such as
+  `env["XDG_CONFIG_HOME"]`.
+- The namespace is read-only and takes no part in user-variable precedence.
+
+The whole environment is captured once, at startup, so every condition in one run
+reads the same values.
 
 ## Location selection
 

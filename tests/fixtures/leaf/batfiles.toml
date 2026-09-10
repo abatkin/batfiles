@@ -5,9 +5,9 @@
 # The actions that need no symlink come first, so a platform that cannot make
 # one still runs them before the refusal stops the list.
 
-# What this repository would answer a condition with. Nothing reads them yet —
-# conditions arrive at 5.6 — so every action below runs whatever these say, and
-# the fixture's installed tree is the same with them as without them.
+# What this repository answers a condition with. Only the one gated action below
+# reads them, so the rest of the installed tree is the same with them as
+# without.
 [vars]
 work = "false"
 profile = "personal"
@@ -19,6 +19,17 @@ type = "create-dir"
 id = "zsh-cache"
 group = "shell"
 dest = "~/.cache/zsh"
+
+# The one action this repository does not want on every machine: a cache for a
+# tool only the work laptop has. `work` is false here, so a run over this
+# fixture leaves the directory unmade — which is the assertion that says the
+# gate closed rather than that the action was forgotten.
+[[actions]]
+type = "create-dir"
+id = "work-cache"
+group = "shell"
+dest = "~/.cache/work-tools"
+when = "work"
 
 # Seeded rather than linked, because it holds the identity of one machine:
 # `git/gitconfig` includes it, editing it must not write into the repository,

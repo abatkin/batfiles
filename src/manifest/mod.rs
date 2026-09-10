@@ -36,11 +36,8 @@ pub(crate) struct Manifest {
     pub vars: BTreeMap<VarName, String>,
 
     /// What a fresh machine starts with switched off. Accepted and checked as
-    /// the document is read; nothing acts on it.
-    #[expect(
-        dead_code,
-        reason = "walked at 5.6, to reject an entry setting both conditions"
-    )]
+    /// the document is read, including the conditions its entries carry;
+    /// adopting the candidates belongs to the bootstrap.
     #[serde(default)]
     pub default_disabled: DefaultDisabled,
 }
@@ -79,11 +76,17 @@ impl Manifest {
                 });
             }
 
+            if action.common().writes_both_conditions() {
+                return Err(Invalid::BothConditions {
+                    action: action_number,
+                });
+            }
+
             // Which of a record's fields are paths, and which rule each one
             // follows, is the record's own answer.
             action.validate(action_number)?;
         }
-        Ok(())
+        self.default_disabled.validate()
     }
 }
 
@@ -96,6 +99,23 @@ pub(crate) enum Invalid {
         first: usize,
         second: usize,
     },
+
+    /// A record writing both spellings of a condition. Refused rather than
+    /// resolved, because the two are not one rule and its negation and there is
+    /// no reading of the pair that is obviously the one that was meant.
+    #[error(
+        "action {action}: writes both `when` and `unless`; \
+         a record has one condition or none"
+    )]
+    BothConditions { action: usize },
+
+    /// The same, on a bootstrap candidate. Named by its position within its own
+    /// array, since what an entry names is deliberately not read yet.
+    #[error(
+        "default-disabled {noun} {number}: writes both `when` and `unless`; \
+         a record has one condition or none"
+    )]
+    BothConditionsOnCandidate { noun: &'static str, number: usize },
 
     // A `source` names a path within the repository that declared it. Every
     // rule below is decided from the written value alone.

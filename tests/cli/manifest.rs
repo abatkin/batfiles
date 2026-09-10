@@ -77,15 +77,16 @@ fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
     );
 }
 
-// `[vars]`: static values a later step reads. The section is accepted and
-// checked as the manifest is read, and nothing reads it yet, so the tests below
-// are about what the document will and will not take.
+// `[vars]`: the values conditions are decided against. The section is accepted
+// and checked as the manifest is read, so the tests below are about what the
+// document will and will not take; what a condition makes of a value is
+// `conditions.rs`.
 
 #[test]
-fn a_vars_section_is_accepted_and_changes_nothing() {
-    // Variables feed conditions and nothing else, and conditions arrive at 5.6.
-    // So a run over a manifest declaring them installs exactly what it would
-    // have installed without them.
+fn a_vars_section_alone_changes_nothing() {
+    // Variables feed conditions and nothing else: no field of any action
+    // interpolates one. So a run over a manifest whose records carry no
+    // condition installs exactly what it would have installed without them.
     let tree = Tree::new();
     tree.write_manifest(&format!(
         "[vars]\nwork = \"false\"\nprofile = \"personal\"\n_rank = \"3\"\nempty = \"\"\n\n{}",
@@ -220,15 +221,59 @@ fn a_default_disabled_candidate_does_not_disable_anything_yet() {
 }
 
 #[test]
-fn a_condition_a_candidate_does_not_have_yet_is_rejected() {
-    // `when` and `unless` arrive at 5.6. The entry record is closed, so one is
-    // an error now rather than a gate that looks as though it were consulted.
-    for field in ["when", "unless"] {
-        let stderr = rejected(&format!(
-            "[[default-disabled.actions]]\nid = \"p10k\"\n{field} = \"work\"\n"
-        ));
-        assert!(stderr.contains(field), "`{field}` was not named:\n{stderr}");
+fn a_candidate_takes_a_condition_and_still_changes_nothing() {
+    // A candidate's condition is parsed and checked as the manifest is read and
+    // evaluated nowhere: which candidates a fresh machine adopts is the
+    // bootstrap's question, and it cannot ask one yet. So a condition here
+    // decides nothing about the run, including the action the entry names.
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[[default-disabled.actions]]\n\
+         id = \"config\"\n\
+         when = \"work\"\n\
+         \n\
+         [[default-disabled.groups]]\n\
+         group = \"gui\"\n\
+         unless = \"facts.os == 'macos'\"\n\
+         \n\
+         [[actions]]\n\
+         type = \"create-dir\"\n\
+         id = \"config\"\n\
+         dest = \"~/.config\"\n",
+    );
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert!(
+        tree.home(".config").is_dir(),
+        "the candidate's condition took effect on the action it names"
+    );
+}
+
+#[test]
+fn a_candidate_writing_both_conditions_is_rejected() {
+    // The rule every record carrying a condition follows, checked here even
+    // though nothing evaluates these two: a candidate that could never mean one
+    // thing is caught on the machine that writes it.
+    for entry in [
+        "[[default-disabled.actions]]\nid = \"p10k\"\nwhen = \"work\"\nunless = \"work\"\n",
+        "[[default-disabled.groups]]\ngroup = \"gui\"\nwhen = \"work\"\nunless = \"work\"\n",
+    ] {
+        let stderr = rejected(entry);
+        assert!(
+            stderr.contains("writes both `when` and `unless`"),
+            "the entry was accepted:\n{stderr}"
+        );
     }
+}
+
+#[test]
+fn a_candidates_condition_is_parsed_where_it_is_written() {
+    let stderr = rejected("[[default-disabled.actions]]\nid = \"p10k\"\nwhen = \"work &&\"\n");
+    assert!(
+        stderr.contains("is not a valid condition"),
+        "the condition was accepted:\n{stderr}"
+    );
 }
 
 #[test]

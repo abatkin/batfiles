@@ -3,15 +3,14 @@
 //! A [`Condition`] is parsed when the document declaring it is read, so nothing
 //! here ever sees malformed text. What this module owns is the binding — a bare
 //! identifier is a user variable, `vars` is the same variables read totally, and
-//! `facts` and `env` are the two reserved namespaces — and the truthiness table
-//! every boolean context is read through. Both are specified in
-//! [`docs/future/repoformat.md`](../docs/future/repoformat.md#condition) until
-//! 5.6 promotes them.
+//! `facts` and `env` are the two reserved namespaces — the truthiness table
+//! every boolean context is read through, and the [`Gate`] a record's condition
+//! makes of it. All three are specified in
+//! [`docs/repoformat.md`](../docs/repoformat.md#conditions).
 //!
-//! [`eval`] is pure: no filesystem, no clock, no subprocess. The one part of
-//! evaluation that reads the host is [`HostNamespaces::capture`], which a run
-//! performs once.
-#![cfg_attr(not(test), expect(dead_code, reason = "read at 5.6"))]
+//! Evaluation is pure: no filesystem, no clock, no subprocess. The one part of
+//! it that reads the host is [`HostNamespaces::capture`], which a run performs
+//! once.
 
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -83,6 +82,62 @@ impl TryFrom<String> for Condition {
 impl fmt::Debug for Condition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Condition").field(&self.source).finish()
+    }
+}
+
+/// The condition one record carries, and which way it decides.
+///
+/// A record writes `when`, or `unless`, or neither, and writing both is refused
+/// where the record is read — which is what makes this two variants rather than
+/// two fields. `when` admits the record when its condition is true and `unless`
+/// admits it when the condition is false.
+///
+/// The two are not one rule and its negation, and the difference matters
+/// wherever a gate has to be closed for a reason other than its own verdict: a
+/// false `unless` *opens* a gate, so a record whose condition cannot be
+/// evaluated is one batfiles has no verdict for in either spelling.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Gate<'a> {
+    When(&'a Condition),
+    Unless(&'a Condition),
+}
+
+impl<'a> Gate<'a> {
+    /// The gate a record declares, or `None` where it declares neither.
+    ///
+    /// A record declaring both is refused as its document is read, so
+    /// preferring `when` here decides nothing: it is only what a record that
+    /// cannot exist would have meant.
+    pub fn declared(when: Option<&'a Condition>, unless: Option<&'a Condition>) -> Option<Self> {
+        when.map(Self::When).or_else(|| unless.map(Self::Unless))
+    }
+
+    /// Whether this run's bindings admit the record the gate is written on.
+    pub fn admits(self, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
+        match self {
+            Self::When(condition) => eval(condition, bindings),
+            Self::Unless(condition) => Ok(!eval(condition, bindings)?),
+        }
+    }
+}
+
+/// Why the gate is closed, which is the only state a report ever names: a
+/// record the gate admits is reported by what it did.
+///
+/// The spelling the record used is named rather than the verdict alone, because
+/// `unless` is the one a reader gets backwards, and the condition goes through
+/// [`quoted_value`] like every other piece of repository text batfiles repeats.
+impl fmt::Display for Gate<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (spelling, verdict, condition) = match self {
+            Self::When(condition) => ("when", "false", condition),
+            Self::Unless(condition) => ("unless", "true", condition),
+        };
+        write!(
+            f,
+            "{spelling} {} is {verdict}",
+            quoted_value(condition.source())
+        )
     }
 }
 
@@ -403,7 +458,10 @@ const NOT_BOOLEAN: &str = "a value in it is not a boolean. Write a comparison, \
      such as `profile == 'personal'`, or use one of true, false, 1, 0, yes, no, on, or off";
 
 /// Evaluate one condition against one set of bindings.
-pub(crate) fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
+///
+/// Reached through [`Gate::admits`], which is where a record's `when` or
+/// `unless` decides what a bare `true` means for it.
+fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
     let evaluator = Evaluator::new_with_coercions(bindings, &COERCIONS);
     let value = evaluator
         .evaluate(&condition.expr)

@@ -34,8 +34,9 @@ document, [`vars.toml`](state.md#varstoml-machine-local-variables). Every
 command that executes actions merges it with the repository's `[vars]`,
 `BATFILES_VAR_*`, and `--var` into one [effective
 set](environment.md#variable-precedence), and `-vv` prints what that came to.
-Nothing acts on a value yet: variables feed conditions, and no command evaluates
-one.
+That set is what a record's [`when` or
+`unless`](repoformat.md#conditions) is decided against, which is the only thing
+that reads a variable.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -228,11 +229,18 @@ lines. An action written with no `id` cannot be named, and is reachable only
 through its [group](repoformat.md#groups).
 
 **Naming one action waives every reason it would otherwise be passed over** —
-both [`disabled.toml`](state.md) lists, and the run-only skips, which is why the
+both [`disabled.toml`](state.md) lists, the run-only skips, which is why the
 command accepts neither `--skip-action` nor `--skip-group` and ignores
-`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`. `disable-action` records that
-an action is not part of an ordinary `sync`; asking for it by name is the way to
-say otherwise for one invocation, without editing what the next `sync` does.
+`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`, and the record's own
+[condition](repoformat.md#conditions). `disable-action` records that an action is
+not part of an ordinary `sync`; asking for it by name is the way to say otherwise
+for one invocation, without editing what the next `sync` does.
+
+The condition is waived rather than merely satisfied, so it is not evaluated at
+all: `apply-action` reaches its record even where the same condition [cannot be
+evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) and stops a
+`sync`. Nothing is finer-grained than the one record the command was given, which
+is the same rule the two lists are waived under.
 
 An `--id` that no action answers to is a failure: the command resolved nothing,
 so it exits 1 naming the address and the manifest, and writes nothing. That
@@ -260,9 +268,10 @@ separate empty-group case to succeed quietly over.
 **Naming the group waives the group's own disable and nothing else.** A
 `disable-group` that would have kept these actions out of a `sync` does not keep
 them out here, while an action disabled by its own `id` is still passed over, and
-so is one named by `--skip-action` or `BATFILES_SKIP_ACTIONS`. The rule is that
-an explicit request waives the exclusions naming *what was asked for*; an
-exclusion naming something more specific still applies.
+so is one named by `--skip-action` or `BATFILES_SKIP_ACTIONS`, and so is one its
+own [condition](repoformat.md#conditions) closes. The rule is that an explicit
+request waives the exclusions naming *what was asked for*; an exclusion naming
+something more specific still applies, and a condition is written on one record.
 
 `--skip-group` is not accepted and `BATFILES_SKIP_GROUPS` is ignored: the command
 has already named the group it is applying, and a group skip could only
@@ -274,7 +283,7 @@ passed over, and why, is `-v` detail as it is in a `sync`.
 
 ```console
 $ batfiles apply-group --group shell --skip-action aliases
-nothing to apply: every action in the group is disabled or skipped
+nothing to apply: every action in the group is disabled, skipped, or excluded by its own condition
 ```
 
 | Option                 | Purpose                                                             |
@@ -359,9 +368,10 @@ suppresses the lines describing an edit and not the edit itself; it never
 suppresses what `vars get` was asked for, which is the general rule for
 [requested data](#output-streams).
 
-Nothing else reads these values yet. Variables feed `when` and `unless`
-conditions, and no command evaluates one, so setting a variable today changes
-what `vars get` answers and nothing about what a `sync` installs.
+What a stored value goes on to decide is a record's [`when` or
+`unless`](repoformat.md#conditions), read at its place in the [variable
+precedence](environment.md#variable-precedence). A manifest whose records carry
+no condition is unaffected by anything these three commands do.
 
 ## Selecting What a Run Does
 
@@ -371,20 +381,24 @@ run the same filter over the same list, minus the exclusions naming what they
 were asked for — see [`apply-action`](#apply-action) and
 [`apply-group`](#apply-group).
 
-Two things say an action should be passed over, and a run honors both:
+Three things say an action should be passed over, and a run honors all three:
 
 - the machine-local [`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups)
   lists, which persist until an enable command or a hand edit removes the name;
-  and
 - the run-only skips: `--skip-action` and `--skip-group`, together with
   [`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`](environment.md#run-only-skips),
-  which apply to one invocation and are never written down.
+  which apply to one invocation and are never written down; and
+- the record's own [`when` or `unless`](repoformat.md#conditions), which is the
+  repository saying the action does not belong on this machine.
 
-Both select over the same two namespaces. An action is named by its `id`, and a
-[group](repoformat.md#groups) is named by the `group` field its members carry —
-so an action written with no `id` can be left out only through its group, and an
-action in no group only by its own name. The two namespaces are separate, so
-`--skip-group zshrc` does not reach the action `zshrc`.
+The first two select over the same two namespaces. An action is named by its
+`id`, and a [group](repoformat.md#groups) is named by the `group` field its
+members carry — so an action written with no `id` can be left out only through
+its group, and an action in no group only by its own name. The two namespaces are
+separate, so `--skip-group zshrc` does not reach the action `zshrc`.
+
+A condition names nothing and is not a list: it is a property of the record, read
+against [the variables this run resolved](environment.md#variable-precedence).
 
 The option and the variable **union** rather than one overriding the other, and
 so do the run-only skips and the persistent lists. These are lists of what to
@@ -451,16 +465,25 @@ noise; `-v` is where the whole account of a run lives.
 ```text
 create-dir zsh-cache (group shell) - skipped: group `shell` is disabled
 symlink zshrc (group shell) - skipped: `zshrc` from --skip-action
+symlink gitconfig-work (group git) - skipped: when "work" is false
 copy profile
 copied /home/you/.profile
 ```
 
 The reason names the source the reader can go and change, which is why it spells
-out the option or the variable rather than saying only that a skip applied. When
-more than one source names the same action, one reason is reported: the disable
-ahead of the run-only skip, because it is the one still in force tomorrow when
-the skip is gone, and the action's own name ahead of its group's, because it is
-the more specific of the two.
+out the option or the variable rather than saying only that a skip applied. A
+condition names itself instead, in the spelling the record used — `unless "gui"
+is true` rather than the verdict alone, because `unless` is the one a reader gets
+backwards.
+
+When more than one reason applies, one is reported, in this order: a disable
+ahead of a run-only skip, because it is the one still in force tomorrow when the
+skip is gone; the action's own name ahead of its group's, because it is the more
+specific of the two; and the condition last of all. Last means the condition is
+not evaluated at all for a record something else already excludes, which is why a
+condition that [cannot be
+evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) costs only the
+runs that would otherwise have carried the record out.
 
 ### Enable and disable actions or groups
 

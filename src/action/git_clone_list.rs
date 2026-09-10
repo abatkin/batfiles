@@ -1,7 +1,6 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
 use super::RunContext;
-use crate::clone_list::Entry;
 use crate::error::Error;
 use crate::git::{self, Failure};
 use crate::manifest::action::GitCloneListAction;
@@ -26,6 +25,22 @@ pub(super) fn git_clone_list(
             .detail(1, &format!("no repositories to clone in {}", action.source));
     }
     for entry in entries {
+        // Reported here rather than where preparation settled it, so the line
+        // sits under the heading naming the action that holds the list. The
+        // wording is the failure warning's below, since both say that one entry
+        // of a list is not being cloned and why.
+        if let Some(why) = &entry.skip_reason {
+            context.reporter().detail(
+                1,
+                &format!(
+                    "not cloning {} ({}): {why}",
+                    entry.url,
+                    entry.written_at(&action.source)
+                ),
+            );
+            continue;
+        }
+
         let dest = dest_dir.join(&entry.dest_name);
         match git::clone_or_update(
             &entry.url,
@@ -40,7 +55,7 @@ pub(super) fn git_clone_list(
                 context.reporter().warn(&format!(
                     "not cloning {} ({}): {failure}",
                     entry.url,
-                    declared(action, entry)
+                    entry.written_at(&action.source)
                 ))
             }
             Err(failure) => return Err(failure),
@@ -70,13 +85,5 @@ fn is_recoverable_entry_error(error: &Error) -> bool {
         // Reading or writing the machine, and anything else that is not about
         // this repository.
         _ => false,
-    }
-}
-
-/// Where an entry is written, for the warning that has to send a reader to it.
-fn declared(action: &GitCloneListAction, entry: &Entry) -> String {
-    match &entry.id {
-        Some(id) => format!("id={id}, {} line {}", action.source, entry.line),
-        None => format!("{} line {}", action.source, entry.line),
     }
 }

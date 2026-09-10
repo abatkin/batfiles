@@ -9,6 +9,7 @@ mod actions;
 mod apply;
 mod clone_lists;
 mod cloning;
+mod conditions;
 mod disabled;
 mod fetching;
 mod groups;

@@ -1,8 +1,9 @@
 # Environment variables
 
-This document proposes bootstrap adoption and condition inputs. Current
-environment capture, location selection, run-only skips, one-shot variables and
-their precedence, color, and Git inheritance are specified in
+This document proposes bootstrap adoption and the variable layers remote
+inclusion adds. Current environment capture, location selection, run-only skips,
+one-shot variables and their precedence, the `facts` and `env` namespaces a
+condition reads, color, and Git inheritance are specified in
 [the environment reference](../environment.md).
 
 ## General precedence
@@ -27,26 +28,6 @@ The built one-shot variables are specified in
 
 `batfiles clone` uses the selected leaf-repository path as its initial destination.
 Existing [location rules](../environment.md#location-selection) apply.
-
-### Two distinct destinations
-
-`BATFILES_VAR_<NAME>` and the `env` namespace are separate channels, and the
-same underlying environment variable can appear in both:
-
-- `BATFILES_VAR_FOO` defines the **user variable** `FOO`, referenced in
-  expressions as a bare identifier (`FOO`) and subject to the built [variable
-  precedence](../environment.md#variable-precedence).
-- The read-only [`env` namespace](#host-environment-in-conditions) exposes the
-  *raw* process environment under `env.*` (for example `env.FOO`, and also
-  `env["BATFILES_VAR_FOO"]`). It does not participate in user-variable
-  precedence.
-
-Only the `BATFILES_VAR_` prefix creates a user variable. A raw `FOO` in the
-environment is reachable as `env.FOO` but does **not** become the user variable
-`FOO`. Environment keys in the `env` namespace follow the host operating
-system's case sensitivity: on Unix `env.FOO` and `env.foo` are different keys,
-while on Windows names are uppercased at capture, so reference them as `env.FOO`
-(a lowercase reference resolves to the empty string like any absent key).
 
 ### Runtime variable precedence
 
@@ -123,94 +104,13 @@ and disable decisions update `disabled.toml`.
 Color selection is built. It is specified in
 [`docs/environment.md`](../environment.md#color).
 
-## Host facts in conditions
+## Condition namespaces
 
-The `facts` namespace exposes what batfiles knows about the machine it is
-running on. It is string-valued and read-only, like `env`, and it does not
-participate in user-variable precedence.
-
-```toml
-when = "facts.os == 'macos'"
-unless = "facts.family == 'windows'"
-```
-
-The namespace contains exactly these keys:
-
-| Key | Value |
-| --- | --- |
-| `facts.os` | The operating system: `linux`, `macos`, `windows`, and so on. |
-| `facts.arch` | The target architecture: `x86_64`, `aarch64`, and so on. |
-| `facts.family` | The operating-system family: `unix` or `windows`. |
-| `facts.hostname` | The host's configured name. |
-
-Rules for `facts` values:
-
-- A key batfiles does not define resolves to the empty string rather than
-  failing, matching `env` and the rule in
-  [the condition section](repoformat.md#condition). This is what makes the set
-  safely extensible — and equally what makes a typo quiet, since `facts.arhc ==
-  'arm64'` is simply false. The set above is enumerated so that there is
-  something to check a spelling against.
-- The set is extensible. A later batfiles may define additional keys; adding one
-  is a non-breaking change, because a manifest cannot have been relying on it
-  resolving to the empty string in any way that mattered.
-- Every key name is identifier-compatible, so member access always works.
-  Indexing (`facts["os"]`) is accepted for symmetry with `env` but is never
-  required.
-
-**macOS is `macos`, not `darwin`.** This is the value most likely to be guessed
-wrong: `uname -s` prints `Darwin`, and the Rust target triple is
-`aarch64-apple-darwin`, but `facts.os` is `macos` on every Apple platform. A
-condition written as `facts.os == 'darwin'` is not an error — it is simply never
-true, so the record it gates is silently skipped on exactly the machines it was
-written for. The same shape of mistake applies to any misspelling; see the
-missing-key rule above.
-
-**`facts.hostname` is the name the platform reports, and batfiles never truncates
-it at the first dot.** On a Unix machine configured with a fully qualified name
-it is `silver.example.net`; on one configured with a short name it is `silver`.
-The cost is real: `facts.hostname == 'silver'` works on the second machine and
-silently fails on the first, because a mismatch is a false condition rather than
-an error. Batfiles does not truncate, because the domain is what distinguishes
-work from home on some fleets and truncating would lose it just as silently.
-Write the name your machines actually report, or compare against the qualified
-form.
-
-**Windows reports the short name, even on a domain-joined machine.** The value
-comes from `GetComputerNameExW(ComputerNamePhysicalDnsHostname)`, which is the
-host component with the DNS suffix excluded, so a machine whose fully qualified
-name is `silver.example.net` has `facts.hostname == 'silver'` there while the
-same name on Unix compares equal to the qualified form. A condition that must
-work on both writes the short form, or tests the domain separately. Reporting
-the qualified Windows name is possible — it is a different call to the same API
-— and is tracked as an enhancement.
-
-## Host environment in conditions
-
-The `env` namespace exposes arbitrary host environment variables to `when`
-expressions. These values are separate from `BATFILES_*` configuration inputs.
-
-```toml
-when = "env.HOME != ''"
-when = "env[\"XDG_CONFIG_HOME\"] != ''"
-```
-
-Rules for `env` values:
-
-- Names follow the host operating system's case sensitivity: verbatim on Unix,
-  uppercased at capture on Windows. Reference Windows host variables by their
-  uppercase form (`env.PATH`); a lowercase reference resolves to the empty string.
-- A set variable resolves to its string value and is never re-typed as a boolean
-  or number.
-- An unset variable resolves to the empty string. Resolver lookups never fail
-  merely because a key is absent.
-- Environment variables with identifier-compatible names may use member access,
-  such as `env.HOME`. Indexing is also available for those names and is required
-  for other keys, such as `env["XDG_CONFIG_HOME"]`.
-- The namespace is read-only and does not participate in user-variable
-  precedence.
-- `batfiles vars list` includes captured host values in the `env.*` namespace
-  when it resolves the effective variable set.
+Both are built. The `facts` namespace and the `env` namespace are specified in
+[the environment reference](../environment.md#host-facts-in-conditions), along
+with the keys `facts` contains, the empty-string rule a missing key follows in
+either, and the two channels one environment variable can reach a condition
+through.
 
 ## How dynamic commands are run
 

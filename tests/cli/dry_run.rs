@@ -42,7 +42,10 @@ fn a_dry_run_writes_nothing_at_all_into_the_home() {
 /// destination. An action whose output is another's input diverges in substance
 /// rather than tense, so it has to be excluded from the comparison rather than
 /// tolerated by it; this count is what makes adding one say so.
-const PARITY_ACTIONS: usize = 13;
+///
+/// The gated action needs no exclusion: a condition is decided the same way in
+/// both modes, so its skip line is one of the ones that has to match.
+const PARITY_ACTIONS: usize = 14;
 
 #[test]
 fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {

@@ -18,9 +18,11 @@ nothing in the repository you cannot read with `cat`.
 > skip is left out, and `apply-action` and `apply-group` install one piece of it
 > on its own.
 >
-> What is not built is the composition: the `when` and `unless` conditions
-> variables feed, git remotes, and including one repository's actions into
-> another. `init` and `clone` are
+> A record can also carry a `when` or an `unless`, so an action, or one
+> repository in a plugin list, belongs to some machines and not others.
+>
+> What is not built is the composition: git remotes, and including one
+> repository's actions into another. `init` and `clone` are
 > not built either, so a fresh machine still clones its repository by hand.
 > Every command but the ones named above parses its arguments and then exits
 > saying it is not implemented yet. The plan, and the reason there is a rewrite,
@@ -128,19 +130,27 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   declaring them changes no run today. It is the one section that is accepted
   without being acted on, and it is named here rather than left to be
   discovered.
-- **Variables are merged from four places, and nothing consults them yet.** A
+- **Variables are merged from four places, and conditions read them.** A
   manifest's `[vars]` defaults, the machine-local `vars.toml` that `vars set`,
   `vars get`, and `vars unset` maintain, `BATFILES_VAR_*` in the environment,
   and `--var` on the command line are merged into one set, each overriding the
-  ones before it. Variables exist to feed `when` and `unless` conditions, and no
-  command evaluates one, so what you set today changes nothing about what a
-  `sync` installs — but `sync -vv` prints the set it worked out, each variable
-  with the value in force and the layers it overrode, which is how you check a
-  precedence question before there is anything reading the answer. `vars get`
-  writes a stored value alone to standard output, so `$(batfiles vars get
-  editor)` is the value and not a sentence about it; the lines describing an
-  edit name the key and never the value, which may be a token or a path that
-  identifies a machine.
+  ones before it. `sync -vv` prints the set it worked out, each variable with the
+  value in force and the layers it overrode, which is how you check a precedence
+  question. `vars get` writes a stored value alone to standard output, so
+  `$(batfiles vars get editor)` is the value and not a sentence about it; the
+  lines describing an edit name the key and never the value, which may be a token
+  or a path that identifies a machine.
+- **A record can say which machines it belongs to.** `when = "work"` runs an
+  action only where the condition holds and `unless` is the other way round; a
+  line of a plugin list takes the same two keys, which is how one list serves
+  several machines. Conditions read the merged variables as bare names, the
+  machine itself through `facts.os`, `facts.arch`, `facts.family`, and
+  `facts.hostname`, and the environment through `env.HOME` and the like. They are
+  parsed when the manifest is read, so a malformed one is a load error rather
+  than a surprise partway through a run, and `sync -v` says which condition
+  passed a record over. A condition that cannot be evaluated at all — a name
+  nothing declares, a value that is not a boolean — stops the run for now;
+  closing the gate with a warning instead arrives with the next step.
 - **One action or one group can be applied on its own.** `apply-action --id
   zshrc` and `apply-group --group shell` carry out part of the same manifest,
   named rather than filtered — the same actions in the same order, with the same
@@ -206,6 +216,18 @@ group = "shell"
 source-dir = "files"
 dest-dir = "~"
 dot-prefix = true
+
+# And one this repository does not want everywhere. `work` is a variable, set
+# here for every machine and overridden on the ones where it is true.
+[vars]
+work = "false"
+
+[[actions]]
+type = "create-dir"
+id = "work-cache"
+group = "shell"
+dest = "~/.cache/work-tools"
+when = "work"
 ```
 
 With that repository at `~/dotfiles`, which is the fallback when the current
@@ -243,10 +265,22 @@ $ batfiles sync -v --skip-group editor
 symlink nvim (group editor) - skipped: `editor` from --skip-group
 ```
 
-It is also how you install several actions on their own. `batfiles apply-group
---group editor` runs that group and nothing else, and `batfiles apply-action
---id nvim` runs the one action — including when you have disabled it, since
-asking for something by name is how you say so for one invocation:
+A condition is the repository's own say in the same question, and `-v` reports it
+the same way. `batfiles vars set work true` on the work laptop, or `--var
+work=true` for one run, is what opens it:
+
+```console
+$ batfiles sync -v
+create-dir work-cache (group shell) - skipped: when "work" is false
+$ batfiles sync -v --var work=true
+create-dir work-cache (group shell)
+created /home/you/.cache/work-tools
+```
+
+Groups are also how you install several actions on their own. `batfiles
+apply-group --group editor` runs that group and nothing else, and `batfiles
+apply-action --id nvim` runs the one action — including when you have disabled
+it, since asking for something by name is how you say so for one invocation:
 
 ```console
 $ batfiles disable-group editor

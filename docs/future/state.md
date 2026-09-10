@@ -20,16 +20,11 @@ rules](environment.md#location-selection).
 ## `vars.toml`: the parts that are not built
 
 The document, its schema, and the three commands that maintain it are specified
-in [`docs/state.md`](../state.md#varstoml-machine-local-variables). What is
-missing is every reader of the values.
-
-**A reader of the merged value.** Machine-local values already contribute the
-persisted layer of the built [variable
-precedence](../environment.md#variable-precedence), and every stored value
-follows the [string-valued variable
-model](repoformat.md#string-valued-variables). What is missing is the condition
-evaluation that consults the merged set; until it lands, a run resolves a stored
-value and does nothing with it.
+in [`docs/state.md`](../state.md#varstoml-machine-local-variables). Stored values
+already contribute the persisted layer of the built [variable
+precedence](../environment.md#variable-precedence) and are read by every
+[condition](../repoformat.md#conditions) a run decides. One command that reads
+them is missing.
 
 **`vars list`**, the one `vars` command that reads more than this file.
 `--machine-only` reads only this file and bypasses repository and cache I/O.

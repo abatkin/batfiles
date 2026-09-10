@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::archive;
 use crate::clone_list;
+use crate::condition::EvalError;
 use crate::git;
 use crate::item::{ItemAddress, ItemAddressError};
 use crate::manifest;
@@ -80,6 +81,13 @@ pub(crate) enum Error {
     /// An `apply-group` naming a group no record in the manifest belongs to.
     #[error("no action in {} is in the group `{group}`", .path.display())]
     UnknownGroup { path: PathBuf, group: ItemAddress },
+
+    /// A condition that is written correctly and cannot be decided on this
+    /// machine. The record is named because a condition is read long after the
+    /// document holding it was, and `record` is whatever names one where it is
+    /// written: an action's heading, or an entry's line of its list.
+    #[error("{record}: {source}")]
+    ConditionFailed { record: String, source: EvalError },
 
     // Carrying an action out.
     /// An action naming a source the repository does not contain.

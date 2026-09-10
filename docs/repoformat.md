@@ -106,7 +106,7 @@ variable name = string matching [A-Za-z_][A-Za-z0-9_]*
   for the other, and a manifest uses both.
 - `facts`, `env`, `vars`, `true`, and `false` cannot name a variable. They are
   the expression language's own identifiers, and reserving all five is what
-  keeps a [condition](future/repoformat.md#condition)'s namespace lookup
+  keeps a [condition](#conditions)'s namespace lookup
   unambiguous without a precedence rule: no variable can shadow a namespace.
 - Names are case-sensitive, so `editor` and `EDITOR` are two variables.
 
@@ -150,6 +150,8 @@ required `type` field.
 | `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, and `git-clone-list` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
+| `when`  | condition          |    no    | Runs the action only where the condition is true. See [conditions](#conditions). |
+| `unless`| condition          |    no    | Runs it only where the condition is false. At most one of the two.     |
 
 Each variant's record is closed independently, so a field belonging to another
 variant is an unknown field rather than one that is quietly ignored. Writing
@@ -789,17 +791,39 @@ outside a quoted value begins a comment and nothing after it is read, so a
 comment may contain anything at all — including text that looks like metadata. A
 `#` that is part of a repository URL has to be written `%23`.
 
-| Key         | Type   | Description                                                |
-|-------------|--------|-------------------------------------------------------------|
-| `id`        | `ID`   | Makes the entry addressable as `<action>.<entry>`.          |
-| `ref`       | string | The branch, tag, or commit to follow.                       |
-| `dest-name` | string | What to call the clone, in place of the derived name.       |
+| Key         | Type      | Description                                                |
+|-------------|-----------|-------------------------------------------------------------|
+| `id`        | `ID`      | Makes the entry addressable as `<action>.<entry>`.          |
+| `ref`       | string    | The branch, tag, or commit to follow.                       |
+| `dest-name` | string    | What to call the clone, in place of the derived name.       |
+| `when`      | condition | Clone the entry only where the condition is true.           |
+| `unless`    | condition | Clone it only where the condition is false.                 |
 
-`when` and `unless` are specified for an entry and are refused today, naming the
-step they arrive at, rather than accepted and never consulted. So is any other
-key: a misspelled one is an error, and so is writing a key twice, writing
-`key=` with no value, and writing a field after the repository that is not
-`key=value` at all — most often a second repository on the same line.
+Any other key is an error: a misspelled one, writing a key twice, writing `key=`
+with no value, and writing a field after the repository that is not `key=value`
+at all — most often a second repository on the same line.
+
+**The two condition keys are an [ordinary condition](#conditions)**, decided
+against the same variables an action's is, and refused on the same terms: one to
+a line, parsed as the list is read. This is per-machine plugin selection — one
+list, shared across machines, with the entries each machine wants:
+
+```text
+https://github.com/zsh-users/zsh-syntax-highlighting.git
+https://github.com/company/internal-zsh-tools.git when="work"
+https://github.com/foo/mac-only.git unless="facts.os != 'macos'"
+```
+
+An entry a condition closes is passed over rather than removed from the list, and
+`sync -v` says so where it reports the rest of the entries:
+
+```text
+not cloning https://github.com/company/internal-zsh-tools.git (plugins.txt line 2): when "work" is false
+```
+
+Conditions are settled when the list is read, which is before any entry is
+cloned, so one that [cannot be evaluated](#when-a-condition-cannot-be-evaluated)
+stops the run before the first clone rather than partway through the list.
 
 An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory
 name follows: `ack.vim` is a perfectly good directory and not a valid ID,
@@ -863,8 +887,7 @@ rank = "3"
 
 **Variables exist only to feed conditions.** A variable is read by a `when` or an
 `unless` and nowhere else: no field of any action interpolates one, and the
-format has no interpolation syntax at all. That is why a repository can declare
-them long before batfiles can act on them.
+format has no interpolation syntax at all.
 
 **Every value is a string, and only a string.** Booleans, integers, floats,
 dates, and arrays are not variable values, so `work = true` and `rank = 3` are
@@ -874,15 +897,10 @@ errors naming the line they are written on rather than values converted to
 [`future/repoformat.md`](future/repoformat.md#dynamic-variable-record) and
 rejected on the same terms until batfiles can run one.
 
-**No value is consulted yet, so declaring the section changes no run.** Batfiles
-accepts it and checks it as the manifest is read; what consults a variable is a
-condition, and conditions are specified in
-[`future/repoformat.md`](future/repoformat.md#condition). Until they arrive, a
-`sync` over a manifest declaring variables installs exactly what it would have
-installed without them.
-
 What is checked is the name and the type of the value, both while the document is
-being read.
+being read. Declaring the section changes no run on its own: a manifest whose
+records carry no [condition](#conditions) installs exactly what it would have
+installed without a `[vars]` at all.
 
 **This is the lowest of four layers.** Machine-local values in
 [`vars.toml`](state.md#varstoml-machine-local-variables), the `BATFILES_VAR_*`
@@ -890,6 +908,135 @@ environment, and `--var` each override a name declared here, in that order.
 Every command that executes actions merges all four into one flat set and prints
 it at `-vv`; the rule is [variable
 precedence](environment.md#variable-precedence).
+
+## Conditions
+
+A condition decides whether the record carrying it applies to this machine. Two
+fields spell one, and a record writes at most one of them:
+
+| Field    | Type      | The record applies when |
+|----------|-----------|-------------------------|
+| `when`   | condition | the condition is true   |
+| `unless` | condition | the condition is false  |
+
+```toml
+[[actions]]
+type = "symlink"
+id = "gitconfig-work"
+source = "git/gitconfig.work"
+dest = "~/.gitconfig"
+when = "work && facts.os == 'macos'"
+```
+
+Three kinds of record take them: an [action](#actions), an entry of a [clone
+list](#the-clone-list-format), and a [default-disabled
+candidate](#default-disabled-bootstrap-entries) — whose conditions are checked
+and never evaluated, because nothing reads that section yet.
+
+**Writing both on one record is a load error.** They are not one rule and its
+negation applied twice, and a record writing both has no reading that is
+obviously the one that was meant.
+
+### The expression
+
+The value is an expression in the
+[Simple Expressions](https://github.com/abatkin/expressions-rs) language.
+Batfiles supplies user variables as bare string-valued identifiers and three
+reserved, string-valued namespaces: [`facts`](environment.md#host-facts-in-conditions)
+and [`env`](environment.md#host-environment-in-conditions) describe the machine,
+and `vars` is the user variables again, read totally. All three accept member
+syntax for identifier-compatible keys — `facts.os`, `env.HOME` — and index
+syntax for any key at all, such as `env["XDG_CURRENT_DESKTOP"]`.
+
+**The expression is parsed when the document holding it is read**, not when it is
+evaluated. A malformed condition is therefore a load error naming the file, the
+line the condition is written on, and the position within the condition — the
+same treatment every other malformed value gets. Every condition in a manifest
+is parsed, including ones no run will ever evaluate.
+
+### Identifiers
+
+A bare identifier is a user variable, in [any of the four
+layers](environment.md#variable-precedence) that can declare one:
+
+| The name is            | Resolves to      |
+|------------------------|------------------|
+| declared, with a value | that string      |
+| declared, and empty    | the empty string |
+| declared nowhere       | an error         |
+
+This is deliberately asymmetric with `facts` and `env`, whose missing keys are
+the empty string. A namespace is extensible, so a key batfiles does not define
+yet is forward compatibility; a variable name is not, so a name nothing declares
+is a typo. Left silent, a misspelt `unless` would read as false on every machine
+forever — and a false `unless` *installs* what it was written to suppress.
+
+`vars` reads the same variables and is total, which is the spelling for one that
+is legitimately optional:
+
+```toml
+when = "work"                     # an error if nothing declares `work`
+when = "vars.work"                # false if nothing declares it
+when = "vars.work || vars.school" # and it composes
+```
+
+Use `vars` for a variable set with `vars set` on some machines only, or passed as
+`--var` on some runs only. For one that is always meant to exist, the bare
+identifier is the spelling that catches a typo. Member syntax always works there,
+because every variable name is identifier-compatible by construction; indexing is
+accepted for symmetry with `env`, where it is sometimes required.
+
+### Truthiness
+
+Wherever a boolean is wanted — the condition's own result, and every `&&`, `||`,
+and `!` operand alike — a value is read by this table:
+
+| Value                                   | Reads as                     |
+|-----------------------------------------|------------------------------|
+| a real boolean                          | itself                       |
+| a number                                | `false` at zero, else `true` |
+| `"true"`, `"1"`, `"yes"`, `"on"`        | `true`                       |
+| `"false"`, `"0"`, `"no"`, `"off"`, `""` | `false`                      |
+| anything else                           | an error                     |
+
+The table is closed on both sides. A value outside it is an error rather than
+silently true, because `profile = "personal"` written as `when = "profile"` is a
+bare identifier where a comparison was meant, and reading it as true would leave
+the gate permanently open with nothing on screen to say so.
+
+Comparison and `+` are unaffected: those keep the language's own rules, so `==`
+behaves exactly as it defines it. The table governs boolean contexts only, and it
+is the one place batfiles infers anything from a string's contents — enumerated
+rather than heuristic for that reason.
+
+### When a condition cannot be evaluated
+
+A condition that parses can still fail on the machine that evaluates it: on an
+identifier no layer declares, on a result outside the truthiness table, on
+arithmetic that overflows. **That failure stops the run**, naming the record and
+the condition:
+
+```console
+$ batfiles sync
+error: symlink gitconfig-work: the condition "work" cannot be evaluated: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
+```
+
+The diagnostic never repeats the offending *value*, only the condition and the
+fix. A condition is the one place a value reaches a diagnostic without having
+been asked for — `when = "env.GITHUB_TOKEN"` puts a credential outside the table
+— and the manifest batfiles is evaluating is not always the reader's own.
+
+Two things narrow what a failure costs. A condition is consulted only for a
+record nothing else already excludes, so one on an action this machine has
+disabled is never evaluated at all; and
+[`apply-action`](cmdline.md#apply-action) waives conditions along with every
+other reason a record would be passed over, so naming one record reaches it even
+where a `sync` over the same manifest stops.
+
+Closing the gate and warning, rather than stopping, is proposed in
+[`future/repoformat.md`](future/repoformat.md#condition): a run that has to read
+a third-party remote's manifest wants a different answer from one reading only
+its own.
 
 ## Default-disabled bootstrap entries
 
@@ -925,12 +1072,14 @@ opinion is the one that counts. Nothing in the section can switch an action off
 again on a machine that has already enabled it.
 
 **Nothing reads the section yet, so declaring it changes no run.** Batfiles
-accepts it and checks it as the manifest is read; adopting the candidates
-belongs to the bootstrap that sets a machine up for the first time, and is
-specified in [`future/repoformat.md`](future/repoformat.md) along with the
-enable and disable options that take precedence over them. Until that arrives,
-a `sync` over a manifest declaring candidates installs exactly what it would
-have installed without them, and creates no `disabled.toml`.
+accepts it and checks it as the manifest is read — including the
+[conditions](#conditions) its entries carry, which are parsed and evaluated
+nowhere. Adopting the candidates belongs to the bootstrap that sets a machine up
+for the first time, and is specified in
+[`future/repoformat.md`](future/repoformat.md) along with the enable and disable
+options that take precedence over them. Until that arrives, a `sync` over a
+manifest declaring candidates installs exactly what it would have installed
+without them, and creates no `disabled.toml`.
 
 What is checked is the record's own syntax. Each entry names an
 [address](cmdline.md#addresses), the records are closed like every other, and an
@@ -946,7 +1095,24 @@ against and no complaint to make about a name nothing answers to yet.
 Both fields hold an [address](cmdline.md#addresses), so a candidate may name
 what an included remote will contribute — `core.p10k` — for the same reason it
 may name what a later branch will introduce: there is nothing to resolve it
-against either way. Two fields the full format gives these records are not
-built: `when` and `unless` arrive with
-[conditions](future/repoformat.md#condition), and are rejected meanwhile by the
-records being closed.
+against either way.
+
+**An entry may carry a [condition](#conditions), so that a candidate is offered
+only on the machines it suits.**
+
+```toml
+[[default-disabled.actions]]
+id = "work-tools"
+when = "work"
+
+[[default-disabled.groups]]
+group = "gui"
+unless = "facts.os == 'macos'"
+```
+
+It is checked as the manifest is read and evaluated nowhere, which follows from
+the section as a whole not being read: there is no adoption for a condition to
+qualify. So `when = "work &&"` is a load error and `when` beside `unless` on one
+entry is a load error, while a well-formed condition on a candidate decides
+nothing about anything today — including about the action the entry names, which
+runs or does not on its own terms.

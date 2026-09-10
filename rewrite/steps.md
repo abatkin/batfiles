@@ -71,15 +71,13 @@ Reference paths and reusable parsers are listed in [keep.md](keep.md).
 - **5.3** ✅ Read `BATFILES_VAR_*` and parse `--var`.
 - **5.4** ✅ Merge the four variable layers in one function, with origins.
 - **5.5** ✅ Parse a condition, bind `facts` / `env` / `vars`, and evaluate one.
-- **5.6** Gate actions and groups on `when` and `unless`; reject both on one
-  record. Extend `Action::common`, default-disabled entries, and clone-list
-  entries, all of which parse through `Condition`. Capture one `Host` per run
-  and share the `VarSet` the bindings read. Promote the condition, identifier,
-  `vars`, and truthiness sections of `docs/future/repoformat.md` and the `facts`
-  and `env` sections of `docs/future/environment.md`, none of which a user can
-  reach until a record accepts a condition. Validate the default-disabled lists and remove the expectations
-  naming this step; entry IDs remain unread until adoption at 8.3.
-- **5.7** Make unevaluable conditions close the gate and warn, in both spellings.
+- **5.6** ✅ Gate actions and clone-list entries on `when` and `unless`.
+- **5.7** Make unevaluable conditions close the gate and warn, in both
+  spellings, in place of the failure 5.6 leaves. A clone-list entry's condition
+  is settled during preparation rather than at the gate, so it needs the same
+  treatment from a second place. Update the promoted [when a condition cannot be
+  evaluated](../docs/repoformat.md#when-a-condition-cannot-be-evaluated) section
+  and retire the proposal it links to.
 - **5.8** Add `vars list`. Separate repository-required roots from state-only
   roots so a state-only resolution cannot carry an unselected batfiles
   directory; normal listing reads the leaf repository while `--machine-only`

@@ -697,15 +697,11 @@ fn an_expectation_naming_two_steps_is_live_while_either_is_open() {
 
 #[test]
 fn a_step_is_found_in_a_reason_however_it_is_punctuated() {
-    // The two forms in the tree today, a step ending a sentence, and a version
+    // The form in the tree today, a step ending a sentence, and a version
     // number, which is not step-shaped.
     assert_eq!(
         reason_steps("adopted at 8.3, by the bootstrap that reads it"),
         ["8.3"]
-    );
-    assert_eq!(
-        reason_steps("walked at 5.6, to reject an entry setting both conditions"),
-        ["5.6"]
     );
     assert_eq!(reason_steps("the caller lands at 4.5."), ["4.5"]);
     assert!(reason_steps("wanted by proc-macro2 1.0.107").is_empty());
