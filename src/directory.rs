@@ -38,7 +38,7 @@ pub(crate) struct BrokenLink {
     pub path: PathBuf,
     /// The target it named, reported so the removal can be recognized rather
     /// than merely announced.
-    pub written: PathBuf,
+    pub target: PathBuf,
 }
 
 impl BrokenLink {
@@ -48,7 +48,7 @@ impl BrokenLink {
         format!(
             "{} a broken symlink to {} to make {}",
             Verb::Remove.say(mode),
-            self.written.display(),
+            self.target.display(),
             self.path.display()
         )
     }
@@ -88,10 +88,10 @@ fn make_directory(dir: &Path, mode: RunMode) -> Result<DirectoryOutcome, Error> 
         _ => Vec::new(),
     };
 
-    if let Some(written) = broken_link_at(dir)? {
+    if let Some(target) = broken_link_at(dir)? {
         replaced.push(BrokenLink {
             path: dir.to_path_buf(),
-            written,
+            target,
         });
         if mode.writes() {
             remove_link(dir)?;

@@ -19,6 +19,10 @@ use crate::manifest::Manifest;
 use crate::output::{Reporter, quoted_value};
 use crate::var::VarName;
 
+/// The detail level the set is reported at: `-vv`, since `-v` is an account of
+/// what a run did and this is the inputs it worked from.
+const DETAIL: u8 = 2;
+
 /// Where a declaration came from. The order is the precedence order, lowest
 /// first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,7 +115,7 @@ impl VarSet {
                 },
                 Layer {
                     origin: Origin::CommandLine,
-                    values: one_shot(cli),
+                    values: cli_overrides(cli),
                 },
             ],
         }
@@ -124,25 +128,27 @@ impl VarSet {
     /// one cannot disagree. `None` is what an undeclared identifier is
     /// diagnosed from; it is not the same answer as a declared empty value.
     ///
-    /// The value borrows from `name` as well as from the set, because
-    /// [`Self::declaring`] holds the name while it walks. Callers read the
-    /// answer immediately, so the shorter borrow costs them nothing.
-    pub fn get<'a>(&'a self, name: &'a str) -> Option<&'a str> {
-        let layer = self.declaring(name).next()?;
-        Some(&layer.values[name])
+    /// The value borrows from the set alone, so a caller may hold it after the
+    /// name it looked up is gone.
+    pub fn get<'a>(&'a self, name: &str) -> Option<&'a str> {
+        self.declaring(name).next().map(|(_, value)| value)
     }
 
-    /// The layers declaring `name`, highest precedence first: the first is the
+    /// Every declaration of `name`, highest precedence first: the first is the
     /// value in force and the rest are the ones it overrode. An empty iterator
     /// means no layer declared the name at all.
     ///
+    /// One lookup per layer, and the value comes back with the origin, because
+    /// the two callers between them want both and asking a layer twice is how
+    /// they could differ.
+    ///
     /// The name is arbitrary text, because a condition can index the `vars`
     /// namespace with anything at all.
-    fn declaring<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Layer> {
+    fn declaring<'a>(&'a self, name: &str) -> impl Iterator<Item = (Origin, &'a str)> {
         self.layers
             .iter()
             .rev()
-            .filter(move |layer| layer.values.contains_key(name))
+            .filter_map(move |layer| Some((layer.origin, layer.values.get(name)?.as_str())))
     }
 
     /// Every name any layer declared, in order and without repeats.
@@ -165,14 +171,22 @@ impl VarSet {
     /// Indented under a heading, which is what separates it from [`Self::list`]:
     /// here the set is detail about a run doing something else, and there it is
     /// the whole of what was asked for.
+    ///
+    /// Every run resolves the set, whether or not it declares a condition, so
+    /// the verbosity is settled before the lines are built rather than once per
+    /// line inside [`Reporter::detail`]: an ordinary run would otherwise sort
+    /// the names and format every value to print none of them.
     pub fn report(&self, reporter: &Reporter) {
+        if !reporter.shows_detail(DETAIL) {
+            return;
+        }
         let lines = self.lines();
         if lines.is_empty() {
             return;
         }
-        reporter.detail(2, "variables:");
+        reporter.detail(DETAIL, "variables:");
         for line in lines {
-            reporter.detail(2, &format!("  {line}"));
+            reporter.detail(DETAIL, &format!("  {line}"));
         }
     }
 
@@ -221,10 +235,10 @@ impl VarSet {
     fn line(&self, name: &VarName, width: usize) -> Option<String> {
         let name = name.as_str();
         let mut declaring = self.declaring(name);
-        let winner = declaring.next()?;
-        let value = quoted_value(&winner.values[name]);
-        let label = winner.origin.label();
-        let shadowed: Vec<&str> = declaring.map(|layer| layer.origin.label()).collect();
+        let (origin, winner) = declaring.next()?;
+        let value = quoted_value(winner);
+        let label = origin.label();
+        let shadowed: Vec<&str> = declaring.map(|(origin, _)| origin.label()).collect();
         let over = if shadowed.is_empty() {
             String::new()
         } else {
@@ -257,12 +271,15 @@ pub(crate) fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<()
     Ok(())
 }
 
-/// The command line as a layer.
+/// The command line as a layer: every `--var`, in the order it was written.
+///
+/// Named for the channel rather than for lasting one run, which every layer
+/// but the machine's does -- [`env_vars::one_shot`] reads the other one.
 ///
 /// It is the one layer that can name a variable twice, and inserting the pairs
 /// in the order they were written is what settles it: the last value wins,
 /// which is the rule between layers applied within one.
-fn one_shot(cli: &[(VarName, String)]) -> BTreeMap<VarName, String> {
+fn cli_overrides(cli: &[(VarName, String)]) -> BTreeMap<VarName, String> {
     let mut values = BTreeMap::new();
     for (name, value) in cli {
         values.insert(name.clone(), value.clone());
@@ -309,19 +326,19 @@ mod tests {
 
     /// The value in force and where it came from.
     fn winner(set: &VarSet, key: &str) -> (String, Origin) {
-        let layer = set
+        let (origin, value) = set
             .declaring(key)
             .next()
             .expect("some layer should declare it");
         // The same value `get` answers with, which is asserted below.
-        (layer.values[key].clone(), layer.origin)
+        (value.to_owned(), origin)
     }
 
     /// The layers that value overrode, highest first.
     fn shadowed(set: &VarSet, key: &str) -> Vec<Origin> {
         set.declaring(key)
             .skip(1)
-            .map(|layer| layer.origin)
+            .map(|(origin, _)| origin)
             .collect()
     }
 
@@ -403,6 +420,19 @@ mod tests {
         let set = stacked([], [], [], [("empty", "")]);
         assert_eq!(set.get("empty"), Some(""));
         assert_eq!(set.get("missing"), None);
+    }
+
+    #[test]
+    fn a_value_outlives_the_name_it_was_looked_up_by() {
+        // A compile-time property rather than a runtime one: the answer borrows
+        // from the set, so a caller holding it does not also have to keep the
+        // string it asked with -- a condition indexing `vars` builds those.
+        let set = stacked([("a", "1")], [], [], []);
+        let value = {
+            let name = "a".to_owned();
+            set.get(&name)
+        };
+        assert_eq!(value, Some("1"));
     }
 
     #[test]

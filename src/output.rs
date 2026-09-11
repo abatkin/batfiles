@@ -174,6 +174,16 @@ impl Reporter {
         println!("{message}");
     }
 
+    /// Whether [`Self::detail`] at `level` would print anything, for the caller
+    /// whose message costs something to build.
+    ///
+    /// Ordinary callers hand `detail` the message and let it decide; asking
+    /// first is for a listing that would be sorted and formatted only to be
+    /// dropped on the run that did not ask for it.
+    pub fn shows_detail(&self, level: u8) -> bool {
+        self.verbosity.shows_detail(level)
+    }
+
     /// Extra detail, printed only at `-v` repeated at least `level` times.
     /// Unlabeled: it elaborates on what a command is doing rather than
     /// reporting a problem.
@@ -282,6 +292,19 @@ mod tests {
         assert!(Verbosity::Verbose(1).shows_detail(1));
         assert!(!Verbosity::Verbose(1).shows_detail(2));
         assert!(Verbosity::Verbose(2).shows_detail(2));
+    }
+
+    #[test]
+    fn a_reporter_answers_for_detail_the_way_it_prints_it() {
+        // The question a caller asks instead of building a message it would
+        // hand to `detail`, so the two have to agree at every level.
+        let mut reporter = Reporter::new(false);
+        assert!(!reporter.shows_detail(1));
+        reporter.set_verbosity(Verbosity::Verbose(1));
+        assert!(reporter.shows_detail(1));
+        assert!(!reporter.shows_detail(2));
+        reporter.set_verbosity(Verbosity::Quiet);
+        assert!(!reporter.shows_detail(1));
     }
 
     #[test]

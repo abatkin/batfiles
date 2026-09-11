@@ -6,15 +6,17 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::condition::{Condition, ConditionError, Gate, Skip};
+use crate::condition::{Condition, ConditionError, Exclusion, Gate};
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdError};
 
 /// One repository the list names.
 #[derive(Debug)]
 pub(crate) struct Entry {
-    /// The repository, exactly as git is given it.
-    pub url: String,
+    /// The repository, exactly as git is given it. Not necessarily a URL:
+    /// `git@host:path` and a plain directory are repositories too, and which
+    /// of them a line names is git's question rather than batfiles'.
+    pub repository: String,
     /// The one directory component the clone lands in.
     pub dest_name: String,
     /// Identifies the entry in diagnostics. Individual entry selection is not
@@ -30,7 +32,7 @@ pub(crate) struct Entry {
     /// own condition, settled during execution preparation. A closed entry
     /// stays on the list rather than being dropped from it, so that the action
     /// can report it under its own heading instead of having it vanish.
-    pub skip: Option<Skip>,
+    pub exclusion: Option<Exclusion>,
     /// Which line of the list declared it, for a diagnostic that has to point
     /// at one. A fault found while reading carries its own line and does not
     /// come from here; this is for the entry that reads correctly and then
@@ -119,11 +121,11 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
     let mut fields = fields(text)?.into_iter();
     // A blank line and a line holding only a comment both declare nothing,
     // which is one case rather than two: the comment is gone by now.
-    let Some(url) = fields.next() else {
+    let Some(repository) = fields.next() else {
         return Ok(None);
     };
-    if url.is_empty() {
-        return Err(Invalid::UrlEmpty);
+    if repository.is_empty() {
+        return Err(Invalid::RepositoryEmpty);
     }
 
     let mut metadata: BTreeMap<String, String> = BTreeMap::new();
@@ -167,16 +169,19 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
             written.clone()
         }
         None => {
-            let derived = derive_name(&url);
+            let derived = derive_name(&repository);
             if !is_one_component(&derived) {
-                return Err(Invalid::DerivedNameUnusable { url, name: derived });
+                return Err(Invalid::DerivedNameUnusable {
+                    repository,
+                    name: derived,
+                });
             }
             derived
         }
     };
 
     Ok(Some(Entry {
-        url,
+        repository,
         dest_name: name,
         id: metadata
             .get("id")
@@ -186,7 +191,7 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
         when: condition(&metadata, "when")?,
         unless: condition(&metadata, "unless")?,
         // What a line says; what this run makes of it is settled later.
-        skip: None,
+        exclusion: None,
         line,
     }))
 }
@@ -203,8 +208,8 @@ fn condition(metadata: &BTreeMap<String, String>, key: &str) -> Result<Option<Co
 }
 
 /// The directory an entry clones into when it does not name one.
-fn derive_name(url: &str) -> String {
-    let trimmed = url.trim_end_matches('/');
+fn derive_name(repository: &str) -> String {
+    let trimmed = repository.trim_end_matches('/');
     let tail = match trimmed.rfind(['/', ':']) {
         Some(at) => &trimmed[at + 1..],
         None => trimmed,
@@ -289,7 +294,7 @@ pub(crate) enum Invalid {
     /// A line whose first field is empty, which is the one thing a repository cannot
     /// be.
     #[error("names no repository")]
-    UrlEmpty,
+    RepositoryEmpty,
 
     /// A field after the repository that is not `key=value`.
     #[error("has `{field}` after the repository, which is not `key=value` metadata")]
@@ -332,10 +337,10 @@ pub(crate) enum Invalid {
     /// ending in a separator this cannot see past, a Windows path whose drive letter is
     /// the last separator.
     #[error(
-        "names `{url}`, which gives `{name}` as a directory name; \
+        "names `{repository}`, which gives `{name}` as a directory name; \
          write `dest-name=` to say what to call the clone"
     )]
-    DerivedNameUnusable { url: String, name: String },
+    DerivedNameUnusable { repository: String, name: String },
 
     /// A `dest-name` that is a path rather than a name.
     #[error("writes `dest-name={name}`, which is not one ordinary directory name")]
@@ -375,8 +380,8 @@ mod tests {
 
     /// What every name in the list comes out as, which is the whole of the
     /// derivation rule.
-    fn name_of(url: &str) -> String {
-        let parsed = entries(url);
+    fn name_of(repository: &str) -> String {
+        let parsed = entries(repository);
         parsed.into_iter().next().expect("one entry").dest_name
     }
 
@@ -407,10 +412,10 @@ mod tests {
     fn a_repository_whose_name_is_not_a_directory_asks_for_dest_name() {
         // A source ending at its separator, one whose last separator is a
         // drive letter, and one whose whole last component is the suffix.
-        for url in ["git@host:", "C:\\src\\repo", "https://e.example/.git"] {
+        for repository in ["git@host:", "C:\\src\\repo", "https://e.example/.git"] {
             assert!(
-                matches!(fault(url), (1, Invalid::DerivedNameUnusable { .. })),
-                "`{url}` should not name a directory"
+                matches!(fault(repository), (1, Invalid::DerivedNameUnusable { .. })),
+                "`{repository}` should not name a directory"
             );
         }
     }
@@ -516,7 +521,7 @@ mod tests {
             fault("https://e.example/a.git ref=main ref=next\n"),
             (1, Invalid::RepeatedKey { .. })
         ));
-        assert!(matches!(fault("'' id=a\n"), (1, Invalid::UrlEmpty)));
+        assert!(matches!(fault("'' id=a\n"), (1, Invalid::RepositoryEmpty)));
     }
 
     #[test]
@@ -525,14 +530,14 @@ mod tests {
         // of one is settled during preparation and tested through the binary.
         let parsed = entries("https://e.example/a.git when=\"work\"\n");
         assert_eq!(
-            parsed[0].gate().expect("a gate").to_string(),
+            parsed[0].gate().expect("a gate").exclusion_reason(),
             "when \"work\" is false"
         );
         let parsed = entries("https://e.example/a.git unless=\"facts.os == 'windows'\"\n");
         assert!(parsed[0].when.is_none());
         assert!(parsed[0].unless.is_some());
         // Nothing has looked at it yet, so every entry reads as one to clone.
-        assert!(parsed[0].skip.is_none());
+        assert!(parsed[0].exclusion.is_none());
     }
 
     #[test]

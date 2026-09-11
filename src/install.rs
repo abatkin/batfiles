@@ -11,19 +11,19 @@ use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths;
 
-/// The kind of node to create for a seed installation.
+/// The kind of node a seed installs, for a caller that settles it at runtime
+/// and then picks the entry point it answers to.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum FileOrDirectory {
+pub(crate) enum SeedKind {
     File,
     Directory,
 }
 
-/// Content kind, reporting fields, and builder for a missing-only installation.
-pub(crate) struct Seed<'a, F> {
-    /// Whether a file or a directory is being installed, which decides how the
-    /// staging node is made and how it is published.
-    pub kind: FileOrDirectory,
-
+/// What a missing-only installation reports, whichever kind it installs.
+///
+/// The content itself is not here: it arrives as the builder each entry point
+/// takes, typed to what that kind of staging node offers.
+pub(crate) struct Seed<'a> {
     /// How the report names what happened: `Verb::Copy` for a copy,
     /// `Verb::Fetch` for a download.
     pub verb: Verb,
@@ -35,24 +35,70 @@ pub(crate) struct Seed<'a, F> {
     /// A source directory the destination must not be inside of, checked once
     /// the destination is known to be free.
     pub source_directory: Option<&'a Path>,
+}
 
-    /// Fill the newly created staging node. Called only in perform mode.
-    /// An error prevents publication and triggers best-effort cleanup.
-    pub fill: F,
+/// Seed one file: `fill` is handed the staging file, opened for writing and
+/// reachable by nobody else, and the path it is at for diagnostics.
+///
+/// Called only in perform mode. An error prevents publication and triggers
+/// best-effort cleanup.
+pub(crate) fn seed_file(
+    what: Seed<'_>,
+    dest: &Path,
+    mode: RunMode,
+    reporter: &Reporter,
+    fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
+) -> Result<(), Error> {
+    seed(
+        what,
+        SeedKind::File,
+        dest,
+        mode,
+        reporter,
+        create_closed_file,
+        fill,
+    )
+}
+
+/// Seed one directory: `fill` is handed the staging directory's path, created
+/// private to this run, and fills it with the content that belongs there.
+///
+/// Called only in perform mode. An error prevents publication and triggers
+/// best-effort cleanup.
+pub(crate) fn seed_directory(
+    what: Seed<'_>,
+    dest: &Path,
+    mode: RunMode,
+    reporter: &Reporter,
+    fill: impl FnOnce(&Path) -> Result<(), Error>,
+) -> Result<(), Error> {
+    seed(
+        what,
+        SeedKind::Directory,
+        dest,
+        mode,
+        reporter,
+        create_closed_directory,
+        |(), staging| fill(staging),
+    )
 }
 
 /// Keep an occupied destination, or build and publish a complete seed.
 /// Checks directory containment and creates missing parents before staging.
 /// Dry runs report intent without creating parents, staging files, or content.
-pub(crate) fn seed<F>(
-    what: Seed<'_, F>,
+///
+/// The whole of the policy both entry points follow. `make` creates the staging
+/// node and `fill` puts the content in it, which is all that differs between
+/// them.
+fn seed<T>(
+    what: Seed<'_>,
+    kind: SeedKind,
     dest: &Path,
     mode: RunMode,
     reporter: &Reporter,
-) -> Result<(), Error>
-where
-    F: FnOnce(Staged, &Path) -> Result<(), Error>,
-{
+    make: impl FnOnce(&Path) -> io::Result<T>,
+    fill: impl FnOnce(T, &Path) -> Result<(), Error>,
+) -> Result<(), Error> {
     let installed = if paths::occupied(dest)? {
         false
     } else {
@@ -63,7 +109,7 @@ where
             reporter.info(&link.removal_note(mode));
         }
         if mode.writes() {
-            build_and_publish(what.kind, dest, reporter, what.fill)?
+            build_and_publish(kind, dest, reporter, make, fill)?
         } else {
             true
         }
@@ -85,24 +131,35 @@ where
 /// Build content beside its destination and publish it when complete.
 /// Returns false if publication finds the destination occupied. Cleanup is
 /// best-effort and restricted to the staging node created by this call.
-fn build_and_publish(
-    kind: FileOrDirectory,
+///
+/// Creating the node is a step of its own, before anything that cleans up,
+/// because that creation is what makes the staging path this run's to remove: a
+/// path already taken fails here, and whatever is at it is left exactly as it
+/// was found.
+fn build_and_publish<T>(
+    kind: SeedKind,
     dest: &Path,
     reporter: &Reporter,
-    fill: impl FnOnce(Staged, &Path) -> Result<(), Error>,
+    make: impl FnOnce(&Path) -> io::Result<T>,
+    fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<bool, Error> {
     let staging = staging_path(dest);
-    let staged = create_staging(kind, &staging)?;
+    let node = create_staging(&staging, make)?;
 
-    let installed = fill(staged, &staging).and_then(|()| publish(&staging, kind, dest));
+    let installed = fill(node, &staging).and_then(|()| publish(&staging, kind, dest));
 
     discard(&staging, kind, reporter);
     installed
 }
 
-/// Exclusively create a private staging node. An occupied path is an error.
-fn create_staging(kind: FileOrDirectory, staging: &Path) -> Result<Staged, Error> {
-    create_closed(kind, staging).map_err(|error| {
+/// Exclusively create a private staging node, `make` deciding which kind. An
+/// occupied path is an error, since the node it would build in is not this
+/// run's to fill.
+fn create_staging<T>(
+    staging: &Path,
+    make: impl FnOnce(&Path) -> io::Result<T>,
+) -> Result<T, Error> {
+    make(staging).map_err(|error| {
         if error.kind() == io::ErrorKind::AlreadyExists {
             Error::StagingPathTaken {
                 path: staging.to_path_buf(),
@@ -116,59 +173,50 @@ fn create_staging(kind: FileOrDirectory, staging: &Path) -> Result<Staged, Error
     })
 }
 
-/// The staging node this run created, ready to receive what is being installed.
-pub(crate) enum Staged {
-    File(fs::File),
-    Directory,
-}
-
-impl Staged {
-    /// Return the staged file handle. Panics if this is a directory; the caller
-    /// must supply a file builder only with `Seed::kind = FileOrDirectory::File`.
-    pub fn into_file(self) -> fs::File {
-        match self {
-            Self::File(file) => file,
-            Self::Directory => panic!("a seed declaring a file is handed a file"),
-        }
-    }
-}
-
-/// Create a staging node no one but its owner can reach into.
+/// Create a staging file no one but its owner can read or write.
 #[cfg(unix)]
-fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+fn create_closed_file(staging: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
 
-    match kind {
-        FileOrDirectory::File => fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(staging)
-            .map(Staged::File),
-        FileOrDirectory::Directory => fs::DirBuilder::new()
-            .mode(0o700)
-            .create(staging)
-            .map(|()| Staged::Directory),
-    }
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(staging)
+}
+
+/// Create a staging directory no one but its owner can reach into.
+#[cfg(unix)]
+fn create_closed_directory(staging: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    fs::DirBuilder::new().mode(0o700).create(staging)
 }
 
 /// Where a mode means something other than it does on unix, this is ordinary
 /// exclusive creation: the permissions batfiles carries across are the unix
 /// ones, and there is nothing here to narrow.
 #[cfg(not(unix))]
-fn create_closed(kind: FileOrDirectory, staging: &Path) -> io::Result<Staged> {
-    match kind {
-        FileOrDirectory::File => create_new(staging).map(Staged::File),
-        FileOrDirectory::Directory => fs::create_dir(staging).map(|()| Staged::Directory),
-    }
+fn create_closed_file(staging: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(staging)
+}
+
+/// The same, for a directory: exclusive creation and nothing to narrow.
+#[cfg(not(unix))]
+fn create_closed_directory(staging: &Path) -> io::Result<()> {
+    fs::create_dir(staging)
 }
 
 /// Publish complete staged content; return false if the destination is occupied.
 /// Files use a hard link where supported. The rename fallback and directory
 /// publication have a race between the occupancy check and rename.
-fn publish(staging: &Path, kind: FileOrDirectory, dest: &Path) -> Result<bool, Error> {
-    if let FileOrDirectory::File = kind {
+fn publish(staging: &Path, kind: SeedKind, dest: &Path) -> Result<bool, Error> {
+    if let SeedKind::File = kind {
         match fs::hard_link(staging, dest) {
             Ok(()) => return Ok(true),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
@@ -188,10 +236,10 @@ fn publish(staging: &Path, kind: FileOrDirectory, dest: &Path) -> Result<bool, E
 }
 
 /// Remove a staging node this run created, saying so if it cannot.
-fn discard(staging: &Path, kind: FileOrDirectory, reporter: &Reporter) {
+fn discard(staging: &Path, kind: SeedKind, reporter: &Reporter) {
     let removed = match kind {
-        FileOrDirectory::File => fs::remove_file(staging),
-        FileOrDirectory::Directory => fs::remove_dir_all(staging),
+        SeedKind::File => fs::remove_file(staging),
+        SeedKind::Directory => fs::remove_dir_all(staging),
     };
     match removed {
         Ok(()) => {}
@@ -203,16 +251,6 @@ fn discard(staging: &Path, kind: FileOrDirectory, reporter: &Reporter) {
     }
 }
 
-/// Create a file, failing rather than truncating if the path is taken.
-#[cfg(not(unix))]
-fn create_new(path: &Path) -> io::Result<fs::File> {
-    fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(path)
-}
-
 /// Lend a callback an exclusively created scratch file beside `dest`.
 /// Remove the scratch file on return, including failure, with best-effort cleanup.
 pub(crate) fn with_scratch<T>(
@@ -222,11 +260,11 @@ pub(crate) fn with_scratch<T>(
 ) -> Result<T, Error> {
     let path = scratch_path(dest);
     let mut scratch = Scratch {
-        file: create_staging(FileOrDirectory::File, &path)?.into_file(),
+        file: create_staging(&path, create_closed_file)?,
         path,
     };
     let done = work(&mut scratch);
-    discard(&scratch.path, FileOrDirectory::File, reporter);
+    discard(&scratch.path, SeedKind::File, reporter);
     done
 }
 

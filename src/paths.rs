@@ -1,4 +1,10 @@
 //! Resolve paths and inspect destination occupancy without writing to the filesystem.
+//!
+//! The path rules batfiles enforces are several, not one: a source is validated
+//! lexically against the repository, a destination is constructed from the
+//! selected home, an existing link is resolved to judge what it holds, and an
+//! archive entry is contained under where it unpacks. They take different
+//! inputs and promise different things, so they stay apart.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -8,14 +14,19 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::Error;
 
-/// The repository an action installs from, in both forms it is needed in.
+/// One repository root, in both forms it is needed in: the anchored path that
+/// goes into a link, and the canonical one that containment is judged against.
+///
+/// A pair of paths and nothing more. What a repository declares, where it came
+/// from, and what it holds all live elsewhere; this answers only where its root
+/// is and whether a path is under it.
 #[derive(Debug)]
-pub(crate) struct Repository {
+pub(crate) struct RepositoryRoot {
     anchored: PathBuf,
     canonical: PathBuf,
 }
 
-impl Repository {
+impl RepositoryRoot {
     /// Anchor and resolve a selected repository root.
     pub fn at(path: &Path) -> Result<Self, Error> {
         let anchored = anchor(path)?;
@@ -61,7 +72,7 @@ pub(crate) enum Occupancy {
 
 impl Occupancy {
     /// Inspect one destination.
-    pub fn at(dest: &Path, repository: &Repository) -> Result<Self, Error> {
+    pub fn at(dest: &Path, repository: &RepositoryRoot) -> Result<Self, Error> {
         match fs::symlink_metadata(dest) {
             Ok(existing) if existing.is_symlink() => {
                 let written = fs::read_link(dest).map_err(|source| Error::Read {
@@ -176,7 +187,7 @@ pub(crate) fn reaches_directory(path: &Path) -> Result<bool, Error> {
 
 /// Refuse a destination that lands inside the source it installs from.
 pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Result<(), Error> {
-    let source = resolved(source);
+    let source = canonicalize_or_normalize(source);
     if will_resolve_to(dest).starts_with(&source) {
         return Err(Error::DestinationInsideSource {
             installed: source,
@@ -186,8 +197,14 @@ pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Re
     Ok(())
 }
 
-/// Canonicalize the nearest existing ancestor and append the missing components.
-/// Falls back to lexical normalization if no ancestor can be canonicalized.
+/// Where a path that does not exist yet would land: the nearest existing
+/// ancestor canonicalized, with the missing components appended.
+///
+/// Best effort, and the name is a prediction rather than a reading. Where no
+/// ancestor canonicalizes, the answer is the lexical one, which a symlink
+/// anywhere along the path can make wrong; where one does, the components below
+/// it have not been resolved because nothing is there to resolve. Use it to
+/// decide what a run is about to do, never to report where something is.
 pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     let mut trailing = Vec::new();
     let mut ancestor = path;
@@ -200,16 +217,22 @@ pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
         // Nothing on this path exists, so there is nothing to resolve against
         // and the lexical answer is the only one available.
         let (Some(parent), Some(name)) = (ancestor.parent(), ancestor.file_name()) else {
-            return normalize(path);
+            return normalize_lexically(path);
         };
         trailing.push(name);
         ancestor = parent;
     }
 }
 
-/// Canonicalize an existing path, falling back to lexical normalization on error.
-pub(crate) fn resolved(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| normalize(path))
+/// The path as the filesystem reads it, or its lexical form where it cannot be
+/// canonicalized — a path that is not there, or one whose links cannot be read.
+///
+/// The two halves are named because the answer does not say which one it is:
+/// the lexical fallback resolves `..` textually, which is a different place
+/// from where the filesystem would have gone through a symlink. Sound for
+/// comparing two paths that both exist, and best effort otherwise.
+pub(crate) fn canonicalize_or_normalize(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| normalize_lexically(path))
 }
 
 /// Where an existing symlink points, as the operating system would read it.
@@ -223,7 +246,7 @@ fn target_of(link: &Path, written: &Path) -> PathBuf {
     } else {
         written.to_path_buf()
     };
-    resolved(&joined)
+    canonicalize_or_normalize(&joined)
 }
 
 /// The direct children of a directory, sorted by name.
@@ -249,11 +272,11 @@ pub(crate) fn children_of(dir: &Path) -> Result<Vec<OsString>, Error> {
 pub(crate) fn anchor(path: &Path) -> Result<PathBuf, Error> {
     let absolute =
         std::path::absolute(path).map_err(|source| Error::WorkingDirectory { source })?;
-    Ok(normalize(&absolute))
+    Ok(normalize_lexically(&absolute))
 }
 
 /// Resolve `.` and `..` textually, without consulting the filesystem.
-pub(crate) fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();
     for component in path.components() {
         match component {
@@ -279,11 +302,17 @@ mod tests {
 
     #[test]
     fn normalizing_cancels_only_what_it_can() {
-        assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
+        assert_eq!(
+            normalize_lexically(Path::new("/a/./b/../c")),
+            PathBuf::from("/a/c")
+        );
         // Nothing to cancel: the root has no parent, and a leading `..` in a
         // relative path is part of where it points.
-        assert_eq!(normalize(Path::new("/..")), PathBuf::from("/"));
-        assert_eq!(normalize(Path::new("../../a")), PathBuf::from("../../a"));
+        assert_eq!(normalize_lexically(Path::new("/..")), PathBuf::from("/"));
+        assert_eq!(
+            normalize_lexically(Path::new("../../a")),
+            PathBuf::from("../../a")
+        );
     }
 
     #[test]

@@ -41,7 +41,7 @@ pub(crate) fn download_file(
     built_at: &Path,
 ) -> Result<(), Error> {
     download(url, sha256, &mut into, built_at)?;
-    widen(&mut into, built_at)
+    set_download_permissions(&mut into, built_at)
 }
 
 /// Download a complete HTTP 200 response into `into`, verifying an optional digest.
@@ -147,7 +147,7 @@ fn hex(digest: &[u8]) -> String {
 
 /// Give the finished download the permissions a fetched file should have.
 #[cfg(unix)]
-fn widen(into: &mut fs::File, built_at: &Path) -> Result<(), Error> {
+fn set_download_permissions(into: &mut fs::File, built_at: &Path) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
 
     into.set_permissions(fs::Permissions::from_mode(FETCHED_MODE))
@@ -158,9 +158,9 @@ fn widen(into: &mut fs::File, built_at: &Path) -> Result<(), Error> {
 }
 
 /// Where a mode means something other than it does on unix, the staging node was
-/// created with the platform default and there is nothing to widen.
+/// created with the platform default and there is nothing to set.
 #[cfg(not(unix))]
-fn widen(_into: &mut fs::File, _built_at: &Path) -> Result<(), Error> {
+fn set_download_permissions(_into: &mut fs::File, _built_at: &Path) -> Result<(), Error> {
     Ok(())
 }
 

@@ -81,8 +81,18 @@ No inclusion of remote actions yet.
   `git::clone_or_update`. Pass None when there is no declared ref. Keep dry-run
   behavior uniform for every caller; review reporting for materializations.
 - **6.3** Add parsed `@remote/path` values to the shared repository-path resolver.
+  Let the parsed source centralize local versus remote resolution. Keep the
+  separate path rules separate — lexical source validation, destination
+  construction, existing-link resolution, and archive containment take different
+  inputs and enforce different contracts — and do not add newtypes to every
+  string that happens to be called `source`.
 - **6.4** Allow leaf symlink and copy actions to source content from remotes.
-- **6.5** Gate remotes on `when` and `unless`.
+- **6.5** Gate remotes on `when` and `unless`. This is the third caller of the
+  map from a condition's evaluation to an exclusion, so extract it here: one
+  result for admitted, excluded, and failed to evaluate, with each caller
+  supplying the record's heading and consequence text. Keep the distinction
+  between an ordinary exclusion and a warning, and do not evaluate a record some
+  list already excludes.
 - **6.6** Document and test that dry runs neither clone nor update materializations.
   Test absent and existing materializations against the local bare fixture,
   snapshot the whole remotes tree, and check direct evidence that no fetch ran.
@@ -99,7 +109,11 @@ No inclusion of remote actions yet.
   selection or preparing clone lists. Resolve included list sources from their
   materialization. Give included actions qualified addresses and extend
   `ItemAddress::names` so stored exclusions can match them. Preserve the
-  distinction between an unread list and a validated empty list.
+  distinction between an unread list and a validated empty list. Splice a copy
+  of each included record per inclusion: two inclusions of one remote share its
+  materialization but may differ in `vars`, so each prepares its own clone-list
+  entries against its own bindings. Preparation attaching entries to the
+  manifest record depends on that.
 - **7.3** Add inclusion action/group selection filters.
 - **7.4** Add per-inclusion variable overrides.
 - **7.5** Add per-inclusion scopes and layered precedence. A reported variable

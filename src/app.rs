@@ -159,17 +159,17 @@ fn dispatch(
         // and nothing else, so they resolve roots without discovering a
         // repository.
         Command::Vars(VarsCommand::Set { key, value }) => {
-            let roots = locate(cli, env, reporter)?;
+            let roots = locate_state(cli, env, reporter)?;
             machine_vars::set(key, value, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vars(VarsCommand::Get { key }) => {
-            let roots = locate(cli, env, reporter)?;
+            let roots = locate_state(cli, env, reporter)?;
             machine_vars::get(key, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vars(VarsCommand::Unset { key }) => {
-            let roots = locate(cli, env, reporter)?;
+            let roots = locate_state(cli, env, reporter)?;
             machine_vars::unset(key, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -178,7 +178,7 @@ fn dispatch(
         // machine-local state alone, so it resolves no repository to read.
         Command::Vars(VarsCommand::List { machine_only, .. }) => {
             if *machine_only {
-                let state = locate(cli, env, reporter)?;
+                let state = locate_state(cli, env, reporter)?;
                 var_set::list_machine(&state, reporter)?;
             } else {
                 let roots = locate_repository(cli, env, reporter)?;
@@ -187,7 +187,7 @@ fn dispatch(
             Ok(ExitCode::SUCCESS)
         }
         Command::Clone(_) | Command::Vars(VarsCommand::Refresh { .. }) => {
-            locate(cli, env, reporter)?;
+            locate_state(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }
     }
@@ -202,16 +202,18 @@ fn edit_disabled_list(
     list: DisabledList,
     change: Change,
 ) -> Result<ExitCode, Error> {
-    let roots = locate(cli, env, reporter)?;
+    let roots = locate_state(cli, env, reporter)?;
     disabled::run(names, list, change, &roots, reporter)?;
     Ok(ExitCode::SUCCESS)
 }
 
 /// Resolve the state roots a command works in, and report them at `-v`.
 ///
-/// A command routed here installs nothing and reads no repository, so it never
-/// discovers a working repository and is never handed one that nothing selected.
-fn locate(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<StateRoots, Error> {
+/// Named for what it locates, beside [`locate_repository`], which resolves every
+/// root: a command routed here installs nothing and reads no repository, so it
+/// never discovers a working repository and is never handed one that nothing
+/// selected.
+fn locate_state(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<StateRoots, Error> {
     let state = resolve_state_roots(&locations(&cli.global), env, detect_os_home)?;
     report_state_roots(reporter, &state);
     Ok(state)

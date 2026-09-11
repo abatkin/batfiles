@@ -115,13 +115,37 @@ impl<'a> Gate<'a> {
         }
     }
 
+    /// Why a closed gate excluded the record it is written on: the spelling the
+    /// record wrote, the condition as written, and the verdict that closed it.
+    ///
+    /// For a gate the caller has already found closed. A gate holds the
+    /// declaration and no verdict of its own, so nothing here can check that; a
+    /// record the gate admits is reported by what it did instead.
+    ///
+    /// The spelling is named rather than the verdict alone, because `unless` is
+    /// the one a reader gets backwards, and the condition goes through
+    /// [`quoted_value`] like every other piece of repository text batfiles
+    /// repeats.
+    pub fn exclusion_reason(self) -> String {
+        let verdict = match self {
+            Self::When(_) => "false",
+            Self::Unless(_) => "true",
+        };
+        format!(
+            "{} {} is {verdict}",
+            self.spelling(),
+            quoted_value(self.condition().source())
+        )
+    }
+
     /// The line a gate this run cannot decide produces: the spelling, the
     /// condition as written, what the run is not doing about it, and the fault
     /// itself, which is the half that teaches the fix.
     ///
-    /// The spelling is named for the reason [`Display`](fmt::Display) names it,
-    /// and here it matters more: a reader who knows `unless` closed the gate
-    /// knows batfiles did not read the failure as false and install the record.
+    /// The spelling is named for the reason [`Self::exclusion_reason`] names
+    /// it, and here it matters more: a reader who knows `unless` closed the
+    /// gate knows batfiles did not read the failure as false and install the
+    /// record.
     ///
     /// `consequence` is the caller's because only the record knows what it was
     /// going to do, and some lines have said it before they reach this: an
@@ -151,27 +175,6 @@ impl<'a> Gate<'a> {
     }
 }
 
-/// Why the gate is closed, which is the only state a report ever names: a
-/// record the gate admits is reported by what it did.
-///
-/// The spelling the record used is named rather than the verdict alone, because
-/// `unless` is the one a reader gets backwards, and the condition goes through
-/// [`quoted_value`] like every other piece of repository text batfiles repeats.
-impl fmt::Display for Gate<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let verdict = match self {
-            Self::When(_) => "false",
-            Self::Unless(_) => "true",
-        };
-        write!(
-            f,
-            "{} {} is {verdict}",
-            self.spelling(),
-            quoted_value(self.condition().source())
-        )
-    }
-}
-
 /// Why a record is being passed over, and how loudly to say so.
 ///
 /// The two are reported the same way — where the record is named, rather than
@@ -181,19 +184,20 @@ impl fmt::Display for Gate<'_> {
 /// anyone asked for, so it is printed at every verbosity and nothing is
 /// silently ignored.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Skip {
-    /// A disable, a run-only skip, or a gate this machine closes.
-    AsAsked(String),
+pub(crate) enum Exclusion {
+    /// A disable, a run-only skip, or a gate this machine closes: all three are
+    /// the run doing as it was asked.
+    Expected(String),
     /// A condition this machine cannot decide, which closes the gate in either
     /// spelling. Rendered by [`Gate::unevaluable`].
-    Unevaluable(String),
+    EvaluationFailed(String),
 }
 
-impl Skip {
+impl Exclusion {
     /// The reason, for a caller composing the line that names the record.
     pub fn reason(&self) -> &str {
         match self {
-            Self::AsAsked(reason) | Self::Unevaluable(reason) => reason,
+            Self::Expected(reason) | Self::EvaluationFailed(reason) => reason,
         }
     }
 }
@@ -345,11 +349,12 @@ fn facts() -> BTreeMap<String, String> {
 /// [`HostNamespaces`].
 pub(crate) struct Bindings<'a> {
     vars: Rc<VarSet>,
-    /// Kept as `host` rather than `namespaces`, because `total` below is a
-    /// namespace too and only these two come from the host.
+    /// Kept as `host` rather than `namespaces`, because `vars_namespace` below
+    /// is a namespace too and only these two come from the host.
     host: &'a HostNamespaces,
-    /// The `vars` namespace, built once because it is handed out by value.
-    total: Value,
+    /// The `vars` namespace over the same variables the bare-identifier lookup
+    /// reads, built once because it is handed out by value.
+    vars_namespace: Value,
 }
 
 impl<'a> Bindings<'a> {
@@ -360,12 +365,12 @@ impl<'a> Bindings<'a> {
     /// namespace, is what keeps one answer to what a name is worth: both
     /// spellings walk the same layers in the same precedence order.
     pub fn new(vars: &Rc<VarSet>, host: &'a HostNamespaces) -> Self {
-        let total = Rc::clone(vars);
+        let vars_namespace = Rc::clone(vars);
         Self {
             vars: Rc::clone(vars),
             host,
-            total: Namespace::value(VARS, move |key| {
-                total.get(key).unwrap_or_default().to_owned()
+            vars_namespace: Namespace::value(VARS, move |key| {
+                vars_namespace.get(key).unwrap_or_default().to_owned()
             }),
         }
     }
@@ -383,7 +388,7 @@ impl VariableResolver for Bindings<'_> {
         match name {
             FACTS => Some(self.host.facts.clone()),
             ENV => Some(self.host.env.clone()),
-            VARS => Some(self.total.clone()),
+            VARS => Some(self.vars_namespace.clone()),
             // `None` is what the evaluator turns into `ResolveFailed`, which is
             // the undeclared-identifier error [`EvalError`] then names.
             _ => self.vars.get(name).map(|value| string(value.to_owned())),
@@ -1026,6 +1031,22 @@ mod tests {
         assert!(line.contains("`work = \"false\"`"), "{line}");
         assert!(line.contains("`batfiles vars set work <value>`"), "{line}");
         assert!(line.contains("`vars.work`"), "{line}");
+    }
+
+    #[test]
+    fn an_excluding_gate_names_the_spelling_and_the_verdict_that_closed_it() {
+        // The verdict is the caller's: the gate itself holds only what the
+        // record declared, and each spelling closes on the opposite value.
+        let parsed = condition("work");
+
+        assert_eq!(
+            Gate::When(&parsed).exclusion_reason(),
+            "when \"work\" is false"
+        );
+        assert_eq!(
+            Gate::Unless(&parsed).exclusion_reason(),
+            "unless \"work\" is true"
+        );
     }
 
     #[test]

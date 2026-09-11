@@ -7,7 +7,7 @@ use std::path::Path;
 use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
-use crate::install::{self, FileOrDirectory, Staged};
+use crate::install::{self, SeedKind};
 use crate::manifest::action::{CopyAction, CopyDirAction};
 use crate::output::Verb;
 use crate::paths;
@@ -39,33 +39,32 @@ pub(super) fn copy_dir(action: &CopyDirAction, context: &RunContext) -> Result<(
 }
 
 /// Seed one node by reproducing it, whichever action asked for it.
-fn seed(
-    source: &Path,
-    kind: FileOrDirectory,
-    dest: &Path,
-    context: &RunContext,
-) -> Result<(), Error> {
-    install::seed(
-        install::Seed {
-            kind,
-            verb: Verb::Copy,
-            origin: source.display().to_string(),
-            // Only a directory can be descended into, so only a directory
-            // source is a place a destination must not be.
-            source_directory: matches!(kind, FileOrDirectory::Directory).then_some(source),
-            fill: |staged, staging: &Path| match staged {
-                Staged::File(into) => copy_file(source, into, staging),
-                Staged::Directory => copy_children(source, staging),
-            },
-        },
-        dest,
-        context.mode(),
-        context.reporter(),
-    )
+///
+/// The one caller of either entry point that does not know which it wants until
+/// it has looked at the source, so the kind it classified picks the entry point
+/// here rather than travelling on into the installation.
+fn seed(source: &Path, kind: SeedKind, dest: &Path, context: &RunContext) -> Result<(), Error> {
+    let what = install::Seed {
+        verb: Verb::Copy,
+        origin: source.display().to_string(),
+        // Only a directory can be descended into, so only a directory source is
+        // a place a destination must not be.
+        source_directory: matches!(kind, SeedKind::Directory).then_some(source),
+    };
+    let mode = context.mode();
+    let reporter = context.reporter();
+    match kind {
+        SeedKind::File => install::seed_file(what, dest, mode, reporter, |into, staging| {
+            copy_file(source, into, staging)
+        }),
+        SeedKind::Directory => install::seed_directory(what, dest, mode, reporter, |staging| {
+            copy_children(source, staging)
+        }),
+    }
 }
 
 /// Classify a source the manifest named, following a final symlink.
-fn kind_of_source(source: &Path) -> Result<FileOrDirectory, Error> {
+fn kind_of_source(source: &Path) -> Result<SeedKind, Error> {
     let found = fs::metadata(source).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             // Reachability, not presence: the source has already been resolved
@@ -84,7 +83,7 @@ fn kind_of_source(source: &Path) -> Result<FileOrDirectory, Error> {
 }
 
 /// Classify a node found inside a directory being copied, following nothing.
-fn kind_of_child(source: &Path) -> Result<FileOrDirectory, Error> {
+fn kind_of_child(source: &Path) -> Result<SeedKind, Error> {
     let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
@@ -98,11 +97,11 @@ fn kind_of_child(source: &Path) -> Result<FileOrDirectory, Error> {
 }
 
 /// The tail both of the above share, once each has decided what to inspect.
-fn classify(found: &fs::Metadata, source: &Path) -> Result<FileOrDirectory, Error> {
+fn classify(found: &fs::Metadata, source: &Path) -> Result<SeedKind, Error> {
     if found.is_file() {
-        Ok(FileOrDirectory::File)
+        Ok(SeedKind::File)
     } else if found.is_dir() {
-        Ok(FileOrDirectory::Directory)
+        Ok(SeedKind::Directory)
     } else {
         Err(Error::SourceNotCopyable {
             path: source.to_path_buf(),
@@ -129,10 +128,10 @@ fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
         let from = source.join(&child);
         let to = built_at.join(&child);
         match kind_of_child(&from)? {
-            FileOrDirectory::File => {
+            SeedKind::File => {
                 copy_file(&from, create_new_file(&to)?, &to)?;
             }
-            FileOrDirectory::Directory => {
+            SeedKind::Directory => {
                 fs::create_dir(&to).map_err(|error| Error::Write {
                     path: to.clone(),
                     source: error,

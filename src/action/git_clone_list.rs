@@ -1,7 +1,7 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
 use super::RunContext;
-use crate::condition::Skip;
+use crate::condition::Exclusion;
 use crate::error::Error;
 use crate::git::{self, Failure};
 use crate::manifest::action::GitCloneListAction;
@@ -15,10 +15,14 @@ pub(super) fn git_clone_list(
     let dest_dir = context.destination(&action.dest_dir);
     context.ensure_directory(&dest_dir)?;
 
+    // Preparation walks the same captured selection this run executes, ahead of
+    // every action, and passes over only the lists an exclusion has already
+    // closed — which are not executed either. A list arriving here unread is
+    // that invariant broken rather than anything a manifest can ask for.
     let entries = action
         .entries
         .as_ref()
-        .expect("executable clone lists are populated during preparation");
+        .expect("an executable clone list is prepared before any action runs");
 
     if entries.is_empty() {
         context
@@ -30,27 +34,27 @@ pub(super) fn git_clone_list(
         // sits under the heading naming the action that holds the list. The
         // wording is the failure warning's below, since both say that one entry
         // of a list is not being cloned and why.
-        if let Some(skip) = &entry.skip {
+        if let Some(exclusion) = &entry.exclusion {
             let line = format!(
                 "not cloning {} ({}): {}",
-                entry.url,
+                entry.repository,
                 entry.written_at(&action.source),
-                skip.reason()
+                exclusion.reason()
             );
             // One line, two severities: an entry this machine's variables close
             // is the list working as written, and one whose condition batfiles
             // could not decide is not, so the reader hears about it whether or
             // not the run asked for detail.
-            match skip {
-                Skip::AsAsked(_) => context.reporter().detail(1, &line),
-                Skip::Unevaluable(_) => context.reporter().warn(&line),
+            match exclusion {
+                Exclusion::Expected(_) => context.reporter().detail(1, &line),
+                Exclusion::EvaluationFailed(_) => context.reporter().warn(&line),
             }
             continue;
         }
 
         let dest = dest_dir.join(&entry.dest_name);
         match git::clone_or_update(
-            &entry.url,
+            &entry.repository,
             &dest,
             entry.git_ref.as_deref(),
             context.repository(),
@@ -61,7 +65,7 @@ pub(super) fn git_clone_list(
             Err(failure) if is_recoverable_entry_error(&failure) => {
                 context.reporter().warn(&format!(
                     "not cloning {} ({}): {failure}",
-                    entry.url,
+                    entry.repository,
                     entry.written_at(&action.source)
                 ))
             }

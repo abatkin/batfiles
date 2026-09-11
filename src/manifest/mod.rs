@@ -76,7 +76,7 @@ impl Manifest {
                 });
             }
 
-            if action.common().writes_both_conditions() {
+            if action.metadata().writes_both_conditions() {
                 return Err(Invalid::BothConditions {
                     action: action_number,
                 });

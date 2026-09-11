@@ -27,7 +27,7 @@ pub(crate) enum Action {
 
 impl Action {
     /// What every record carries, whichever variant it is.
-    pub fn common(&self) -> Common<'_> {
+    pub fn metadata(&self) -> ActionMetadata<'_> {
         let (kind, id, group, when, unless) = match self {
             Self::Symlink(it) => ("symlink", &it.id, &it.group, &it.when, &it.unless),
             Self::SymlinkDir(it) => ("symlink-dir", &it.id, &it.group, &it.when, &it.unless),
@@ -39,7 +39,7 @@ impl Action {
             Self::GitClone(it) => ("git-clone", &it.id, &it.group, &it.when, &it.unless),
             Self::GitCloneList(it) => ("git-clone-list", &it.id, &it.group, &it.when, &it.unless),
         };
-        Common {
+        ActionMetadata {
             kind,
             id: id.as_ref(),
             group: group.as_ref(),
@@ -98,25 +98,25 @@ impl Action {
 
     /// The action's `id`, if it was written with one.
     pub fn id(&self) -> Option<&ItemId> {
-        self.common().id
+        self.metadata().id
     }
 
     /// The group the action belongs to, if it was written with one.
     pub fn group(&self) -> Option<&ItemId> {
-        self.common().group
+        self.metadata().group
     }
 
     /// The gate the action's condition makes, if it was written with one.
     pub fn gate(&self) -> Option<Gate<'_>> {
-        self.common().gate()
+        self.metadata().gate()
     }
 
     /// How the action introduces itself in a report: what kind it is, what it is
     /// called, and the group it is in.
     pub fn describe(&self, number: usize) -> String {
-        let Common {
+        let ActionMetadata {
             kind, id, group, ..
-        } = self.common();
+        } = self.metadata();
         let name = match id {
             Some(id) => id.to_string(),
             None => format!("action {number}"),
@@ -130,20 +130,33 @@ impl Action {
 
 /// The `type` tag and the four fields every `[[actions]]` record carries,
 /// borrowed from one.
+///
+/// This is where those four are explained, for all nine record types: each
+/// declares them itself, because each is a flat TOML table that rejects the
+/// fields it does not accept, and a struct below comments a shared field only
+/// where that record means something particular by it.
+///
+/// - `id` makes the action addressable: `apply-action` names one, and
+///   `disabled.toml` remembers one. What an action installs is not separately
+///   addressable, whether it installs one thing or many.
+/// - `group` is the one group the action belongs to, which `apply-group` names
+///   and `disabled.toml` also remembers.
+/// - `when` admits the action where the condition is true, `unless` where it is
+///   false. A record writes at most one of the two.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Common<'a> {
+pub(crate) struct ActionMetadata<'a> {
     /// The action's `type`, spelled as the manifest spells it.
     pub kind: &'static str,
     pub id: Option<&'a ItemId>,
     pub group: Option<&'a ItemId>,
-    /// The two spellings of a condition, of which a record may write at most
-    /// one. Kept apart here rather than resolved, because the check that they
-    /// are not both written is the manifest's and needs to see both.
+    /// Kept apart from `unless` rather than resolved into a gate, because the
+    /// check that a record does not write both is the manifest's and needs to
+    /// see both.
     pub when: Option<&'a Condition>,
     pub unless: Option<&'a Condition>,
 }
 
-impl<'a> Common<'a> {
+impl<'a> ActionMetadata<'a> {
     /// The gate this record's condition makes, or `None` where it has none.
     pub fn gate(self) -> Option<Gate<'a>> {
         Gate::declared(self.when, self.unless)
@@ -159,14 +172,9 @@ impl<'a> Common<'a> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct SymlinkAction {
-    /// Makes the action addressable.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The source, relative to the repository root. A plain string until 6.3
     /// makes it a path that may also name a remote.
@@ -181,15 +189,11 @@ pub(crate) struct SymlinkAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct SymlinkDirAction {
-    /// Makes the action addressable. The children never are, individually: the
-    /// action installs all of them or none.
+    /// The children are never addressable: the action installs all of them or
+    /// none.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The directory whose direct children are linked, relative to the
     /// repository root.
@@ -207,14 +211,9 @@ pub(crate) struct SymlinkDirAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CreateDirAction {
-    /// Makes the action addressable.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The directory to create, resolved against the selected home when the
     /// action runs. Missing parents are created with it.
@@ -225,14 +224,9 @@ pub(crate) struct CreateDirAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyAction {
-    /// Makes the action addressable.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The file or directory to copy, relative to the repository root.
     pub source: String,
@@ -246,14 +240,10 @@ pub(crate) struct CopyAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyDirAction {
-    /// Makes the action addressable. The children never are, individually.
+    /// The children are never addressable, individually.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The directory whose direct children are copied, relative to the
     /// repository root.
@@ -271,14 +261,9 @@ pub(crate) struct CopyDirAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchFileAction {
-    /// Makes the action addressable.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The URL to fetch, as written. Not a `RepoPath` and never resolved
     /// against a root: what it names is not on this machine.
@@ -295,15 +280,11 @@ pub(crate) struct FetchFileAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchArchiveAction {
-    /// Makes the action addressable. The archive's entries never are,
-    /// individually: the action installs the whole tree or none of it.
+    /// The archive's entries are never addressable: the action installs the
+    /// whole tree or none of it.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The URL to fetch, as written. Not a `RepoPath` and never resolved
     /// against a root: what it names is not on this machine.
@@ -324,15 +305,10 @@ pub(crate) struct FetchArchiveAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneAction {
-    /// Makes the action addressable. The clone's contents never are,
-    /// individually.
+    /// The clone's contents are never addressable, individually.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The repository to clone, exactly as git is given it. Not a `RepoPath`
     /// and not checked as a URL: git accepts an `scp`-style `git@host:path`, a
@@ -353,15 +329,11 @@ pub(crate) struct GitCloneAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneListAction {
-    /// Makes the action addressable, and — once entries are individually
-    /// selectable — the first segment of `<action>.<entry>`.
+    /// Once entries are individually selectable, this is also the first segment
+    /// of `<action>.<entry>`.
     pub id: Option<ItemId>,
-    /// The one group the action belongs to.
     pub group: Option<ItemId>,
-    /// The condition admitting the action, if it is written with one.
     pub when: Option<Condition>,
-    /// The condition excluding the action, if it is written with one. A record
-    /// writes at most one of the two; see [`Common::gate`].
     pub unless: Option<Condition>,
     /// The list, relative to the repository root. An ordinary repository path,
     /// unlike the sources of the two actions that reach the network: what is off
@@ -373,8 +345,15 @@ pub(crate) struct GitCloneListAction {
     /// is: each entry contributes one child of it.
     pub dest_dir: String,
 
-    /// Entries read during execution preparation. None means the list has not been
-    /// read; executable lists must contain Some, including when the list is empty.
+    /// The list's entries, read during execution preparation and settled
+    /// against this run's variables: run state kept on the declaration record,
+    /// which is why serde neither reads nor writes it.
+    ///
+    /// `None` is a list nothing has opened — a record no run has prepared, or
+    /// one this run excluded before reading it. `Some([])` is a list that was
+    /// read and declares nothing. The two are different answers and must not
+    /// collapse into an empty default: one is unknown, the other is known to be
+    /// empty, and only the second is a list this run can execute.
     #[serde(skip)]
     pub entries: Option<Vec<Entry>>,
 }

@@ -7,11 +7,11 @@ use crate::error::Error;
 use crate::location::Roots;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
-use crate::paths::{self, Repository};
+use crate::paths::{self, RepositoryRoot};
 
 /// Anchored repository and home roots, execution mode, and reporter for one run.
 pub(crate) struct RunContext<'a> {
-    repository: Repository,
+    repository: RepositoryRoot,
     home: PathBuf,
     mode: RunMode,
     reporter: &'a Reporter,
@@ -21,7 +21,7 @@ impl<'a> RunContext<'a> {
     /// Anchor the resolved roots, once, for every action in a run.
     pub fn new(roots: &Roots, mode: RunMode, reporter: &'a Reporter) -> Result<Self, Error> {
         Ok(Self {
-            repository: Repository::at(&roots.batfiles_dir)?,
+            repository: RepositoryRoot::at(&roots.batfiles_dir)?,
             home: paths::anchor(&roots.home)?,
             mode,
             reporter,
@@ -32,7 +32,7 @@ impl<'a> RunContext<'a> {
     /// The final node must exist; a broken symlink counts as present. The returned
     /// path preserves repository symlinks rather than canonicalizing them.
     pub fn source(&self, source: &str) -> Result<PathBuf, Error> {
-        let resolved = paths::normalize(&self.repository.path().join(source));
+        let resolved = paths::normalize_lexically(&self.repository.path().join(source));
 
         // Presence, not reachability: a source that is itself a broken symlink
         // is there, and linking at it is what the repository asked for.
@@ -61,7 +61,7 @@ impl<'a> RunContext<'a> {
 
     /// The repository an action installs from, for the one question that needs
     /// it: whether a symlink already at a destination points into it.
-    pub fn repository(&self) -> &Repository {
+    pub fn repository(&self) -> &RepositoryRoot {
         &self.repository
     }
 
@@ -102,7 +102,7 @@ fn destination(home: &Path, dest: &str) -> PathBuf {
         Some(rest) => home.join(rest.trim_start_matches('/')),
         None => home.join(dest),
     };
-    paths::normalize(&path)
+    paths::normalize_lexically(&path)
 }
 
 #[cfg(test)]

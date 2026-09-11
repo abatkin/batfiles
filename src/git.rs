@@ -14,7 +14,7 @@ use crate::directory;
 use crate::error::Error;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
-use crate::paths::{self, ExistingNode, Occupancy, Repository};
+use crate::paths::{self, ExistingNode, Occupancy, RepositoryRoot};
 
 /// What can go wrong reaching a clone, as one enum a caller can match on.
 #[derive(Debug, ThisError)]
@@ -77,7 +77,7 @@ pub(crate) fn clone_or_update(
     url: &str,
     dest: &Path,
     git_ref: Option<&str>,
-    repository: &Repository,
+    repository: &RepositoryRoot,
     mode: RunMode,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -470,7 +470,9 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
         dest,
     )?;
     match line_as_path(&toplevel.stdout) {
-        Some(root) if paths::resolved(&root) == paths::resolved(dest) => {}
+        Some(root)
+            if paths::canonicalize_or_normalize(&root)
+                == paths::canonicalize_or_normalize(dest) => {}
         _ => {
             return Err(Failure::CloneElsewhere {
                 path: dest.to_path_buf(),

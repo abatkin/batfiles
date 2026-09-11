@@ -63,7 +63,9 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
     let reporter = context.reporter();
     let mode = context.mode();
     match Occupancy::at(dest, context.repository())? {
-        Occupancy::Replaceable { points_at, .. } if points_at == paths::resolved(target) => {
+        Occupancy::Replaceable { points_at, .. }
+            if points_at == paths::canonicalize_or_normalize(target) =>
+        {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
         }
         Occupancy::Replaceable { written, .. } => {

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::action::{self, RunContext};
 use crate::clone_list;
-use crate::condition::{Bindings, HostNamespaces, Skip};
+use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
@@ -85,9 +85,9 @@ pub(crate) fn apply_group(
         disabled,
         reporter,
     );
-    let carried_out = run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
+    let executed_count = run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
 
-    if carried_out == 0 {
+    if executed_count == 0 {
         reporter.info(
             "nothing to apply: every action in the group is disabled, skipped, \
              or excluded by its own condition",
@@ -108,13 +108,22 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
 struct SelectedAction {
     index: usize,
     heading: String,
-    skip: Option<Skip>,
+    exclusion: Option<Exclusion>,
 }
 
 /// Read every executable clone list from the captured selection before writes,
 /// and settle each entry's own condition against this run.
 ///
-/// Skipped lists are not opened; parsed entries remain on the manifest records.
+/// The contract the action relies on: every list this run may execute leaves
+/// here read, and the ones passed over are exactly the ones an exclusion has
+/// already closed, which are not executed. An excluded list is never opened, so
+/// its record keeps the unread `None` that says nothing looked.
+///
+/// Entries are attached to the manifest record, which therefore holds both what
+/// a repository declared and what this run made of it. That is sound while one
+/// record is prepared once per run; an inclusion that splices the same remote
+/// twice must splice a copy per inclusion, since the two can differ in `vars`.
+///
 /// An entry a condition closes stays on its list, marked, so that the action
 /// reports it where the rest of the list is reported.
 fn prepare_clone_lists(
@@ -124,13 +133,13 @@ fn prepare_clone_lists(
     bindings: &Bindings<'_>,
 ) -> Result<(), Error> {
     for selected in selected_actions {
-        if selected.skip.is_some() {
+        if selected.exclusion.is_some() {
             continue;
         }
         if let Action::GitCloneList(list) = &mut manifest.actions[selected.index] {
             let mut entries = clone_list::read(&context.source(&list.source)?)?;
             for entry in &mut entries {
-                entry.skip = closed(entry, bindings);
+                entry.exclusion = entry_exclusion(entry, bindings);
             }
             list.entries = Some(entries);
         }
@@ -145,18 +154,27 @@ fn prepare_clone_lists(
 /// run, so the entries around it are cloned as they would have been. No
 /// consequence clause: the line the caller writes it into opens with `not
 /// cloning`.
-fn closed(entry: &clone_list::Entry, bindings: &Bindings<'_>) -> Option<Skip> {
+// CARRY(6.5): `Selection::exclusion` maps an evaluation the same way, and a
+// failure must close the gate in both. Remote conditions are the third caller;
+// share the mapping then.
+fn entry_exclusion(entry: &clone_list::Entry, bindings: &Bindings<'_>) -> Option<Exclusion> {
     let gate = entry.gate()?;
     match gate.admits(bindings) {
         Ok(true) => None,
-        Ok(false) => Some(Skip::AsAsked(gate.to_string())),
-        Err(error) => Some(Skip::Unevaluable(gate.unevaluable(None, &error))),
+        Ok(false) => Some(Exclusion::Expected(gate.exclusion_reason())),
+        Err(error) => Some(Exclusion::EvaluationFailed(gate.unevaluable(None, &error))),
     }
 }
 
 /// Capture selection once, prepare executable clone lists, and execute in
-/// manifest order. Returns the number executed; unknown targets and action
-/// failures are errors. Dry runs use the same selection and preparation.
+/// manifest order. Unknown targets and action failures are errors. Dry runs use
+/// the same selection and preparation.
+///
+/// The count returned is of action handlers this run invoked and that returned
+/// successfully, which is what tells a caller whether the run reached any of the
+/// records it was asked for. It is not a count of changes: an action finding its
+/// seed already in place, a clone list with no entries, and a list whose every
+/// entry warned each count once, the same as one that wrote something.
 fn run(
     manifest: &mut Manifest,
     selection: &Selection<'_>,
@@ -198,25 +216,27 @@ fn run(
         selected_actions.push(SelectedAction {
             index,
             heading: action.describe(index + 1),
-            skip: selection.skipped(action, &bindings),
+            exclusion: selection.exclusion(action, &bindings),
         });
     }
 
     prepare_clone_lists(manifest, &selected_actions, &context, &bindings)?;
-    let mut carried_out = 0;
+    let mut executed_count = 0;
 
     for selected in &selected_actions {
         let heading = &selected.heading;
-        match &selected.skip {
-            Some(Skip::AsAsked(why)) => reporter.detail(1, &format!("{heading} - skipped: {why}")),
+        match &selected.exclusion {
+            Some(Exclusion::Expected(why)) => {
+                reporter.detail(1, &format!("{heading} - skipped: {why}"))
+            }
             // Without the "skipped" frame the other reasons take: the reason
             // says what is not happening, and this one is printed whether or
             // not the run asked for detail.
-            Some(Skip::Unevaluable(why)) => reporter.warn(&format!("{heading}: {why}")),
+            Some(Exclusion::EvaluationFailed(why)) => reporter.warn(&format!("{heading}: {why}")),
             None => {
                 reporter.detail(1, heading);
                 action::run(&manifest.actions[selected.index], &context)?;
-                carried_out += 1;
+                executed_count += 1;
             }
         }
     }
@@ -226,5 +246,5 @@ fn run(
     {
         return Err(error);
     }
-    Ok(carried_out)
+    Ok(executed_count)
 }
