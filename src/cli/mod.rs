@@ -1,12 +1,6 @@
-//! The command-line surface.
-//!
-//! This module tree owns everything specific to the command line: the argument
-//! definitions and the `--color` option's resolution. Every other environment
-//! input is deliberately not read here.
-//!
-//! The whole surface parses from the first slice, so the product is visible
-//! before it works. Which of the commands here actually run is
-//! [`crate::app`]'s to say, and it says it in one place.
+//! Command-line definitions and color resolution; other environment inputs are
+//! handled outside this module tree. Parsing includes unimplemented commands;
+//! [`crate::app`] dispatches or rejects them.
 
 mod actions;
 mod disabled;

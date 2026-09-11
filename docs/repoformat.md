@@ -153,35 +153,17 @@ required `type` field.
 | `when`  | condition          |    no    | Runs the action only where the condition is true. See [conditions](#conditions). |
 | `unless`| condition          |    no    | Runs it only where the condition is false. At most one of the two.     |
 
-Each variant's record is closed independently, so a field belonging to another
-variant is an unknown field rather than one that is quietly ignored. Writing
-`source-dir` on a `symlink` is an error, so is writing `source` on a
-`symlink-dir`, so is writing either on a `create-dir`, which installs nothing
-and therefore has no source at all, and so is writing `dot-prefix` anywhere but
-on the two actions that install a directory's children.
+Each variant accepts only its documented fields. A field belonging to another
+variant is an error when the manifest is read: for example, `symlink` takes
+`source`, while `symlink-dir` takes `source-dir`. Only `symlink-dir` and
+`copy-dir` accept `dot-prefix`, which adds a leading `.` to each installed name.
 
-**The action types come in pairs, and the pairing is not about the source
-type.** `symlink` and `copy` install **one thing at one name**, and that thing
-may be a file or a directory. `symlink-dir` and `copy-dir` install **each direct
-child of a directory, into a directory**. The `-dir` suffix says what is done
-with the source's contents — enumerate them — rather than what the source is.
-Choosing between the two members of a pair is the author's, and it is not
-inferred from what happens to be on disk.
-
-**A choice between two shapes is a `type`, never a boolean.** No action record
-carries a field whose value decides which of its other fields mean anything.
-That is what makes each record closed in the way the paragraph above promises:
-a field that is meaningful only in one of two modes is accepted and ignored in
-the other, which is precisely the silent misreading the format is written to
-avoid. So `symlink-dir` is an action type rather than `symlink` with a
-`children` flag, and unpacking a downloaded archive is
-[`fetch-archive`](#fetch-archive) rather than `fetch-file` with an `extract`
-flag — a repository asking for the wrong one gets an error naming the field, at
-the moment the manifest is read. There is no `extract` field in the format at
-all, on either action.
-
-`dot-prefix` is the format's only boolean and is not an exception: it changes
-what an installed child is called, and no other field's meaning turns on it.
+`symlink` and `copy` install one file or directory at one destination.
+`symlink-dir` and `copy-dir` install each direct child into a destination
+directory. Choose the type explicitly; it is not inferred from the source's
+filesystem type. To download and unpack an archive, use
+[`fetch-archive`](#fetch-archive); [`fetch-file`](#fetch-file) installs the
+downloaded bytes as one file.
 
 ### Groups
 
@@ -203,27 +185,9 @@ whoever reads the file rather than something batfiles requires or arranges.
 Group names and action IDs are separate namespaces, so a group may share a name
 with an action without either becoming ambiguous.
 
-**A group is a way of leaving several actions out at once.** `sync --skip-group`
-and `BATFILES_SKIP_GROUPS` pass over every action naming it for one run, and
-`disable-group` records the name in
-[`disabled.toml`](state.md#disabledtoml-disabled-actions-and-groups), which
-every later run honors until an `enable-group` removes it. What a run does with
-the two is specified in
-[selecting what a run does](cmdline.md#selecting-what-a-run-does).
-
-Because a group is only the actions that name it, that selection reaches exactly
-those: an action written with no `group` cannot be left out by group, and an
-action written with no `id` can be left out *only* by group — and reached, by
-anything naming a single record, only through its group.
-
-**A group is also a way of applying several actions at once.**
-[`apply-group`](cmdline.md#apply-group) carries out the actions naming it and no
-others, in declaration order. Since a group is only its members, one no action
-names does not exist, and applying it is a failure rather than a run with nothing
-to do.
-
-The field is also read by reporting: `sync -v` names the group each action
-belongs to as it reaches it.
+Use a group to apply, disable, or skip its members together. The command-line
+reference owns [selection and apply overrides](cmdline.md#selecting-what-a-run-does)
+and [verbose action headings](cmdline.md#sync).
 
 ### `symlink`
 
@@ -248,33 +212,11 @@ here than elsewhere, because a symlink stores the target it is handed and reads
 it back relative to the link's own directory: a target left relative to the
 working directory would point somewhere other than where it was meant to.
 
-What happens at the destination depends on what is already there, applying
-[Replacing what is already there](safety.md#replacing-what-is-already-there):
-
-| Already at the destination                          | Result                                                            |
-|-----------------------------------------------------|-------------------------------------------------------------------|
-| nothing                                             | The link is created, along with any missing parent directories.   |
-| a symlink already pointing at the source            | Nothing, reported only at `-v`.                                   |
-| a symlink pointing elsewhere in the repository      | It is repointed at the source.                                    |
-| a symlink whose target is not there                 | It is repointed at the source, and the target it held is named.   |
-| a symlink pointing outside the repository, and there | An error naming the path and what it found, with nothing written. |
-| a regular file                                      | An error naming the path and what it found, with nothing written. |
-| a directory                                         | An error naming the path and what it found, with nothing written. |
-| anything else                                       | An error naming the path and what it found, with nothing written. |
-
-Where it points, not how it is spelled, is what the four symlink rows mean by
-"the source", "elsewhere in the repository", and "outside the repository" — and
-the fourth row does not read where it points at all, only whether anything is
-there. The three error rows are one refusal but not one message, and a repaired
-link is repointed regardless of how the stale one was written.
-
-A `dest` landing inside the `source` is an error, under
-[Installing into what you install from](safety.md#installing-into-what-you-install-from).
-Unlike the other actions this one is decided at the moment the link would be
-written rather than up front, because a link that is already correct resolves
-into its own source and would otherwise be refused on every run. Repointing a
-replaceable link counts as writing one, and is refused before the link it found
-is removed.
+Missing links are created, correct links are kept, and replaceable links are
+repaired. Other occupied destinations are refused. The safety reference owns
+the [destination policy](safety.md#replacing-what-is-already-there) and the
+[source-containment check](safety.md#installing-into-what-you-install-from),
+including its exception for an already-correct link.
 
 On a platform where batfiles cannot create a symlink, a `symlink` action is an
 error naming the action rather than a silent skip or a copy substituted for the
@@ -321,19 +263,10 @@ link at `~/.config`, not as a directory holding two.
 **The children are linked in sorted order**, because the order a filesystem
 happens to hold them in is not one anybody can diff.
 
-**`dest-dir` is a container, not a destination**, so it is created where it is
-missing and followed where it is a symlink, under
-[Replacing what is already there](safety.md#replacing-what-is-already-there) — unlike the
-destination of each individual link, which is judged without following one. It
-may hold entries batfiles did not put there, and those are left alone. Creating
-it is reported, because a directory that appeared in the home is worth a line
-whichever action made it.
-
-Each child's own destination is then decided by that same section, one at a
-time. A child link batfiles owns is repaired; anything else stops the action
-where it stands, so the children before it stay installed and the ones after it
-are not attempted. That is what stopping at the first failure already means
-across a manifest, applied within one action.
+`dest-dir` follows the [directory-container policy](safety.md#directory-containers);
+each child's destination follows the [symlink policy](safety.md#replacing-what-is-already-there).
+Children are processed in order, stopping at the first failure without rolling
+back earlier children, as described under [execution failures](cmdline.md#execution-failures).
 
 **`dot-prefix` refuses a child that is already dotted.** A `source-dir`
 containing `.hidden` would install `..hidden`, which is a legal file name and
@@ -352,10 +285,8 @@ said at `-v`.
 A `source-dir` that exists but is not a directory is an error, because there are
 no children to link and linking the thing itself is what `symlink` is for.
 
-A `dest-dir` landing inside the `source-dir` is an error, under
-[Installing into what you install from](safety.md#installing-into-what-you-install-from),
-and is refused before the destination directory is created — creating it is what
-would put it among the children about to be linked.
+The [containment rule](safety.md#installing-into-what-you-install-from) prevents
+creating `dest-dir` inside `source-dir` before children are enumerated.
 
 The platform rule is `symlink`'s: where batfiles cannot create a symlink the
 action is refused by name, before the source directory is read.
@@ -384,25 +315,10 @@ directory whose contents come from somewhere else — a plugin root another tool
 clones into, a cache a program expects to find already there — which a manifest
 would otherwise have no way to ask for.
 
-`dest` follows [Sources and destinations](#sources-and-destinations), and is a
-container rather than a destination under
-[Replacing what is already there](safety.md#replacing-what-is-already-there). The action
-is `mkdir -p`:
-
-| Already at the destination            | Result                                                            |
-|---------------------------------------|-------------------------------------------------------------------|
-| nothing                               | The directory is created, along with any missing parents.         |
-| a directory                           | Nothing, reported only at `-v`.                                   |
-| a symlink to a directory              | Nothing, reported only at `-v`; the link is left as it is.        |
-| a symlink whose target is not there   | The link is removed and the directory made in its place, naming the target it held. |
-| a regular file                        | An error naming the path and what it found, with nothing written. |
-| anything else                         | An error naming the path and what it found, with nothing written. |
-
-A directory that is already there is left exactly as it is, contents and all:
-the action creates a directory, it does not own one. The only node it removes is
-a broken symlink, which holds nothing to keep; that aside it removes nothing,
-which is why a symlink to a directory satisfies it where the same node at a
-`symlink`'s destination would be refused.
+`dest` follows [Sources and destinations](#sources-and-destinations). Missing
+directories and parents are created; existing directory contents are preserved.
+The [directory-container policy](safety.md#directory-containers) specifies
+symlink handling and occupied-path refusals.
 
 Every platform batfiles builds for creates directories, so unlike the two
 symlink actions there is no platform on which this one is refused by name.
@@ -430,21 +346,10 @@ editing does not write back into the repository and that a later `sync` will not
 undo. This is the action for a file whose *initial* contents a repository wants
 to supply — a machine-local override, a template to fill in.
 
-`source` and `dest` follow [Sources and destinations](#sources-and-destinations),
-and `dest` is a destination rather than a container, so it is examined without
-following a final symlink. Missing parent directories are created.
-
-**A directory source is installed whole.** The destination decides once, for the
-action as a whole:
-
-| Already at the destination | Result                                                             |
-|----------------------------|----------------------------------------------------------------------|
-| nothing                    | The copy is made, with any missing parents. A directory source is reproduced to the bottom. |
-| anything at all            | Nothing at all, reported only at `-v`.                             |
-
-So `copy` over an existing directory does nothing — it does not seed into it.
-Filling in around what someone already has is [`copy-dir`](#copy-dir), and
-choosing between them is the whole of the difference between the two.
+`source` and `dest` follow [Sources and destinations](#sources-and-destinations).
+The [seed policy](safety.md#seeds-do-not-replace-and-so-do-not-refuse) installs
+only at a vacant destination. A directory source is installed whole; an existing
+directory is not merged. Use [`copy-dir`](#copy-dir) to seed missing direct children.
 
 Copies preserve source permissions under the shared [permission and staging
 rules](safety.md#installed-permissions). A destination inside the source
@@ -673,12 +578,6 @@ detached checkout sitting at the right object is the correct state rather than
 something to repair, so a later run reports it as unchanged and leaves it alone.
 A `ref` that resolves to nothing at all fails, naming what was asked for.
 
-The conservative rules below still apply in front of all of it: a worktree with
-uncommitted changes is never touched, and a declared branch holding commits the
-remote does not is warned about rather than reset. Changing which branch a clone
-is on is reported — `switched <dest> to <ref>` — and deletes nothing: the branch
-you were on, and its commits, stay where they are.
-
 [Git updates](safety.md#git-updates) specifies dirty-worktree checks,
 fast-forwarding, local-file protection, and failure handling.
 [Clone validation](safety.md#clone-validation) specifies which existing
@@ -701,68 +600,26 @@ dest-dir = "~/.oh-my-zsh/custom/plugins"
 | `source`   | string |   yes    | The list, relative to the repository root. Never empty.            |
 | `dest-dir` | string |   yes    | The directory the clones are made in. Never empty; `~` is the home. |
 
-[`git-clone`](#git-clone) repeated over a file, and the file is the point: a
-plugin directory is kept by pasting a URL onto the end of a list, and a format
-asking for a whole TOML record per repository would be a worse version of the
-file it replaces. What the list may say is the [clone list
-format](#the-clone-list-format) below.
+Use this action for a list of plugin repositories, with one repository per line
+in the [clone list format](#the-clone-list-format).
 
-Both fields are ordinary. `source` names a file in the repository and follows
-[Sources and destinations](#sources-and-destinations) like any other — unlike
-`git-clone`'s `source`, which names something off this machine; here that is the
-list's job, line by line. `dest-dir` is spelled as it is because this action
-installs *into* a directory rather than at a name, exactly as `symlink-dir` and
-`copy-dir` do, and each entry contributes one child of it.
+`source` names the list file, relative to the repository; each line supplies a
+Git repository source. `dest-dir` is the container for the resulting clones,
+with one child directory per entry. Both action fields follow
+[Sources and destinations](#sources-and-destinations).
 
-**The list is read as the repository is loaded, before any action runs.** It is
-a file in the repository, on disk and readable at that point, so the rule the
-manifest itself follows extends to it: a document batfiles cannot make sense of
-stops the run before it has done any work rather than partway through. One
-malformed line is caught while your home is still untouched, which is most of
-what a list buys over the same repositories spread through the manifest. The
-cost is worth stating: a list *produced* by an earlier action in the same run is
-not a list this can read. A list belonging to an action the run passes over —
-disabled, or skipped for this run — is not read at all, for the same reason such
-an action's `source` need not exist.
+Selected, unskipped lists must already exist when execution is prepared; an
+earlier action cannot produce a list for the same run. Skipped lists are not
+opened. See [clone-list preparation](cmdline.md#clone-list-preparation) for
+validation order and failures.
 
-**The directory is made before the first entry**, so a list that declares no
-repositories still leaves the place they would go — a plugin directory a shell
-reads is worth having whether or not anything is in it yet. The entries are then
-cloned in list order, each into one child of it, and what a clone does and what
-it refuses is [`git-clone`](#git-clone)'s and does not differ here. An entry's
-`ref` follows [the same rules](#ref-following-one-branch-tag-or-commit).
+The destination directory is created before processing entries, even for an
+empty list. Entries are cloned in list order using [`git-clone`](#git-clone)'s
+behavior, including its [ref rules](#ref-following-one-branch-tag-or-commit).
 
-#### One entry that fails costs that entry
-
-A list is many repositories, and one of them being unreachable is not a reason
-to abandon the rest. So an entry that cannot be cloned is **warned about, and
-the entries after it are still installed**:
-
-- a destination holding something batfiles did not put there — a file, a
-  directory that is not a clone, a symlink to a checkout elsewhere, or what an
-  interrupted clone left;
-- a `git` that ran and failed: the clone, the fetch, the fast-forward, or a
-  `ref` that resolves to nothing.
-
-The warning names the repository as the list writes it, the list and the line it
-is on, and the entry's `id` where it has one, since that is what you have to open
-and edit.
-
-**An entry that failed on its `ref` keeps the clone it made.** A `ref` is
-resolved after the fetch, so a repository whose `ref` names nothing is already
-at its destination by the time the entry fails, sitting on whatever the clone
-came down on. It is left there: every later run finds it, tries the `ref` again,
-and warns again, so the state is one you are told about on every `sync` rather
-than one a run passes over as installed. Fixing the `ref` moves the clone onto
-it; removing the entry leaves the directory to you.
-
-What is not survivable is a `git` that could not be run at all, a file that could
-not be read or written, and a `dest-dir` that could not be created: none of those
-is about one repository, and every entry after would fail the same way.
-
-**So a `sync` that exits 0 may still have entries that did not clone.** The
-warnings are the only thing that says so, and they are warnings rather than notes
-so that `--quiet` does not take them away.
+Entries are processed independently: recoverable failures warn and leave later
+entries eligible to run. The command reference owns
+[clone-list warning and exit semantics](cmdline.md#clone-list-entry-failures).
 
 ## The clone list format
 
@@ -814,18 +671,10 @@ https://github.com/company/internal-zsh-tools.git when="work"
 https://github.com/foo/mac-only.git unless="facts.os != 'macos'"
 ```
 
-An entry a condition closes is passed over rather than removed from the list, and
-`sync -v` says so where it reports the rest of the entries:
-
-```text
-not cloning https://github.com/company/internal-zsh-tools.git (plugins.txt line 2): when "work" is false
-```
-
-Conditions are settled when the list is read, which is before any entry is
-cloned. One that [cannot be evaluated](#when-a-condition-cannot-be-evaluated)
-closes its own entry, the same as anywhere else, and is warned about on the line
-that says the entry is not being cloned; the entries around it are cloned as
-they would have been.
+Entry conditions follow the same [fail-closed semantics](#when-a-condition-cannot-be-evaluated)
+as action conditions. See [preparation](cmdline.md#clone-list-preparation) for
+evaluation timing and [exclusion reporting](cmdline.md#exclusion-reporting) for
+output examples.
 
 An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory
 name follows: `ack.vim` is a perfectly good directory and not a valid ID,
@@ -1016,18 +865,8 @@ rather than heuristic for that reason.
 A condition that parses can still fail on the machine that evaluates it: on an
 identifier no layer declares, on a result outside the truthiness table, on
 arithmetic that overflows. **The failure closes the gate**: the record is passed
-over, the run carries on, and a warning names the record, the field that decided
-it, and the fix:
-
-```console
-$ batfiles sync
-warning: symlink gitconfig-work: when "work" cannot be evaluated, so it is not installed: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
-```
-
-One bad identifier in one record costs that record and nothing else — which is
-what a run reading a third-party remote's manifest needs — and nothing is
-silently ignored, because the warning is printed whether or not the run asked
-for detail.
+over. The command reference specifies [warnings](cmdline.md#exclusion-reporting)
+and [continuation and exit behavior](cmdline.md#execution-failures).
 
 **Closing is the answer for `when` and `unless` alike**, which is why the
 warning names the spelling. The `unless` case looks like it should invert and
@@ -1040,11 +879,8 @@ A condition is the one place a value reaches a diagnostic without having been
 asked for — `when = "env.GITHUB_TOKEN"` puts a credential outside the table —
 and the manifest batfiles is evaluating is not always the reader's own.
 
-Two things narrow how often it is reached at all. A condition is consulted only
-for a record nothing else already excludes, so one on an action this machine has
-disabled is never evaluated; and [`apply-action`](cmdline.md#apply-action)
-waives conditions along with every other reason a record would be passed over,
-so naming one record reaches it whatever this machine makes of its condition.
+The [selection rules](cmdline.md#selection-by-command) determine when an action's
+condition is consulted or waived.
 
 ## Default-disabled bootstrap entries
 

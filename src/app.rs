@@ -249,9 +249,9 @@ fn locations(global: &GlobalOptions) -> LocationInputs {
 /// precedence is hard to reason about from the outside, so `-v` shows the
 /// answer rather than leaving it to be inferred.
 ///
-/// Every command reports these two. A command reading the leaf repository
-/// reports its repository and home ahead of them; one that does not has neither
-/// to report.
+/// Commands that resolve state roots report these two paths. Repository
+/// commands report their repository and home first. Commands that resolve no
+/// roots, such as `version`, do not call this helper.
 fn report_state_roots(reporter: &Reporter, state: &StateRoots) {
     for (label, path) in [("config:", &state.config_dir), ("cache:", &state.cache_dir)] {
         reporter.detail(1, &format!("{label:<12}{}", path.display()));

@@ -16,11 +16,12 @@ const UNSUPPORTED: &str = "src/cli/unsupported.rs";
 /// The enum that decides which action types a manifest may declare.
 const ACTIONS: &str = "src/manifest/action.rs";
 
-/// The documents that answer "what can `sync` actually do", each on a line
-/// beginning [`IMPLEMENTED`].
-const ACTION_TYPE_DOCS: [&str; 2] = ["README.md", "docs/goals.md"];
+/// The document that answers "what can `sync` actually do", on a line beginning
+/// [`IMPLEMENTED`]. Goals state intended scope and deliberately keep no
+/// inventory.
+const ACTION_TYPE_DOCS: [&str; 1] = ["README.md"];
 
-/// What that line starts with, in both documents.
+/// What that line starts with.
 const IMPLEMENTED: &str = "Implemented so far:";
 
 /// The fixture repositories the CLI tests drive whole. Between them they
@@ -840,7 +841,7 @@ fn withheld_options_name_steps_that_are_still_open() {
 }
 
 #[test]
-fn the_documents_name_every_action_type_that_exists() {
+fn the_readme_names_every_action_type_that_exists() {
     let source = fs::read_to_string(crate_dir().join(ACTIONS))
         .unwrap_or_else(|error| panic!("{ACTIONS} declares the action types: {error}"));
     assert!(
@@ -942,7 +943,7 @@ fn an_action_type_is_named_the_way_a_manifest_writes_it() {
 #[test]
 fn a_document_that_has_fallen_behind_the_enum_is_caught() {
     let built = implemented_action_types(fixture_actions());
-    // The shape both documents use today, and what slice 1 owes them.
+    // The shape the README uses today, and what slice 1 owes it.
     let behind = "**Implemented so far: `symlink`.**\n";
     let current = "Implemented so far: `symlink`, `create-dir`, and `copy`.\n";
     assert_ne!(documented_action_types(behind).as_ref(), Some(&built));

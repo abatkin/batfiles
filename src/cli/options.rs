@@ -1,19 +1,11 @@
-//! The option groups shared between several commands.
+//! Shared command option groups and `--var` parsing.
 //!
-//! Values here stay `String` unless something is decided by parsing them. For
-//! the options still rejected wholesale (`guidance.md`, rule 12) that is because
-//! a rejected option needs no parsed type, and pulling an address type forward
-//! to hold a value nothing reads is how the previous implementation grew its
-//! unreachable half. For the two skip lists, which are live, it is because an
-//! unusable name warns and is dropped rather than failing the run — a decision
-//! that needs the reporter, which clap's value parsers do not have.
+//! Unimplemented options retain string values. Skip lists also remain strings:
+//! invalid names must warn and be dropped using the reporter, not fail parsing.
 //!
-//! `--var` is the exception, and the reason is the opposite one: an unusable key
-//! *does* fail the command, and parsing it here is what makes that failure a
-//! usage error raised before the location roots are resolved and before any file
-//! is opened. Validating it where the layers are merged would be too late —
-//! `vars.toml` has been read off disk by then — and the environment's half of
-//! the same rule, which warns instead, is [`crate::env_vars`]'.
+//! Validate `--var` here so invalid keys cause usage errors before root resolution
+//! or file reads. Deferring validation to variable merging would read `vars.toml`
+//! first. Environment overrides instead warn in [`crate::env_vars`].
 
 use clap::Args;
 

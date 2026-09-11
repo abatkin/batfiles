@@ -96,7 +96,7 @@ the `repository:` and `home:` lines appear only for a command that reads the
 leaf repository, as [location selection](environment.md#location-selection)
 specifies. It also prints the destinations `sync` left alone because they were
 already correct. A second level, `-vv`, adds the [effective
-variables](environment.md#variable-precedence) a run resolved. `--quiet`
+variable listing](#vars-list) a run resolved. `--quiet`
 suppresses the lines saying what `sync` did, and nothing else.
 
 Three of the four resolved roots are live. `sync` and the two apply commands
@@ -173,8 +173,7 @@ Print the batfiles version to standard output and exit successfully. This
 command does not resolve the selected repository, home, config, or cache
 directories.
 
-`batfiles version` and `batfiles --version` print the same line, because the
-command renders the same string clap renders for the flag.
+`batfiles version` and `batfiles --version` print the same line.
 
 ### `sync`
 
@@ -184,8 +183,8 @@ batfiles sync [--dry-run] [--skip-action <id>]... [--skip-group <group>]...
 
 Read the leaf repository's [manifest](repoformat.md#reading-the-manifest) and
 execute the actions it selects, in declaration order, each one inspecting the
-filesystem as the previous one left it. The first failure stops the run; what
-earlier actions did stays done, and nothing is rolled back.
+filesystem as the previous one left it. See [execution failures](#execution-failures)
+for stopping behavior, clone-list exceptions, and exit status.
 
 Not every action in the manifest is one of them: a run passes over what is
 disabled or skipped — see
@@ -234,20 +233,9 @@ it: the same inspection, the same decision at the destination, the same reported
 lines. An action written with no `id` cannot be named, and is reachable only
 through its [group](repoformat.md#groups).
 
-**Naming one action waives every reason it would otherwise be passed over** —
-both [`disabled.toml`](state.md) lists, the run-only skips, which is why the
-command accepts neither `--skip-action` nor `--skip-group` and ignores
-`BATFILES_SKIP_ACTIONS` and `BATFILES_SKIP_GROUPS`, and the record's own
-[condition](repoformat.md#conditions). `disable-action` records that an action is
-not part of an ordinary `sync`; asking for it by name is the way to say otherwise
-for one invocation, without editing what the next `sync` does.
-
-The condition is waived rather than merely satisfied, so it is not evaluated at
-all: `apply-action` reaches its record even where the same condition [cannot be
-evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) and a `sync` over
-the same manifest passes the record over. Nothing is finer-grained than the one
-record the command was given, which is the same rule the two lists are waived
-under.
+Naming one action bypasses its exclusions for this invocation, without editing
+what the next `sync` does. The [selection table](#selection-by-command) specifies
+which lists and conditions each command consults.
 
 An `--id` that no action answers to is a failure: the command resolved nothing,
 so it exits 1 naming the address and the manifest, and writes nothing. That
@@ -272,17 +260,8 @@ actions naming it, so a group no action names does not exist: it exits 1 naming
 the group, exactly as `apply-action` does for an unknown ID, and there is no
 separate empty-group case to succeed quietly over.
 
-**Naming the group waives the group's own disable and nothing else.** A
-`disable-group` that would have kept these actions out of a `sync` does not keep
-them out here, while an action disabled by its own `id` is still passed over, and
-so is one named by `--skip-action` or `BATFILES_SKIP_ACTIONS`, and so is one its
-own [condition](repoformat.md#conditions) closes. The rule is that an explicit
-request waives the exclusions naming *what was asked for*; an exclusion naming
-something more specific still applies, and a condition is written on one record.
-
-`--skip-group` is not accepted and `BATFILES_SKIP_GROUPS` is ignored: the command
-has already named the group it is applying, and a group skip could only
-contradict that.
+Naming a group bypasses group exclusions; each member's own exclusions still
+apply. See the [selection table](#selection-by-command) for the complete rules.
 
 Where every action in the group is passed over, the run says so in one line and
 exits 0 — the group exists and the command did what was asked. Which record was
@@ -298,12 +277,6 @@ nothing to apply: every action in the group is disabled, skipped, or excluded by
 | `--group <group>`      | Required. The group whose actions are carried out.                    |
 | `--skip-action <id>`   | Leave one action of that group out of this run. Repeatable.           |
 | `--dry-run`            | Report what it would do — see [dry-run behavior](#dry-run-behavior).  |
-
-Both commands read the leaf manifest and `disabled.toml` before carrying
-anything out, the way `sync` does, so a document that is missing, malformed, or
-invalid fails the command with the file named rather than partway through. That
-holds for `apply-action` too, which waives both lists and reads them anyway: a
-state file that cannot be read fails any command that executes actions.
 
 Every other option they accept is [refused for now](#unimplemented-options).
 
@@ -396,19 +369,24 @@ profile = "work" (vars.toml; over batfiles.toml)
 rank    = "9" (BATFILES_VAR_*; over batfiles.toml)
 ```
 
-These are the lines `-vv` prints for a run that executes actions, produced by
-the same resolution, so a listing and a run cannot disagree about what a
-variable is worth or which layer decided it. Precedence is the reason to ask,
-which is why each line names its origin rather than being shaped for a shell to
-parse; `vars get` is what answers with a bare value.
+Action commands at `-vv` use the same listing format, indented under a
+`variables:` heading, and include any `--var` overrides supplied to that run:
 
-Three of the four layers of the [variable
-precedence](environment.md#variable-precedence) are listed: the leaf
-repository's `[vars]`, `vars.toml`, and `BATFILES_VAR_*`. The fourth is not,
-because `vars list` does not accept `--var` — a listing of an invocation that
-set one would describe the invocation rather than the machine. Host facts and
-the environment are not listed either: `facts.*` and `env.*` are namespaces a
-[condition](repoformat.md#conditions) reads, not variables anything declared.
+```console
+$ BATFILES_VAR_editor=code batfiles sync -vv --var editor=emacs
+variables:
+  editor  = "emacs" (--var; over BATFILES_VAR_*, vars.toml, batfiles.toml)
+  profile = "work" (vars.toml; over batfiles.toml)
+```
+
+Both listings explicitly print values; mutation reports name only the key to
+avoid disclosing values incidentally. `vars get` supplies a bare persisted value
+when that is what a script needs.
+
+The listing resolves the leaf repository's `[vars]`, `vars.toml`, and
+`BATFILES_VAR_*` using the [variable precedence](environment.md#variable-precedence).
+`vars list` does not accept `--var`. It does not list the `facts.*` or `env.*`
+namespaces; those are accessed through [conditions](repoformat.md#conditions).
 
 | Option           | Purpose                                                          |
 |------------------|--------------------------------------------------------------------|
@@ -421,17 +399,16 @@ selected: a normal listing reads the leaf `batfiles.toml` and fails when there
 is none, as every command that reads the manifest does.
 
 A value is quoted, so an empty value is visible as `""` rather than reading as a
-variable with no value. An empty set writes nothing to standard output — an
+variable with no value. Control characters are escaped to keep each entry on one
+line. Names are sorted and aligned; shadowed origins are listed from highest to
+lowest precedence. An empty set writes nothing to standard output — an
 empty set is not data — and reports that there is nothing to list on standard
 error, where `--quiet` suppresses it.
 
 ## Selecting What a Run Does
 
-This is what a `sync` selects over, and it is the whole of it: a `sync` asks for
-the manifest, so it honors everything either source names. The apply commands
-run the same filter over the same list, minus the exclusions naming what they
-were asked for — see [`apply-action`](#apply-action) and
-[`apply-group`](#apply-group).
+Selection preserves manifest declaration order. `sync` considers all actions;
+the apply commands consider only the named action or group.
 
 Three things say an action should be passed over, and a run honors all three:
 
@@ -476,6 +453,35 @@ invocation and a run that fails partway should not swallow them.
 name that a later branch or Git update introduces is the point of that document,
 so the same non-match that warns above is expected there.
 
+### Selection by command
+
+| Exclusion source | `sync` | `apply-action` | `apply-group` |
+| --- | --- | --- | --- |
+| Disabled action IDs | Honor | Waive | Honor |
+| Disabled groups | Honor | Waive | Waive |
+| `--skip-action` / `BATFILES_SKIP_ACTIONS` | Honor | Option rejected; environment ignored | Honor |
+| `--skip-group` / `BATFILES_SKIP_GROUPS` | Honor | Option rejected; environment ignored | Option rejected; environment ignored |
+| The action's `when` / `unless` | Evaluate if otherwise selected | Do not evaluate | Evaluate if otherwise selected |
+
+`apply-action` bypasses its record's condition even if evaluation would fail.
+Conditions on entries inside a selected clone list still apply. These overrides
+affect only the invocation; they do not edit persistent disabled state.
+
+All three commands load the leaf manifest and `disabled.toml`, even when lists
+are waived. A missing manifest fails; a missing state document is empty under
+the [state-file rules](state.md). Malformed or unreadable documents fail before
+action execution. Variable loading follows [variable precedence](environment.md#variable-precedence).
+
+### Clone-list preparation
+
+After selection and action conditions are settled, all selected, unskipped
+clone lists are read and validated before any action writes. Skipped lists are
+not opened. A missing or malformed executable list fails the run before
+installation begins, even if its action appears later in the manifest. A list
+produced by an earlier action in the same run is therefore unavailable for
+preparation. Entry conditions are evaluated during preparation, but their
+exclusions are reported when the parent action runs, in list order.
+
 ### Addresses
 
 Everywhere an action or a group is named — `--skip-action`, `--skip-group`,
@@ -510,6 +516,8 @@ $ batfiles apply-action --id core.zshrc
 error: no action in /home/you/dotfiles/batfiles.toml has the id `core.zshrc`
 ```
 
+### Exclusion reporting
+
 A skipped action is reported at `-v` **only**, as part of the heading naming the
 record. Asking for a skip and then being told about it at normal verbosity is
 noise; `-v` is where the whole account of a run lives.
@@ -536,7 +544,7 @@ without the `- skipped:` frame, the reason having already said what is not
 happening.
 
 ```text
-warning: symlink gitconfig-work (group git): when "work" cannot be evaluated, so it is not installed: `work` is not declared. Add ...
+warning: symlink gitconfig-work (group git): when "work" cannot be evaluated, so it is not installed: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
 ```
 
 When more than one reason applies, one is reported, in this order: a disable
@@ -547,6 +555,17 @@ not evaluated at all for a record something else already excludes, which is why 
 condition that [cannot be
 evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) costs only the
 runs that would otherwise have carried the record out.
+
+Clone-list exclusions are reported under the parent action, in entry order.
+An ordinary condition exclusion is `-v` detail:
+
+```text
+not cloning https://github.com/company/internal-zsh-tools.git (plugins.txt line 2): when "work" is false
+```
+
+An entry condition that cannot be evaluated instead emits a warning using the
+same `not cloning` frame, naming the condition and failure. Other entries remain
+eligible to run.
 
 ### Enable and disable actions or groups
 
@@ -678,12 +697,9 @@ the same reason: the refusal is a decision, and inspection is what decides it.
 
 ## Unimplemented Options
 
-The whole option set parses from the first release, so the shape of each command
-is visible before the command works. An option that parses but is not honored
-yet is **refused, never ignored**: the run exits 2 naming the option and the
-step that makes it live, before any root is resolved or any file is opened.
-Silently accepting it would be worse than not accepting it at all, because
-nothing would have happened and it would look as though something had.
+An option that parses but is not honored yet is **refused, never ignored**:
+the run exits 2 naming the option and the step that makes it live, before any
+root is resolved or any file is opened.
 
 The refusal comes ahead of a command's own not-implemented message, so
 `batfiles clone <url> --interactive` reports `--interactive` rather than
@@ -704,6 +720,37 @@ already covers it. Neither is an option
 that is live elsewhere and is waiting only on the command: `clone
 --skip-group gui` reports `clone`, because `--skip-group` is not the part of
 that invocation batfiles cannot do yet.
+
+## Execution failures
+
+An action failure stops `sync` or an apply command with status 1. Earlier
+changes remain; nothing is rolled back. Directory-wide actions likewise stop
+at the first failed child, preserving work already completed for earlier children.
+
+### Clone-list entry failures
+
+`git-clone-list` processes entries independently. It warns and continues after:
+
+- an occupied destination that cannot be used, including a directory that is
+  not a clone, an indirect checkout, or an incomplete clone;
+- a Git subprocess that ran but failed, including clone, fetch, or update;
+- a declared ref that cannot be resolved.
+
+The warning names the repository source, list file, line number, and entry ID
+when present. Warnings remain visible under `--quiet`. Failure to launch Git,
+filesystem read/write failures, and failure to create the destination container
+stop the run. These are conservative error categories, not a claim that every
+remaining entry would fail in the same way.
+
+Recoverable entry failures do not make the command fail: status 0 can therefore
+include entries that did not clone or update, even when every entry failed.
+Consult the warnings and the [Git recovery policy](safety.md#git-updates)
+before retrying. Standalone `git-clone` action failures propagate normally.
+
+Condition evaluation failures also warn and skip the affected action or entry
+without making the command fail. The [condition rules](repoformat.md#when-a-condition-cannot-be-evaluated)
+define this fail-closed behavior; [exclusion reporting](#exclusion-reporting)
+defines the action warning format.
 
 ## Exit Statuses
 
@@ -732,7 +779,6 @@ a destination holding something batfiles will not replace, or a write the
 operating system refused. In each case the invocation was well-formed and
 something outside it did not hold up.
 
-All but the last of those happen before anything is written; the last may not.
-`sync` stops at the first action that fails, so an earlier action's symlink is
-still there. That is what status 1 means and status 2 does not: the filesystem
-may have been touched, and the fix is to look rather than to retype the command.
+Failures before action execution leave installation destinations untouched;
+action failures may leave earlier work completed. See [execution failures](#execution-failures)
+for stopping behavior and warnings that permit status 0.

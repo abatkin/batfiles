@@ -60,8 +60,6 @@ impl Action {
                 check_source(&action.source_dir, number)?;
                 check_dest(&action.dest_dir, number)
             }
-            // The one action type with nothing to install, so the only one whose
-            // paths are all destination and no source.
             Self::CreateDir(action) => check_dest(&action.dest, number),
             Self::Copy(action) => {
                 check_source(&action.source, number)?;

@@ -107,8 +107,7 @@ work = "true"
   a name.
 - A key that breaks that rule fails the whole document rather than just its own
   entry, so a hand-written `has-dash` or a key named `vars` — one of the five
-  reserved identifiers — makes the file fail to load. An entry that can never
-  become live is not junk worth preserving.
+  reserved identifiers — makes the file fail to load.
 - Every value is a string. A bare `work = true` is invalid rather than coerced,
   the same way it is under a manifest's `[vars]`.
 - The document may be empty. Removing the final key leaves a valid empty
@@ -165,9 +164,7 @@ Consequences of this policy:
 
 Reading follows the rules the leaf manifest is read by, specified in
 [reading the manifest](repoformat.md#reading-the-manifest), with one difference:
-a **missing** state file is an empty document rather than an error. A repository
-is a repository because it has a manifest, while a machine that has disabled
-nothing has nothing to record.
+a **missing** state file is an empty document rather than an error.
 
 A dry run does not change any of this. `--dry-run` promises that the plan is not
 carried out, not that the process writes nothing anywhere — batfiles' own

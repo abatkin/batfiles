@@ -99,11 +99,7 @@ impl<'a> RunContext<'a> {
 /// The caller must reject empty values and `~other` before calling.
 fn destination(home: &Path, dest: &str) -> PathBuf {
     let path = match dest.strip_prefix('~') {
-        // `~` leaves nothing and `~/…` leaves a separator, so trimming covers
-        // both without a second arm.
         Some(rest) => home.join(rest.trim_start_matches('/')),
-        // `join` returns an absolute `dest` unchanged, which is the rule for
-        // one, so the relative and absolute cases are the same line.
         None => home.join(dest),
     };
     paths::normalize(&path)

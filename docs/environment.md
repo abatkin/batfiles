@@ -123,22 +123,9 @@ Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables)
 a malformed or unreadable one now fails these commands as a malformed manifest
 does.
 
-The merged set is what every [condition](repoformat.md#conditions) in the run is
-decided against, and the only thing that reads a variable. It also answers
-questions about itself: `batfiles <command> -vv` prints the effective set, each
-variable with the value in force, the layer that supplied it, and the layers that
-value overrode.
-
-```console
-$ BATFILES_VAR_editor=code batfiles sync -vv --var editor=emacs
-variables:
-  editor  = "emacs" (--var; over BATFILES_VAR_*, vars.toml, batfiles.toml)
-  profile = "work" (vars.toml; over batfiles.toml)
-```
-
-Unlike the machine-local variable commands, whose outcome lines deliberately
-name a key and never its value, this listing prints values: it exists to show
-which layer won, and `-vv` is a request for exactly that.
+The merged set supplies [condition](repoformat.md#conditions) values. Use
+`vars list` or an action command's `-vv` output to inspect values and origins;
+the command reference owns the [listing format](cmdline.md#vars-list).
 
 Actions spliced from an included remote will add layers of their own, specified
 in [`future/environment.md`](future/environment.md#runtime-variable-precedence).
@@ -236,16 +223,9 @@ the leaf repository resolves those two and also selects the destination home and
 the leaf repository: `sync`, `apply-action`, `apply-group`, and a normal `vars
 list`. `version` and `init` resolve no roots at all.
 
-The two sets are separate resolutions rather than one with parts left unread, so
-a command in the first set has no destination home and no leaf repository at all
-— not an unused default standing in for one.
-
-A command that is [not implemented yet](cmdline.md#what-runs-today) has no work
-to need roots for, and resolves the first set: `clone` and `vars refresh` print
-`config:` and `cache:` at `-v` and then report that they do not exist. That is
-what they resolve today rather than what they will resolve — `clone` writes a
-repository into the selected home and synchronizes it — so do not read this
-paragraph as a contract about either command's finished behavior.
+The [unimplemented commands](cmdline.md#what-runs-today) `clone` and
+`vars refresh` currently resolve only config and cache roots, print them at
+`-v`, and then report that the command is unimplemented.
 
 The destination home is selected in this order:
 
@@ -359,10 +339,8 @@ unlabeled and uncolored, so there is no second stream whose state could
 disagree. The help, `--version`, and usage-error output that clap renders is
 handed the mode untouched and applies clap's own terminal detection.
 
-Color is resolved before the arguments are parsed, because clap may need to
-render a usage error for arguments it could not parse, and that output should
-honor the requested color too. This is why `--color` is recovered from the raw
-arguments rather than read off the parsed command.
+The selected color mode also applies to help, version output, and argument
+parsing errors.
 
 ## Variables passed on to `git`
 

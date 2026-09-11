@@ -116,9 +116,8 @@ fn a_variable_name_follows_its_own_rule_rather_than_the_id_rule() {
 
 #[test]
 fn a_name_the_expression_language_owns_is_rejected() {
-    // Reserving these is what keeps 5.5's namespace lookup unambiguous, and the
-    // refusal has to land now: a name accepted here and refused there would
-    // break a manifest that already loaded.
+    // Reserved names keep namespace lookup unambiguous. Reject them while
+    // loading the manifest, rather than accepting names evaluation cannot use.
     for reserved in ["facts", "env", "vars", "true", "false"] {
         let stderr = rejected(&format!("[vars]\n{reserved} = \"x\"\n"));
         assert!(
@@ -177,7 +176,7 @@ const CANDIDATES: &str = "[[default-disabled.actions]]\n\
 
 #[test]
 fn a_default_disabled_section_is_accepted_and_changes_nothing() {
-    // What 3.5 buys: the closed document takes the section. Nothing adopts the
+    // The closed document accepts the section. Nothing adopts the
     // candidates until 8.3, so the run installs what it would have installed
     // and leaves the machine-local lists alone — including by not creating the
     // `disabled.toml` that adoption would have to write.

@@ -17,7 +17,8 @@ pub(crate) struct Entry {
     pub url: String,
     /// The one directory component the clone lands in.
     pub dest_name: String,
-    /// Makes the entry addressable as `<action>.<entry>`.
+    /// Identifies the entry in diagnostics. Individual entry selection is not
+    /// implemented; see the clone-list address enhancement in the roadmap.
     pub id: Option<ItemId>,
     /// The branch, tag, or commit the entry follows.
     pub git_ref: Option<String>,

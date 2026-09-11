@@ -1,5 +1,10 @@
 # Batfiles Product Goals
 
+This document states intended scope, not status. What is built today is in the
+project README's [What works today](../README.md#what-works-today); anything
+marked *intended* here is specified in [`docs/future/`](future/) and binds
+nothing.
+
 ## Purpose
 
 Batfiles is a dotfiles manager that turns one user-owned repository, plus any
@@ -28,7 +33,7 @@ tool-owned `remotes/` tree. It never installs remote content by itself.
 Composition is explicit, scoped, and limited to one level: included remotes do
 not (on their own) recursively pull in their own remotes or included action sets.
 
-The stable bootstrap experience has three pieces:
+The stable bootstrap experience, *intended*, has three pieces:
 
 1. A small `install.sh` checked into the leaf repository uses a `batfiles`
    binary found on `PATH`, or downloads one to `~/.local/bin`, and invokes
@@ -53,7 +58,8 @@ The stable bootstrap experience has three pieces:
 - Support Git, file, and archive remotes as named sources.
 - Let a leaf action reference a particular path from a particular remote.
 - Let a leaf repository splice a Git remote's actions into its own ordered
-  action list, with action/group selection and per-inclusion variables.
+  action list, with action/group selection and per-inclusion variables
+  (*intended*: [`include-remote`](future/repoformat.md#include-remote)).
 - Resolve every repository-backed source path against exactly one repository;
   never implicitly merge or search all sources.
 
@@ -62,39 +68,31 @@ The stable bootstrap experience has three pieces:
 The declarative action model covers installing repository files, seeding copies,
 creating directories, cloning Git repositories singly and from manifests,
 fetching files and archives, and including a reusable remote's actions. The
-[future repository format](future/repoformat.md#actions) enumerates the intended
-set.
-
-**Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`.**
-
-That line is the answer to "what can `sync` actually do", and it gains an action
-each time one is built. `tests/hygiene.rs` checks it against the `Action` enum,
-here and in the project `README.md`, so it cannot fall behind the build.
+[action schema](repoformat.md#actions) specifies the types a manifest may
+declare; the project README answers "what can `sync` actually do" and is checked
+against the `Action` enum by `tests/hygiene.rs`.
 
 Normal synchronization is convergence-oriented but intentionally asymmetric:
-symlinks can be repaired, while copied files, fetched content, created
-directories, and clones are preserved after creation. Explicit action or group
-application uses the same behavior as synchronization.
+symlinks are repaired and Git clones are advanced under the conservative
+[update policy](safety.md#git-updates), while copied files, fetched content, and
+created directories are left alone once they exist. Refreshing those is
+*intended*. Explicit action or group application uses the same behavior as
+synchronization.
 
 ### Produce one predictable plan
 
-- Preserve declaration order, including remote actions expanded in place.
-- Execute actions in that order, with each action observing changes made by
-  earlier actions.
-- Do not perform cross-action destination conflict detection; repository
-  authors are responsible for intentional or accidental overlaps.
-- Filter disabled, skipped, or condition-false items before adding them to the
-  structural plan.
-- Build the complete knowable structural plan before executing actions.
-  Dynamic-variable resolution is part of planning and may execute commands or
-  update its cache.
+- Preserve declaration order, including remote actions expanded in place, and
+  execute actions in that order.
+- Build the complete knowable structural plan before executing actions, leaving
+  out what is disabled, skipped, or gated off by a false condition. The command
+  reference defines [what a run selects](cmdline.md#selecting-what-a-run-does).
 - Let each action inspect the filesystem as it begins, using the state left by
   earlier successful actions, and act on what it finds there — rather than
   freezing a decision for every action from the state at the start of the run.
-- Provide dry-run output that clearly says what would be created, updated,
-  skipped, backed up, fetched, or cloned — while doing none of it — and whether
-  the plan is complete or partial. The command-line specification defines the
-  shared [dry-run behavior](cmdline.md#dry-run-behavior).
+- Do not perform cross-action destination conflict detection; repository
+  authors are responsible for intentional or accidental overlaps.
+- Say what a run would do without doing it, and whether the plan it could build
+  is complete or partial: [dry-run behavior](cmdline.md#dry-run-behavior).
 
 ### Adapt declaratively to each machine
 
@@ -103,24 +101,25 @@ application uses the same behavior as synchronization.
 - Provide built-in machine facts and access to environment variables.
 - Layer repository defaults, per-inclusion overrides, persisted machine-local
   choices, environment overrides, and one-shot command-line values with clear
-  precedence.
-- Use the repository format's shared [string-valued variable
-  model](future/repoformat.md#string-valued-variables) consistently.
-- Support cached command-backed variables for facts that must be discovered
+  [precedence](environment.md#variable-precedence).
+- Keep every variable a string, whichever layer produced it; a condition is the
+  one place a string becomes a decision ([variables](repoformat.md#variables)).
+- *Intended*: cached command-backed variables for facts that must be discovered
   locally, with explicit refresh controls and a way for the leaf repository to
   forbid executing a remote's dynamic variable commands.
-- Allow actions and groups to be persistently enabled or disabled, skipped for
-  one run, or default-disabled during first-machine bootstrap.
+- Allow actions and groups to be persistently enabled or disabled or skipped for
+  one run, and (*intended*) default-disabled during first-machine bootstrap.
 - Express machine variation through these declarative controls rather than
   arbitrary per-repository install hooks.
 
 ### Define safety policy separately
 
-The [safety model](future/safety.md) separately defines the guiding rules for
-destination resolution, symlink traversal, archive handling, replacement and
-backup behavior, Git updates, and failure recovery. Keeping those rules in one
-place prevents individual action specifications from developing inconsistent
-safety guarantees.
+The [safety model](safety.md) separately defines destination resolution, symlink
+traversal, archive handling, replacement behavior, Git updates, and failure
+recovery. Keeping those rules in one place prevents individual action
+specifications from developing inconsistent safety guarantees. Backups, refresh,
+and the trust rules remote content will need are
+[*intended*](future/safety.md).
 
 ### Stay automation-friendly
 
@@ -130,7 +129,7 @@ safety guarantees.
   to [standard error](cmdline.md#output-streams), and keep requested data and
   dry-run output suitable for scripts.
 - Keep input precedence explicit and predictable; the environment specification
-  defines the authoritative [precedence rules](future/environment.md#general-precedence).
+  defines the authoritative [precedence rules](environment.md).
 - Select the leaf repository, destination home, config directory, and cache
   directory explicitly through options or environment variables, with
   conventional defaults.
@@ -142,9 +141,10 @@ cache data:
 
 - machine-local variable overrides and disabled action/group lists are user
   configuration;
-- dynamic variable results are disposable cache data; and
+- dynamic variable results are disposable cache data (*intended*); and
 - installed home-directory content has no persistent ownership record.
 
 State-file updates should be atomic whole-document replacements. Configuration
 and cache locations should follow XDG conventions while remaining overridable
-for testing and unusual installations.
+for testing and unusual installations. The [state specification](state.md) owns
+the documents and their lifecycle.

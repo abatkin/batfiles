@@ -62,14 +62,11 @@ impl Verb {
     }
 }
 
-/// A value batfiles is repeating back, quoted and made safe to print.
+/// Quote a string and escape control characters for single-line output.
 ///
-/// Everything batfiles has to show that it did not choose the wording of goes
-/// through this: a variable's value, and the environment variable names it
-/// warns about. Both come from outside — a repository, a hand-edited state
-/// file, the ambient environment — and a raw one can end a line and start a
-/// convincing `error:` of its own, or carry the escape sequences that move a
-/// terminal's cursor around.
+/// Used for displayed variable values, rejected environment-variable names,
+/// and condition source text. These strings can contain newlines that forge
+/// diagnostic lines or escape sequences that move the terminal cursor.
 ///
 /// Control characters, backslashes, and the surrounding quote are escaped the
 /// way Rust's own debug output escapes them, so the result is one line. The

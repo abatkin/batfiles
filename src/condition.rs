@@ -1,16 +1,11 @@
-//! What a `when` or `unless` condition means, and what counts as true.
+//! Parse and evaluate `when`/`unless` conditions with Batfiles' truthiness rules.
 //!
-//! A [`Condition`] is parsed when the document declaring it is read, so nothing
-//! here ever sees malformed text. What this module owns is the binding — a bare
-//! identifier is a user variable, `vars` is the same variables read totally, and
-//! `facts` and `env` are the two reserved namespaces — the truthiness table
-//! every boolean context is read through, and the [`Gate`] a record's condition
-//! makes of it. All three are specified in
-//! [`docs/repoformat.md`](../docs/repoformat.md#conditions).
+//! Parse conditions when their document is read. Bare identifiers require a
+//! declared variable; `vars`, `facts`, and `env` return empty strings for missing
+//! keys. See [`docs/repoformat.md`](../docs/repoformat.md#conditions).
 //!
-//! Evaluation is pure: no filesystem, no clock, no subprocess. The one part of
-//! it that reads the host is [`HostNamespaces::capture`], which a run performs
-//! once.
+//! Evaluation is pure: no filesystem, clock, or subprocess access. Capture host
+//! inputs once per run with [`HostNamespaces::capture`].
 
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -78,7 +73,7 @@ impl TryFrom<String> for Condition {
 }
 
 /// The source text. A derived implementation would print the whole tree, and
-/// every record that will carry an `Option<Condition>` derives [`Debug`].
+/// records carrying an `Option<Condition>` derive [`Debug`].
 impl fmt::Debug for Condition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Condition").field(&self.source).finish()
@@ -281,7 +276,7 @@ impl std::error::Error for ConditionError {}
 
 /// The two namespaces sourced from outside the repository, prepared for
 /// evaluation: the host facts and the host environment
-/// [`docs/future/environment.md`](../docs/future/environment.md#host-facts-in-conditions)
+/// [`docs/environment.md`](../docs/environment.md#host-facts-in-conditions)
 /// specifies.
 ///
 /// These are the same for every condition in one invocation, which is what
@@ -330,7 +325,8 @@ impl HostNamespaces {
 /// would report `silver.example.net`. The qualified Windows name needs a second
 /// API and is
 /// [an enhancement](../rewrite/steps.md#enhancements) rather than a flag on this
-/// call; `docs/future/environment.md` documents the difference for users.
+/// call; [the environment reference](../docs/environment.md#host-facts-in-conditions)
+/// documents the difference for users.
 fn facts() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("os".to_owned(), std::env::consts::OS.to_owned()),
@@ -468,7 +464,7 @@ fn string(text: String) -> Value {
 /// | a number | `false` at zero, `true` otherwise |
 /// | `"true"`, `"1"`, `"yes"`, `"on"` | `true` |
 /// | `"false"`, `"0"`, `"no"`, `"off"`, `""` | `false` |
-/// | anything else | an error naming the value |
+/// | anything else | an error that does not disclose the value |
 ///
 /// Supplied as a [`Coercions`] policy so that it applies to a condition's result
 /// and to every `&&`, `||`, and `!` operand alike. Comparison and `+` are

@@ -1,20 +1,9 @@
-//! `vars.toml`: the variable values set on this machine, and the three commands
-//! that edit and read it — `vars set`, `vars get`, and `vars unset`.
+//! Read and edit machine-local `vars.toml` with `vars set`, `get`, and `unset`.
+//! These commands do not read the repository or apply environment/CLI overrides.
 //!
-//! Three commands rather than one parameterized entry point, because they do not
-//! share a shape: one writes, one reads, one deletes.
-//!
-//! They touch `vars.toml` and nothing else. They do not read the leaf
-//! repository, apply precedence, or consult the environment, so `vars get`
-//! answers with the persisted string or with nothing at all.
-//!
-//! A mutation's outcome line **names the key and never the value**, which is a
-//! deliberate divergence from [`crate::disabled`], whose lines quote the address
-//! because the address *is* the state. A variable's value is user data — it may
-//! be a token, or a path that identifies a machine — and an informational line
-//! puts it in terminal scrollback and in the logs of whatever script called
-//! batfiles. `vars get` is the way to read a value back, and it writes to
-//! standard output where a caller asked for it.
+//! Mutation reports name the key, never the value: values may contain tokens or
+//! identifying paths that must not leak into terminal scrollback or script logs.
+//! `vars get` explicitly requests the persisted value on standard output.
 
 use std::collections::BTreeMap;
 use std::path::Path;

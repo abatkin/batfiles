@@ -1,32 +1,16 @@
-//! `BATFILES_VAR_*`: the user variables one invocation's environment sets.
+//! Read validated `BATFILES_VAR_*` overrides from the captured environment.
+//! [`crate::var_set`] applies their precedence relative to other layers.
 //!
-//! This is the environment's layer of the variable set, as
-//! [`crate::machine_vars`] is `vars.toml`'s. It reads the captured environment
-//! and produces validated names; where its values sit relative to the other
-//! layers is [`crate::var_set`]'s answer, not this module's.
+//! Only the prefix creates a user variable: `BATFILES_VAR_FOO` supplies `FOO`
+//! and remains readable as `env.BATFILES_VAR_FOO`. An unprefixed `FOO` is only
+//! available through `env.FOO`.
 //!
-//! Only the `BATFILES_VAR_` prefix makes a user variable. The raw environment
-//! is a separate channel that condition evaluation will expose read-only as
-//! `env.*`, so `BATFILES_VAR_FOO` defines the user variable `FOO` *and* remains
-//! readable as `env.BATFILES_VAR_FOO`, while a bare `FOO` in the environment is
-//! only ever the latter.
+//! Invalid ambient names warn and are dropped; invalid explicit `--var` names
+//! fail the invocation in [`crate::cli::options`].
 //!
-//! An unusable name is **warned about and dropped**, where an unusable
-//! [`--var`](crate::cli::options) key fails the command outright. The
-//! difference is deliberate: the environment is ambient and may predate any
-//! interest in batfiles, so one bad name in it should not stop a run, while a
-//! `--var` was typed for this invocation and is worth failing on.
-//!
-//! A warning names the environment variable and not its value. The value is
-//! user data — it may be a token — and the name is the part the user acts on.
-//! That is the default rather than a prohibition: a command whose whole job is
-//! to show variables, such as `vars list`, may print values because that is what
-//! it was asked for.
-//!
-//! The name it does print is a rejected one, so it is arbitrary text off the
-//! environment rather than a checked [`VarName`]: it goes through
-//! [`quoted_value`], which is what keeps a suffix containing a newline from
-//! writing a second line that reads like batfiles'.
+//! Warnings omit values, which may be tokens; explicitly requested listings may
+//! show them. Rejected names are arbitrary text, so escape them with
+//! [`quoted_value`] to prevent embedded newlines from forging diagnostic lines.
 
 use std::collections::BTreeMap;
 

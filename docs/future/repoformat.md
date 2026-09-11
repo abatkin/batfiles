@@ -327,7 +327,12 @@ bootstrap policy belongs to the leaf repository.
 ## Actions
 
 Current action types and their shared fields, `when` and `unless` included, are
-specified in [`docs/repoformat.md`](../repoformat.md#actions).
+specified in [`docs/repoformat.md`](../repoformat.md#actions). `create-dir` and
+[`git-clone`](../repoformat.md#git-clone) — the latter including the
+conservative update policy a later `sync` applies to the clone it finds and the
+[`ref`](../repoformat.md#ref-following-one-branch-tag-or-commit) that says which
+branch, tag, or commit it should be on — are built with nothing outstanding. The
+sections below are the actions with something left to build.
 
 ### `symlink-dir`
 
@@ -375,10 +380,6 @@ exclude = ["private/*"]
 
 These filters are unbuilt. Selection is recursive, so patterns may contain `/`.
 
-### `create-dir`
-
-Built and specified in [`docs/repoformat.md`](../repoformat.md#create-dir).
-
 ### `git-clone-list`
 
 Built and specified in
@@ -400,14 +401,6 @@ selection the machine states for itself rather than the repository.
 [Leaf clone lists](../repoformat.md#git-clone-list) are prepared before action
 writes. For remote inclusion, materialize the source first, then prepare the
 list before executing included actions. Step 7.2 owns this extension.
-
-### `git-clone`
-
-Built and specified in
-[`docs/repoformat.md`](../repoformat.md#git-clone), including the conservative
-update policy a later `sync` applies to the clone it finds and the
-[`ref`](../repoformat.md#ref-following-one-branch-tag-or-commit) that says which
-branch, tag, or commit it should be on.
 
 ### `fetch-archive` entry filters
 

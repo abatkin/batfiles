@@ -21,9 +21,10 @@ source path using the selected repository spelling. See
 Local installation actions refuse destinations that resolve inside their source
 directory. Missing destination components are resolved through their nearest
 existing ancestor. Directory-wide actions check before creating their container.
-A single symlink checks before creating or replacing its destination, but leaves
-an already-correct link unchanged. A seed checks containment only when its
-individual destination is vacant; a directory-wide copy also checks its container
+A single symlink checks before creating or replacing its destination, including
+before removing a replaceable link, but leaves an already-correct link unchanged.
+A seed checks containment only when its individual destination is vacant;
+a directory-wide copy also checks its container
 before enumerating children.
 
 ## Replacing what is already there
@@ -171,8 +172,13 @@ when the subsequent fast-forward is skipped; local branches and commits remain.
 
 The [ref field](repoformat.md#ref-following-one-branch-tag-or-commit) controls
 branch versus detached checkout. Submodules are not initialized or updated.
-[Clone lists](repoformat.md#one-entry-that-fails-costs-that-entry) may continue
-past an entry-specific failure; standalone clone actions propagate it.
+The command reference defines [clone-list failure handling](cmdline.md#clone-list-entry-failures).
+
+A clone whose declared `ref` cannot be resolved remains at its destination in
+the checkout state reached before the failure. Later runs retry the ref; fixing
+it lets the clone follow the intended target. Removing the list entry or action
+does not remove that directory. This applies to standalone clones and clone-list
+entries alike.
 
 ### Clone validation
 

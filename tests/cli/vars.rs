@@ -2,9 +2,8 @@
 //! four layers that can declare a variable.
 //!
 //! What the command tests pin down is the document, the account of the edit,
-//! and which stream a value comes back on. What the merge tests pin down is
-//! which layer wins, since no condition reads a value yet: `-vv` is where a run
-//! says what it resolved.
+//! and which stream a value comes back on. The merge tests use `-vv` to check
+//! which layer wins; condition evaluation is covered in `conditions.rs`.
 
 use crate::support::*;
 use std::fs;

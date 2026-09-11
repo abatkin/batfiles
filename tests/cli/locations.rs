@@ -212,8 +212,7 @@ fn a_command_that_does_not_use_the_repository_resolves_only_its_own_state() {
 #[test]
 fn config_and_cache_do_not_follow_the_selected_home() {
     // Batfiles' own state belongs to the invoking user, not to whichever home
-    // is being installed into, so `--home-dir` must not move it. None of the
-    // three paths named inline here is opened by any command yet.
+    // is being installed into, so `--home-dir` must not move it.
     let tree = Tree::new();
     let assertion = tree
         .batfiles()

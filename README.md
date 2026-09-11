@@ -10,9 +10,8 @@ nothing in the repository you cannot read with `cat`.
 
 > **Status: early, but it installs a real repository.**
 >
-> Batfiles is being rebuilt from scratch. Four of the plan's eleven slices are
-> done, and the author's own dotfiles are declared entirely in a
-> `batfiles.toml` — links, seeded copies, a downloaded file, and the plugin
+> Batfiles is being rebuilt from scratch. The author's own dotfiles are declared
+> entirely in a `batfiles.toml` — links, seeded copies, a downloaded file, and the plugin
 > repositories a shell script used to clone. `sync` installs a repository,
 > `--dry-run` says what it would install, what you have disabled or asked to
 > skip is left out, and `apply-action` and `apply-group` install one piece of it
@@ -24,9 +23,9 @@ nothing in the repository you cannot read with `cat`.
 > What is not built is the composition: git remotes, and including one
 > repository's actions into another. `init` and `clone` are
 > not built either, so a fresh machine still clones its repository by hand.
-> Every command but the ones named above parses its arguments and then exits
-> saying it is not implemented yet. The plan, and the reason there is a rewrite,
-> are in [`rewrite/README.md`](rewrite/README.md).
+> `vars refresh` is also unimplemented. See the
+> [command reference](docs/cmdline.md#what-runs-today) for supported commands
+> and the [rewrite roadmap](rewrite/steps.md) for completed and remaining work.
 
 > [!NOTE]
 > There is a sample repository to read and install:
@@ -88,17 +87,19 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
 - **Or a whole list of them.** `git-clone-list` names a plain text file in the
   repository — one repository per line, `key=value` metadata beside it — and one
   directory to clone them all under, which is how a vim or zsh plugin directory
-  is usually kept. The list is read and checked as the repository is loaded, so a
-  malformed line fails the run before the first action has touched anything. Each
+  is usually kept. Selected, unskipped lists are read and checked during execution
+  preparation, before any action writes; skipped lists are not opened. A malformed
+  line in a list being prepared fails the run before installation begins. Each
   entry is then cloned on `git-clone`'s terms, in list order, and **one entry that
   cannot be cloned costs that entry rather than the run**: it is warned about by
   name and line, and the repositories after it are still installed. Worth knowing
   because of that: a `sync` that exits 0 may still have entries that did not
   clone, and the warnings are what say so.
-- **Nothing else is replaced.** A destination holding a regular file, a
-  directory, or a symlink pointing outside the repository is refused by name.
-  Until there is a backup policy to give it back with, batfiles does not
-  destroy what it did not create.
+- **Existing content is handled according to the action.** Seeds keep occupied
+  destinations, directory actions preserve existing containers, and Git actions
+  validate and conservatively update existing clones. Symlink and Git actions
+  refuse conflicting content under the
+  [destination policy](docs/safety.md#replacing-what-is-already-there).
 - **The manifest is read strictly.** An unknown key, an unknown action type, a
   section from a part of the format that does not parse yet, or a `source` or
   `dest` that cannot mean what it says is an error — never a setting that looks

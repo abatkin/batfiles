@@ -43,9 +43,9 @@ pub(crate) enum VarNameError {
 /// Identifiers the expression language and its batfiles bindings own, so none of
 /// them can name a user variable.
 ///
-/// Reserving all five is what will make condition evaluation's namespace
-/// dispatch unambiguous by construction: no user variable can shadow `facts`,
-/// `env`, or `vars`, so the resolver arriving at 5.5 needs no precedence rule.
+/// No user variable can shadow the `facts`, `env`, or `vars` namespaces, or
+/// the `true` and `false` literals, so resolution needs no precedence rule
+/// between user variables and reserved identifiers.
 const RESERVED: [&str; 5] = ["facts", "env", "vars", "true", "false"];
 
 /// The rule itself.
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn the_expression_keywords_are_reserved() {
         // Listed literally rather than read back from `RESERVED`, so trimming
-        // the constant fails here — which is what keeps 5.5's namespace
+        // the constant fails here — which is what keeps condition namespace
         // dispatch unshadowable.
         for reserved in ["facts", "env", "vars", "true", "false"] {
             assert_eq!(

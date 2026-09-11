@@ -1,27 +1,12 @@
-//! The variables in force for one run: the four layers that can declare one,
-//! stacked in precedence order.
+//! Resolve variable values and origins from manifest, machine, environment,
+//! and command-line layers, in increasing precedence order.
 //!
-//! The layers are the leaf repository's `[vars]`, the machine-local
-//! [`vars.toml`](crate::machine_vars), the `BATFILES_VAR_*`
-//! [environment](crate::env_vars), and this command line's `--var`, each
-//! overriding the ones before it. The rule is specified in
-//! [`docs/environment.md`](../docs/environment.md#variable-precedence).
+//! All layers form one scope. Keep shadowed declarations for provenance;
+//! lookup takes the highest-precedence declaration, including an empty value.
+//! See [`docs/environment.md`](../docs/environment.md#variable-precedence).
 //!
-//! The four layers are one flat scope — a name resolves the same way whatever
-//! declared it, and there is no second namespace to look in — but the scope is
-//! not *stored* flattened. Each layer keeps its own map, and reading a variable
-//! means walking the layers from the top and taking the first that declares the
-//! name, which is the precedence rule itself rather than a reconstruction of
-//! it. Two properties come free from that shape: a layer cannot declare a name
-//! twice, because a map cannot hold a key twice, and the layers a value
-//! overrode are still there to be reported, because nothing collapsed them.
-//!
-//! A [`Condition`](crate::condition::Condition) is the only thing that consults
-//! a value. The set is worked out on every run whether or not any record carries
-//! one, and shown at `-vv`, so precedence can be read off a real invocation.
-//! `vars list` asks for the same set on its own, and is here rather than with
-//! the [machine-local commands](crate::machine_vars) because the set, not the
-//! document, is what it answers with.
+//! Resolve the set on every action run, even without conditions. `-vv` and
+//! `vars list` report the same effective values and origins.
 
 use std::collections::{BTreeMap, BTreeSet};
 

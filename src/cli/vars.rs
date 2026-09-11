@@ -1,8 +1,5 @@
 //! The `vars` command family. These read or edit machine-local variable state
 //! and the dynamic-variable cache; only `vars list` consults the repository.
-//!
-//! The variants carry their arguments inline rather than in named structs
-//! because none of them takes more than two.
 
 use clap::Subcommand;
 
