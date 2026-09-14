@@ -538,7 +538,7 @@ fn unpack(tarball: &Tarball<'_>, records: &[Record], into: &Path) -> Result<(), 
             }
             Kind::File => {
                 create_parents(&built_at)?;
-                let mut file = create_closed(&built_at)?;
+                let mut file = create_private_file(&built_at)?;
                 io::copy(entry, &mut file).map_err(|source| Error::Write {
                     path: built_at.clone(),
                     source,
@@ -664,11 +664,11 @@ fn create_parents(at: &Path) -> Result<(), Error> {
     }
 }
 
-/// Create a file of the tree, closed, failing rather than truncating if the path
+/// Create a private file of the tree, failing rather than truncating if the path
 /// is taken: inside a staging node this run just made, a name already taken is an
 /// archive naming one entry twice.
 #[cfg(unix)]
-fn create_closed(at: &Path) -> Result<fs::File, Error> {
+fn create_private_file(at: &Path) -> Result<fs::File, Error> {
     use std::os::unix::fs::OpenOptionsExt as _;
 
     fs::OpenOptions::new()
@@ -686,7 +686,7 @@ fn create_closed(at: &Path) -> Result<fs::File, Error> {
 /// exclusive creation: the permissions batfiles carries across are the unix
 /// ones, and there is nothing here to narrow.
 #[cfg(not(unix))]
-fn create_closed(at: &Path) -> Result<fs::File, Error> {
+fn create_private_file(at: &Path) -> Result<fs::File, Error> {
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)

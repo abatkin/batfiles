@@ -1,10 +1,5 @@
-//! Resolve paths and inspect destination occupancy without writing to the filesystem.
-//!
-//! The path rules batfiles enforces are several, not one: a source is validated
-//! lexically against the repository, a destination is constructed from the
-//! selected home, an existing link is resolved to judge what it holds, and an
-//! archive entry is contained under where it unpacks. They take different
-//! inputs and promise different things, so they stay apart.
+//! Resolve paths and inspect destination occupancy without filesystem writes.
+//! Keep lexical source containment separate from filesystem target resolution.
 
 use std::ffi::OsString;
 use std::fmt;

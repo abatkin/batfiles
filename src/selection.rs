@@ -238,7 +238,7 @@ impl<'a> Selection<'a> {
         // one record and nothing is finer-grained than that, so naming it
         // reaches it whatever this machine makes of its condition.
         let gate = action.gate().filter(|_| self.target.honors_actions())?;
-        gate.verdict(bindings, Some(NOT_INSTALLED)).exclusion()
+        gate.exclusion(bindings, Some(NOT_INSTALLED))
     }
 
     /// The first exclusion either list names, or `None` where neither does.

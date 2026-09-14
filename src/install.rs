@@ -19,10 +19,7 @@ pub(crate) enum SeedKind {
     Directory,
 }
 
-/// What a missing-only installation reports, whichever kind it installs.
-///
-/// The content itself is not here: it arrives as the builder each entry point
-/// takes, typed to what that kind of staging node offers.
+/// A seed's reporting fields and optional source-containment constraint.
 pub(crate) struct Seed<'a> {
     /// How the report names what happened: `Verb::Copy` for a copy,
     /// `Verb::Fetch` for a download.
@@ -40,7 +37,7 @@ pub(crate) struct Seed<'a> {
 /// Seed one file: `fill` is handed the staging file, opened for writing and
 /// reachable by nobody else, and the path it is at for diagnostics.
 ///
-/// Called only in perform mode. An error prevents publication and triggers
+/// `fill` runs only in perform mode. An error prevents publication and triggers
 /// best-effort cleanup.
 pub(crate) fn seed_file(
     what: Seed<'_>,
@@ -55,7 +52,7 @@ pub(crate) fn seed_file(
         dest,
         mode,
         reporter,
-        create_closed_file,
+        create_private_file,
         fill,
     )
 }
@@ -63,7 +60,7 @@ pub(crate) fn seed_file(
 /// Seed one directory: `fill` is handed the staging directory's path, created
 /// private to this run, and fills it with the content that belongs there.
 ///
-/// Called only in perform mode. An error prevents publication and triggers
+/// `fill` runs only in perform mode. An error prevents publication and triggers
 /// best-effort cleanup.
 pub(crate) fn seed_directory(
     what: Seed<'_>,
@@ -78,7 +75,7 @@ pub(crate) fn seed_directory(
         dest,
         mode,
         reporter,
-        create_closed_directory,
+        create_private_directory,
         |(), staging| fill(staging),
     )
 }
@@ -175,7 +172,7 @@ fn create_staging<T>(
 
 /// Create a staging file no one but its owner can read or write.
 #[cfg(unix)]
-fn create_closed_file(staging: &Path) -> io::Result<fs::File> {
+fn create_private_file(staging: &Path) -> io::Result<fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
 
     fs::OpenOptions::new()
@@ -188,7 +185,7 @@ fn create_closed_file(staging: &Path) -> io::Result<fs::File> {
 
 /// Create a staging directory no one but its owner can reach into.
 #[cfg(unix)]
-fn create_closed_directory(staging: &Path) -> io::Result<()> {
+fn create_private_directory(staging: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
 
     fs::DirBuilder::new().mode(0o700).create(staging)
@@ -198,7 +195,7 @@ fn create_closed_directory(staging: &Path) -> io::Result<()> {
 /// exclusive creation: the permissions batfiles carries across are the unix
 /// ones, and there is nothing here to narrow.
 #[cfg(not(unix))]
-fn create_closed_file(staging: &Path) -> io::Result<fs::File> {
+fn create_private_file(staging: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -208,7 +205,7 @@ fn create_closed_file(staging: &Path) -> io::Result<fs::File> {
 
 /// The same, for a directory: exclusive creation and nothing to narrow.
 #[cfg(not(unix))]
-fn create_closed_directory(staging: &Path) -> io::Result<()> {
+fn create_private_directory(staging: &Path) -> io::Result<()> {
     fs::create_dir(staging)
 }
 
@@ -260,7 +257,7 @@ pub(crate) fn with_scratch<T>(
 ) -> Result<T, Error> {
     let path = scratch_path(dest);
     let mut scratch = Scratch {
-        file: create_staging(&path, create_closed_file)?,
+        file: create_staging(&path, create_private_file)?,
         path,
     };
     let done = work(&mut scratch);

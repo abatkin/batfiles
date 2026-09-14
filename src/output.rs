@@ -62,20 +62,9 @@ impl Verb {
     }
 }
 
-/// Quote a string and escape control characters for single-line output.
-///
-/// Used for displayed variable values, rejected environment-variable names,
-/// and condition source text. These strings can contain newlines that forge
-/// diagnostic lines or escape sequences that move the terminal cursor.
-///
-/// Control characters, backslashes, and the surrounding quote are escaped the
-/// way Rust's own debug output escapes them, so the result is one line. The
-/// apostrophe is left alone: it needs no escaping inside double quotes, and
-/// `don't` is worth more than the consistency of writing `don\'t`. Printable
-/// text of any script passes through as itself.
-///
-/// The quotes are always written, which is what keeps an empty value visible as
-/// `""` rather than as a gap where a value should be.
+/// Quote a string for single-line output, escaping control characters,
+/// backslashes, and double quotes. Preserve apostrophes and printable Unicode.
+/// Empty strings render as `""`.
 pub(crate) fn quoted_value(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('"');
@@ -174,12 +163,7 @@ impl Reporter {
         println!("{message}");
     }
 
-    /// Whether [`Self::detail`] at `level` would print anything, for the caller
-    /// whose message costs something to build.
-    ///
-    /// Ordinary callers hand `detail` the message and let it decide; asking
-    /// first is for a listing that would be sorted and formatted only to be
-    /// dropped on the run that did not ask for it.
+    /// Whether [`Self::detail`] at `level` is enabled; check before expensive formatting.
     pub fn shows_detail(&self, level: u8) -> bool {
         self.verbosity.shows_detail(level)
     }

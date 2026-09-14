@@ -29,9 +29,8 @@ pub(crate) use crate::manifest::check::Invalid;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct Manifest {
-    /// The repositories this one names, keyed by the ID an action reaches them
-    /// by. Unordered, because a remote is looked up rather than run: what a
-    /// machine does with one is decided by the action that names it.
+    /// Declared repositories, keyed by ID. Sync materializes non-excluded
+    /// declarations in ID order, whether or not an action references them.
     #[serde(default)]
     pub remotes: BTreeMap<ItemId, Remote>,
 

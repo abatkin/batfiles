@@ -23,7 +23,7 @@ use simple_expressions::types::primitive::Primitive;
 use simple_expressions::types::value::Value;
 
 use crate::env::Environment;
-use crate::output::quoted_value;
+use crate::output::{Reporter, quoted_value};
 use crate::var_set::VarSet;
 
 /// The reserved namespace of host facts.
@@ -33,13 +33,7 @@ const ENV: &str = "env";
 /// The reserved namespace of user variables, read totally.
 const VARS: &str = "vars";
 
-/// A condition, parsed, and the text it was written as.
-///
-/// The parse happens while the declaring document is read, so `when = "work &&"`
-/// is a load error naming the file and line rather than a surprise partway
-/// through a run. Both halves are kept: the text is the condition's identity,
-/// since batfiles never rewrites a manifest and whitespace, parentheses, and
-/// quote style are not recoverable from a parse tree.
+/// A parsed condition with its original text retained for diagnostics.
 #[derive(Clone, Deserialize)]
 #[serde(try_from = "String")]
 pub(crate) struct Condition {
@@ -80,17 +74,8 @@ impl fmt::Debug for Condition {
     }
 }
 
-/// The condition one record carries, and which way it decides.
-///
-/// A record writes `when`, or `unless`, or neither, and writing both is refused
-/// where the record is read — which is what makes this two variants rather than
-/// two fields. `when` admits the record when its condition is true and `unless`
-/// admits it when the condition is false.
-///
-/// The two are not one rule and its negation, and the difference matters
-/// wherever a gate has to be closed for a reason other than its own verdict: a
-/// false `unless` *opens* a gate, so a record whose condition cannot be
-/// evaluated is one batfiles has no verdict for in either spelling.
+/// A condition and whether true (`when`) or false (`unless`) admits the record.
+/// Evaluation failures exclude the record in either case.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Gate<'a> {
     When(&'a Condition),
@@ -98,26 +83,26 @@ pub(crate) enum Gate<'a> {
 }
 
 impl<'a> Gate<'a> {
-    /// The gate a record declares, or `None` where it declares neither.
-    ///
-    /// A record declaring both is refused as its document is read, so
-    /// preferring `when` here decides nothing: it is only what a record that
-    /// cannot exist would have meant.
+    /// Construct a gate from mutually exclusive fields, or `None` if both are absent.
+    /// Callers must reject records declaring both fields during document validation.
     pub fn declared(when: Option<&'a Condition>, unless: Option<&'a Condition>) -> Option<Self> {
         when.map(Self::When).or_else(|| unless.map(Self::Unless))
     }
 
-    /// Which way this gate decides for this run: the record is carried out,
-    /// this machine's variables close it, or the condition cannot be decided at
-    /// all — which closes it too.
-    ///
-    /// `consequence` is the caller's, since only the record knows what it was
-    /// going to do; a line that has already said it passes `None`.
-    pub fn verdict(self, bindings: &Bindings<'_>, consequence: Option<&str>) -> Verdict {
+    /// Return `None` if the gate admits the record, otherwise its exclusion.
+    /// Evaluation failures also exclude the record. `consequence` supplies an optional
+    /// description of the skipped work for the failure diagnostic.
+    pub fn exclusion(
+        self,
+        bindings: &Bindings<'_>,
+        consequence: Option<&str>,
+    ) -> Option<Exclusion> {
         match self.admits(bindings) {
-            Ok(true) => Verdict::Admitted,
-            Ok(false) => Verdict::Excluded(self.exclusion_reason()),
-            Err(error) => Verdict::Unevaluable(self.unevaluable(consequence, &error)),
+            Ok(true) => None,
+            Ok(false) => Some(Exclusion::Expected(self.exclusion_reason())),
+            Err(error) => Some(Exclusion::EvaluationFailed(
+                self.unevaluable(consequence, &error),
+            )),
         }
     }
 
@@ -129,17 +114,8 @@ impl<'a> Gate<'a> {
         }
     }
 
-    /// Why a closed gate excluded the record it is written on: the spelling the
-    /// record wrote, the condition as written, and the verdict that closed it.
-    ///
-    /// For a gate the caller has already found closed. A gate holds the
-    /// declaration and no verdict of its own, so nothing here can check that; a
-    /// record the gate admits is reported by what it did instead.
-    ///
-    /// The spelling is named rather than the verdict alone, because `unless` is
-    /// the one a reader gets backwards, and the condition goes through
-    /// [`quoted_value`] like every other piece of repository text batfiles
-    /// repeats.
+    /// Describe why a closed gate excludes its record, quoting the condition.
+    /// The caller must have established that the gate is closed.
     pub fn exclusion_reason(self) -> String {
         let verdict = match self {
             Self::When(_) => "false",
@@ -152,19 +128,7 @@ impl<'a> Gate<'a> {
         )
     }
 
-    /// The line a gate this run cannot decide produces: the spelling, the
-    /// condition as written, what the run is not doing about it, and the fault
-    /// itself, which is the half that teaches the fix.
-    ///
-    /// The spelling is named for the reason [`Self::exclusion_reason`] names
-    /// it, and here it matters more: a reader who knows `unless` closed the
-    /// gate knows batfiles did not read the failure as false and install the
-    /// record.
-    ///
-    /// `consequence` is [`Self::verdict`]'s caller's because only the record
-    /// knows what it was going to do, and some lines have said it before they
-    /// reach this: an entry of a clone list opens with `not cloning`, so it
-    /// passes `None`.
+    /// Format an evaluation failure with the condition and optional consequence.
     fn unevaluable(self, consequence: Option<&str>, error: &EvalError) -> String {
         let condition = quoted_value(self.condition().source());
         let consequence = consequence.map_or_else(String::new, |what| format!(", so {what}"));
@@ -190,41 +154,7 @@ impl<'a> Gate<'a> {
     }
 }
 
-/// What one gate's evaluation came to.
-///
-/// Separate from [`Exclusion`], which is what a run recorded about a record and
-/// also arrives from a disabled list or a run-only skip.
-#[derive(Debug)]
-pub(crate) enum Verdict {
-    /// The record applies to this machine.
-    Admitted,
-    /// This machine's variables close the gate. From
-    /// [`Gate::exclusion_reason`].
-    Excluded(String),
-    /// The condition cannot be decided here, which closes the gate in either
-    /// spelling. From [`Gate::unevaluable`].
-    Unevaluable(String),
-}
-
-impl Verdict {
-    /// The exclusion to record, or `None` where the run carries the record out.
-    pub fn exclusion(self) -> Option<Exclusion> {
-        match self {
-            Self::Admitted => None,
-            Self::Excluded(reason) => Some(Exclusion::Expected(reason)),
-            Self::Unevaluable(reason) => Some(Exclusion::EvaluationFailed(reason)),
-        }
-    }
-}
-
-/// Why a record is being passed over, and how loudly to say so.
-///
-/// The two are reported the same way — where the record is named, rather than
-/// where the reason was settled — and differ only in what they cost the reader.
-/// Every reason but one is the run doing as it was asked, and belongs with the
-/// rest of what `-v` reports; a condition batfiles cannot decide is nothing
-/// anyone asked for, so it is printed at every verbosity and nothing is
-/// silently ignored.
+/// A reason to skip a record, classified for verbose output or a warning.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Exclusion {
     /// A disable, a run-only skip, or a gate this machine closes: all three are
@@ -236,6 +166,26 @@ pub(crate) enum Exclusion {
 }
 
 impl Exclusion {
+    /// Report caller-supplied wording at `-v` for expected exclusions, or as a
+    /// warning at every verbosity for evaluation failures.
+    pub fn report(&self, reporter: &Reporter, message: &str) {
+        match self {
+            Self::Expected(_) => reporter.detail(1, message),
+            Self::EvaluationFailed(_) => reporter.warn(message),
+        }
+    }
+
+    /// Report an action or remote exclusion with its heading and reason, at the
+    /// severity [`Self::report`] gives it.
+    pub fn report_heading(&self, reporter: &Reporter, heading: &str) {
+        let reason = self.reason();
+        let message = match self {
+            Self::Expected(_) => format!("{heading} - skipped: {reason}"),
+            Self::EvaluationFailed(_) => format!("{heading}: {reason}"),
+        };
+        self.report(reporter, &message);
+    }
+
     /// The reason, for a caller composing the line that names the record.
     pub fn reason(&self) -> &str {
         match self {
@@ -391,8 +341,7 @@ fn facts() -> BTreeMap<String, String> {
 /// [`HostNamespaces`].
 pub(crate) struct Bindings<'a> {
     vars: Rc<VarSet>,
-    /// Kept as `host` rather than `namespaces`, because `vars_namespace` below
-    /// is a namespace too and only these two come from the host.
+    /// The captured `facts` and `env` namespaces.
     host: &'a HostNamespaces,
     /// The `vars` namespace over the same variables the bare-identifier lookup
     /// reads, built once because it is handed out by value.
@@ -400,12 +349,8 @@ pub(crate) struct Bindings<'a> {
 }
 
 impl<'a> Bindings<'a> {
-    /// Bind `vars` for evaluation alongside the namespaces `host` captured.
-    ///
-    /// The variable set is shared rather than borrowed because a namespace owns
-    /// what it reads. Sharing it, rather than copying the variables into the
-    /// namespace, is what keeps one answer to what a name is worth: both
-    /// spellings walk the same layers in the same precedence order.
+    /// Bind variables and captured host namespaces for evaluation.
+    /// Bare identifiers and the `vars` namespace share the same variable set.
     pub fn new(vars: &Rc<VarSet>, host: &'a HostNamespaces) -> Self {
         let vars_namespace = Rc::clone(vars);
         Self {
@@ -438,18 +383,9 @@ impl VariableResolver for Bindings<'_> {
     }
 }
 
-/// A string-valued namespace whose lookups are total, in member and index
-/// syntax alike.
-///
-/// One type serves all three namespaces, so `facts.os`, `vars.work`, and
-/// `env["XDG_CURRENT_DESKTOP"]` reach the same rule. The crate's own dict
-/// cannot: it answers an unknown key with `NoSuchKey` and an unknown member
-/// with `UnknownMember`, which contradicts the empty-string rule outright.
-///
-/// The lookup is a closure rather than a map because [`Object`] requires [`Any`]
-/// and therefore `'static`, so a namespace cannot borrow what it reads. Each of
-/// the three captures a share of its source instead of a copy, and nothing needs
-/// the keys enumerated: the language has no way to ask for them.
+/// A string-valued namespace supporting member and index lookup.
+/// Lookups return empty strings for missing keys. The owned lookup closure
+/// must be static to satisfy the expression evaluator's [`Object`] contract.
 struct Namespace {
     /// The namespace's own name, which is what a type error reports.
     name: &'static str,
@@ -1131,34 +1067,19 @@ mod tests {
         let work = condition("work");
         let nowhere = condition("nowhere");
 
-        let verdict = |gate: Gate<'_>| gate.verdict(&bindings, Some(CONSEQUENCE));
+        let verdict = |gate: Gate<'_>| gate.exclusion(&bindings, Some(CONSEQUENCE));
 
-        assert!(matches!(verdict(Gate::When(&work)), Verdict::Admitted));
-        let Verdict::Excluded(reason) = verdict(Gate::Unless(&work)) else {
+        assert!(verdict(Gate::When(&work)).is_none());
+        let Some(Exclusion::Expected(reason)) = verdict(Gate::Unless(&work)) else {
             panic!("a true `unless` closes its gate");
         };
         assert_eq!(reason, "unless \"work\" is true");
-        let Verdict::Unevaluable(reason) = verdict(Gate::When(&nowhere)) else {
+        let Some(Exclusion::EvaluationFailed(reason)) = verdict(Gate::When(&nowhere)) else {
             panic!("a condition nothing declares cannot be decided");
         };
         assert!(
             reason.starts_with("when \"nowhere\" cannot be evaluated, so "),
             "{reason}"
-        );
-    }
-
-    #[test]
-    fn a_verdict_becomes_the_exclusion_its_caller_records() {
-        // Admission is the absence of an exclusion, and the two closed verdicts
-        // differ in how loudly the run says so.
-        assert!(Verdict::Admitted.exclusion().is_none());
-        assert_eq!(
-            Verdict::Excluded("when \"work\" is false".to_owned()).exclusion(),
-            Some(Exclusion::Expected("when \"work\" is false".to_owned()))
-        );
-        assert_eq!(
-            Verdict::Unevaluable("boom".to_owned()).exclusion(),
-            Some(Exclusion::EvaluationFailed("boom".to_owned()))
         );
     }
 

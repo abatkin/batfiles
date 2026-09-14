@@ -943,7 +943,7 @@ fn an_action_type_is_named_the_way_a_manifest_writes_it() {
 #[test]
 fn a_document_that_has_fallen_behind_the_enum_is_caught() {
     let built = implemented_action_types(fixture_actions());
-    // The shape the README uses today, and what slice 1 owes it.
+    // Compare an incomplete inventory with a complete one.
     let behind = "**Implemented so far: `symlink`.**\n";
     let current = "Implemented so far: `symlink`, `create-dir`, and `copy`.\n";
     assert_ne!(documented_action_types(behind).as_ref(), Some(&built));
@@ -997,9 +997,7 @@ fn a_marker_naming_no_step_is_rejected() {
 
 #[test]
 fn an_entry_is_found_however_rustfmt_wrapped_it() {
-    // Copied from a real entry long enough for rustfmt to break it up, and kept
-    // pointing at a step that is still open so that grepping for a done one
-    // does not land here.
+    // Step literals must be recognized in entries split across lines.
     let wrapped = "        (\n\
                    \x20           !options.disable_actions.is_empty(),\n\
                    \x20           \"--disable-action\",\n\

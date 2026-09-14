@@ -1,10 +1,6 @@
-//! `remotes/`: bringing the repositories a manifest declares onto this machine.
-//!
-//! A declared remote is materialized because it was declared, not because
-//! something reaches into it: an action naming one installs from the tree that
-//! is already there, and a remote nothing names is brought down all the same.
-//! Where each one lands is
-//! [`RunContext::materialization`](crate::action::RunContext::materialization).
+//! Evaluate remote conditions and materialize declared Git repositories.
+//! Sync materializes all non-excluded declarations, including unreferenced ones.
+//! Apply commands read existing materializations through `RunContext`.
 
 use std::collections::BTreeMap;
 
@@ -24,12 +20,9 @@ pub(crate) const DIRECTORY: &str = "remotes";
 /// where an earlier run left one.
 const NOT_MATERIALIZED: &str = "it is not materialized";
 
-/// Which declared remotes this machine does not have, and why.
-///
-/// Settled by every command rather than by `sync` alone: only `sync`
-/// materializes, but an action resolving a path into a remote is refused
-/// wherever it runs, and evaluation is pure. A condition batfiles cannot decide
-/// closes the gate here as everywhere else.
+/// Evaluate declared remote conditions without I/O.
+/// Returns excluded remotes and their reasons, even when an old tree exists.
+/// Used by sync and apply commands to prevent reads from excluded remotes.
 pub(crate) fn excluded(
     remotes: &BTreeMap<ItemId, Remote>,
     bindings: &Bindings<'_>,
@@ -37,49 +30,23 @@ pub(crate) fn excluded(
     remotes
         .iter()
         .filter_map(|(id, remote)| {
-            let exclusion = remote
-                .gate()?
-                .verdict(bindings, Some(NOT_MATERIALIZED))
-                .exclusion()?;
+            let exclusion = remote.gate()?.exclusion(bindings, Some(NOT_MATERIALIZED))?;
             Some((id.clone(), exclusion))
         })
         .collect()
 }
 
-/// Materialize every declared remote, in ID order, before the run's first
-/// action.
-///
-/// Each is cloned where nothing is and updated where a materialization already
-/// is, on a `git-clone` action's terms: the same conservative update policy,
-/// the same refusals at a destination holding something else, and the same
-/// silence under [`RunMode::DryRun`](crate::mode::RunMode::DryRun), which runs
-/// no git for any caller.
-///
-/// A remote this machine's conditions close is reported and passed over. A
-/// materialization an earlier run left is neither updated nor removed; what
-/// keeps it from being installed from is path resolution, which refuses an
-/// excluded remote.
-///
-/// A failure stops the run, as an action's does: an action later in the list
-/// may install from the tree that is not there, and continuing would mean a
-/// `sync` reporting success over a remote it never brought down.
+/// Clone or update non-excluded remotes in ID order using the Git update policy.
+/// Report excluded remotes without modifying their existing trees.
+/// Dry runs report intent without launching Git. A failure stops the run.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
     context: &RunContext<'_>,
 ) -> Result<(), Error> {
     for (id, remote) in remotes {
-        // The two lines an excluded action gets, under the heading this
-        // remote's own work would have printed under.
         if let Some(exclusion) = context.excluded_remote(id) {
             let heading = format!("remote {id}");
-            match exclusion {
-                Exclusion::Expected(why) => context
-                    .reporter()
-                    .detail(1, &format!("{heading} - skipped: {why}")),
-                Exclusion::EvaluationFailed(why) => {
-                    context.reporter().warn(&format!("{heading}: {why}"))
-                }
-            }
+            exclusion.report_heading(context.reporter(), &heading);
             continue;
         }
         // A `file` or `archive` remote is refused by name as the manifest is
@@ -89,9 +56,6 @@ pub(crate) fn materialize(
         let Remote::Git(remote) = remote else {
             continue;
         };
-        // The heading an action gets at `-v`, for the work that happens before
-        // the first one: the lines below name paths, and this names the record
-        // they came from.
         context.reporter().detail(1, &format!("remote {id}"));
         git::clone_or_update(
             &remote.url,

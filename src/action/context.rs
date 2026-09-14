@@ -43,22 +43,15 @@ impl<'a> RunContext<'a> {
         })
     }
 
-    /// Why this machine does not have the remote `id` names, or `None` where it
-    /// is one this run materializes and reads.
+    /// The condition excluding this remote, if any, regardless of tree presence.
     pub fn excluded_remote(&self, id: &ItemId) -> Option<&Exclusion> {
         self.excluded_remotes.get(id)
     }
 
-    /// Resolve a validated repository path to an absolute one, against the
-    /// declaring repository or against a declared remote's materialization.
-    ///
-    /// This is where the two trees stop being two: which one a path is read
-    /// from is settled here, and every action downstream has an absolute path
-    /// and no further questions.
-    ///
-    /// The final node must exist; a broken symlink counts as present. The
-    /// returned path preserves repository symlinks rather than canonicalizing
-    /// them.
+    /// Resolve a validated source against its declaring repository or remote tree.
+    /// The final node must exist; broken symlinks count as present.
+    /// Returns an absolute path preserving repository symlinks.
+    /// Excluded or missing remote materializations are errors.
     pub fn source(&self, source: &RepoPath) -> Result<PathBuf, Error> {
         let resolved =
             paths::normalize_lexically(&self.tree_root(source.remote())?.join(source.path()));
@@ -83,16 +76,8 @@ impl<'a> RunContext<'a> {
         }
     }
 
-    /// The root a repository path is read from.
-    ///
-    /// A remote's is its materialization, which has to be on the machine
-    /// already: nothing clones one on demand, so a path into a remote that
-    /// `sync` has not brought down is reported as that rather than as a missing
-    /// file under a directory the user never made.
-    ///
-    /// A remote this machine's conditions exclude is refused ahead of that, and
-    /// whether or not a tree is there: a materialization an earlier run left
-    /// behind is not content this one may install from.
+    /// Return the declaring repository root or an existing remote materialization.
+    /// Refuse excluded remotes before checking whether their trees exist.
     fn tree_root(&self, remote: Option<&ItemId>) -> Result<PathBuf, Error> {
         let Some(id) = remote else {
             return Ok(self.repository.path().to_path_buf());

@@ -72,13 +72,13 @@ impl Environment {
         }
     }
 
-    /// The keys that name one-shot user variables (`BATFILES_VAR_<NAME>`).
+    /// The keys that name user-variable overrides (`BATFILES_VAR_<NAME>`).
     ///
     /// Public because a diagnostic about a rejected suffix has to name the whole
     /// environment variable, which is what the user goes and deletes.
     pub const VAR_PREFIX: &'static str = "BATFILES_VAR_";
 
-    /// The one-shot user-variable candidates: every `BATFILES_VAR_<NAME>` key
+    /// The user-variable override candidates: every `BATFILES_VAR_<NAME>` key
     /// with a non-empty suffix, yielding `(name, value)`.
     ///
     /// The name is the suffix verbatim — case-sensitive on Unix, already
@@ -86,7 +86,7 @@ impl Environment {
     /// `BATFILES_VAR_` names nothing and is left out; an empty value is kept,
     /// because it is a value. Whether a suffix is a *usable* name is
     /// [`crate::env_vars`]' question, not this module's.
-    pub fn one_shot_vars(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub fn var_overrides(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries.iter().filter_map(|(key, value)| {
             let name = key.strip_prefix(Self::VAR_PREFIX)?;
             (!name.is_empty()).then_some((name, value.as_str()))
@@ -134,14 +134,14 @@ mod tests {
     }
 
     #[test]
-    fn one_shot_vars_collects_the_prefixed_keys() {
+    fn var_overrides_collects_the_prefixed_keys() {
         let env = Environment::from_pairs([
             ("BATFILES_VAR_EDITOR", "vim"),
             ("BATFILES_VAR_PROFILE", ""),
             ("EDITOR", "emacs"),
         ]);
         assert_eq!(
-            env.one_shot_vars().collect::<Vec<_>>(),
+            env.var_overrides().collect::<Vec<_>>(),
             // The empty value is carried through: it is what `PROFILE` is set
             // to, not a sign that nothing set it.
             vec![("EDITOR", "vim"), ("PROFILE", "")]
@@ -149,17 +149,17 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_var_prefix_names_nothing() {
+    fn var_overrides_ignores_a_bare_prefix() {
         let env = Environment::from_pairs([("BATFILES_VAR_", "orphan")]);
-        assert_eq!(env.one_shot_vars().count(), 0);
+        assert_eq!(env.var_overrides().count(), 0);
     }
 
     #[test]
-    fn a_var_suffix_is_taken_verbatim() {
+    fn var_overrides_preserves_unvalidated_suffixes() {
         // Including a suffix no name rule would accept: what is *usable* is
         // decided in `env_vars`, where a rejection can warn about it.
         let env = Environment::from_pairs([("BATFILES_VAR_1up", "x")]);
-        assert_eq!(env.one_shot_vars().collect::<Vec<_>>(), vec![("1up", "x")]);
+        assert_eq!(env.var_overrides().collect::<Vec<_>>(), vec![("1up", "x")]);
     }
 
     #[test]

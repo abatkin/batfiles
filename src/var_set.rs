@@ -1,12 +1,6 @@
 //! Resolve variable values and origins from manifest, machine, environment,
-//! and command-line layers, in increasing precedence order.
-//!
-//! All layers form one scope. Keep shadowed declarations for provenance;
-//! lookup takes the highest-precedence declaration, including an empty value.
+//! and CLI layers. Preserve shadowed declarations for provenance.
 //! See [`docs/environment.md`](../docs/environment.md#variable-precedence).
-//!
-//! Resolve the set on every action run, even without conditions. `-vv` and
-//! `vars list` report the same effective values and origins.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,9 +32,7 @@ pub(crate) enum Origin {
 }
 
 impl Origin {
-    /// The layer named the way the user would go and change it, which is the
-    /// only thing a report has any use for. Each name identifies its layer on
-    /// its own, since every layer is one document or one channel.
+    /// The document or input channel to name in a report.
     fn label(self) -> &'static str {
         match self {
             Self::Manifest => "batfiles.toml",
@@ -84,15 +76,12 @@ impl VarSet {
         Ok(Self::stack(
             manifest.clone(),
             machine.values,
-            env_vars::one_shot(env, reporter),
+            env_vars::overrides(env, reporter),
             cli,
         ))
     }
 
-    /// Stack four layers that have already been read, lowest precedence first.
-    ///
-    /// Separate from [`Self::resolve`] because which layers a command reads is
-    /// the command's question: [`list_machine`] reads one of them.
+    /// Stack four already-read layers in increasing precedence order.
     pub fn stack(
         manifest: BTreeMap<VarName, String>,
         machine: BTreeMap<VarName, String>,
@@ -121,29 +110,14 @@ impl VarSet {
         }
     }
 
-    /// The value in force for `name`, or `None` where no layer declares it.
-    ///
-    /// This is the precedence rule itself rather than a lookup into a flattened
-    /// copy of it, so a condition reading a variable and a `-vv` line reporting
-    /// one cannot disagree. `None` is what an undeclared identifier is
-    /// diagnosed from; it is not the same answer as a declared empty value.
-    ///
-    /// The value borrows from the set alone, so a caller may hold it after the
-    /// name it looked up is gone.
+    /// The highest-precedence value, or `None` if no layer declares the name.
+    /// A declared empty string is a value. The result borrows only from the set.
     pub fn get<'a>(&'a self, name: &str) -> Option<&'a str> {
         self.declaring(name).next().map(|(_, value)| value)
     }
 
-    /// Every declaration of `name`, highest precedence first: the first is the
-    /// value in force and the rest are the ones it overrode. An empty iterator
-    /// means no layer declared the name at all.
-    ///
-    /// One lookup per layer, and the value comes back with the origin, because
-    /// the two callers between them want both and asking a layer twice is how
-    /// they could differ.
-    ///
-    /// The name is arbitrary text, because a condition can index the `vars`
-    /// namespace with anything at all.
+    /// Declarations of arbitrary `name` text, highest precedence first.
+    /// Returns an empty iterator if no layer declares it.
     fn declaring<'a>(&'a self, name: &str) -> impl Iterator<Item = (Origin, &'a str)> {
         self.layers
             .iter()
@@ -159,23 +133,8 @@ impl VarSet {
             .collect()
     }
 
-    /// Show the set at `-vv`, the way `-v` shows the resolved roots: precedence
-    /// is hard to reason about from outside, so a run can be asked what it
-    /// worked out rather than having it inferred.
-    ///
-    /// This prints values, unlike the machine-local commands' outcome lines,
-    /// which deliberately name a key and never its value. The difference is what
-    /// was asked for: `-vv` is a request for exactly this, and a listing that
-    /// withheld the values could not show which layer won.
-    ///
-    /// Indented under a heading, which is what separates it from [`Self::list`]:
-    /// here the set is detail about a run doing something else, and there it is
-    /// the whole of what was asked for.
-    ///
-    /// Every run resolves the set, whether or not it declares a condition, so
-    /// the verbosity is settled before the lines are built rather than once per
-    /// line inside [`Reporter::detail`]: an ordinary run would otherwise sort
-    /// the names and format every value to print none of them.
+    /// Report effective values and origins at `-vv`, indented under a heading.
+    /// An empty set produces no output. Values are quoted for single-line output.
     pub fn report(&self, reporter: &Reporter) {
         if !reporter.shows_detail(DETAIL) {
             return;
@@ -190,16 +149,8 @@ impl VarSet {
         }
     }
 
-    /// Answer `vars list` with the set, on standard output.
-    ///
-    /// The same lines `-vv` reports, from the same walk down the layers, so the
-    /// command and the run cannot disagree about what a variable is worth or
-    /// which layer decided it. Precedence is the reason to run the command, so
-    /// each line carries its origin rather than being made shell-parseable.
-    ///
-    /// A set with nothing in it prints nothing at all, since standard output
-    /// carries data and there is none; the account of that goes to standard
-    /// error like every other line describing what a command did.
+    /// Print effective values and origins to standard output.
+    /// An empty set produces only a status message on standard error.
     pub fn list(&self, reporter: &Reporter) {
         let lines = self.lines();
         if lines.is_empty() {
@@ -248,37 +199,21 @@ impl VarSet {
     }
 }
 
-/// Answer `vars list` for the selected leaf repository.
-///
-/// Every layer a run resolves except the command line, which `vars list` does
-/// not accept: listing the variables of an invocation that set one would say
-/// less about the machine than about the invocation.
+/// List variables for the selected leaf repository, without CLI overrides.
 pub(crate) fn list(roots: &Roots, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest())?;
     VarSet::resolve(&manifest.vars, &roots.state, env, &[], reporter)?.list(reporter);
     Ok(())
 }
 
-/// Answer `vars list --machine-only` from `vars.toml` alone.
-///
-/// One layer, so nothing here can be overridden and no repository or process
-/// environment is consulted: the answer is what this machine has persisted, and
-/// every line of it names a variable [`vars unset`](crate::machine_vars::unset)
-/// would remove.
+/// List only persisted machine variables; do not read the repository or environment.
 pub(crate) fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let machine = MachineVars::load(&state.machine_vars())?;
     VarSet::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
     Ok(())
 }
 
-/// The command line as a layer: every `--var`, in the order it was written.
-///
-/// Named for the channel rather than for lasting one run, which every layer
-/// but the machine's does -- [`env_vars::one_shot`] reads the other one.
-///
-/// It is the one layer that can name a variable twice, and inserting the pairs
-/// in the order they were written is what settles it: the last value wins,
-/// which is the rule between layers applied within one.
+/// Collect `--var` pairs in argument order; the last value for each name wins.
 fn cli_overrides(cli: &[(VarName, String)]) -> BTreeMap<VarName, String> {
     let mut values = BTreeMap::new();
     for (name, value) in cli {

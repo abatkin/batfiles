@@ -1,10 +1,6 @@
-//! A path read from a repository: the declaring one, or a declared remote's.
-//!
-//! One value answers the only question the two have between them — which tree
-//! is this read from — so every field that names repository content carries the
-//! same type and [`RunContext`](crate::action::RunContext) resolves it in one
-//! place. The rules the path itself follows are checked in
-//! [`manifest::check`](crate::manifest::check); the shape is here.
+//! Parse local and remote repository paths for resolution by
+//! [`RunContext`](crate::action::RunContext). Path validation belongs to
+//! [`manifest::check`](crate::manifest::check).
 
 use std::fmt;
 
@@ -108,9 +104,7 @@ pub(crate) enum RepoPathError {
     RemoteId(#[from] ItemIdError),
 }
 
-/// Both spellings, read through one visitor rather than an untagged enum, which
-/// answers every malformed value with the same sentence about matching no
-/// variant. A closed record is worth a message naming the field that closed it.
+/// Read a string or a closed table, preserving field-specific parse errors.
 impl<'de> Deserialize<'de> for RepoPath {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

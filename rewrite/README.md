@@ -1,8 +1,9 @@
 # Rewrite
 
-Slices 0–5 provide local installation, selection, dry-run, fetching, Git clone
-actions, and the variables and conditions that decide which records a machine
-takes. [steps.md](steps.md) tracks remaining implementation work.
+Slices 0–6 provide local installation, selection, dry-run, fetching, Git clone
+actions, variables and conditions, and Git remote materialization. Actions can
+read remote content; including remote actions remains unbuilt.
+[steps.md](steps.md) tracks remaining implementation work.
 
 ## Acceptance repositories
 

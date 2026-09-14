@@ -38,9 +38,9 @@ Current [path and destination safety](../safety.md) applies to new action types.
 
 ## Repository source paths
 
-A remote source resolves against its materialization under the tool-owned
-`remotes/` tree. Extend the shared repository resolver and containment rules
-when materialization is implemented.
+Remote source resolution is implemented. New remote types must follow the
+current [source syntax](../repoformat.md#sources-and-destinations) and
+[path safety rules](../safety.md#path-resolution).
 
 ## Replacement and backups
 
