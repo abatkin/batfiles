@@ -14,6 +14,7 @@ use std::path::{Component, Path};
 use thiserror::Error;
 
 use crate::item::ItemId;
+use crate::repo_path::{REMOTE_PREFIX, RepoPath};
 
 /// How a load diagnostic names the record that broke the rule.
 ///
@@ -42,6 +43,35 @@ impl fmt::Display for RecordName {
             Self::Candidate { noun, number } => write!(f, "default-disabled {noun} {number}"),
             Self::Remote(id) => write!(f, "remote `{id}`"),
         }
+    }
+}
+
+// The path rules below are the same rules whichever tree a path is read from;
+// only the noun changes, and a path says for itself which one that is. Three
+// spellings of the one noun, because a sentence about a root and a sentence
+// about a whole tree each read better with their own phrasing.
+
+/// How a message names the tree a path is read from.
+fn tree_of(written: &RepoPath) -> String {
+    match written.remote() {
+        None => "the repository".to_owned(),
+        Some(id) => format!("remote `{id}`"),
+    }
+}
+
+/// How a message names that tree's root.
+fn root_of(written: &RepoPath) -> String {
+    match written.remote() {
+        None => "the repository root".to_owned(),
+        Some(id) => format!("the root of remote `{id}`"),
+    }
+}
+
+/// How a message names all of it.
+fn whole_of(written: &RepoPath) -> String {
+    match written.remote() {
+        None => "the whole repository".to_owned(),
+        Some(id) => format!("the whole of remote `{id}`"),
     }
 }
 
@@ -81,25 +111,52 @@ pub(crate) enum Invalid {
     #[error("{record}: writes both `when` and `unless`; a record has one condition or none")]
     BothConditions { record: RecordName },
 
-    // A `source` names a path within the repository that declared it. Every
-    // rule below is decided from the written value alone.
+    // A `source` names a path within one repository: the one that declared it,
+    // or the materialization of a remote it names with `@`. Every rule below is
+    // decided from the written value alone, and holds the same way for both.
+    //
+    // Each carries the path rather than a rendering of it, so that what a
+    // message quotes and what it says about the tree are one value and cannot
+    // come apart.
     #[error("{record}: source is empty; a source names a path within the repository")]
     SourceEmpty { record: RecordName },
 
     /// A source naming its own starting point — a leading `/`, a `\`, or a
-    /// drive letter — rather than one relative to the repository.
-    #[error("{record}: source `{value}` is not relative to the repository root")]
-    SourceNotRelative { record: RecordName, value: String },
+    /// drive letter — rather than one relative to the tree it is read from.
+    #[error("{record}: source `{written}` is not relative to {}", root_of(.written))]
+    SourceNotRelative {
+        record: RecordName,
+        written: RepoPath,
+    },
 
-    #[error("{record}: source `{value}` resolves outside the repository")]
-    SourceOutsideRepository { record: RecordName, value: String },
+    #[error("{record}: source `{written}` resolves outside {}", tree_of(.written))]
+    SourceOutsideTree {
+        record: RecordName,
+        written: RepoPath,
+    },
 
-    /// A source that stays inside the repository but names all of it.
+    /// A source that stays inside its tree but names all of it.
     #[error(
-        "{record}: source `{value}` names the whole repository; \
-         a source names a path within it"
+        "{record}: source `{written}` names {}; a source names a path within it",
+        whole_of(.written)
     )]
-    SourceIsRepositoryRoot { record: RecordName, value: String },
+    SourceIsWholeTree {
+        record: RecordName,
+        written: RepoPath,
+    },
+
+    /// A path under a remote reference, or the `path` of a structured one, that
+    /// begins with the character a remote reference begins with. Reserved on
+    /// both halves of the rule, so that `@` at the start of a repository path
+    /// means one thing wherever it is written.
+    #[error(
+        "{record}: source `{written}` starts with `@`, which introduces a remote \
+         reference and cannot start a path within one"
+    )]
+    SourceStartsWithRemotePrefix {
+        record: RecordName,
+        written: RepoPath,
+    },
 
     // A `dest` names a path on the machine, anchored to the selected home.
     #[error("{record}: dest is empty; write `~` for the home directory itself")]
@@ -173,28 +230,48 @@ pub(crate) enum Invalid {
 }
 
 /// The rules a `source` satisfies as written.
+// CARRY(6.4): the records carry a `RepoPath` themselves once actions may source
+// from a remote, and this shim goes with the last caller that holds a string.
 pub(super) fn check_source(source: &str, record: &RecordName) -> Result<(), Invalid> {
-    if source.is_empty() {
+    check_repo_path(&RepoPath::local(source.to_owned()), record)
+}
+
+/// The rules a repository path satisfies as written, wherever it is read from.
+///
+/// Everything here is decided from the value alone. Whether a named remote is
+/// one the manifest declares spans two records and so is the document's to
+/// check; whether anything is at the path is the run's.
+pub(super) fn check_repo_path(written: &RepoPath, record: &RecordName) -> Result<(), Invalid> {
+    let path = written.path();
+    // Only a plain string can say nothing at all; a reference that names a
+    // remote and no path has named a tree, and is refused as naming all of it.
+    if written.remote().is_none() && path.is_empty() {
         return Err(Invalid::SourceEmpty {
             record: record.clone(),
         });
     }
-    if is_anchored(Path::new(source)) {
-        return Err(Invalid::SourceNotRelative {
+    if path.starts_with(REMOTE_PREFIX) {
+        return Err(Invalid::SourceStartsWithRemotePrefix {
             record: record.clone(),
-            value: source.to_owned(),
+            written: written.clone(),
         });
     }
-    match depth_within_tree(source) {
-        None => Err(Invalid::SourceOutsideRepository {
+    if is_anchored(Path::new(path)) {
+        return Err(Invalid::SourceNotRelative {
             record: record.clone(),
-            value: source.to_owned(),
+            written: written.clone(),
+        });
+    }
+    match depth_within_tree(path) {
+        None => Err(Invalid::SourceOutsideTree {
+            record: record.clone(),
+            written: written.clone(),
         }),
-        // Zero components deep is the repository root itself, however it was
-        // spelled: `.`, `./`, and `shell/..` all land there.
-        Some(0) => Err(Invalid::SourceIsRepositoryRoot {
+        // Zero components deep is the tree's own root, however it was spelled:
+        // `.`, `./`, `shell/..`, and a reference with no path all land there.
+        Some(0) => Err(Invalid::SourceIsWholeTree {
             record: record.clone(),
-            value: source.to_owned(),
+            written: written.clone(),
         }),
         Some(_) => Ok(()),
     }
@@ -345,6 +422,8 @@ fn names_a_path_inside_an_archive(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     /// The record the checks below are written against; which record a
@@ -391,7 +470,7 @@ mod tests {
             assert!(
                 matches!(
                     source_error(escaping),
-                    Invalid::SourceNotRelative { .. } | Invalid::SourceOutsideRepository { .. }
+                    Invalid::SourceNotRelative { .. } | Invalid::SourceOutsideTree { .. }
                 ),
                 "`{escaping}` was accepted"
             );
@@ -437,10 +516,70 @@ mod tests {
         assert!(matches!(source_error(""), Invalid::SourceEmpty { .. }));
         for whole in [".", "./", "shell/.."] {
             assert!(
-                matches!(source_error(whole), Invalid::SourceIsRepositoryRoot { .. }),
+                matches!(source_error(whole), Invalid::SourceIsWholeTree { .. }),
                 "`{whole}` was not recognized as the whole repository"
             );
         }
+    }
+
+    /// A remote reference, read the way a manifest hands one over.
+    fn remote_path(written: &str) -> RepoPath {
+        toml::from_str::<BTreeMap<String, RepoPath>>(&format!("source = \"{written}\"\n"))
+            .expect("a well-formed reference")
+            .remove("source")
+            .expect("the value that was just read")
+    }
+
+    fn remote_error(written: &str) -> Invalid {
+        check_repo_path(&remote_path(written), &record())
+            .expect_err("expected the source to be refused")
+    }
+
+    #[test]
+    fn a_remote_reference_follows_the_same_rules_as_a_local_source() {
+        for accepted in ["@core/shell/zshrc", "@core/a/../b", "@core/./bin/batgrep"] {
+            assert!(
+                check_repo_path(&remote_path(accepted), &record()).is_ok(),
+                "`{accepted}` was refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_remote_reference_names_the_remote_rather_than_the_repository() {
+        // The same three refusals, about the tree the path is actually read
+        // from: a message naming the repository would send someone to the wrong
+        // one of the two.
+        for (refused, expected) in [
+            ("@core/../secrets", "resolves outside remote `core`"),
+            (
+                "@core//etc/passwd",
+                "is not relative to the root of remote `core`",
+            ),
+            ("@core", "names the whole of remote `core`"),
+            ("@core/shell/..", "names the whole of remote `core`"),
+        ] {
+            let message = remote_error(refused).to_string();
+            assert!(message.contains(expected), "`{refused}`: {message}");
+        }
+    }
+
+    #[test]
+    fn a_path_within_a_remote_may_not_start_the_reference_over() {
+        // `@` introduces a remote and nothing else, in either spelling, so a
+        // second one cannot open a path within the first.
+        assert!(matches!(
+            remote_error("@core/@other/zshrc"),
+            Invalid::SourceStartsWithRemotePrefix { .. }
+        ));
+        let structured: BTreeMap<String, RepoPath> =
+            toml::from_str("source = { remote = \"core\", path = \"@other/zshrc\" }\n")
+                .expect("a well-formed reference");
+        assert!(matches!(
+            check_repo_path(&structured["source"], &record())
+                .expect_err("expected the source to be refused"),
+            Invalid::SourceStartsWithRemotePrefix { .. }
+        ));
     }
 
     #[test]

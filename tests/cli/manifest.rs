@@ -600,6 +600,19 @@ fn a_source_naming_the_whole_repository_is_rejected() {
 }
 
 #[test]
+fn a_source_starting_with_the_remote_prefix_is_rejected() {
+    // `@` is reserved for naming a remote, which no action reads yet. A
+    // repository really holding a directory called `@work` cannot install from
+    // it, and is told why rather than being told the file is missing.
+    // Only the first character is reserved; `files/@work/zshrc` is an ordinary
+    // path, which is a rule about spelling and is tested where the spelling is.
+    let stderr = rejected(&one_symlink("@work/zshrc", "~/.zshrc"));
+    for expected in ["@work/zshrc", "starts with `@`"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
 fn an_empty_dest_is_rejected_in_favor_of_writing_the_home_out() {
     // `~` already means the home directory itself, so the diagnostic points at
     // that spelling rather than only refusing.

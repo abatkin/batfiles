@@ -23,6 +23,7 @@ mod mode;
 mod output;
 mod paths;
 mod remotes;
+mod repo_path;
 mod selection;
 mod tomlfile;
 mod var;

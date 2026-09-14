@@ -229,6 +229,14 @@ repository. Use `/` separators. Anchored paths and drive prefixes are rejected
 according to the host's path syntax. A symlink stored inside the repository may
 point outside it.
 
+A source may not begin with `@`. That character introduces a reference to a
+declared [remote](#remotes), spelled `@<remote>/<path>`, which
+[`future/repoformat.md`](future/repoformat.md#repository-path) specifies and no
+action reads yet. Reserving it now gives the character one meaning wherever a
+repository path is written, and it stays ordinary anywhere but the first
+position: `files/@work/zshrc` is a path like any other. There is no escape, so a
+repository whose files begin with `@` cannot name one as a source.
+
 Sources are checked for presence when the action runs, including dry runs. A
 final broken symlink counts as present for linking; a copy must be able to read
 its target. `source-dir` must resolve to a directory. Executable clone lists are

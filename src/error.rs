@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::archive;
 use crate::clone_list;
 use crate::git;
-use crate::item::{ItemAddress, ItemAddressError};
+use crate::item::{ItemAddress, ItemAddressError, ItemId};
 use crate::manifest;
 use crate::paths::ExistingNode;
 use crate::var::{VarName, VarNameError};
@@ -85,6 +85,16 @@ pub(crate) enum Error {
     /// An action naming a source the repository does not contain.
     #[error("no such file in the repository: {}", .path.display())]
     SourceMissing { path: PathBuf },
+
+    /// An action sourcing from a remote that is not on this machine. Named
+    /// apart from a missing source, because the path under `remotes/` is one
+    /// batfiles owns: what is absent is the materialization, not something the
+    /// user was supposed to have put there.
+    #[error(
+        "remote `{remote}` is not materialized at {}; run `batfiles sync` to bring it down",
+        .path.display()
+    )]
+    RemoteNotMaterialized { remote: ItemId, path: PathBuf },
 
     /// A `source-dir` naming something the repository holds, but not a directory.
     #[error("not a directory: {}", .path.display())]

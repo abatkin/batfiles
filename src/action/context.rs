@@ -10,6 +10,7 @@ use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, RepositoryRoot};
 use crate::remotes;
+use crate::repo_path::RepoPath;
 
 /// Anchored repository and home roots, execution mode, and reporter for one run.
 pub(crate) struct RunContext<'a> {
@@ -31,10 +32,32 @@ impl<'a> RunContext<'a> {
     }
 
     /// Resolve a validated repository-relative source to an absolute path.
-    /// The final node must exist; a broken symlink counts as present. The returned
-    /// path preserves repository symlinks rather than canonicalizing them.
+    // CARRY(6.4): the records carry a `RepoPath` themselves once actions may
+    // source from a remote, and this shim goes with the last caller that holds
+    // a string.
     pub fn source(&self, source: &str) -> Result<PathBuf, Error> {
-        let resolved = paths::normalize_lexically(&self.repository.path().join(source));
+        self.repo_source(&RepoPath::local(source.to_owned()))
+    }
+
+    /// Resolve a source directory named by a repository-relative string.
+    // CARRY(6.4): the same shim, for the actions that install a directory.
+    pub fn source_directory(&self, source_dir: &str) -> Result<PathBuf, Error> {
+        self.repo_source_directory(&RepoPath::local(source_dir.to_owned()))
+    }
+
+    /// Resolve a validated repository path to an absolute one, against the
+    /// declaring repository or against a declared remote's materialization.
+    ///
+    /// This is where the two trees stop being two: which one a path is read
+    /// from is settled here, and every action downstream has an absolute path
+    /// and no further questions.
+    ///
+    /// The final node must exist; a broken symlink counts as present. The
+    /// returned path preserves repository symlinks rather than canonicalizing
+    /// them.
+    pub fn repo_source(&self, source: &RepoPath) -> Result<PathBuf, Error> {
+        let resolved =
+            paths::normalize_lexically(&self.tree_root(source.remote())?.join(source.path()));
 
         // Presence, not reachability: a source that is itself a broken symlink
         // is there, and linking at it is what the repository asked for.
@@ -47,12 +70,33 @@ impl<'a> RunContext<'a> {
 
     /// Resolve a source directory, following its final symlink.
     /// Fails if the source is missing, unreadable, or does not resolve to a directory.
-    pub fn source_directory(&self, source_dir: &str) -> Result<PathBuf, Error> {
-        let resolved = self.source(source_dir)?;
+    pub fn repo_source_directory(&self, source_dir: &RepoPath) -> Result<PathBuf, Error> {
+        let resolved = self.repo_source(source_dir)?;
         if paths::reaches_directory(&resolved)? {
             Ok(resolved)
         } else {
             Err(Error::SourceNotADirectory { path: resolved })
+        }
+    }
+
+    /// The root a repository path is read from.
+    ///
+    /// A remote's is its materialization, which has to be on the machine
+    /// already: nothing clones one on demand, so a path into a remote that
+    /// `sync` has not brought down is reported as that rather than as a missing
+    /// file under a directory the user never made.
+    fn tree_root(&self, remote: Option<&ItemId>) -> Result<PathBuf, Error> {
+        let Some(id) = remote else {
+            return Ok(self.repository.path().to_path_buf());
+        };
+        let path = self.materialization(id);
+        if paths::occupied(&path)? {
+            Ok(path)
+        } else {
+            Err(Error::RemoteNotMaterialized {
+                remote: id.clone(),
+                path,
+            })
         }
     }
 

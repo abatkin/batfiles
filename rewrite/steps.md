@@ -78,13 +78,18 @@ No inclusion of remote actions yet.
 
 - **6.1** ✅ Add `[remotes]` with Git records and update the supported schema.
 - **6.2** ✅ Materialize declared remotes under `remotes/<id>/` on `sync`.
-- **6.3** Add parsed `@remote/path` values to the shared repository-path resolver.
-  Let the parsed source centralize local versus remote resolution. Keep the
-  separate path rules separate — lexical source validation, destination
-  construction, existing-link resolution, and archive containment take different
-  inputs and enforce different contracts — and do not add newtypes to every
-  string that happens to be called `source`.
-- **6.4** Allow leaf symlink and copy actions to source content from remotes.
+- **6.3** ✅ Add parsed `@remote/path` values to the shared repository-path resolver.
+- **6.4** Allow leaf actions to source content from remotes. Give the five
+  repository-path fields — `symlink`, `symlink-dir`, `copy`, `copy-dir`, and
+  `git-clone-list`'s `source` — a `RepoPath` instead of a string, and remove the
+  two 6.3 shims that build a local one: `check_source` and `RunContext::source`,
+  whose `source_directory` half goes with it. Rename `repo_source` and
+  `repo_source_directory` once they are the only pair left. Add the cross-record
+  check that a named remote is one the manifest declares, which nothing could
+  ask for while no field carried a reference. Promote the repository-path
+  section from `docs/future/repoformat.md`, including the rule that `@` at the
+  start of a repository path is reserved and has no escape, and cover a remote
+  source through the binary.
 - **6.5** Gate remotes on `when` and `unless`. This is the third caller of the
   map from a condition's evaluation to an exclusion, so extract it here: one
   result for admitted, excluded, and failed to evaluate, with each caller

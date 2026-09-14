@@ -123,6 +123,10 @@ source = { remote = "core", path = "files/zshrc" }
 A plain string is relative to the action's own repository. A string beginning
 with `@` is shorthand for the structured remote reference.
 
+What is built is the reservation rather than the reference: a repository path
+[may not begin with `@`](../repoformat.md#sources-and-destinations), and no
+action field reads either remote spelling yet.
+
 Remote references are available only to actions declared by the leaf
 repository. An action included from a Git remote may use only an ordinary
 repository-relative string, which resolves within that Git remote's
