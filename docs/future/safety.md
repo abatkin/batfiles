@@ -96,7 +96,8 @@ filter or upstream archive unexpectedly deletes local content.
 
 ## Git repositories
 
-Use the current [Git update policy](../safety.md#git-updates) for materializations.
+That a Git remote's materialization follows the current [Git update
+policy](../safety.md#git-updates) is built and specified there.
 
 Network and repository trust still apply. Batfiles does not guarantee signed
 commits or immutable branch contents. Updating a declared Git remote can

@@ -14,11 +14,17 @@ root.
 ```text
 dotfiles/
 ├── batfiles.toml
+├── remotes/                # generated and owned by batfiles
 └── ...
 ```
 
 Only `batfiles.toml` has intrinsic meaning. Every other name in the tree becomes
 meaningful when an action references it, and means nothing on its own.
+
+`remotes/` is the exception, and it is not yours to write: batfiles generates it
+to hold the [remotes](#remotes) the manifest declares, one directory per remote
+ID. It is a checkout of somebody else's repository rather than content of this
+one, so a repository under version control should ignore it.
 
 The **leaf repository** is the one a command works on, selected by
 `--batfiles-dir` or `BATFILES_DIR`, then by a `batfiles.toml` in the current
@@ -104,6 +110,13 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
   and not TOML's looser one for a bare key. `[remotes.core-2]` is a remote;
   `[remotes._hidden]` and `[remotes."core.extra"]` are load errors, the second
   because a dotted name is already an address.
+- Two remote IDs may not differ only in case. An ID is also the directory its
+  remote [materializes](#materialization) in, and `core` and `Core` are one
+  directory on macOS and Windows, where the second remote would find and update
+  the first one's clone instead of its own. The pair is a load error on every
+  platform, including the ones that would keep them apart: a manifest is the
+  same repository on all of a person's machines, and a rule enforced only on
+  some of them would move the failure to the machine least able to explain it.
 - Group names, action IDs, and remote IDs occupy distinct namespaces. An action
   and the remote it installs from may share a name without either becoming
   ambiguous, and nothing resolves one against the other.
@@ -173,17 +186,39 @@ not a field of either, and a manifest writing it is refused as an unknown field.
 
 **Declaring a remote does not install anything.** It names a source, and an
 action decides whether and where its content is installed. That is why the
-section is a map rather than an ordered list, as `[[actions]]` is: nothing about
-a remote is ordered, because nothing about it runs.
+section is a map rather than an ordered list, as `[[actions]]` is: a remote is
+looked up rather than executed, and [materializing](#materialization) one
+happens before the ordered list and depends on nothing in it.
 
-**Nothing materializes a remote yet, so declaring one changes no run.** Batfiles
-accepts the section and checks it as the manifest is read — including the
-[conditions](#conditions) its records carry, which are parsed and evaluated
-nowhere, and including the `allow-dynamic-vars` field the future schema gives a
-Git remote, which is refused as unknown until batfiles can run a dynamic
-variable. Until cloning arrives, a `sync` over a manifest declaring remotes
-installs exactly what it would have installed without them, and writes nothing
-into the repository.
+### Materialization
+
+**Declaring a remote is what brings it onto the machine.** `sync` clones each
+declared remote into `remotes/<id>/` inside the leaf repository, before the first
+action, and updates it there on every later run. Nothing has to name a remote for
+this to happen, and nothing can yet: an action that installs from a
+materialization is not built.
+
+The ID a remote is declared under is the directory it lands in, so two records
+naming one repository are two materializations, and what reaches a remote's
+content will name the record rather than the URL. Because the ID is a directory
+name, [two of them may not differ only in case](#names-and-ids).
+
+**A materialization is a clone like any other.** It follows `ref` where one is
+written and the branch it is on where none is, and later runs update it under the
+[Git update policy](safety.md#git-updates) — fast-forward only, and left alone
+with a warning where that is not possible. A `remotes/<id>` holding something
+that is not a clone is refused the same way a `git-clone` destination is, and
+[clone validation](safety.md#clone-validation) applies unchanged.
+
+**A remote that cannot be materialized stops the run**, before any action, the
+way a failed action stops it. What `sync` reports while doing all this is in
+[`cmdline.md`](cmdline.md#sync).
+
+Two things about the section still do nothing. The [conditions](#conditions) its
+records carry are parsed and checked, and evaluated nowhere, so a remote is
+materialized whatever its `when` or `unless` says. The `allow-dynamic-vars` field
+the future schema gives a Git remote is refused as unknown until batfiles can run
+a dynamic variable.
 
 ## Sources and destinations
 
@@ -857,8 +892,8 @@ when = "work && facts.os == 'macos'"
 Four kinds of record take them: an [action](#actions), an entry of a [clone
 list](#the-clone-list-format), a [remote](#remotes), and a [default-disabled
 candidate](#default-disabled-bootstrap-entries). The last two are checked and
-never evaluated, because nothing materializes a remote or adopts a candidate
-yet.
+never evaluated: a remote is [materialized](#materialization) whatever its
+condition says, and nothing adopts a candidate yet.
 
 **Writing both on one record is a load error.** They are not one rule and its
 negation applied twice, and a record writing both has no reading that is

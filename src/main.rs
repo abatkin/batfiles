@@ -22,6 +22,7 @@ mod manifest;
 mod mode;
 mod output;
 mod paths;
+mod remotes;
 mod selection;
 mod tomlfile;
 mod var;

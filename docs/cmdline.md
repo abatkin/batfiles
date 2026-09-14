@@ -20,9 +20,10 @@ work to do — and then report that they are not implemented yet, exiting 2 havi
 written nothing. `init` operates on the current directory, so it resolves no
 roots before saying the same.
 
-`sync` executes the action types that exist, `--dry-run` reports what it
-would execute without doing any of it, and `--skip-action`/`--skip-group` leave
-part of it out for one run.
+`sync` materializes the [remotes](repoformat.md#materialization) the manifest
+declares and executes the action types that exist, `--dry-run` reports what it
+would do without doing any of it, and `--skip-action`/`--skip-group` leave part
+of it out for one run.
 
 `apply-action` and `apply-group` carry out part of the same manifest, named
 rather than filtered — the same actions, in the same order, with the same
@@ -212,6 +213,27 @@ linked /home/you/.ackrc -> /home/you/dotfiles/files/ackrc
 An action with no `id` is named by its one-based position in the manifest, which
 is how a load error names one too, so a heading and a diagnostic point at the
 same record by the same words. An action with no group ends after its name.
+
+Before any of them, `sync` [materializes](repoformat.md#materialization) every
+[remote](repoformat.md#remotes) the manifest declares, cloning what is missing
+and updating what is there. Those lines come first and are the same lines a
+`git-clone` action prints, under a heading naming the record they belong to:
+
+```text
+remote core
+cloned /home/you/dotfiles/remotes/core from git@github.com:me/dotfiles-core.git
+symlink zshrc (group shell)
+linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
+```
+
+A materialization that was already up to date says nothing, as an unchanged
+destination does. A remote that cannot be cloned or updated fails the run before
+any action, so a `sync` that reaches its first action has every declared remote
+in place. Under `--dry-run` batfiles says what it would clone or update and runs
+no git at all, which is the [dry-run rule](#dry-run-behavior) for every caller.
+
+`sync` is the only command that does this; see [what all three
+load](#selection-by-command).
 
 | Option                 | Purpose                                                                |
 |------------------------|--------------------------------------------------------------------------|
@@ -471,6 +493,11 @@ All three commands load the leaf manifest and `disabled.toml`, even when lists
 are waived. A missing manifest fails; a missing state document is empty under
 the [state-file rules](state.md). Malformed or unreadable documents fail before
 action execution. Variable loading follows [variable precedence](environment.md#variable-precedence).
+
+Only `sync` [materializes](repoformat.md#materialization) the declared remotes.
+An apply command is aimed at one record, and bringing the whole declared set up
+to date is the whole-repository job `sync` is for, so it uses whatever is
+already in `remotes/` and fetches nothing.
 
 ### Clone-list preparation
 

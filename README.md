@@ -20,8 +20,10 @@ nothing in the repository you cannot read with `cat`.
 > A record can also carry a `when` or an `unless`, so an action, or one
 > repository in a plugin list, belongs to some machines and not others.
 >
-> What is not built is the composition: git remotes, and including one
-> repository's actions into another. `init` and `clone` are
+> Composition is half built: a `[remotes]` section names other Git
+> repositories and `sync` clones each one into your repository's own `remotes/`
+> tree, but nothing installs from one or splices a remote's actions into your
+> manifest yet. `init` and `clone` are
 > not built either, so a fresh machine still clones its repository by hand.
 > `vars refresh` is also unimplemented. See the
 > [command reference](docs/cmdline.md#what-runs-today) for supported commands
@@ -95,6 +97,15 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   name and line, and the repositories after it are still installed. Worth knowing
   because of that: a `sync` that exits 0 may still have entries that did not
   clone, and the warnings are what say so.
+- **A repository can name other repositories, and `sync` fetches them.**
+  `[remotes]` declares a Git repository by `url`, optionally pinned with a
+  `ref`. Each declared remote is cloned into `remotes/<id>/` inside your own
+  repository and kept up to date there on later runs, on `git-clone`'s
+  conservative terms. Declaring one is what fetches it — nothing has to name it,
+  and nothing can yet: installing from a remote, and splicing a remote's actions
+  into your manifest, are what slices 6 and 7 are still for. So a remote today
+  is a checkout batfiles maintains beside your files and nothing more. The
+  `remotes/` tree is batfiles', not yours; tell Git to ignore it.
 - **Existing content is handled according to the action.** Seeds keep occupied
   destinations, directory actions preserve existing containers, and Git actions
   validate and conservatively update existing clones. Symlink and Git actions
@@ -319,8 +330,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 5     | Variables, and `when`/`unless` conditions                           |
-| 6–7   | Git remotes, and splicing a remote's actions into your own manifest |
+| 6–7   | Installing from a remote, and splicing its actions into your own    |
 | 8     | `init` and `clone` for new machines, with default-disabled adoption |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |

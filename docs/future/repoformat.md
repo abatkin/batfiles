@@ -8,12 +8,10 @@ planning, precedence, state, and command execution policy.
 ## Repository Layout
 
 The part of this section that runs — a repository is a file tree with a
-`batfiles.toml` at its root, and only that file has intrinsic meaning — is
+`batfiles.toml` at its root, only that file has intrinsic meaning, and batfiles
+generates `remotes/<remote-id>/` to hold what the manifest declares — is
 specified in [`docs/repoformat.md`](../repoformat.md), along with how the
-manifest is read. The `remotes/` tree below is not built.
-
-A batfiles repository is an ordinary file tree with a `batfiles.toml` at its
-root.
+manifest is read and what materializing a remote does.
 
 ```text
 dotfiles/
@@ -26,19 +24,12 @@ dotfiles/
 └── ...
 ```
 
-Only `batfiles.toml` has intrinsic meaning. Names such as `bin/`, `files/`, and
-`local-files/` become meaningful only when actions reference them.
-
-The user-selected **leaf repository** owns the configuration being applied. A
-Git remote may also have a `batfiles.toml`; it is optional and is read only when
-a leaf `include-remote` action selects it. The `remotes/` directory is generated
-materialization data and should normally be ignored by Git.
-
-Each remote materializes at `remotes/<remote-id>/` inside the leaf repository,
-keyed by its `[remotes]` map key rather than by the ID of any inclusion that
-selects it. An included Git remote's optional manifest is therefore
-`remotes/<remote-id>/batfiles.toml`, and two inclusions of one remote share the
-single materialization at that path.
+What is not built is the reading of what a materialization holds. A Git remote
+may have a `batfiles.toml` of its own; it is optional and is read only when a
+leaf `include-remote` action selects it, so an included remote's manifest is
+`remotes/<remote-id>/batfiles.toml`. Because a materialization is keyed by the
+remote's map key rather than by the ID of any inclusion that selects it, two
+inclusions of one remote share the single materialization at that path.
 
 ## Top-Level `batfiles.toml` Schema
 
@@ -104,8 +95,8 @@ thing about them is not built.
 **The record that does not have one yet.** An `include-remote` takes a condition
 too, and that record does not exist; it is specified with its own schema below.
 A [remote](../repoformat.md#remotes) and a `[default-disabled]` entry each accept
-one already, and nothing evaluates either, since nothing materializes a remote
-or adopts a candidate.
+one already, and nothing evaluates either: a remote is materialized whatever its
+condition says, and nothing adopts a candidate.
 
 For concision, schema tables below list only `when`. Every record that accepts
 `when` also accepts `unless` as its negated alias, on the terms the built
@@ -180,17 +171,19 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ## Remotes
 
 `[remotes]` is a map from a user-selected name to a tagged remote record. The
-map, the ID its keys follow, the shared `type` / `when` / `unless` fields, and
-the whole of the `git` record are built and specified in
+map, the ID its keys follow, the shared `type` / `when` / `unless` fields, the
+whole of the `git` record, and [materializing
+one](../repoformat.md#materialization) are built and specified in
 [`docs/repoformat.md`](../repoformat.md#remotes). Three things about the section
 are not.
 
 **The other two record variants**, below. A manifest declaring either is refused
 by name, so a remote that batfiles cannot fetch is never read as one it can.
+Nothing downloads or unpacks a remote; only a Git one materializes.
 
-**Materializing any of them**, which is what a remote is for. Nothing clones,
-fetches, or unpacks a declared remote yet, and no action can reach one's content:
-the [repository path](#repository-path) that names one is unbuilt too.
+**Reaching a materialization's content.** A remote is cloned into the repository,
+and no action can install from what is there: the [repository
+path](#repository-path) that names one is unbuilt.
 
 **One field of the `git` record**: `allow-dynamic-vars`, a boolean defaulting to
 `false`, which says whether an included remote's dynamic variable declarations

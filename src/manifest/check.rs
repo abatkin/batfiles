@@ -59,6 +59,19 @@ pub(crate) enum Invalid {
         second: usize,
     },
 
+    /// Two remote IDs that a case-folding filesystem cannot tell apart.
+    ///
+    /// Refused on every platform, not only the ones that would fold them: a
+    /// manifest describes one repository across all of a person's machines, and
+    /// a rule that held on Linux alone would move the failure to the machine
+    /// least able to explain it.
+    #[error(
+        "remotes `{one}` and `{other}` differ only in case; where the filesystem \
+         ignores case they are one directory under `remotes/`, and only one of \
+         the two repositories would ever be cloned"
+    )]
+    RemotesShareOneDirectory { one: ItemId, other: ItemId },
+
     /// A record writing both spellings of a condition. Refused rather than
     /// resolved, because the two are not one rule and its negation and there is
     /// no reading of the pair that is obviously the one that was meant.

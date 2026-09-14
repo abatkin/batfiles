@@ -1,35 +1,168 @@
-//! `[remotes]`: the repositories a manifest names. Declaring one is read and
-//! checked as the manifest is read; nothing materializes one yet, so every case
-//! here is settled before anything is executed and all of them run on every
-//! platform.
+//! `[remotes]`: the repositories a manifest names, and the tree `sync` brings
+//! them onto the machine in.
+//!
+//! The rules about what a record may say are settled as the manifest is read,
+//! so those cases execute nothing. The rest clone from a local bare repository
+//! (`guidance.md`, "Test environments"), as the `git-clone` tests do.
+
+use std::fs;
 
 use crate::support::*;
 
-/// A complete Git remote, using every field the record accepts.
-const COMPLETE: &str = "[remotes.core]\n\
-     type = \"git\"\n\
-     url = \"https://e.example/core.git\"\n\
-     ref = \"main\"\n\
-     when = \"work\"\n\n";
+/// A manifest declaring one Git remote at `core`, plus whatever else the case
+/// needs after it.
+fn declaring(origin: &BareRepo, rest: &str) -> String {
+    format!(
+        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\n\n{rest}",
+        display(&origin.origin())
+    )
+}
+
+/// What the materialization of `core` holds at `name`.
+fn materialized(tree: &Tree, name: &str) -> String {
+    let path = tree.path("repo").join("remotes/core").join(name);
+    fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", display(&path)))
+}
 
 #[test]
-fn a_declared_remote_is_read_and_changes_no_run() {
-    // The `[default-disabled]` bargain, for the section that arrives before
-    // anything reads it: a manifest declaring a remote installs exactly what
-    // the same manifest installs without one, and materializes nothing.
+fn a_declared_remote_is_cloned_into_the_repository() {
+    // Declaring one is what materializes it: nothing here names `core`, and
+    // nothing can until an action can reach its content.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(&origin, &one_create_dir("~/.cache/zsh")));
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(materialized(&tree, "README.md"), "a plugin\n");
+    assert!(
+        tree.path("repo").join("remotes/core/.git").is_dir(),
+        "the materialization is not a clone"
+    );
+    assert!(
+        stderr_of(&assertion).contains(&format!(
+            "cloned {} from {}",
+            display(&tree.path("repo").join("remotes/core")),
+            display(&origin.origin())
+        )),
+        "the clone was not reported:\n{}",
+        stderr_of(&assertion)
+    );
+    // The actions still run, after it.
+    assert!(tree.home(".cache/zsh").is_dir(), "the action did not run");
+}
+
+#[test]
+fn a_later_sync_updates_the_materialization() {
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(&origin, ""));
+    tree.batfiles().arg("sync").assert().success();
+
+    origin.publish("PLUGINS.md", "one more\n", "second");
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(materialized(&tree, "PLUGINS.md"), "one more\n");
+    assert!(
+        stderr_of(&assertion).contains(&format!(
+            "updated {}",
+            display(&tree.path("repo").join("remotes/core"))
+        )),
+        "the update was not reported:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_declared_ref_is_what_the_materialization_follows() {
+    // `ref` is `git-clone`'s field under another name, so it does what a cloned
+    // action's does: the checkout stands on what the ref names, not on `main`.
+    let origin = BareRepo::new();
+    origin.publish_on("topic", "TOPIC.md", "on the branch\n", "topic work");
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "{COMPLETE}[vars]\nwork = \"true\"\n\n{}",
-        one_create_dir("~/.cache/zsh")
+        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\nref = \"topic\"\n",
+        display(&origin.origin())
     ));
 
     tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(materialized(&tree, "TOPIC.md"), "on the branch\n");
+}
+
+#[test]
+fn a_materialization_is_named_and_reported_before_the_first_action() {
+    // The heading an action gets at `-v`, for the work that comes before any of
+    // them: the remote says which record its lines belong to, and the whole of
+    // it precedes the first action's heading.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(&origin, &one_create_dir("~/.cache/zsh")));
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    let heading = stderr.find("remote core").expect("the remote heading");
+    let cloned = stderr.find("cloned ").expect("the clone line");
+    let action = stderr
+        .find("create-dir action 1")
+        .expect("the action heading");
+    assert!(
+        heading < cloned,
+        "the heading came after its line:\n{stderr}"
+    );
+    assert!(
+        cloned < action,
+        "the remote was materialized after the actions:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_remote_that_cannot_be_materialized_stops_the_run() {
+    // A materialization failure is an action failure: the run stops, and the
+    // records after it do not run.
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\n\n{}",
+        display(&tree.path("nowhere.git")),
+        one_create_dir("~/.cache/zsh")
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+
+    assert!(
+        stderr_of(&assertion).contains("git clone failed"),
+        "{}",
+        stderr_of(&assertion)
+    );
+    assert!(
+        !tree.home(".cache/zsh").exists(),
+        "the run continued past the failed remote"
+    );
+}
+
+#[test]
+fn an_apply_command_materializes_nothing() {
+    // `sync` is what brings the declared remotes up to date. Applying one
+    // record is aimed at that record, and putting the network in front of it
+    // would make the narrow command the slow one.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        "[[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/zsh\"\n",
+    ));
+
+    tree.batfiles()
+        .args(["apply-action", "--id", "cache"])
+        .assert()
+        .success();
 
     assert!(tree.home(".cache/zsh").is_dir(), "the action did not run");
     assert_eq!(
         entries(&tree.path("repo")),
         ["batfiles.toml"],
-        "something was materialized into the repository"
+        "an apply command materialized a remote"
     );
 }
 
@@ -124,6 +257,27 @@ fn a_git_remote_is_closed_over_the_fields_it_accepts() {
             "`{unknown}` was accepted:\n{stderr}"
         );
     }
+}
+
+#[test]
+fn two_remote_keys_may_not_differ_only_in_case() {
+    // Two map keys and one directory, wherever the filesystem folds case: the
+    // second remote would find the first one's clone and update that, since a
+    // clone keeps the remote it was made with. Refused here rather than on
+    // macOS, because the manifest is the same repository on every machine.
+    let stderr = rejected(
+        "[remotes.core]\n\
+         type = \"git\"\n\
+         url = \"https://e.example/a.git\"\n\n\
+         [remotes.Core]\n\
+         type = \"git\"\n\
+         url = \"https://e.example/b.git\"\n",
+    );
+    assert!(
+        stderr.contains("`core`") && stderr.contains("`Core`"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("differ only in case"), "{stderr}");
 }
 
 #[test]

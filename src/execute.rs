@@ -14,81 +14,105 @@ use crate::manifest::Manifest;
 use crate::manifest::action::Action;
 use crate::mode::RunMode;
 use crate::output::Reporter;
+use crate::remotes;
 use crate::selection::{Selection, Target};
 use crate::var::VarName;
 use crate::var_set::VarSet;
 
+/// What an invocation settled before any of these commands got to work: where
+/// it runs, whether it writes, and the two sources of a variable that the
+/// command line and the environment supply.
+///
+/// One borrowed group rather than five parameters, because every command here
+/// takes all five and hands all five on unchanged; what distinguishes them is
+/// the record they were pointed at, which each takes for itself.
+pub(crate) struct Invocation<'a> {
+    pub roots: &'a Roots,
+    pub mode: RunMode,
+    /// `--var` values, in the order they were written.
+    pub vars: &'a [(VarName, String)],
+    pub env: &'a Environment,
+    pub reporter: &'a Reporter,
+}
+
 /// `sync`: bring the home directory to the state the whole manifest describes.
 pub(crate) fn sync(
-    roots: &Roots,
-    mode: RunMode,
+    invocation: &Invocation<'_>,
     skip_actions: &[String],
     skip_groups: &[String],
-    vars: &[(VarName, String)],
-    env: &Environment,
-    reporter: &Reporter,
 ) -> Result<(), Error> {
-    let (mut manifest, disabled) = load(roots)?;
+    let (mut manifest, disabled) = load(invocation.roots)?;
     let selection = Selection::new(
         Target::Everything,
         skip_actions,
         skip_groups,
-        env,
+        invocation.env,
         disabled,
-        reporter,
+        invocation.reporter,
     );
     // An empty manifest, and one whose every action is disabled, are both
     // ordinary successful runs that did nothing, so the count is not consulted.
-    run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
+    run(&mut manifest, &selection, Remotes::Materialize, invocation)?;
     Ok(())
+}
+
+/// What a run does about the repositories the manifest declares.
+///
+/// The distinction is the command's, not the manifest's: bringing every
+/// declared remote up to date is `sync`'s whole-repository job, and an apply
+/// command carrying it out would put the network between someone and the one
+/// record they named.
+enum Remotes {
+    /// `sync`: clone what is missing and update what is there, before the first
+    /// action.
+    Materialize,
+    /// The apply commands: whatever is materialized already, and nothing
+    /// fetched.
+    AsFound,
 }
 
 /// `apply-action`: carry out the one record named by `id`, whatever the
 /// machine-local lists say about it.
-pub(crate) fn apply_action(
-    roots: &Roots,
-    mode: RunMode,
-    id: &str,
-    vars: &[(VarName, String)],
-    env: &Environment,
-    reporter: &Reporter,
-) -> Result<(), Error> {
+pub(crate) fn apply_action(invocation: &Invocation<'_>, id: &str) -> Result<(), Error> {
     let id = ItemAddress::try_from(id.to_owned())?;
-    let (mut manifest, disabled) = load(roots)?;
+    let (mut manifest, disabled) = load(invocation.roots)?;
     // The command accepts neither run-only option, and naming one action waives
     // every exclusion either document holds.
-    let selection = Selection::new(Target::Action(&id), &[], &[], env, disabled, reporter);
-    run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
+    let selection = Selection::new(
+        Target::Action(&id),
+        &[],
+        &[],
+        invocation.env,
+        disabled,
+        invocation.reporter,
+    );
+    run(&mut manifest, &selection, Remotes::AsFound, invocation)?;
     Ok(())
 }
 
 /// `apply-group`: carry out the records naming `group` that are not themselves
 /// disabled or skipped.
 pub(crate) fn apply_group(
-    roots: &Roots,
-    mode: RunMode,
+    invocation: &Invocation<'_>,
     group: &str,
     skip_actions: &[String],
-    vars: &[(VarName, String)],
-    env: &Environment,
-    reporter: &Reporter,
 ) -> Result<(), Error> {
     let group = ItemAddress::try_from(group.to_owned())?;
-    let (mut manifest, disabled) = load(roots)?;
+    let (mut manifest, disabled) = load(invocation.roots)?;
     // `--skip-group` is not accepted, so there is no group-shaped run-only list
     // to hand over; naming the group waives the one there would have been.
     let selection = Selection::new(
         Target::Group(&group),
         skip_actions,
         &[],
-        env,
+        invocation.env,
         disabled,
-        reporter,
+        invocation.reporter,
     );
-    let executed_count = run(&mut manifest, &selection, roots, mode, vars, env, reporter)?;
+    let executed_count = run(&mut manifest, &selection, Remotes::AsFound, invocation)?;
 
     if executed_count == 0 {
-        reporter.info(
+        invocation.reporter.info(
             "nothing to apply: every action in the group is disabled, skipped, \
              or excluded by its own condition",
         );
@@ -166,9 +190,10 @@ fn entry_exclusion(entry: &clone_list::Entry, bindings: &Bindings<'_>) -> Option
     }
 }
 
-/// Capture selection once, prepare executable clone lists, and execute in
-/// manifest order. Unknown targets and action failures are errors. Dry runs use
-/// the same selection and preparation.
+/// Capture selection once, materialize the declared remotes where `remotes`
+/// asks for it, prepare executable clone lists, and execute in manifest order.
+/// Unknown targets, materialization failures, and action failures are errors.
+/// Dry runs use the same selection and preparation.
 ///
 /// The count returned is of action handlers this run invoked and that returned
 /// successfully, which is what tells a caller whether the run reached any of the
@@ -178,12 +203,10 @@ fn entry_exclusion(entry: &clone_list::Entry, bindings: &Bindings<'_>) -> Option
 fn run(
     manifest: &mut Manifest,
     selection: &Selection<'_>,
-    roots: &Roots,
-    mode: RunMode,
-    vars: &[(VarName, String)],
-    env: &Environment,
-    reporter: &Reporter,
+    remotes: Remotes,
+    invocation: &Invocation<'_>,
 ) -> Result<usize, Error> {
+    let reporter = invocation.reporter;
     // A complaint about the invocation, so it comes before any of the work —
     // including the context, whose own failure would otherwise swallow it.
     selection.warn_unmatched(&manifest.actions, reporter);
@@ -193,17 +216,17 @@ fn run(
     // copy of them.
     let variables = Rc::new(VarSet::resolve(
         &manifest.vars,
-        &roots.state,
-        env,
-        vars,
+        &invocation.roots.state,
+        invocation.env,
+        invocation.vars,
         reporter,
     )?);
     variables.report(reporter);
     // The host is read once for the whole run, and every condition in it is
     // decided against these bindings.
-    let host = HostNamespaces::capture(env);
+    let host = HostNamespaces::capture(invocation.env);
     let bindings = Bindings::new(&variables, &host);
-    let context = RunContext::new(roots, mode, reporter)?;
+    let context = RunContext::new(invocation.roots, invocation.mode, reporter)?;
 
     let mut selected_actions: Vec<SelectedAction> = Vec::new();
     for (index, action) in manifest.actions.iter().enumerate() {
@@ -218,6 +241,13 @@ fn run(
             heading: action.describe(index + 1),
             exclusion: selection.exclusion(action, &bindings),
         });
+    }
+
+    // Before the lists are read and before the first action runs, because both
+    // are what a materialization is for: 6.3 gives an action a source inside
+    // one, and the list it reads may be that source.
+    if let Remotes::Materialize = remotes {
+        remotes::materialize(&manifest.remotes, &context)?;
     }
 
     prepare_clone_lists(manifest, &selected_actions, &context, &bindings)?;
@@ -242,7 +272,7 @@ fn run(
     }
 
     if selected_actions.is_empty()
-        && let Some(error) = selection.unresolved(roots.manifest())
+        && let Some(error) = selection.unresolved(invocation.roots.manifest())
     {
         return Err(error);
     }

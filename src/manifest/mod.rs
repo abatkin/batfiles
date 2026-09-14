@@ -81,8 +81,20 @@ impl Manifest {
     fn validate(&self) -> Result<(), Invalid> {
         // Ahead of the actions, since an action reaching a remote's content is
         // reaching one of these.
+        //
+        // A remote's ID is also the directory it materializes in, so the keys
+        // have to be distinct as directory names and not only as map keys. An
+        // ID is ASCII by its own rule, so folding it is exactly what a
+        // case-insensitive filesystem does to it.
+        let mut directories: BTreeMap<String, &ItemId> = BTreeMap::new();
         for (id, remote) in &self.remotes {
             remote.validate(id)?;
+            if let Some(one) = directories.insert(id.as_str().to_ascii_lowercase(), id) {
+                return Err(Invalid::RemotesShareOneDirectory {
+                    one: one.clone(),
+                    other: id.clone(),
+                });
+            }
         }
 
         let mut seen: BTreeMap<&ItemId, usize> = BTreeMap::new();

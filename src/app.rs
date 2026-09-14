@@ -11,7 +11,7 @@ use crate::cli::{Cli, Command, GlobalOptions, VarsCommand, color};
 use crate::disabled::{self, Change, DisabledList};
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute;
+use crate::execute::{self, Invocation};
 use crate::location::{
     LocationInputs, Roots, StateRoots, detect_os_home, discover_working_repository, resolve_roots,
     resolve_state_roots,
@@ -19,6 +19,7 @@ use crate::location::{
 use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
+use crate::var::VarName;
 use crate::var_set;
 
 /// A command that ran and failed.
@@ -88,38 +89,26 @@ fn dispatch(
         Command::Sync(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::sync(
-                &roots,
-                RunMode::new(args.dry_run),
+                &invocation(&roots, args.dry_run, &args.action.vars, env, reporter),
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
-                &args.action.vars,
-                env,
-                reporter,
             )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::ApplyAction(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::apply_action(
-                &roots,
-                RunMode::new(args.dry_run),
+                &invocation(&roots, args.dry_run, &args.action.vars, env, reporter),
                 &args.id,
-                &args.action.vars,
-                env,
-                reporter,
             )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::ApplyGroup(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::apply_group(
-                &roots,
-                RunMode::new(args.dry_run),
+                &invocation(&roots, args.dry_run, &args.action.vars, env, reporter),
                 &args.group,
                 &args.selection.skip_actions,
-                &args.action.vars,
-                env,
-                reporter,
             )?;
             Ok(ExitCode::SUCCESS)
         }
@@ -190,6 +179,24 @@ fn dispatch(
             locate_state(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }
+    }
+}
+
+/// What the three action-executing commands share: where they run, whether
+/// they write, and the values the invocation itself supplied.
+fn invocation<'a>(
+    roots: &'a Roots,
+    dry_run: bool,
+    vars: &'a [(VarName, String)],
+    env: &'a Environment,
+    reporter: &'a Reporter,
+) -> Invocation<'a> {
+    Invocation {
+        roots,
+        mode: RunMode::new(dry_run),
+        vars,
+        env,
+        reporter,
     }
 }
 

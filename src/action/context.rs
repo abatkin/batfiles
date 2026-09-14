@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use crate::directory::{self, DirectoryOutcome};
 use crate::error::Error;
+use crate::item::ItemId;
 use crate::location::Roots;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, RepositoryRoot};
+use crate::remotes;
 
 /// Anchored repository and home roots, execution mode, and reporter for one run.
 pub(crate) struct RunContext<'a> {
@@ -57,6 +59,20 @@ impl<'a> RunContext<'a> {
     /// An action's `dest`, resolved against this run's selected home.
     pub fn destination(&self, dest: &str) -> PathBuf {
         destination(&self.home, dest)
+    }
+
+    /// Where one declared remote is materialized: `remotes/<id>` inside the leaf
+    /// repository, keyed by the ID the remote was declared under rather than by
+    /// anything that reaches it.
+    ///
+    /// A repository-owned path, so it is resolved here with the rest of them.
+    /// An ID is a path segment the manifest already validated, so nothing here
+    /// can leave the tree.
+    pub fn materialization(&self, id: &ItemId) -> PathBuf {
+        self.repository
+            .path()
+            .join(remotes::DIRECTORY)
+            .join(id.as_str())
     }
 
     /// The repository an action installs from, for the one question that needs
