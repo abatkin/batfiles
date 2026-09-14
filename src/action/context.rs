@@ -1,7 +1,9 @@
 //! Action roots, source and destination resolution, run mode, and reporting.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::condition::Exclusion;
 use crate::directory::{self, DirectoryOutcome};
 use crate::error::Error;
 use crate::item::ItemId;
@@ -12,23 +14,39 @@ use crate::paths::{self, RepositoryRoot};
 use crate::remotes;
 use crate::repo_path::RepoPath;
 
-/// Anchored repository and home roots, execution mode, and reporter for one run.
+/// Anchored repository and home roots, execution mode, excluded remotes, and
+/// reporter for one run.
 pub(crate) struct RunContext<'a> {
     repository: RepositoryRoot,
     home: PathBuf,
     mode: RunMode,
+    /// The declared remotes this machine's conditions close, and why, settled
+    /// once for the run before any action asks.
+    excluded_remotes: BTreeMap<ItemId, Exclusion>,
     reporter: &'a Reporter,
 }
 
 impl<'a> RunContext<'a> {
     /// Anchor the resolved roots, once, for every action in a run.
-    pub fn new(roots: &Roots, mode: RunMode, reporter: &'a Reporter) -> Result<Self, Error> {
+    pub fn new(
+        roots: &Roots,
+        mode: RunMode,
+        excluded_remotes: BTreeMap<ItemId, Exclusion>,
+        reporter: &'a Reporter,
+    ) -> Result<Self, Error> {
         Ok(Self {
             repository: RepositoryRoot::at(&roots.batfiles_dir)?,
             home: paths::anchor(&roots.home)?,
             mode,
+            excluded_remotes,
             reporter,
         })
+    }
+
+    /// Why this machine does not have the remote `id` names, or `None` where it
+    /// is one this run materializes and reads.
+    pub fn excluded_remote(&self, id: &ItemId) -> Option<&Exclusion> {
+        self.excluded_remotes.get(id)
     }
 
     /// Resolve a validated repository path to an absolute one, against the
@@ -71,10 +89,20 @@ impl<'a> RunContext<'a> {
     /// already: nothing clones one on demand, so a path into a remote that
     /// `sync` has not brought down is reported as that rather than as a missing
     /// file under a directory the user never made.
+    ///
+    /// A remote this machine's conditions exclude is refused ahead of that, and
+    /// whether or not a tree is there: a materialization an earlier run left
+    /// behind is not content this one may install from.
     fn tree_root(&self, remote: Option<&ItemId>) -> Result<PathBuf, Error> {
         let Some(id) = remote else {
             return Ok(self.repository.path().to_path_buf());
         };
+        if let Some(exclusion) = self.excluded_remote(id) {
+            return Err(Error::RemoteExcluded {
+                remote: id.clone(),
+                reason: exclusion.reason().to_owned(),
+            });
+        }
         let path = self.materialization(id);
         if paths::occupied(&path)? {
             Ok(path)

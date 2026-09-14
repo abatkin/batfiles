@@ -229,8 +229,22 @@ linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
 A materialization that was already up to date says nothing, as an unchanged
 destination does. A remote that cannot be cloned or updated fails the run before
 any action, so a `sync` that reaches its first action has every declared remote
-in place. Under `--dry-run` batfiles says what it would clone or update and runs
-no git at all, which is the [dry-run rule](#dry-run-behavior) for every caller.
+it takes in place. Under `--dry-run` batfiles says what it would clone or update
+and runs no git at all, which is the [dry-run rule](#dry-run-behavior) for every
+caller.
+
+A remote whose own [condition](repoformat.md#a-remotes-condition) closes on this
+machine is passed over instead, under the same heading and by the rules in
+[exclusion reporting](#exclusion-reporting):
+
+```text
+remote core - skipped: when "work" is false
+symlink zshrc (group shell)
+linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
+```
+
+Every command decides those conditions, though only `sync` acts on them: an
+action installing from an excluded remote is refused by name wherever it runs.
 
 `sync` is the only command that does this; see [what all three
 load](#selection-by-command).
@@ -499,6 +513,14 @@ An apply command is aimed at one record, and bringing the whole declared set up
 to date is the whole-repository job `sync` is for, so it uses whatever is
 already in `remotes/` and fetches nothing.
 
+**A remote's own condition is different**, and every command evaluates it. It
+decides whether this machine takes the remote at all rather than what one run
+does, so an action installing from an [excluded
+remote](repoformat.md#a-remotes-condition) is refused under all three commands —
+including `apply-action`, whose waiver covers the record it names and not the
+repositories that record reaches into. Only `sync` reports the exclusion, since
+only `sync` had work to pass over.
+
 ### Clone-list preparation
 
 After selection and action conditions are settled, all selected, unskipped
@@ -593,6 +615,19 @@ not cloning https://github.com/company/internal-zsh-tools.git (plugins.txt line 
 An entry condition that cannot be evaluated instead emits a warning using the
 same `not cloning` frame, naming the condition and failure. Other entries remain
 eligible to run.
+
+A [remote](repoformat.md#a-remotes-condition) its condition closes is reported
+the same two ways, under the heading its materialization would have printed
+under, before the first action:
+
+```text
+remote core - skipped: unless "personal" is true
+warning: remote core: when "work" cannot be evaluated, so it is not materialized: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
+```
+
+Neither stops the run. An action that then installs from the excluded remote
+fails as any action reaching content it may not read does, naming the remote and
+repeating the reason.
 
 ### Enable and disable actions or groups
 

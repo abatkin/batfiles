@@ -80,15 +80,12 @@ No inclusion of remote actions yet.
 - **6.2** ✅ Materialize declared remotes under `remotes/<id>/` on `sync`.
 - **6.3** ✅ Add parsed `@remote/path` values to the shared repository-path resolver.
 - **6.4** ✅ Source leaf-action content from a remote's materialization.
-- **6.5** Gate remotes on `when` and `unless`. This is the third caller of the
-  map from a condition's evaluation to an exclusion, so extract it here: one
-  result for admitted, excluded, and failed to evaluate, with each caller
-  supplying the record's heading and consequence text. Keep the distinction
-  between an ordinary exclusion and a warning, and do not evaluate a record some
-  list already excludes.
+- **6.5** ✅ Gate remotes on `when` and `unless`.
 - **6.6** Document and test that dry runs neither clone nor update materializations.
   Test absent and existing materializations against the local bare fixture,
   snapshot the whole remotes tree, and check direct evidence that no fetch ran.
+  Cover an excluded remote in both modes, since a dry run reports the exclusion
+  a real run reports and neither mode reads the tree.
   Stale materializations remain usable for inspection; 7.1 handles missing ones.
 - **6.7** Add a separate local bare repository fixture for remotes.
 

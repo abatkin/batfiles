@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::condition::{Bindings, EvalError, Exclusion, Gate};
+use crate::condition::{Bindings, Exclusion};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
@@ -88,10 +88,6 @@ pub(crate) enum SkipReason<'a> {
         name: &'a ItemId,
         origin: &'static str,
     },
-    /// The record's own condition, which this machine closes. Unlike the other
-    /// two, this one names nothing the reader could go and edit for one run: it
-    /// is the repository saying the action does not belong here.
-    Condition(Gate<'a>),
 }
 
 impl fmt::Display for SkipReason<'_> {
@@ -99,7 +95,6 @@ impl fmt::Display for SkipReason<'_> {
         match self {
             Self::Disabled { noun, name } => write!(f, "{noun} `{name}` is disabled"),
             Self::Run { name, origin } => write!(f, "`{name}` from {origin}"),
-            Self::Condition(gate) => f.write_str(&gate.exclusion_reason()),
         }
     }
 }
@@ -230,33 +225,27 @@ impl<'a> Selection<'a> {
     /// exclusion, and says so at every verbosity: the record is the one thing a
     /// reader can act on, and it is named where the run reports it rather than
     /// here.
-    // CARRY(6.5): `execute::entry_exclusion` maps an evaluation the same way,
-    // split here by the ordering the lists impose. Remote conditions are the
-    // third caller; share the mapping then.
+    ///
+    /// The record's own condition is consulted last, so a record some list
+    /// already excludes is never evaluated: a condition that cannot be
+    /// evaluated then costs only the runs that would otherwise have carried the
+    /// record out.
     pub fn exclusion(&self, action: &Action, bindings: &Bindings<'_>) -> Option<Exclusion> {
-        match self.first_reason(action, bindings) {
-            Ok(reason) => reason.map(|reason| Exclusion::Expected(reason.to_string())),
-            Err((gate, error)) => Some(Exclusion::EvaluationFailed(
-                gate.unevaluable(Some(NOT_INSTALLED), &error),
-            )),
+        if let Some(reason) = self.listed_reason(action) {
+            return Some(Exclusion::Expected(reason.to_string()));
         }
+        // Waived exactly where the action's own name is. `apply-action` names
+        // one record and nothing is finer-grained than that, so naming it
+        // reaches it whatever this machine makes of its condition.
+        let gate = action.gate().filter(|_| self.target.honors_actions())?;
+        gate.verdict(bindings, Some(NOT_INSTALLED)).exclusion()
     }
 
-    /// Return the first applicable exclusion, or None. Persistent disables precede
-    /// run-only skips; action exclusions precede group exclusions within each source.
-    /// The record's own condition is consulted last. The target determines which
+    /// The first exclusion either list names, or `None` where neither does.
+    /// Persistent disables precede run-only skips; action exclusions precede
+    /// group exclusions within each source. The target determines which
     /// exclusions are honored.
-    ///
-    /// Only the condition can fail, and only for a record nothing else already
-    /// excludes: a manifest's conditions are all parsed as it is read, so what
-    /// is left to go wrong here needs this machine's variables to go wrong
-    /// against. The gate comes back with the fault because the line reporting
-    /// it names the spelling the record used.
-    fn first_reason<'b>(
-        &self,
-        action: &'b Action,
-        bindings: &Bindings<'_>,
-    ) -> Result<Option<SkipReason<'b>>, (Gate<'b>, EvalError)> {
+    fn listed_reason<'b>(&self, action: &'b Action) -> Option<SkipReason<'b>> {
         let id = action.id().filter(|_| self.target.honors_actions());
         let group = action.group().filter(|_| self.target.honors_groups());
 
@@ -265,40 +254,26 @@ impl<'a> Selection<'a> {
         };
 
         if let Some(name) = id.filter(|id| listed(&self.disabled.actions, id)) {
-            return Ok(Some(SkipReason::Disabled {
+            return Some(SkipReason::Disabled {
                 noun: "action",
                 name,
-            }));
+            });
         }
         if let Some(name) = group.filter(|group| listed(&self.disabled.groups, group)) {
-            return Ok(Some(SkipReason::Disabled {
+            return Some(SkipReason::Disabled {
                 noun: "group",
                 name,
-            }));
+            });
         }
         if let Some((name, origin)) = id.and_then(|id| Some((id, self.actions.origin(id)?))) {
-            return Ok(Some(SkipReason::Run { name, origin }));
+            return Some(SkipReason::Run { name, origin });
         }
-        if let Some((name, origin)) = group.and_then(|g| Some((g, self.groups.origin(g)?))) {
-            return Ok(Some(SkipReason::Run { name, origin }));
-        }
-        // Last, so a record some list already excludes is never evaluated: a
-        // condition that cannot be evaluated then costs only the runs that
-        // would otherwise have carried the record out.
-        //
-        // Waived exactly where the action's own name is. `apply-action` names
-        // one record and nothing is finer-grained than that, so naming it
-        // reaches it whatever this machine makes of its condition.
-        if self.target.honors_actions()
-            && let Some(gate) = action.gate()
-        {
-            return match gate.admits(bindings) {
-                Ok(true) => Ok(None),
-                Ok(false) => Ok(Some(SkipReason::Condition(gate))),
-                Err(error) => Err((gate, error)),
-            };
-        }
-        Ok(None)
+        group.and_then(|group| {
+            Some(SkipReason::Run {
+                name: group,
+                origin: self.groups.origin(group)?,
+            })
+        })
     }
 }
 

@@ -96,6 +96,13 @@ pub(crate) enum Error {
     )]
     RemoteNotMaterialized { remote: ItemId, path: PathBuf },
 
+    /// An action sourcing from a remote whose own condition closed on this
+    /// machine. Named apart from a missing materialization because nothing is
+    /// missing: the fix is the condition or the action naming it, not a `sync`.
+    /// The reason is the one the run reports for the remote itself.
+    #[error("remote `{remote}` is excluded on this machine: {reason}")]
+    RemoteExcluded { remote: ItemId, reason: String },
+
     /// A `source-dir` naming something the repository holds, but not a directory.
     #[error("not a directory: {}", .path.display())]
     SourceNotADirectory { path: PathBuf },

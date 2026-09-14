@@ -106,10 +106,12 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   write a path of its own: `source = "@core/files/zshrc"` links a file your
   repository does not hold. The remote has to be one you declared, which is
   checked when the manifest is read, and `sync` is what brings it down — an
-  `apply-` command installs from the copy already on the machine. What is not
-  built is the other half: splicing a remote's own actions into your manifest,
-  which is what slice 7 is for. The `remotes/` tree is batfiles', not yours;
-  tell Git to ignore it.
+  `apply-` command installs from the copy already on the machine. A remote takes
+  a `when` or `unless` of its own, and one that closes on this machine is neither
+  cloned nor read: a repository you only have at work is declared once and stays
+  off your laptop. What is not built is the other half: splicing a remote's own
+  actions into your manifest, which is what slice 7 is for. The `remotes/` tree
+  is batfiles', not yours; tell Git to ignore it.
 - **Existing content is handled according to the action.** Seeds keep occupied
   destinations, directory actions preserve existing containers, and Git actions
   validate and conservatively update existing clones. Symlink and Git actions

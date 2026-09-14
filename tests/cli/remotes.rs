@@ -206,12 +206,171 @@ fn a_remote_writes_one_condition_or_none() {
 
 #[test]
 fn a_remotes_condition_is_parsed_where_the_manifest_is_read() {
-    // Parsed with the document that holds it, like every other condition, and
-    // evaluated nowhere until 6.5 gives it something to decide.
+    // Parsed with the document that holds it, like every other condition, so a
+    // malformed one fails the manifest rather than the machine that evaluates
+    // it.
     let stderr = rejected(
         "[remotes.core]\ntype = \"git\"\nurl = \"https://e.example/a.git\"\nwhen = \"work &&\"\n",
     );
     assert!(stderr.contains("not a valid condition"), "{stderr}");
+}
+
+// A remote's own condition, which decides whether this machine has the remote
+// at all. Where an action's condition decides one record of the ordered list,
+// this decides a whole repository: what is not materialized is also not read.
+
+/// A manifest declaring `core` behind one condition, with `vars` declaring what
+/// the condition reads and `rest` holding whatever actions the case needs.
+fn conditioned(
+    origin: &BareRepo,
+    spelling: &str,
+    condition: &str,
+    vars: &str,
+    rest: &str,
+) -> String {
+    format!(
+        "{vars}[remotes.core]\n\
+         type = \"git\"\n\
+         url = \"{}\"\n\
+         {spelling} = \"{condition}\"\n\n\
+         {rest}",
+        display(&origin.origin())
+    )
+}
+
+#[test]
+fn a_remote_whose_condition_closes_is_not_materialized() {
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        &one_create_dir("~/.cache/zsh"),
+    ));
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+
+    assert_eq!(
+        entries(&tree.path("repo")),
+        ["batfiles.toml"],
+        "an excluded remote was brought down anyway"
+    );
+    // The run is an ordinary one otherwise: an excluded remote is the manifest
+    // working as written, not a failure, so the actions after it run.
+    assert!(tree.home(".cache/zsh").is_dir(), "the run stopped");
+    assert!(
+        stderr_of(&assertion).contains("remote core - skipped: when \"work\" is false"),
+        "the exclusion was not reported as one:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn an_excluded_remote_says_nothing_without_detail() {
+    // Reported the way an excluded action is: asking for a skip and then being
+    // told about it at normal verbosity is noise, and `-v` is where the whole
+    // account of a run lives.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        "",
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(stderr_of(&assertion), "", "the run was not quiet");
+}
+
+#[test]
+fn unless_decides_a_remote_the_other_way_round() {
+    // The spelling a reader gets backwards, on the record where getting it
+    // backwards means cloning a repository this machine was told to leave
+    // alone.
+    let origin = BareRepo::new();
+
+    let closed = Tree::new();
+    closed.write_manifest(&conditioned(
+        &origin,
+        "unless",
+        "work",
+        "[vars]\nwork = \"true\"\n\n",
+        "",
+    ));
+    closed.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&closed.path("repo")), ["batfiles.toml"]);
+
+    let open = Tree::new();
+    open.write_manifest(&conditioned(
+        &origin,
+        "unless",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        "",
+    ));
+    open.batfiles().arg("sync").assert().success();
+    assert_eq!(materialized(&open, "README.md"), "a plugin\n");
+}
+
+#[test]
+fn a_remotes_condition_that_cannot_be_decided_closes_it_and_warns() {
+    // The gate closes in either spelling, and the warning is printed whether or
+    // not the run asked for detail: nobody asked for this one. `nowhere` is
+    // declared by no layer.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "nowhere",
+        "",
+        &one_create_dir("~/.cache/zsh"),
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert_eq!(
+        entries(&tree.path("repo")),
+        ["batfiles.toml"],
+        "a remote batfiles could not decide about was cloned"
+    );
+    assert!(
+        stderr.contains(
+            "remote core: when \"nowhere\" cannot be evaluated, so it is not materialized"
+        ),
+        "the failure was not reported under the record:\n{stderr}"
+    );
+    // The half of the line a reader acts on.
+    assert!(stderr.contains("`nowhere` is not declared"), "{stderr}");
+    assert!(tree.home(".cache/zsh").is_dir(), "the run stopped");
+}
+
+#[test]
+fn a_condition_flipped_on_the_command_line_decides_the_remote() {
+    // A remote's condition reads the same variable set every other condition
+    // does, from all four layers.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        "",
+    ));
+
+    tree.batfiles()
+        .args(["sync", "--var", "work=true"])
+        .assert()
+        .success();
+
+    assert_eq!(materialized(&tree, "README.md"), "a plugin\n");
 }
 
 #[test]
@@ -505,4 +664,74 @@ fn a_source_in_a_remote_this_machine_has_not_cloned_says_to_sync() {
         );
     }
     assert!(!tree.home(".gitconfig").exists(), "the action installed");
+}
+
+#[test]
+fn a_source_in_a_remote_this_machine_excludes_is_refused_by_name() {
+    // Nothing is missing here, so the refusal is not the one above. An action
+    // installing from a conditional remote is usually gated on the same
+    // condition; this is what happens to one that is not.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        &one_copy("@core/seed/gitconfig", "~/.gitconfig"),
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+
+    for expected in [
+        "remote `core` is excluded on this machine",
+        "when \"work\" is false",
+    ] {
+        assert!(
+            stderr_of(&assertion).contains(expected),
+            "no `{expected}` in:\n{}",
+            stderr_of(&assertion)
+        );
+    }
+    assert!(!tree.home(".gitconfig").exists(), "the action installed");
+}
+
+#[test]
+fn a_materialization_left_by_an_earlier_run_is_kept_and_not_read() {
+    // What a machine that once satisfied the condition is left with: the tree
+    // stays, because batfiles removes nothing it was not asked to, and is not
+    // read, because what a manifest installs must not depend on which machine
+    // once satisfied the condition.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        &one_copy("@core/seed/gitconfig", "~/.gitconfig"),
+    ));
+
+    tree.batfiles()
+        .args(["sync", "--var", "work=true"])
+        .assert()
+        .success();
+    assert_eq!(materialized(&tree, "seed/gitconfig"), "[user]\n");
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().failure();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains("remote core - skipped: when \"work\" is false"),
+        "the remote was not reported as excluded:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("remote `core` is excluded on this machine"),
+        "the stale materialization was read:\n{stderr}"
+    );
+    assert_eq!(
+        materialized(&tree, "seed/gitconfig"),
+        "[user]\n",
+        "the materialization was removed"
+    );
 }

@@ -220,9 +220,42 @@ whatever is on the machine already and fetch nothing, so an action they run that
 installs from a remote reads the materialization as it stands. Where there is
 none, the action is refused by name rather than reported as a missing file.
 
-Two things about the section still do nothing. The [conditions](#conditions) its
-records carry are parsed and checked, and evaluated nowhere, so a remote is
-materialized whatever its `when` or `unless` says. The `allow-dynamic-vars` field
+### A remote's condition
+
+A remote takes a [condition](#conditions) like any other record, and what it
+decides is whether this machine has the remote at all:
+
+```toml
+[remotes.corporate]
+type = "git"
+url = "git@git.example.com:it/dotfiles.git"
+when = "work"
+```
+
+**A remote the condition closes is not materialized.** `sync` neither clones nor
+updates it, and says so where it would have reported the work — see
+[exclusion reporting](cmdline.md#exclusion-reporting). Nothing else about the
+run changes: an excluded remote is the manifest working as written, so the
+actions still run.
+
+**What is not materialized is also not read.** A [repository
+path](#sources-and-destinations) naming an excluded remote is refused by name,
+and by every command rather than by `sync` alone: the apply commands materialize
+nothing, but they decide a remote's condition all the same, since which trees
+this machine may install from is the manifest's answer and not the filesystem's.
+An action installing from a conditional remote normally carries the same
+condition; one that does not is refused when the remote's condition closes.
+
+**A materialization an earlier run left behind stays where it is.** Batfiles
+removes nothing it was not asked to, so a machine that stops being a work
+machine keeps `remotes/corporate` until someone deletes it. It is not read while
+the remote is excluded: a manifest must not install different content on two
+machines according to which of them once satisfied the condition.
+
+A condition batfiles [cannot evaluate](#when-a-condition-cannot-be-evaluated)
+closes the gate here as everywhere else, with the warning that rule specifies.
+
+One thing about the section still does nothing: the `allow-dynamic-vars` field
 the future schema gives a Git remote is refused as unknown until batfiles can run
 a dynamic variable.
 
@@ -940,9 +973,10 @@ when = "work && facts.os == 'macos'"
 
 Four kinds of record take them: an [action](#actions), an entry of a [clone
 list](#the-clone-list-format), a [remote](#remotes), and a [default-disabled
-candidate](#default-disabled-bootstrap-entries). The last two are checked and
-never evaluated: a remote is [materialized](#materialization) whatever its
-condition says, and nothing adopts a candidate yet.
+candidate](#default-disabled-bootstrap-entries). What one decides is the
+record's own: an action or an entry is carried out or passed over, and a remote
+is [brought onto the machine](#a-remotes-condition) or is not. The last kind is
+checked and never evaluated, because nothing adopts a candidate yet.
 
 **Writing both on one record is a load error.** They are not one rule and its
 negation applied twice, and a record writing both has no reading that is

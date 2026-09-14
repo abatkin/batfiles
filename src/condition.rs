@@ -107,8 +107,22 @@ impl<'a> Gate<'a> {
         when.map(Self::When).or_else(|| unless.map(Self::Unless))
     }
 
+    /// Which way this gate decides for this run: the record is carried out,
+    /// this machine's variables close it, or the condition cannot be decided at
+    /// all — which closes it too.
+    ///
+    /// `consequence` is the caller's, since only the record knows what it was
+    /// going to do; a line that has already said it passes `None`.
+    pub fn verdict(self, bindings: &Bindings<'_>, consequence: Option<&str>) -> Verdict {
+        match self.admits(bindings) {
+            Ok(true) => Verdict::Admitted,
+            Ok(false) => Verdict::Excluded(self.exclusion_reason()),
+            Err(error) => Verdict::Unevaluable(self.unevaluable(consequence, &error)),
+        }
+    }
+
     /// Whether this run's bindings admit the record the gate is written on.
-    pub fn admits(self, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
+    fn admits(self, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
         match self {
             Self::When(condition) => eval(condition, bindings),
             Self::Unless(condition) => Ok(!eval(condition, bindings)?),
@@ -147,10 +161,11 @@ impl<'a> Gate<'a> {
     /// gate knows batfiles did not read the failure as false and install the
     /// record.
     ///
-    /// `consequence` is the caller's because only the record knows what it was
-    /// going to do, and some lines have said it before they reach this: an
-    /// entry of a clone list opens with `not cloning`, so it passes `None`.
-    pub fn unevaluable(self, consequence: Option<&str>, error: &EvalError) -> String {
+    /// `consequence` is [`Self::verdict`]'s caller's because only the record
+    /// knows what it was going to do, and some lines have said it before they
+    /// reach this: an entry of a clone list opens with `not cloning`, so it
+    /// passes `None`.
+    fn unevaluable(self, consequence: Option<&str>, error: &EvalError) -> String {
         let condition = quoted_value(self.condition().source());
         let consequence = consequence.map_or_else(String::new, |what| format!(", so {what}"));
         format!(
@@ -171,6 +186,33 @@ impl<'a> Gate<'a> {
     fn condition(self) -> &'a Condition {
         match self {
             Self::When(condition) | Self::Unless(condition) => condition,
+        }
+    }
+}
+
+/// What one gate's evaluation came to.
+///
+/// Separate from [`Exclusion`], which is what a run recorded about a record and
+/// also arrives from a disabled list or a run-only skip.
+#[derive(Debug)]
+pub(crate) enum Verdict {
+    /// The record applies to this machine.
+    Admitted,
+    /// This machine's variables close the gate. From
+    /// [`Gate::exclusion_reason`].
+    Excluded(String),
+    /// The condition cannot be decided here, which closes the gate in either
+    /// spelling. From [`Gate::unevaluable`].
+    Unevaluable(String),
+}
+
+impl Verdict {
+    /// The exclusion to record, or `None` where the run carries the record out.
+    pub fn exclusion(self) -> Option<Exclusion> {
+        match self {
+            Self::Admitted => None,
+            Self::Excluded(reason) => Some(Exclusion::Expected(reason)),
+            Self::Unevaluable(reason) => Some(Exclusion::EvaluationFailed(reason)),
         }
     }
 }
@@ -1075,6 +1117,48 @@ mod tests {
             Gate::Unless(&parsed)
                 .unevaluable(None, &error)
                 .starts_with("unless \"nowhere\" cannot be evaluated: "),
+        );
+    }
+
+    #[test]
+    fn one_evaluation_decides_a_gate_three_ways() {
+        // The map every record carrying a condition goes through, so that a
+        // failure closes the gate for an action, a clone-list entry, and a
+        // remote alike.
+        let vars = vars(&[("work", "true")]);
+        let host = host(&[]);
+        let bindings = Bindings::new(&vars, &host);
+        let work = condition("work");
+        let nowhere = condition("nowhere");
+
+        let verdict = |gate: Gate<'_>| gate.verdict(&bindings, Some(CONSEQUENCE));
+
+        assert!(matches!(verdict(Gate::When(&work)), Verdict::Admitted));
+        let Verdict::Excluded(reason) = verdict(Gate::Unless(&work)) else {
+            panic!("a true `unless` closes its gate");
+        };
+        assert_eq!(reason, "unless \"work\" is true");
+        let Verdict::Unevaluable(reason) = verdict(Gate::When(&nowhere)) else {
+            panic!("a condition nothing declares cannot be decided");
+        };
+        assert!(
+            reason.starts_with("when \"nowhere\" cannot be evaluated, so "),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_verdict_becomes_the_exclusion_its_caller_records() {
+        // Admission is the absence of an exclusion, and the two closed verdicts
+        // differ in how loudly the run says so.
+        assert!(Verdict::Admitted.exclusion().is_none());
+        assert_eq!(
+            Verdict::Excluded("when \"work\" is false".to_owned()).exclusion(),
+            Some(Exclusion::Expected("when \"work\" is false".to_owned()))
+        );
+        assert_eq!(
+            Verdict::Unevaluable("boom".to_owned()).exclusion(),
+            Some(Exclusion::EvaluationFailed("boom".to_owned()))
         );
     }
 

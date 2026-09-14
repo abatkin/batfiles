@@ -94,9 +94,9 @@ thing about them is not built.
 
 **The record that does not have one yet.** An `include-remote` takes a condition
 too, and that record does not exist; it is specified with its own schema below.
-A [remote](../repoformat.md#remotes) and a `[default-disabled]` entry each accept
-one already, and nothing evaluates either: a remote is materialized whatever its
-condition says, and nothing adopts a candidate.
+A [remote](../repoformat.md#a-remotes-condition) decides its own already; a
+`[default-disabled]` entry accepts one that nothing evaluates, because nothing
+adopts a candidate.
 
 For concision, schema tables below list only `when`. Every record that accepts
 `when` also accepts `unless` as its negated alias, on the terms the built

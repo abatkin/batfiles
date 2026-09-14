@@ -178,16 +178,8 @@ fn prepare_clone_lists(
 /// run, so the entries around it are cloned as they would have been. No
 /// consequence clause: the line the caller writes it into opens with `not
 /// cloning`.
-// CARRY(6.5): `Selection::exclusion` maps an evaluation the same way, and a
-// failure must close the gate in both. Remote conditions are the third caller;
-// share the mapping then.
 fn entry_exclusion(entry: &clone_list::Entry, bindings: &Bindings<'_>) -> Option<Exclusion> {
-    let gate = entry.gate()?;
-    match gate.admits(bindings) {
-        Ok(true) => None,
-        Ok(false) => Some(Exclusion::Expected(gate.exclusion_reason())),
-        Err(error) => Some(Exclusion::EvaluationFailed(gate.unevaluable(None, &error))),
-    }
+    entry.gate()?.verdict(bindings, None).exclusion()
 }
 
 /// Capture selection once, materialize the declared remotes where `remotes`
@@ -226,7 +218,15 @@ fn run(
     // decided against these bindings.
     let host = HostNamespaces::capture(invocation.env);
     let bindings = Bindings::new(&variables, &host);
-    let context = RunContext::new(invocation.roots, invocation.mode, reporter)?;
+    // Settled before the context, which carries it: an action resolving a path
+    // into a remote asks what this run made of that remote's condition.
+    let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
+    let context = RunContext::new(
+        invocation.roots,
+        invocation.mode,
+        excluded_remotes,
+        reporter,
+    )?;
 
     let mut selected_actions: Vec<SelectedAction> = Vec::new();
     for (index, action) in manifest.actions.iter().enumerate() {

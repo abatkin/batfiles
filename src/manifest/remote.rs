@@ -4,7 +4,7 @@
 use serde::Deserialize;
 
 use super::check::{Invalid, RecordName, check_git_ref, check_git_source};
-use crate::condition::Condition;
+use crate::condition::{Condition, Gate};
 use crate::item::ItemId;
 
 /// One entry of `[remotes]`, selected by its required `type` field.
@@ -36,6 +36,17 @@ impl Remote {
             // `Invalid::RemoteTypeUnbuilt` then.
             Self::File(_) => Err(unbuilt(record, "file")),
             Self::Archive(_) => Err(unbuilt(record, "archive")),
+        }
+    }
+
+    /// The condition deciding whether this machine has the remote at all, or
+    /// `None` where the record declares neither field.
+    pub fn gate(&self) -> Option<Gate<'_>> {
+        match self {
+            Self::Git(remote) => Gate::declared(remote.when.as_ref(), remote.unless.as_ref()),
+            // CARRY(9.3): refused as the manifest is read, so no run reaches
+            // one. Each gains its conditions with the record that builds it.
+            Self::File(_) | Self::Archive(_) => None,
         }
     }
 }

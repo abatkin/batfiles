@@ -179,7 +179,10 @@ The command reference defines [clone-list failure handling](cmdline.md#clone-lis
 A clone whose declared `ref` cannot be resolved remains at its destination in
 the checkout state reached before the failure. Later runs retry the ref; fixing
 it lets the clone follow the intended target. Removing the list entry, action, or
-remote does not remove that directory. This applies to standalone clones,
+remote does not remove that directory, and neither does a
+[remote's condition](repoformat.md#a-remotes-condition) closing on a machine
+that once satisfied it: the materialization stays where its owner can see it,
+and is not read while the remote is excluded. This applies to standalone clones,
 clone-list entries, and materializations alike.
 
 ### Clone validation
