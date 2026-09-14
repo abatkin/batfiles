@@ -600,14 +600,16 @@ fn a_source_naming_the_whole_repository_is_rejected() {
 }
 
 #[test]
-fn a_source_starting_with_the_remote_prefix_is_rejected() {
-    // `@` is reserved for naming a remote, which no action reads yet. A
-    // repository really holding a directory called `@work` cannot install from
-    // it, and is told why rather than being told the file is missing.
-    // Only the first character is reserved; `files/@work/zshrc` is an ordinary
-    // path, which is a rule about spelling and is tested where the spelling is.
-    let stderr = rejected(&one_symlink("@work/zshrc", "~/.zshrc"));
-    for expected in ["@work/zshrc", "starts with `@`"] {
+fn a_path_within_a_remote_may_not_start_the_reference_over() {
+    // `@` introduces a remote and nothing else, so a second one cannot open a
+    // path inside the first. Only the leading character is reserved;
+    // `files/@work/zshrc` is an ordinary path, which is a rule about spelling
+    // and is tested where the spelling is.
+    let stderr = rejected(&format!(
+        "[remotes.core]\ntype = \"git\"\nurl = \"https://git.example/core.git\"\n\n{}",
+        one_symlink("@core/@work/zshrc", "~/.zshrc")
+    ));
+    for expected in ["@core/@work/zshrc", "starts with `@`"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
 }

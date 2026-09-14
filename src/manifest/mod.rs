@@ -119,8 +119,10 @@ impl Manifest {
             }
 
             // Which of a record's fields are paths, and which rule each one
-            // follows, is the record's own answer.
-            action.validate(&record)?;
+            // follows, is the record's own answer. The remotes go with it for
+            // the one source rule that reaches past the record: the remote a
+            // path names has to be one of the records above.
+            action.validate(&record, &self.remotes)?;
         }
         self.default_disabled.validate()
     }

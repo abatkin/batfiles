@@ -301,3 +301,208 @@ fn a_remote_needs_a_type_to_be_one() {
     let stderr = rejected("[remotes.core]\nurl = \"https://e.example/a.git\"\n");
     assert!(stderr.contains("type"), "{stderr}");
 }
+
+// Installing from a materialization. Each of the five fields that reads a
+// repository path may name a remote, so what these cover is the resolution
+// rather than the action: an action installing from `@core/...` behaves
+// exactly as it does installing from the leaf repository, and the tests of
+// that behavior are with the action.
+
+/// A remote holding what an action can install from: files, a directory of
+/// them, and a list of repositories to clone.
+fn stocked() -> BareRepo {
+    let origin = BareRepo::new();
+    origin.publish("files/zshrc", "# zsh, from core\n", "add zshrc");
+    origin.publish("seed/gitconfig", "[user]\n", "add a seed");
+    origin
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_may_point_into_a_materialization() {
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        &one_symlink("@core/files/zshrc", "~/.zshrc"),
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    // The link points at the materialization, which is the only place the
+    // content is: nothing copies a remote's file into the leaf repository.
+    assert_eq!(
+        link_target(&tree.home(".zshrc")),
+        tree.path("repo").join("remotes/core/files/zshrc")
+    );
+    assert_eq!(
+        fs::read_to_string(tree.home(".zshrc")).expect("the link should resolve"),
+        "# zsh, from core\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn both_spellings_of_a_reference_reach_the_same_file() {
+    // The structured form is the shorthand written out, so a manifest may use
+    // either and get the same link.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        "[[actions]]\n\
+         type = \"symlink\"\n\
+         source = { remote = \"core\", path = \"files/zshrc\" }\n\
+         dest = \"~/.zshrc\"\n",
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        link_target(&tree.home(".zshrc")),
+        tree.path("repo").join("remotes/core/files/zshrc")
+    );
+}
+
+#[test]
+fn a_copy_seeds_from_a_materialization() {
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        &one_copy("@core/seed/gitconfig", "~/.gitconfig"),
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    // A detached copy, as a copy from the leaf repository is: the file is the
+    // seed's contents and nothing points back at the remote.
+    assert_eq!(
+        fs::read_to_string(tree.home(".gitconfig")).expect("the seed should be installed"),
+        "[user]\n"
+    );
+    assert!(!tree.home(".gitconfig").is_symlink());
+}
+
+#[test]
+fn a_directory_action_reads_its_children_from_a_materialization() {
+    let origin = stocked();
+    origin.publish("seed/npmrc", "loglevel=warn\n", "add another seed");
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        &one_copy_dir("@core/seed", "~/.config/seeds", false),
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        entries(&tree.home(".config/seeds")),
+        ["gitconfig", "npmrc"],
+        "the children came from somewhere other than the remote"
+    );
+}
+
+#[test]
+fn a_clone_list_may_live_in_a_materialization() {
+    // The list is repository content like any other, so it can be held by a
+    // remote. What the list names is a repository to clone, which was never a
+    // repository path and is unchanged by where the list itself came from.
+    let origin = stocked();
+    let plugin = origin.another("plugin");
+    origin.publish(
+        "plugins.txt",
+        &format!("{}\n", display(&plugin)),
+        "add a plugin list",
+    );
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        "[[actions]]\n\
+         type = \"git-clone-list\"\n\
+         source = \"@core/plugins.txt\"\n\
+         dest-dir = \"~/.plugins\"\n",
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(tree.home(".plugins/plugin/README.md")).expect("a cloned plugin"),
+        "a plugin\n"
+    );
+}
+
+#[test]
+fn a_list_held_by_a_remote_is_named_the_way_the_manifest_wrote_it() {
+    // A warning about an entry names the list it came from. That is the path as
+    // written, including the remote, rather than the materialization it was
+    // read out of: the reader's copy of the list is the one in the remote.
+    let origin = stocked();
+    let tree = Tree::new();
+    origin.publish(
+        "plugins.txt",
+        &format!("{}\n", display(&tree.path("nowhere.git"))),
+        "add a list naming nothing",
+    );
+    tree.write_manifest(&declaring(
+        &origin,
+        "[[actions]]\n\
+         type = \"git-clone-list\"\n\
+         source = \"@core/plugins.txt\"\n\
+         dest-dir = \"~/.plugins\"\n",
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert!(
+        stderr_of(&assertion).contains("@core/plugins.txt line 1"),
+        "the list was not named as written:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_source_naming_an_undeclared_remote_is_refused_when_the_manifest_is_read() {
+    // The one source rule that spans two records, so it is the manifest that
+    // answers it, before anything runs. This is also what a repository really
+    // holding a directory called `@work` is told: `@` introduces a remote
+    // wherever a repository path starts with it, and there is no escape.
+    let stderr = rejected(&one_symlink("@work/zshrc", "~/.zshrc"));
+    for expected in ["@work/zshrc", "does not declare", "[remotes.work]"] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+}
+
+#[test]
+fn a_source_in_a_remote_this_machine_has_not_cloned_says_to_sync() {
+    // An apply command materializes nothing, so it is the command that can
+    // reach a declared remote that is not on the machine. The refusal names the
+    // remote rather than reporting a missing file under a directory nobody
+    // made.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        "[[actions]]\n\
+         type = \"copy\"\n\
+         id = \"gitconfig\"\n\
+         source = \"@core/seed/gitconfig\"\n\
+         dest = \"~/.gitconfig\"\n",
+    ));
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-action", "--id", "gitconfig"])
+        .assert()
+        .failure()
+        .code(1);
+
+    for expected in ["remote `core` is not materialized", "batfiles sync"] {
+        assert!(
+            stderr_of(&assertion).contains(expected),
+            "no `{expected}` in:\n{}",
+            stderr_of(&assertion)
+        );
+    }
+    assert!(!tree.home(".gitconfig").exists(), "the action installed");
+}

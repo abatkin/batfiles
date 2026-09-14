@@ -31,20 +31,6 @@ impl<'a> RunContext<'a> {
         })
     }
 
-    /// Resolve a validated repository-relative source to an absolute path.
-    // CARRY(6.4): the records carry a `RepoPath` themselves once actions may
-    // source from a remote, and this shim goes with the last caller that holds
-    // a string.
-    pub fn source(&self, source: &str) -> Result<PathBuf, Error> {
-        self.repo_source(&RepoPath::local(source.to_owned()))
-    }
-
-    /// Resolve a source directory named by a repository-relative string.
-    // CARRY(6.4): the same shim, for the actions that install a directory.
-    pub fn source_directory(&self, source_dir: &str) -> Result<PathBuf, Error> {
-        self.repo_source_directory(&RepoPath::local(source_dir.to_owned()))
-    }
-
     /// Resolve a validated repository path to an absolute one, against the
     /// declaring repository or against a declared remote's materialization.
     ///
@@ -55,7 +41,7 @@ impl<'a> RunContext<'a> {
     /// The final node must exist; a broken symlink counts as present. The
     /// returned path preserves repository symlinks rather than canonicalizing
     /// them.
-    pub fn repo_source(&self, source: &RepoPath) -> Result<PathBuf, Error> {
+    pub fn source(&self, source: &RepoPath) -> Result<PathBuf, Error> {
         let resolved =
             paths::normalize_lexically(&self.tree_root(source.remote())?.join(source.path()));
 
@@ -70,8 +56,8 @@ impl<'a> RunContext<'a> {
 
     /// Resolve a source directory, following its final symlink.
     /// Fails if the source is missing, unreadable, or does not resolve to a directory.
-    pub fn repo_source_directory(&self, source_dir: &RepoPath) -> Result<PathBuf, Error> {
-        let resolved = self.repo_source(source_dir)?;
+    pub fn source_directory(&self, source_dir: &RepoPath) -> Result<PathBuf, Error> {
+        let resolved = self.source(source_dir)?;
         if paths::reaches_directory(&resolved)? {
             Ok(resolved)
         } else {

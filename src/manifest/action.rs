@@ -1,14 +1,18 @@
 //! `[[actions]]`: the ordered list of things a repository does.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use super::check::{
     Invalid, RecordName, check_archive_root, check_dest, check_digest, check_git_ref,
     check_git_source, check_source, check_url,
 };
+use super::remote::Remote;
 use crate::clone_list::Entry;
 use crate::condition::{Condition, Gate};
 use crate::item::ItemId;
+use crate::repo_path::RepoPath;
 
 /// One entry of `[[actions]]`.
 #[derive(Debug, Deserialize)]
@@ -51,23 +55,31 @@ impl Action {
     /// Validate declared paths, URLs, digests, archive roots, and Git refs.
     /// `record` is how a diagnostic names the record, which for an action is
     /// its one-based position.
-    pub fn validate(&self, record: &RecordName) -> Result<(), Invalid> {
+    ///
+    /// `remotes` is what the manifest declares, for the one rule a record
+    /// cannot settle alone: a source may name a remote, and the remote it names
+    /// has to be one of these.
+    pub fn validate(
+        &self,
+        record: &RecordName,
+        remotes: &BTreeMap<ItemId, Remote>,
+    ) -> Result<(), Invalid> {
         match self {
             Self::Symlink(action) => {
-                check_source(&action.source, record)?;
+                check_source(&action.source, record, remotes)?;
                 check_dest(&action.dest, record)
             }
             Self::SymlinkDir(action) => {
-                check_source(&action.source_dir, record)?;
+                check_source(&action.source_dir, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
             Self::CreateDir(action) => check_dest(&action.dest, record),
             Self::Copy(action) => {
-                check_source(&action.source, record)?;
+                check_source(&action.source, record, remotes)?;
                 check_dest(&action.dest, record)
             }
             Self::CopyDir(action) => {
-                check_source(&action.source_dir, record)?;
+                check_source(&action.source_dir, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
             // The two action types whose `source` names something off this
@@ -92,7 +104,7 @@ impl Action {
                 check_dest(&action.dest, record)
             }
             Self::GitCloneList(action) => {
-                check_source(&action.source, record)?;
+                check_source(&action.source, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
         }
@@ -178,9 +190,9 @@ pub(crate) struct SymlinkAction {
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The source, relative to the repository root. A plain string until 6.3
-    /// makes it a path that may also name a remote.
-    pub source: String,
+    /// The source, within the repository that declared the action or within a
+    /// remote it names.
+    pub source: RepoPath,
     /// The destination path as written, resolved against the selected home when
     /// the action runs.
     pub dest: String,
@@ -197,9 +209,9 @@ pub(crate) struct SymlinkDirAction {
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The directory whose direct children are linked, relative to the
-    /// repository root.
-    pub source_dir: String,
+    /// The directory whose direct children are linked, within the repository
+    /// that declared the action or within a remote it names.
+    pub source_dir: RepoPath,
     /// The directory the links are made in, resolved against the selected home
     /// when the action runs and created if it is missing.
     pub dest_dir: String,
@@ -230,8 +242,9 @@ pub(crate) struct CopyAction {
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The file or directory to copy, relative to the repository root.
-    pub source: String,
+    /// The file or directory to copy, within the repository that declared the
+    /// action or within a remote it names.
+    pub source: RepoPath,
     /// Where the copy goes, exactly. Resolved against the selected home when
     /// the action runs.
     pub dest: String,
@@ -247,9 +260,9 @@ pub(crate) struct CopyDirAction {
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The directory whose direct children are copied, relative to the
-    /// repository root.
-    pub source_dir: String,
+    /// The directory whose direct children are copied, within the repository
+    /// that declared the action or within a remote it names.
+    pub source_dir: RepoPath,
     /// The directory the copies are made in, resolved against the selected home
     /// when the action runs and created if it is missing.
     pub dest_dir: String,
@@ -337,10 +350,11 @@ pub(crate) struct GitCloneListAction {
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The list, relative to the repository root. An ordinary repository path,
-    /// unlike the sources of the two actions that reach the network: what is off
-    /// this machine is named by the list's lines, not by this field.
-    pub source: String,
+    /// The list, within the repository that declared the action or within a
+    /// remote it names. An ordinary repository path, unlike the sources of the
+    /// two actions that reach the network: what is off this machine is named by
+    /// the list's lines, not by this field.
+    pub source: RepoPath,
     /// The directory the clones are made in, resolved against the selected home
     /// when the action runs. Spelled `dest-dir` like the other actions that
     /// install into a directory rather than at a name, because that is what it

@@ -69,7 +69,11 @@ impl BareRepo {
         } else {
             git(&work, &["checkout", "-b", branch]);
         }
-        fs::write(work.join(name), contents).expect("a file to commit");
+        let path = work.join(name);
+        // So that a name may be a path: a repository an action installs from
+        // keeps its files in directories like any other.
+        fs::create_dir_all(path.parent().expect("a parent")).expect("a directory to commit into");
+        fs::write(&path, contents).expect("a file to commit");
         git(&work, add);
         git(&work, &["commit", "-m", message]);
         git(&work, &["push", "origin", branch]);

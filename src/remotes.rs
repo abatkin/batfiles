@@ -1,8 +1,9 @@
 //! `remotes/`: bringing the repositories a manifest declares onto this machine.
 //!
 //! A declared remote is materialized because it was declared, not because
-//! something reaches into it: the tree is here for an action to install from,
-//! and until 6.4 there is no such action. Where each one lands is
+//! something reaches into it: an action naming one installs from the tree that
+//! is already there, and a remote nothing names is brought down all the same.
+//! Where each one lands is
 //! [`RunContext::materialization`](crate::action::RunContext::materialization).
 
 use std::collections::BTreeMap;
@@ -26,9 +27,9 @@ pub(crate) const DIRECTORY: &str = "remotes";
 /// silence under [`RunMode::DryRun`](crate::mode::RunMode::DryRun), which runs
 /// no git for any caller.
 ///
-/// A failure stops the run, as an action's does. Nothing consumes a
-/// materialization yet, so continuing would mean a `sync` reporting success
-/// over a remote that is not there.
+/// A failure stops the run, as an action's does: an action later in the list
+/// may install from the tree that is not there, and continuing would mean a
+/// `sync` reporting success over a remote it never brought down.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
     context: &RunContext<'_>,

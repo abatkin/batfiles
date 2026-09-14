@@ -10,8 +10,8 @@ use crate::item::ItemId;
 /// One entry of `[remotes]`, selected by its required `type` field.
 ///
 /// The map key is the remote's ID, so unlike an action a remote is always
-/// named. That is what a diagnostic about one uses, and what an action will
-/// write to reach its content at 6.3.
+/// named. That is what a diagnostic about one uses, and what an action writes
+/// to reach its content.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum Remote {

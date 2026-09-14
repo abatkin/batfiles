@@ -8,11 +8,13 @@
 //! [`Manifest::validate`](super::Manifest::validate)'s. Both are decidable from
 //! the document alone, so both are settled while it is being read.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path};
 
 use thiserror::Error;
 
+use super::remote::Remote;
 use crate::item::ItemId;
 use crate::repo_path::{REMOTE_PREFIX, RepoPath};
 
@@ -73,6 +75,13 @@ fn whole_of(written: &RepoPath) -> String {
         None => "the whole repository".to_owned(),
         Some(id) => format!("the whole of remote `{id}`"),
     }
+}
+
+/// The bare ID of the remote a path names, for the one message that has to
+/// spell a declaration rather than describe a tree. Empty for a path naming no
+/// remote, which that message is never about.
+fn named_remote_of(written: &RepoPath) -> String {
+    written.remote().map(ItemId::to_string).unwrap_or_default()
 }
 
 /// A manifest that parsed but breaks one of the rules in this module, or the
@@ -158,6 +167,24 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
+    /// A source naming a remote no `[remotes]` entry declares. The one source
+    /// rule that cannot be decided from the value alone, since what makes a
+    /// name a remote is another record saying so.
+    ///
+    /// The remedy is a declaration rather than a different path, so the message
+    /// says where one goes: someone who wrote `@core/...` meant a repository,
+    /// and telling them the path is wrong would send them to the wrong file.
+    #[error(
+        "{record}: source `{written}` names {}, which this manifest does not \
+         declare; add a `[remotes.{}]` record",
+        tree_of(.written),
+        named_remote_of(.written)
+    )]
+    SourceRemoteUndeclared {
+        record: RecordName,
+        written: RepoPath,
+    },
+
     // A `dest` names a path on the machine, anchored to the selected home.
     #[error("{record}: dest is empty; write `~` for the home directory itself")]
     DestinationEmpty { record: RecordName },
@@ -229,19 +256,18 @@ pub(crate) enum Invalid {
     },
 }
 
-/// The rules a `source` satisfies as written.
-// CARRY(6.4): the records carry a `RepoPath` themselves once actions may source
-// from a remote, and this shim goes with the last caller that holds a string.
-pub(super) fn check_source(source: &str, record: &RecordName) -> Result<(), Invalid> {
-    check_repo_path(&RepoPath::local(source.to_owned()), record)
-}
-
-/// The rules a repository path satisfies as written, wherever it is read from.
+/// The rules a `source` satisfies as written, wherever it is read from.
 ///
-/// Everything here is decided from the value alone. Whether a named remote is
-/// one the manifest declares spans two records and so is the document's to
-/// check; whether anything is at the path is the run's.
-pub(super) fn check_repo_path(written: &RepoPath, record: &RecordName) -> Result<(), Invalid> {
+/// All but the last are decided from the value alone. The last spans two
+/// records — a source may name a remote, and `remotes` is what the manifest
+/// declares — and is settled here rather than separately, so that one function
+/// answers whether a source is usable at all. Whether anything is at the path
+/// is the run's question, not the document's.
+pub(super) fn check_source(
+    written: &RepoPath,
+    record: &RecordName,
+    remotes: &BTreeMap<ItemId, Remote>,
+) -> Result<(), Invalid> {
     let path = written.path();
     // Only a plain string can say nothing at all; a reference that names a
     // remote and no path has named a tree, and is refused as naming all of it.
@@ -263,18 +289,34 @@ pub(super) fn check_repo_path(written: &RepoPath, record: &RecordName) -> Result
         });
     }
     match depth_within_tree(path) {
-        None => Err(Invalid::SourceOutsideTree {
-            record: record.clone(),
-            written: written.clone(),
-        }),
+        None => {
+            return Err(Invalid::SourceOutsideTree {
+                record: record.clone(),
+                written: written.clone(),
+            });
+        }
         // Zero components deep is the tree's own root, however it was spelled:
         // `.`, `./`, `shell/..`, and a reference with no path all land there.
-        Some(0) => Err(Invalid::SourceIsWholeTree {
+        Some(0) => {
+            return Err(Invalid::SourceIsWholeTree {
+                record: record.clone(),
+                written: written.clone(),
+            });
+        }
+        Some(_) => {}
+    }
+    // Last, because it is the one rule that is not about the path: a well-formed
+    // reference into a remote nobody declared is still a source that resolves
+    // nowhere, and saying so about the path first would bury that.
+    if let Some(id) = written.remote()
+        && !remotes.contains_key(id)
+    {
+        return Err(Invalid::SourceRemoteUndeclared {
             record: record.clone(),
             written: written.clone(),
-        }),
-        Some(_) => Ok(()),
+        });
     }
+    Ok(())
 }
 
 /// Whether a path starts from somewhere of its own rather than from wherever it
@@ -432,8 +474,30 @@ mod tests {
         RecordName::Action(1)
     }
 
+    /// A manifest's `[remotes]`, from the IDs it declares. What each record says
+    /// is nothing to a source naming it: declared or not is the whole rule.
+    fn declaring(ids: &[&str]) -> BTreeMap<ItemId, Remote> {
+        ids.iter()
+            .map(|id| {
+                let remote = toml::from_str("type = \"git\"\nurl = \"https://e.example/r.git\"\n")
+                    .expect("a well-formed remote");
+                (
+                    ItemId::try_from((*id).to_owned()).expect("valid ID"),
+                    remote,
+                )
+            })
+            .collect()
+    }
+
+    /// A path in the declaring repository, built rather than parsed so that a
+    /// Windows spelling reaches the check with its backslashes intact.
+    fn local(source: &str) -> RepoPath {
+        RepoPath::local(source.to_owned())
+    }
+
     fn source_error(source: &str) -> Invalid {
-        check_source(source, &record()).expect_err("expected the source to be refused")
+        check_source(&local(source), &record(), &declaring(&[]))
+            .expect_err("expected the source to be refused")
     }
 
     #[test]
@@ -458,7 +522,7 @@ mod tests {
     fn a_source_names_a_path_within_its_repository() {
         for accepted in ["shell/zshrc", "editor/nvim", "a/../b", "./bin/batgrep"] {
             assert!(
-                check_source(accepted, &record()).is_ok(),
+                check_source(&local(accepted), &record(), &declaring(&[])).is_ok(),
                 "`{accepted}` was refused"
             );
         }
@@ -531,7 +595,7 @@ mod tests {
     }
 
     fn remote_error(written: &str) -> Invalid {
-        check_repo_path(&remote_path(written), &record())
+        check_source(&remote_path(written), &record(), &declaring(&["core"]))
             .expect_err("expected the source to be refused")
     }
 
@@ -539,10 +603,37 @@ mod tests {
     fn a_remote_reference_follows_the_same_rules_as_a_local_source() {
         for accepted in ["@core/shell/zshrc", "@core/a/../b", "@core/./bin/batgrep"] {
             assert!(
-                check_repo_path(&remote_path(accepted), &record()).is_ok(),
+                check_source(&remote_path(accepted), &record(), &declaring(&["core"])).is_ok(),
                 "`{accepted}` was refused"
             );
         }
+    }
+
+    #[test]
+    fn a_source_may_only_name_a_remote_the_manifest_declares() {
+        // The one source rule that is not about the path: the same reference is
+        // fine or not depending on another record entirely.
+        let written = remote_path("@core/shell/zshrc");
+        assert!(check_source(&written, &record(), &declaring(&["core"])).is_ok());
+        let refused = check_source(&written, &record(), &declaring(&["work"]))
+            .expect_err("expected an undeclared remote to be refused");
+        assert!(matches!(refused, Invalid::SourceRemoteUndeclared { .. }));
+        let message = refused.to_string();
+        // The remedy is a declaration, so the message names one rather than
+        // sending the reader back to the path.
+        assert!(message.contains("does not declare"), "{message}");
+        assert!(message.contains("[remotes.core]"), "{message}");
+    }
+
+    #[test]
+    fn a_path_that_breaks_a_rule_is_reported_as_that_rather_than_as_an_undeclared_remote() {
+        // Both faults at once. The path rules come first because they are the
+        // ones the reader can see in the value in front of them.
+        assert!(matches!(
+            check_source(&remote_path("@core/../secrets"), &record(), &declaring(&[]))
+                .expect_err("expected the source to be refused"),
+            Invalid::SourceOutsideTree { .. }
+        ));
     }
 
     #[test]
@@ -576,7 +667,7 @@ mod tests {
             toml::from_str("source = { remote = \"core\", path = \"@other/zshrc\" }\n")
                 .expect("a well-formed reference");
         assert!(matches!(
-            check_repo_path(&structured["source"], &record())
+            check_source(&structured["source"], &record(), &declaring(&["core"]))
                 .expect_err("expected the source to be refused"),
             Invalid::SourceStartsWithRemotePrefix { .. }
         ));

@@ -15,6 +15,11 @@ pub(super) fn git_clone_list(
     let dest_dir = context.destination(&action.dest_dir);
     context.ensure_directory(&dest_dir)?;
 
+    // How the list is named in every line below: the path as the manifest
+    // wrote it, which for a list held by a remote is the reference including
+    // the remote, rather than wherever on this machine it was materialized.
+    let list = action.source.to_string();
+
     // Preparation walks the same captured selection this run executes, ahead of
     // every action, and passes over only the lists an exclusion has already
     // closed — which are not executed either. A list arriving here unread is
@@ -27,7 +32,7 @@ pub(super) fn git_clone_list(
     if entries.is_empty() {
         context
             .reporter()
-            .detail(1, &format!("no repositories to clone in {}", action.source));
+            .detail(1, &format!("no repositories to clone in {list}"));
     }
     for entry in entries {
         // Reported here rather than where preparation settled it, so the line
@@ -38,7 +43,7 @@ pub(super) fn git_clone_list(
             let line = format!(
                 "not cloning {} ({}): {}",
                 entry.repository,
-                entry.written_at(&action.source),
+                entry.written_at(&list),
                 exclusion.reason()
             );
             // One line, two severities: an entry this machine's variables close
@@ -66,7 +71,7 @@ pub(super) fn git_clone_list(
                 context.reporter().warn(&format!(
                     "not cloning {} ({}): {failure}",
                     entry.repository,
-                    entry.written_at(&action.source)
+                    entry.written_at(&list)
                 ))
             }
             Err(failure) => return Err(failure),

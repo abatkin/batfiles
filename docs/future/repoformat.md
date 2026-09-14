@@ -104,28 +104,10 @@ For concision, schema tables below list only `when`. Every record that accepts
 
 ### Repository path
 
-Fields that read a path from a repository accept either a string or a closed
-structured record:
-
-```text
-RepoPath = string | { remote: string, path: string }
-```
-
-For an action declared by the leaf repository, all three TOML forms below are
-valid:
-
-```toml
-source = "files/zshrc"
-source = "@core/files/zshrc"
-source = { remote = "core", path = "files/zshrc" }
-```
-
-A plain string is relative to the action's own repository. A string beginning
-with `@` is shorthand for the structured remote reference.
-
-What is built is the reservation rather than the reference: a repository path
-[may not begin with `@`](../repoformat.md#sources-and-destinations), and no
-action field reads either remote spelling yet.
+The three spellings, the `@` reservation, and the rule that a named remote must
+be one the manifest declares are built and specified in
+[`docs/repoformat.md`](../repoformat.md#sources-and-destinations). What is not
+built is who may write a remote reference.
 
 Remote references are available only to actions declared by the leaf
 repository. An action included from a Git remote may use only an ordinary

@@ -244,8 +244,8 @@ fn run(
     }
 
     // Before the lists are read and before the first action runs, because both
-    // are what a materialization is for: 6.3 gives an action a source inside
-    // one, and the list it reads may be that source.
+    // are what a materialization is for: an action's source may be inside one,
+    // and the list it reads may be that source.
     if let Remotes::Materialize = remotes {
         remotes::materialize(&manifest.remotes, &context)?;
     }

@@ -195,13 +195,14 @@ happens before the ordered list and depends on nothing in it.
 **Declaring a remote is what brings it onto the machine.** `sync` clones each
 declared remote into `remotes/<id>/` inside the leaf repository, before the first
 action, and updates it there on every later run. Nothing has to name a remote for
-this to happen, and nothing can yet: an action that installs from a
-materialization is not built.
+this to happen: a declared remote is materialized whether or not an action
+installs from it.
 
 The ID a remote is declared under is the directory it lands in, so two records
-naming one repository are two materializations, and what reaches a remote's
-content will name the record rather than the URL. Because the ID is a directory
-name, [two of them may not differ only in case](#names-and-ids).
+naming one repository are two materializations, and a
+[repository path](#sources-and-destinations) reaching a remote's content names
+the record rather than the URL. Because the ID is a directory name,
+[two of them may not differ only in case](#names-and-ids).
 
 **A materialization is a clone like any other.** It follows `ref` where one is
 written and the branch it is on where none is, and later runs update it under the
@@ -214,6 +215,11 @@ that is not a clone is refused the same way a `git-clone` destination is, and
 way a failed action stops it. What `sync` reports while doing all this is in
 [`cmdline.md`](cmdline.md#sync).
 
+**Only `sync` materializes.** The [apply commands](cmdline.md#apply-action) use
+whatever is on the machine already and fetch nothing, so an action they run that
+installs from a remote reads the materialization as it stands. Where there is
+none, the action is refused by name rather than reported as a missing file.
+
 Two things about the section still do nothing. The [conditions](#conditions) its
 records carry are parsed and checked, and evaluated nowhere, so a remote is
 materialized whatever its `when` or `unless` says. The `allow-dynamic-vars` field
@@ -222,20 +228,54 @@ a dynamic variable.
 
 ## Sources and destinations
 
-Repository-local `source` and `source-dir` values are nonempty relative paths
-within the declaring repository. They may contain `.` and `..` only if they
-remain strictly inside it; `.`, `./`, and `shell/..` cannot name the whole
-repository. Use `/` separators. Anchored paths and drive prefixes are rejected
-according to the host's path syntax. A symlink stored inside the repository may
-point outside it.
+A `source` or `source-dir` is a **repository path**: a path within a repository,
+and which repository that is. Five action fields take one — `symlink`'s
+`source`, `symlink-dir`'s `source-dir`, `copy`'s `source`, `copy-dir`'s
+`source-dir`, and `git-clone-list`'s `source`. The fetching actions and
+`git-clone` name something off this machine instead, and their `source` syntax
+is in their own action tables.
 
-A source may not begin with `@`. That character introduces a reference to a
-declared [remote](#remotes), spelled `@<remote>/<path>`, which
-[`future/repoformat.md`](future/repoformat.md#repository-path) specifies and no
-action reads yet. Reserving it now gives the character one meaning wherever a
-repository path is written, and it stays ordinary anywhere but the first
-position: `files/@work/zshrc` is a path like any other. There is no escape, so a
-repository whose files begin with `@` cannot name one as a source.
+A repository path is written in one of three ways:
+
+```toml
+source = "files/zshrc"                              # this repository
+source = "@core/files/zshrc"                        # the remote `core`
+source = { remote = "core", path = "files/zshrc" }  # the same, written out
+```
+
+A plain string is a path within the repository that declared the action. A
+string beginning with `@` is shorthand for the structured form, and the two are
+the same value: `@core/files/zshrc` and
+`{ remote = "core", path = "files/zshrc" }` resolve alike and are quoted alike
+in diagnostics. The structured form is closed and requires both halves — a table
+with only a `path` is the plain string written the long way around and means
+nothing else.
+
+**The remote must be one the same manifest [declares](#remotes).** A path naming
+a remote no `[remotes]` entry declares is refused when the manifest is read,
+before anything runs, and the diagnostic says which record to add. A path
+resolves within that remote's [materialization](#materialization), which has to
+already be on this machine: `sync` brings the declared remotes down before the
+first action, and a path into one that is not there is refused by name rather
+than reported as a missing file. So an [apply command](cmdline.md#apply-action),
+which materializes nothing, can only install from a remote `sync` has already
+cloned.
+
+**`@` at the start of a repository path is reserved and has no escape.** The
+character introduces a remote reference wherever a repository path begins with
+it, in both spellings: a `path` inside a structured reference may not begin with
+one either, so a second `@` cannot start the reference over. Elsewhere in a path
+it is an ordinary character — `files/@work/zshrc` is a path like any other. A
+repository whose files begin with `@` therefore cannot name one as a source.
+
+Every other rule holds whichever tree the path reads from. A repository path is a
+nonempty relative path within that tree. It may contain `.` and `..` only if it
+remains strictly inside; `.`, `./`, `shell/..`, and a reference naming a remote
+and no path cannot name the whole of a tree. Use `/` separators. Anchored paths
+and drive prefixes are rejected according to the host's path syntax. A symlink
+stored inside a repository may point outside it. Diagnostics name the tree the
+path is read from, so a refusal about `@core/../secrets` says `remote core`
+rather than sending the reader to the wrong repository.
 
 Sources are checked for presence when the action runs, including dry runs. A
 final broken symlink counts as present for linking; a copy must be able to read
@@ -255,8 +295,6 @@ Destinations may leave the selected home. Roots are anchored and paths are
 normalized lexically. [Location selection](environment.md#location-selection)
 defines the roots; [installation safety](safety.md) defines filesystem
 resolution, source containment checks, occupied destinations, and staging.
-
-Fetching and Git actions have their own `source` syntax in the action tables.
 
 ## Actions
 
@@ -321,7 +359,7 @@ dest = "~/.zshrc"
 
 | Field    | Type   | Required | Description                                                        |
 |----------|--------|:--------:|--------------------------------------------------------------------|
-| `source` | string |   yes    | The source, relative to the repository root. Never empty.          |
+| `source` | repository path |   yes    | The source, within this repository or a remote it names. Never empty. |
 | `dest`   | string |   yes    | The destination path, as written. Never empty; `~` is the home.    |
 
 `source` is the link's target and `dest` is the link itself; both follow
@@ -357,7 +395,7 @@ dot-prefix = true
 
 | Field        | Type    | Required | Description                                                             |
 |--------------|---------|:--------:|---------------------------------------------------------------------------|
-| `source-dir` | string  |   yes    | The directory whose direct children are linked, relative to the root.     |
+| `source-dir` | repository path  |   yes    | The directory whose direct children are linked. |
 | `dest-dir`   | string  |   yes    | The directory the links are made in. Created if it is missing.            |
 | `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.                 |
 
@@ -368,7 +406,7 @@ file.
 
 `source-dir` follows the [`source` rules](#sources-and-destinations) and
 `dest-dir` the `dest` rules; both are decided while the manifest is read. A
-`source-dir` naming the repository root is refused by the rule that already
+`source-dir` naming the root of its tree is refused by the rule that already
 covers it, which matters more here than for `symlink` — it would link
 `batfiles.toml` and `.git` into the home rather than install one of them.
 
@@ -455,7 +493,7 @@ dest = "~/.gitconfig.local"
 
 | Field    | Type   | Required | Description                                                     |
 |----------|--------|:--------:|-------------------------------------------------------------------|
-| `source` | string |   yes    | The file or directory to copy, relative to the repository root. |
+| `source` | repository path |   yes    | The file or directory to copy, within this repository or a remote it names. |
 | `dest`   | string |   yes    | Where the copy goes, exactly. Never empty; `~` is the home.     |
 
 The same two fields as [`symlink`](#symlink), installing the same thing in the
@@ -493,7 +531,7 @@ dot-prefix = true
 
 | Field        | Type    | Required | Description                                                          |
 |--------------|---------|:--------:|------------------------------------------------------------------------|
-| `source-dir` | string  |   yes    | The directory whose direct children are copied, relative to the root. |
+| `source-dir` | repository path  |   yes    | The directory whose direct children are copied. |
 | `dest-dir`   | string  |   yes    | The directory the copies are made in. Created if it is missing.       |
 | `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.             |
 
@@ -715,14 +753,17 @@ dest-dir = "~/.oh-my-zsh/custom/plugins"
 
 | Field      | Type   | Required | Description                                                        |
 |------------|--------|:--------:|--------------------------------------------------------------------|
-| `source`   | string |   yes    | The list, relative to the repository root. Never empty.            |
+| `source`   | repository path |   yes    | The list, within this repository or a remote it names. Never empty. |
 | `dest-dir` | string |   yes    | The directory the clones are made in. Never empty; `~` is the home. |
 
 Use this action for a list of plugin repositories, with one repository per line
 in the [clone list format](#the-clone-list-format).
 
-`source` names the list file, relative to the repository; each line supplies a
-Git repository source. `dest-dir` is the container for the resulting clones,
+`source` names the list file, in this repository or in a remote it names; each
+line supplies a Git repository source. What a line names was never a repository
+path, so where the list itself came from changes nothing about how it is read.
+A warning about an entry names the list as the manifest wrote it, remote and
+all. `dest-dir` is the container for the resulting clones,
 with one child directory per entry. Both action fields follow
 [Sources and destinations](#sources-and-destinations).
 
