@@ -1,8 +1,31 @@
 //! Single-action manifests and assertions for the leaf fixture.
 
-use super::Tree;
+use super::{Tree, display, stderr_of};
 use std::fs;
 use std::path::PathBuf;
+
+/// Run `sync` against a manifest expected to be rejected, and return the
+/// diagnostic.
+///
+/// Every rejection is the same shape: status 1, the file named, and no action
+/// reached — a manifest batfiles cannot make sense of stops the command before
+/// it claims to have done anything.
+pub(crate) fn rejected(manifest: &str) -> String {
+    let tree = Tree::new();
+    tree.write_manifest(manifest);
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&display(&tree.manifest())),
+        "the manifest was not named:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("is not implemented yet"),
+        "the stub ran anyway:\n{stderr}"
+    );
+    stderr
+}
 
 /// A manifest declaring one symlink and nothing else.
 pub(crate) fn one_symlink(source: &str, dest: &str) -> String {

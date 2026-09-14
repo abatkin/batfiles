@@ -44,9 +44,10 @@ single materialization at that path.
 
 The part of this section that runs — every section optional, no format-version
 field, and known records closed — is specified in
-[`docs/repoformat.md`](../repoformat.md), along with `[[actions]]`, `[vars]`, and
-`[default-disabled]`. `[remotes]` parses in no repository yet: declaring it is an
-error until the code that reads it exists.
+[`docs/repoformat.md`](../repoformat.md), along with all four sections:
+`[remotes]`, `[[actions]]`, `[vars]`, and `[default-disabled]`. What is not
+built is two of the value shapes below: a `file` or `archive` remote, and a
+table-valued variable.
 
 All top-level sections are optional:
 
@@ -68,7 +69,9 @@ Known records are closed: unknown fields in the top-level document, a remote,
 an action, a dynamic variable, a structured path reference, or a
 default-disabled entry are invalid. Map keys under `[remotes]` and `[vars]` are
 user-defined data and therefore are not treated as schema fields; their values
-must still match one of the known value shapes.
+must still match one of the known value shapes. The built half of that rule,
+including the two naming rules the keys themselves follow, is specified in
+[`docs/repoformat.md`](../repoformat.md#top-level-schema).
 
 ## Shared Value Types
 
@@ -98,10 +101,11 @@ record writes one of the two or neither, and what [a condition that cannot be
 evaluated](../repoformat.md#when-a-condition-cannot-be-evaluated) does. One
 thing about them is not built.
 
-**The records that do not have them yet.** A remote and an `include-remote` take
-a condition too, and neither record exists; each is specified with its own schema
-below. `[default-disabled]` entries accept one and nothing evaluates it, since
-nothing adopts the candidates.
+**The record that does not have one yet.** An `include-remote` takes a condition
+too, and that record does not exist; it is specified with its own schema below.
+A [remote](../repoformat.md#remotes) and a `[default-disabled]` entry each accept
+one already, and nothing evaluates either, since nothing materializes a remote
+or adopts a candidate.
 
 For concision, schema tables below list only `when`. Every record that accepts
 `when` also accepts `unless` as its negated alias, on the terms the built
@@ -153,10 +157,11 @@ exclude = ["private/*", "*.bak"]
 
 ### Names and IDs
 
-The ID rule, action-ID uniqueness, and the variable-name rule are specified in
-[`docs/repoformat.md`](../repoformat.md#names-and-ids). Remote IDs are not built.
-Clone-list entry IDs follow the current
-[entry format](../repoformat.md#the-clone-list-format).
+The ID rule, action-ID uniqueness, remote IDs, and the variable-name rule are
+specified in [`docs/repoformat.md`](../repoformat.md#names-and-ids). Clone-list
+entry IDs follow the current
+[entry format](../repoformat.md#the-clone-list-format). What is not built is the
+`include-remote` ID and the manifest-entry IDs an inclusion makes addressable.
 
 ```text
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
@@ -174,30 +179,23 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 
 ## Remotes
 
-`[remotes]` is a map from a user-selected name to a tagged remote record. Every
-remote has these fields:
+`[remotes]` is a map from a user-selected name to a tagged remote record. The
+map, the ID its keys follow, the shared `type` / `when` / `unless` fields, and
+the whole of the `git` record are built and specified in
+[`docs/repoformat.md`](../repoformat.md#remotes). Three things about the section
+are not.
 
-| Field  | Type                           | Required | Default | Description                       |
-|--------|--------------------------------|:--------:|---------|-----------------------------------|
-| `type` | `"git" \| "file" \| "archive"` |   yes    | —       | Selects the record variant.       |
-| `when` | `Condition`                    |    no    | enabled | Conditionally enables the remote. |
+**The other two record variants**, below. A manifest declaring either is refused
+by name, so a remote that batfiles cannot fetch is never read as one it can.
 
-### Git remote
+**Materializing any of them**, which is what a remote is for. Nothing clones,
+fetches, or unpacks a declared remote yet, and no action can reach one's content:
+the [repository path](#repository-path) that names one is unbuilt too.
 
-```toml
-[remotes.core]
-type = "git"
-url = "git@github.com:me/dotfiles-core.git"
-branch = "main"
-when = "facts.os != 'windows'"
-allow-dynamic-vars = true
-```
-
-| Field                | Type    | Required | Default | Description                                                               |
-|----------------------|---------|:--------:|---------|---------------------------------------------------------------------------|
-| `url`                | string  |   yes    | —       | Git repository URL.                                                       |
-| `branch`             | string  |    no    | —       | Branch name; tags and commit pins are not part of the remote schema.      |
-| `allow-dynamic-vars` | boolean |    no    | `false` | Whether this remote may execute included dynamic variable declarations.   |
+**One field of the `git` record**: `allow-dynamic-vars`, a boolean defaulting to
+`false`, which says whether an included remote's dynamic variable declarations
+may be executed. It arrives with the dynamic variables it governs, at step 9.1,
+and is refused as an unknown field until then.
 
 ### File remote
 
@@ -233,8 +231,9 @@ exclude = ["*.md"]
 | `include`      | `GlobFilter` |    no    | Archive entries to include.                                                 |
 | `exclude`      | `GlobFilter` |    no    | Archive entries to exclude.                                                 |
 
-Declaring a remote only names and materializes a source. Actions decide whether
-and where its content is installed.
+That declaring a remote only names a source, and that actions decide whether and
+where its content is installed, holds for these two as it does for a `git`
+remote and is specified with it.
 
 ## Variables
 

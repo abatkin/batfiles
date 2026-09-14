@@ -2,9 +2,9 @@
 
 use serde::Deserialize;
 
-use super::{
-    Invalid, check_archive_root, check_dest, check_digest, check_git_ref, check_git_source,
-    check_source, check_url,
+use super::check::{
+    Invalid, RecordName, check_archive_root, check_dest, check_digest, check_git_ref,
+    check_git_source, check_source, check_url,
 };
 use crate::clone_list::Entry;
 use crate::condition::{Condition, Gate};
@@ -49,49 +49,51 @@ impl Action {
     }
 
     /// Validate declared paths, URLs, digests, archive roots, and Git refs.
-    /// `number` is the one-based action position used in diagnostics.
-    pub fn validate(&self, number: usize) -> Result<(), Invalid> {
+    /// `record` is how a diagnostic names the record, which for an action is
+    /// its one-based position.
+    pub fn validate(&self, record: &RecordName) -> Result<(), Invalid> {
         match self {
             Self::Symlink(action) => {
-                check_source(&action.source, number)?;
-                check_dest(&action.dest, number)
+                check_source(&action.source, record)?;
+                check_dest(&action.dest, record)
             }
             Self::SymlinkDir(action) => {
-                check_source(&action.source_dir, number)?;
-                check_dest(&action.dest_dir, number)
+                check_source(&action.source_dir, record)?;
+                check_dest(&action.dest_dir, record)
             }
-            Self::CreateDir(action) => check_dest(&action.dest, number),
+            Self::CreateDir(action) => check_dest(&action.dest, record),
             Self::Copy(action) => {
-                check_source(&action.source, number)?;
-                check_dest(&action.dest, number)
+                check_source(&action.source, record)?;
+                check_dest(&action.dest, record)
             }
             Self::CopyDir(action) => {
-                check_source(&action.source_dir, number)?;
-                check_dest(&action.dest_dir, number)
+                check_source(&action.source_dir, record)?;
+                check_dest(&action.dest_dir, record)
             }
             // The two action types whose `source` names something off this
             // machine, so it answers to neither path rule.
             Self::FetchFile(action) => {
-                check_url(&action.source, number)?;
-                check_digest(action.sha256.as_deref(), number)?;
-                check_dest(&action.dest, number)
+                check_url(&action.source, record)?;
+                check_digest(action.sha256.as_deref(), record)?;
+                check_dest(&action.dest, record)
             }
             Self::FetchArchive(action) => {
-                check_url(&action.source, number)?;
-                check_digest(action.sha256.as_deref(), number)?;
-                check_archive_root(action.archive_root.as_deref(), number)?;
-                check_dest(&action.dest, number)
+                check_url(&action.source, record)?;
+                check_digest(action.sha256.as_deref(), record)?;
+                check_archive_root(action.archive_root.as_deref(), record)?;
+                check_dest(&action.dest, record)
             }
             // A third kind of source: neither a repository path nor a URL, but
-            // whatever `git` accepts as a repository to clone.
+            // whatever `git` accepts as a repository to clone. A Git remote
+            // spells the same thing `url` and shares both checks.
             Self::GitClone(action) => {
-                check_git_source(&action.source, number)?;
-                check_git_ref(action.git_ref.as_deref(), number)?;
-                check_dest(&action.dest, number)
+                check_git_source(&action.source, "source", record)?;
+                check_git_ref(action.git_ref.as_deref(), record)?;
+                check_dest(&action.dest, record)
             }
             Self::GitCloneList(action) => {
-                check_source(&action.source, number)?;
-                check_dest(&action.dest_dir, number)
+                check_source(&action.source, record)?;
+                check_dest(&action.dest_dir, record)
             }
         }
     }

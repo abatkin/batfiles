@@ -15,6 +15,7 @@ mod fetching;
 mod groups;
 mod locations;
 mod manifest;
+mod remotes;
 mod selection;
 mod surface;
 mod vars;

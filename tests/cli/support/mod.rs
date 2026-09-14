@@ -15,7 +15,7 @@ pub(crate) use git::{BareRepo, git};
 pub(crate) use http::{Reply, Server, server_that_hangs_up};
 pub(crate) use manifests::{
     LEAF_ORDERED_PAIR, assert_leaf_portable_actions, one_copy, one_copy_dir, one_create_dir,
-    one_symlink, one_symlink_dir, seeded_repository_in_the_home,
+    one_symlink, one_symlink_dir, rejected, seeded_repository_in_the_home,
 };
 pub(crate) use tree::Tree;
 

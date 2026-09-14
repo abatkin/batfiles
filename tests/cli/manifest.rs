@@ -37,45 +37,10 @@ fn a_malformed_manifest_names_the_file_and_where_it_broke() {
     }
 }
 
-/// Run `sync` against a manifest expected to be rejected, and return the
-/// diagnostic.
-///
-/// Every rejection is the same shape: status 1, the file named, and the stub
-/// never reached — a manifest batfiles cannot make sense of stops the command
-/// before it claims to have done anything.
-fn rejected(manifest: &str) -> String {
-    let tree = Tree::new();
-    fs::write(tree.manifest(), manifest).expect("a manifest");
-
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
-    let stderr = stderr_of(&assertion);
-    assert!(
-        stderr.contains(&display(&tree.manifest())),
-        "the manifest was not named:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("is not implemented yet"),
-        "the stub ran anyway:\n{stderr}"
-    );
-    stderr
-}
-
 // The rejections below never get as far as executing anything, so they run
 // everywhere. Their positive counterpart — a record using every field it
 // accepts, which has to be executed to be worth asserting — is
 // `linking::a_symlink_action_parses_with_every_field_it_accepts`.
-
-#[test]
-fn a_section_from_a_slice_that_has_not_landed_is_rejected() {
-    // The document is closed, so a section batfiles will understand later is an
-    // error now rather than something that looks as though it took effect.
-    // `[remotes]` arrives at 6.1 and is the last of the two this covered.
-    let stderr = rejected("[remotes]\ncore = { type = \"git\" }\n");
-    assert!(
-        stderr.contains("remotes"),
-        "the section was not named:\n{stderr}"
-    );
-}
 
 // `[vars]`: the values conditions are decided against. The section is accepted
 // and checked as the manifest is read, so the tests below are about what the

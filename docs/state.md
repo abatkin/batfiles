@@ -52,8 +52,8 @@ A syntactically valid address is persisted as given, whatever its segment count.
 These commands resolve nothing, so an address with more segments than any
 resolvable [form](cmdline.md#addresses) — `a.b.c.d.e` — is accepted and recorded.
 A qualified address names an action or a group spliced in from an included
-remote; no remote exists yet, so one recorded today matches nothing, which is the
-same outcome as any other name a manifest does not answer to.
+remote; nothing includes a remote yet, so one recorded today matches nothing,
+which is the same outcome as any other name a manifest does not answer to.
 
 ### Semantics and lifecycle
 

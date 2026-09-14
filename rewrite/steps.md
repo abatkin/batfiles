@@ -76,7 +76,7 @@ See [retirement](docs.md#retirement-at-slice-8) for the slice 8 transition.
 
 No inclusion of remote actions yet.
 
-- **6.1** Add `[remotes]` with Git records and update the supported schema.
+- **6.1** ✅ Add `[remotes]` with Git records and update the supported schema.
 - **6.2** Materialize declared remotes under `remotes/<id>/` through
   `git::clone_or_update`. Pass None when there is no declared ref. Keep dry-run
   behavior uniform for every caller; review reporting for materializations.

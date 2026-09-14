@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use super::Invalid;
+use super::check::{Invalid, RecordName};
 use crate::condition::Condition;
 use crate::item::ItemAddress;
 
@@ -45,9 +45,11 @@ fn one_condition(
     index: usize,
 ) -> Result<(), Invalid> {
     if when.is_some() && unless.is_some() {
-        return Err(Invalid::BothConditionsOnCandidate {
-            noun,
-            number: index + 1,
+        return Err(Invalid::BothConditions {
+            record: RecordName::Candidate {
+                noun,
+                number: index + 1,
+            },
         });
     }
     Ok(())

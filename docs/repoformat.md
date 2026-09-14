@@ -1,9 +1,9 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, the static variables it can declare, and the nine kinds of action it
-can declare. The rest of the schema — remotes, conditions, dynamic variables,
-and the other action types — is in
+it is read, the static variables and Git remotes it can declare, and the nine
+kinds of action it can declare. The rest of the schema — file and archive
+remotes, dynamic variables, and the other action types — is in
 [`future/repoformat.md`](future/repoformat.md) until those records parse.
 
 ## Repository layout
@@ -23,8 +23,8 @@ meaningful when an action references it, and means nothing on its own.
 The **leaf repository** is the one a command works on, selected by
 `--batfiles-dir` or `BATFILES_DIR`, then by a `batfiles.toml` in the current
 directory, and finally by `<selected-home>/dotfiles`; see
-[location selection](environment.md#location-selection). A remote repository may
-carry its own `batfiles.toml`, and nothing reads one yet.
+[location selection](environment.md#location-selection). A [remote](#remotes)
+repository may carry its own `batfiles.toml`, and nothing reads one yet.
 
 ## Reading the manifest
 
@@ -62,10 +62,12 @@ batfiles owns is replaced when it changes is specified alongside that one, under
 
 ## Top-level schema
 
-There is no format-version field, and every top-level section is optional. Three
+There is no format-version field, and every top-level section is optional. Four
 sections exist:
 
 ```toml
+[remotes]                  # map<ID, Remote>
+
 [[actions]]                # ordered list<Action>
 
 [vars]                     # map<variable name, string>
@@ -75,11 +77,16 @@ sections exist:
 [[default-disabled.groups]]
 ```
 
-Known records are closed: an unknown key, in the document or in an action, is
-invalid. That is what a section from an unbuilt part of the format runs into.
-`[remotes]` is specified in [`future/repoformat.md`](future/repoformat.md) and is
-rejected until the code that reads it exists, so a manifest declaring one fails
-rather than appearing to have been understood.
+Known records are closed: an unknown key, in the document or in a record, is
+invalid. That is what a field from an unbuilt part of the format runs into, and
+what an unbuilt *value* shape runs into is the same rule read one level down —
+a `file` [remote](#remotes) and a table-valued [variable](#variables) are each
+refused by name rather than appearing to have been understood.
+
+The map keys under `[remotes]` and `[vars]` are user-chosen names rather than
+schema fields, so neither section is closed against the names it holds; what
+each name is allowed to *be* is [the two naming rules](#names-and-ids), and what
+its value is allowed to be is the record or the type the section specifies.
 
 ## Names and IDs
 
@@ -87,13 +94,19 @@ rather than appearing to have been understood.
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 ```
 
-- IDs and group names match that rule. In particular an ID cannot contain
-  whitespace, `.`, or `,`: dots compose
+- IDs, group names, and [remote](#remotes) names match that rule. In particular
+  an ID cannot contain whitespace, `.`, or `,`: dots compose
   [addresses](cmdline.md#addresses), and commas delimit environment lists.
 - Action IDs are unique within a repository. A repeated one is a load error
   naming both actions, because an address matching two of them could not say
   which was meant.
-- Group names and action IDs occupy distinct namespaces.
+- A `[remotes]` key is the ID of the remote it declares, so it follows this rule
+  and not TOML's looser one for a bare key. `[remotes.core-2]` is a remote;
+  `[remotes._hidden]` and `[remotes."core.extra"]` are load errors, the second
+  because a dotted name is already an address.
+- Group names, action IDs, and remote IDs occupy distinct namespaces. An action
+  and the remote it installs from may share a name without either becoming
+  ambiguous, and nothing resolves one against the other.
 
 ```text
 variable name = string matching [A-Za-z_][A-Za-z0-9_]*
@@ -109,6 +122,68 @@ variable name = string matching [A-Za-z_][A-Za-z0-9_]*
   keeps a [condition](#conditions)'s namespace lookup
   unambiguous without a precedence rule: no variable can shadow a namespace.
 - Names are case-sensitive, so `editor` and `EDITOR` are two variables.
+
+## Remotes
+
+`[remotes]` is a map from a name to a record describing a repository this one
+does not hold. The key is the remote's [ID](#names-and-ids):
+
+```toml
+[remotes.core]
+type = "git"
+url = "git@github.com:me/dotfiles-core.git"
+ref = "main"
+```
+
+Every remote is a closed record selected by its required `type`:
+
+| Field    | Type               | Required | Description                                                     |
+|----------|--------------------|:--------:|-----------------------------------------------------------------|
+| `type`   | remote-type string |   yes    | Selects the record variant. `git` is the one that exists.       |
+| `when`   | condition          |    no    | See [conditions](#conditions).                                  |
+| `unless` | condition          |    no    | At most one of the two.                                         |
+
+**`file` and `archive` are reserved and not built.** Both are specified in
+[`future/repoformat.md`](future/repoformat.md#file-remote), and a manifest
+declaring either is refused by name and told which step builds it — rather than
+being told that its type does not exist, which is the wrong thing to tell
+someone who read the type in the schema. A `type` the schema does not reserve at
+all is refused as exactly that, because there is no record behind it to check.
+
+### `git`
+
+A repository for git to clone.
+
+| Field | Type   | Required | Description                                                |
+|-------|--------|:--------:|------------------------------------------------------------|
+| `url` | string |   yes    | A repository for git to clone. Never empty.                |
+| `ref` | string |    no    | A branch, tag, or commit to follow. Never empty.           |
+
+**`url` and `ref` are [`git-clone`](#git-clone)'s `source` and `ref`, under the
+name a remote declaration reads better with.** So `url` is whatever git accepts —
+an `https://` URL, an `scp`-style `git@github.com:user/repo.git`, `ssh://`,
+`git://`, or a plain directory on this machine — and only an empty value is
+refused here. `ref` follows [the same rules](#ref-following-one-branch-tag-or-commit)
+a cloned action's does: a name a branch could have is followed as a branch, and
+anything else that resolves is checked out detached.
+
+One spelling and one rule, so a repository that pins a clone and a repository
+that pins a remote are written the same way and read the same way. `branch` is
+not a field of either, and a manifest writing it is refused as an unknown field.
+
+**Declaring a remote does not install anything.** It names a source, and an
+action decides whether and where its content is installed. That is why the
+section is a map rather than an ordered list, as `[[actions]]` is: nothing about
+a remote is ordered, because nothing about it runs.
+
+**Nothing materializes a remote yet, so declaring one changes no run.** Batfiles
+accepts the section and checks it as the manifest is read — including the
+[conditions](#conditions) its records carry, which are parsed and evaluated
+nowhere, and including the `allow-dynamic-vars` field the future schema gives a
+Git remote, which is refused as unknown until batfiles can run a dynamic
+variable. Until cloning arrives, a `sync` over a manifest declaring remotes
+installs exactly what it would have installed without them, and writes nothing
+into the repository.
 
 ## Sources and destinations
 
@@ -779,10 +854,11 @@ dest = "~/.gitconfig"
 when = "work && facts.os == 'macos'"
 ```
 
-Three kinds of record take them: an [action](#actions), an entry of a [clone
-list](#the-clone-list-format), and a [default-disabled
-candidate](#default-disabled-bootstrap-entries) — whose conditions are checked
-and never evaluated, because nothing reads that section yet.
+Four kinds of record take them: an [action](#actions), an entry of a [clone
+list](#the-clone-list-format), a [remote](#remotes), and a [default-disabled
+candidate](#default-disabled-bootstrap-entries). The last two are checked and
+never evaluated, because nothing materializes a remote or adopts a candidate
+yet.
 
 **Writing both on one record is a load error.** They are not one rule and its
 negation applied twice, and a record writing both has no reading that is
