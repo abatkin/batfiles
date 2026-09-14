@@ -1,0 +1,4 @@
+# Shell settings every machine on the corporate network wants, sourced by the
+# personal zshrc rather than replacing it.
+export CORP_PROXY=proxy.corp.example:8080
+alias vpn='corp-vpn connect'

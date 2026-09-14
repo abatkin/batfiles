@@ -83,7 +83,7 @@ No inclusion of remote actions yet.
 - **6.5** ✅ Gate remotes on `when` and `unless`.
 - **6.6** ✅ Document and test that dry runs neither clone nor update
   materializations.
-- **6.7** Add a separate local bare repository fixture for remotes.
+- **6.7** ✅ Add a separate local bare repository fixture for remotes.
 
 ## Slice 7 — `include-remote`
 
@@ -109,7 +109,8 @@ No inclusion of remote actions yet.
 - **7.6** Enforce one-level inclusion: ignore an included remote's own remotes
   and inclusions.
 - **7.7** Give every inclusion a stable, unique display label.
-- **7.8** Add a synthetic two-remote fixture with overlapping paths and overrides.
+- **7.8** Add a synthetic two-remote fixture with overlapping paths and
+  overrides, beside the realistic `corporate` repository 6.7 added.
 - **7.9** Acceptance: assemble the personal and corporate repositories under `sync`.
 
 ## Slice 8 — Bootstrap

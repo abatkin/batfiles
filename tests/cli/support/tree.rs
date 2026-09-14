@@ -1,9 +1,11 @@
 //! Temporary repository, home, config, and cache roots.
 
-use super::{BareRepo, Server, batfiles, copy_tree, display};
+use super::{BareRepo, Server, batfiles, copy_tree, display, fixture_tree};
 use assert_cmd::Command;
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// A throwaway tree standing in for the four location roots, with an empty leaf
@@ -25,10 +27,7 @@ impl Tree {
     /// `tests/fixtures/<name>` rather than holding a manifest written inline.
     pub(crate) fn fixture(name: &str) -> Self {
         let tree = Self::roots();
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
-            .join(name);
-        copy_tree(&source, &tree.path("repo"));
+        copy_tree(&fixture_tree(name), &tree.path("repo"));
         tree
     }
 

@@ -3,7 +3,9 @@
 //!
 //! The rules about what a record may say are settled as the manifest is read,
 //! so those cases execute nothing. The rest clone from a local bare repository
-//! (`guidance.md`, "Test environments"), as the `git-clone` tests do.
+//! (`guidance.md`, "Test environments"), as the `git-clone` tests do -- from the
+//! bare one-file repository where only the clone matters, and from the
+//! `corporate` fixture where the content does.
 //!
 //! The dry-run tests at the end assert the stronger of the two available claims
 //! wherever they can: not only that the tree is unchanged, but that the
@@ -472,19 +474,22 @@ fn a_remote_needs_a_type_to_be_one() {
 // exactly as it does installing from the leaf repository, and the tests of
 // that behavior are with the action.
 
-/// A remote holding what an action can install from: files, a directory of
-/// them, and a list of repositories to clone.
-fn stocked() -> BareRepo {
-    let origin = BareRepo::new();
-    origin.publish("files/zshrc", "# zsh, from core\n", "add zshrc");
-    origin.publish("seed/gitconfig", "[user]\n", "add a seed");
-    origin
+/// A remote holding what an action can install from: a file to link, and a
+/// directory of seeds to copy. It is a fixture repository rather than a few
+/// `publish` calls, because a remote is somebody's dotfiles and the tests below
+/// read its content rather than only its existence.
+fn corporate() -> BareRepo {
+    BareRepo::from_fixture("corporate")
 }
+
+/// What the fixture's seeded git configuration says, which several cases below
+/// assert they installed unchanged.
+const CORPORATE_GITCONFIG: &str = "[user]\n\temail = you@corp.example\n";
 
 #[cfg(unix)]
 #[test]
 fn a_symlink_may_point_into_a_materialization() {
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -499,9 +504,11 @@ fn a_symlink_may_point_into_a_materialization() {
         link_target(&tree.home(".zshrc")),
         tree.path("repo").join("remotes/core/files/zshrc")
     );
-    assert_eq!(
-        fs::read_to_string(tree.home(".zshrc")).expect("the link should resolve"),
-        "# zsh, from core\n"
+    assert!(
+        fs::read_to_string(tree.home(".zshrc"))
+            .expect("the link should resolve")
+            .contains("CORP_PROXY"),
+        "the link resolved to something other than the remote's zshrc"
     );
 }
 
@@ -510,7 +517,7 @@ fn a_symlink_may_point_into_a_materialization() {
 fn both_spellings_of_a_reference_reach_the_same_file() {
     // The structured form is the shorthand written out, so a manifest may use
     // either and get the same link.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -530,7 +537,7 @@ fn both_spellings_of_a_reference_reach_the_same_file() {
 
 #[test]
 fn a_copy_seeds_from_a_materialization() {
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -543,15 +550,14 @@ fn a_copy_seeds_from_a_materialization() {
     // seed's contents and nothing points back at the remote.
     assert_eq!(
         fs::read_to_string(tree.home(".gitconfig")).expect("the seed should be installed"),
-        "[user]\n"
+        CORPORATE_GITCONFIG
     );
     assert!(!tree.home(".gitconfig").is_symlink());
 }
 
 #[test]
 fn a_directory_action_reads_its_children_from_a_materialization() {
-    let origin = stocked();
-    origin.publish("seed/npmrc", "loglevel=warn\n", "add another seed");
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -571,9 +577,13 @@ fn a_directory_action_reads_its_children_from_a_materialization() {
 fn a_clone_list_may_live_in_a_materialization() {
     // The list is repository content like any other, so it can be held by a
     // remote. What the list names is a repository to clone, which was never a
-    // repository path and is unchanged by where the list itself came from.
-    let origin = stocked();
-    let plugin = origin.another("plugin");
+    // repository path and is unchanged by where the list itself came from --
+    // here an unrelated repository, which is the ordinary case for a list of
+    // plugins. The list itself is published rather than shipped with the
+    // fixture, because the path it names is a temporary directory.
+    let origin = corporate();
+    let elsewhere = BareRepo::new();
+    let plugin = elsewhere.another("plugin");
     origin.publish(
         "plugins.txt",
         &format!("{}\n", display(&plugin)),
@@ -601,7 +611,7 @@ fn a_list_held_by_a_remote_is_named_the_way_the_manifest_wrote_it() {
     // A warning about an entry names the list it came from. That is the path as
     // written, including the remote, rather than the materialization it was
     // read out of: the reader's copy of the list is the one in the remote.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     origin.publish(
         "plugins.txt",
@@ -643,7 +653,7 @@ fn a_source_in_a_remote_this_machine_has_not_cloned_says_to_sync() {
     // reach a declared remote that is not on the machine. The refusal names the
     // remote rather than reporting a missing file under a directory nobody
     // made.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -676,7 +686,7 @@ fn a_source_in_a_remote_this_machine_excludes_is_refused_by_name() {
     // Nothing is missing here, so the refusal is not the one above. An action
     // installing from a conditional remote is usually gated on the same
     // condition; this is what happens to one that is not.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&conditioned(
         &origin,
@@ -707,7 +717,7 @@ fn a_materialization_left_by_an_earlier_run_is_kept_and_not_read() {
     // stays, because batfiles removes nothing it was not asked to, and is not
     // read, because what a manifest installs must not depend on which machine
     // once satisfied the condition.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&conditioned(
         &origin,
@@ -721,7 +731,7 @@ fn a_materialization_left_by_an_earlier_run_is_kept_and_not_read() {
         .args(["sync", "--var", "work=true"])
         .assert()
         .success();
-    assert_eq!(materialized(&tree, "seed/gitconfig"), "[user]\n");
+    assert_eq!(materialized(&tree, "seed/gitconfig"), CORPORATE_GITCONFIG);
 
     let assertion = tree.batfiles().args(["sync", "-v"]).assert().failure();
     let stderr = stderr_of(&assertion);
@@ -736,7 +746,7 @@ fn a_materialization_left_by_an_earlier_run_is_kept_and_not_read() {
     );
     assert_eq!(
         materialized(&tree, "seed/gitconfig"),
-        "[user]\n",
+        CORPORATE_GITCONFIG,
         "the materialization was removed"
     );
 }
@@ -823,9 +833,9 @@ fn a_dry_run_over_an_existing_materialization_fetches_nothing() {
 fn a_dry_run_describes_the_materialization_as_it_stands() {
     // What the run can read is a tree as old as the last `sync` left it, and
     // what it reports is what that tree holds rather than what the remote has
-    // published since. Describing `npmrc` would be describing a file no run put
+    // published since. Describing `pypirc` would be describing a file no run put
     // on this machine.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -834,7 +844,7 @@ fn a_dry_run_describes_the_materialization_as_it_stands() {
     tree.batfiles().arg("sync").assert().success();
     fs::remove_dir_all(tree.home(".config/seeds")).expect("the installed seeds");
 
-    origin.publish("seed/npmrc", "loglevel=warn\n", "add another seed");
+    origin.publish("seed/pypirc", "[distutils]\n", "seed the package index");
     let assertion = tree
         .batfiles()
         .args(["sync", "--dry-run"])
@@ -850,7 +860,7 @@ fn a_dry_run_describes_the_materialization_as_it_stands() {
         "the child the materialization holds was not described:\n{stderr}"
     );
     assert!(
-        !stderr.contains("npmrc"),
+        !stderr.contains("pypirc"),
         "a dry run described content the materialization does not hold:\n{stderr}"
     );
 }
@@ -860,7 +870,7 @@ fn a_dry_run_refuses_a_source_in_a_remote_that_is_not_materialized() {
     // A dry run materializes nothing, so it stands where an apply command
     // stands: there is no tree to read, and a plan drawn from one that is not
     // there would be an invention rather than a report.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
@@ -921,7 +931,7 @@ fn a_dry_run_reads_no_more_of_an_excluded_remote_than_a_real_run_does() {
     // above. A dry run is where someone would look to find out what the
     // condition costs them, and it must not answer from a tree a real run
     // would refuse.
-    let origin = stocked();
+    let origin = corporate();
     let tree = Tree::new();
     tree.write_manifest(&conditioned(
         &origin,

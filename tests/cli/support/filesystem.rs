@@ -7,6 +7,15 @@ pub(crate) fn display(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// A fixture repository's tree as the source ships it, for the two things that
+/// are made out of one: a leaf repository copied into a tree, and a bare
+/// repository the fixture is committed into.
+pub(crate) fn fixture_tree(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
 /// Copy a directory tree, creating `to` and everything beneath it.
 pub(crate) fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).expect("a destination directory");

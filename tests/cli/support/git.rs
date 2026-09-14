@@ -1,6 +1,6 @@
 //! Local Git repositories for clone and update tests.
 
-use super::display;
+use super::{copy_tree, display, fixture_tree};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -11,8 +11,28 @@ pub(crate) struct BareRepo {
 }
 
 impl BareRepo {
-    /// A repository with one commit on `main`, holding one file.
+    /// A repository with one commit on `main`, holding one file: what a test
+    /// clones when the clone itself is the subject and the content is not.
     pub(crate) fn new() -> Self {
+        let repo = Self::empty();
+        repo.publish("README.md", "a plugin\n", "first");
+        repo
+    }
+
+    /// A repository holding the fixture tree at `tests/fixtures/<name>`, for the
+    /// other kind of subject: a repository a manifest installs *from*, whose
+    /// content is worth reading and worth keeping in files rather than in string
+    /// literals.
+    pub(crate) fn from_fixture(name: &str) -> Self {
+        let repo = Self::empty();
+        repo.stand_on("main");
+        copy_tree(&fixture_tree(name), &repo.work());
+        repo.record("main", &format!("the {name} repository"), &["add", "-A"]);
+        repo
+    }
+
+    /// The two repositories and the link between them, with no commit yet.
+    fn empty() -> Self {
         let repo = Self {
             dir: tempfile::tempdir().expect("a temporary directory"),
         };
@@ -25,7 +45,6 @@ impl BareRepo {
             &repo.work(),
             &["remote", "add", "origin", &display(&repo.origin())],
         );
-        repo.publish("README.md", "a plugin\n", "first");
         repo
     }
 
@@ -63,17 +82,29 @@ impl BareRepo {
     }
 
     fn commit(&self, branch: &str, name: &str, contents: &str, message: &str, add: &[&str]) {
+        self.stand_on(branch);
+        let path = self.work().join(name);
+        // So that a name may be a path: a repository an action installs from
+        // keeps its files in directories like any other.
+        fs::create_dir_all(path.parent().expect("a parent")).expect("a directory to commit into");
+        fs::write(&path, contents).expect("a file to commit");
+        self.record(branch, message, add);
+    }
+
+    /// Put the working clone on `branch`, creating it where it is not there yet.
+    fn stand_on(&self, branch: &str) {
         let work = self.work();
         if git_succeeds(&work, &["rev-parse", "--verify", "--quiet", &heads(branch)]) {
             git(&work, &["checkout", branch]);
         } else {
             git(&work, &["checkout", "-b", branch]);
         }
-        let path = work.join(name);
-        // So that a name may be a path: a repository an action installs from
-        // keeps its files in directories like any other.
-        fs::create_dir_all(path.parent().expect("a parent")).expect("a directory to commit into");
-        fs::write(&path, contents).expect("a file to commit");
+    }
+
+    /// Commit whatever `add` stages and push it, for both the one-file case and
+    /// the whole-fixture one.
+    fn record(&self, branch: &str, message: &str, add: &[&str]) {
+        let work = self.work();
         git(&work, add);
         git(&work, &["commit", "-m", message]);
         git(&work, &["push", "origin", branch]);
