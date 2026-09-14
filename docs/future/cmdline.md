@@ -67,16 +67,19 @@ today. What is left here is what the unbuilt half of the tool adds to it: the
 remotes an inclusion composes over, and the one thing a dry run does that is not
 describing.
 
-**A remote is described, not materialized.** Every action that reaches the
-network already works this way and says so in
-[`docs/cmdline.md`](../cmdline.md#dry-run-behavior); here it costs more. A dry
-run neither clones nor updates a remote, so an inclusion is described from the
-materialization already on disk, exactly as that materialization declares it —
-which may be out of date, and knowingly so. An
-inclusion with no materialization at all contributes actions that cannot be
-listed, so it is reported with a reason and the plan is marked **partial** rather
-than pretending to be whole. A complete plan is one in which nothing was reported
-that way. To see the rest, refresh the remote — by running `sync`, or by updating
+**An inclusion is described from the materialization on disk.** That a dry run
+neither clones nor updates a remote, and reads whatever tree the last `sync`
+left, is already specified in
+[`docs/cmdline.md`](../cmdline.md#dry-run-behavior); here it costs more, because
+what comes out of that tree is not one action's content but the actions
+themselves. An inclusion is described exactly as its materialization declares
+it, which may be out of date and knowingly so. An inclusion with no
+materialization at all contributes actions that cannot be listed, so it is
+reported with a reason and the plan is marked **partial** rather than pretending
+to be whole — where a leaf action reaching the same absent tree is simply
+refused, because one action's source is a thing the plan can do without and the
+list itself is not. A complete plan is one in which nothing was reported that
+way. To see the rest, refresh the remote — by running `sync`, or by updating
 that checkout by hand — and repeat the dry run.
 
 Dry run still performs normal dynamic-variable resolution. Allowed dynamic

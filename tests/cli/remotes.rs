@@ -4,6 +4,11 @@
 //! The rules about what a record may say are settled as the manifest is read,
 //! so those cases execute nothing. The rest clone from a local bare repository
 //! (`guidance.md`, "Test environments"), as the `git-clone` tests do.
+//!
+//! The dry-run tests at the end assert the stronger of the two available claims
+//! wherever they can: not only that the tree is unchanged, but that the
+//! materialization's own `FETCH_HEAD` is still absent, which is what says no git
+//! ran at all.
 
 use std::fs;
 
@@ -733,5 +738,213 @@ fn a_materialization_left_by_an_earlier_run_is_kept_and_not_read() {
         materialized(&tree, "seed/gitconfig"),
         "[user]\n",
         "the materialization was removed"
+    );
+}
+
+// What a dry run does about a materialization, which is to describe one and
+// bring none down. That makes the tree already on the machine both the only
+// thing the run can read and no more current than the last real run left it.
+
+/// Where the materialization of `core` is, whether or not anything is there.
+fn materialization(tree: &Tree) -> std::path::PathBuf {
+    tree.path("repo").join("remotes/core")
+}
+
+#[test]
+fn a_dry_run_materializes_nothing_where_there_is_no_materialization() {
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(&origin, &one_create_dir("~/.cache/zsh")));
+    let before = snapshot(&tree.path("repo"));
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
+
+    // The whole repository, because `remotes/` is the tree a real run would
+    // have made: a dry run leaves this side as untouched as it leaves the home.
+    assert_eq!(
+        snapshot(&tree.path("repo")),
+        before,
+        "a dry run wrote into the repository"
+    );
+    assert!(
+        stderr_of(&assertion).contains(&format!(
+            "would clone {} from {}",
+            display(&materialization(&tree)),
+            display(&origin.origin())
+        )),
+        "the clone was not described:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_dry_run_over_an_existing_materialization_fetches_nothing() {
+    // The case worth writing carefully, as it is for a `git-clone` destination.
+    // A tree snapshot alone would pass for an implementation that fetched and
+    // then declined to merge, so this asserts the thing only a fetch produces:
+    // `FETCH_HEAD` is still absent, and the materialization has not learned
+    // about the commit its origin published.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(&origin, ""));
+    tree.batfiles().arg("sync").assert().success();
+    let clone = materialization(&tree);
+    fs::remove_file(clone.join(".git/FETCH_HEAD")).ok();
+    let before = snapshot(&tree.path("repo").join("remotes"));
+
+    origin.publish("PLUGINS.md", "one more\n", "second");
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        snapshot(&tree.path("repo").join("remotes")),
+        before,
+        "a dry run changed the materialization"
+    );
+    assert!(
+        !clone.join(".git/FETCH_HEAD").exists(),
+        "a dry run reached the network"
+    );
+    assert!(
+        stderr_of(&assertion).contains(&format!("would update {}", display(&clone))),
+        "the update was not described:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_dry_run_describes_the_materialization_as_it_stands() {
+    // What the run can read is a tree as old as the last `sync` left it, and
+    // what it reports is what that tree holds rather than what the remote has
+    // published since. Describing `npmrc` would be describing a file no run put
+    // on this machine.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        &one_copy_dir("@core/seed", "~/.config/seeds", false),
+    ));
+    tree.batfiles().arg("sync").assert().success();
+    fs::remove_dir_all(tree.home(".config/seeds")).expect("the installed seeds");
+
+    origin.publish("seed/npmrc", "loglevel=warn\n", "add another seed");
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains(&format!(
+            "would copy {}",
+            display(&tree.home(".config/seeds/gitconfig"))
+        )),
+        "the child the materialization holds was not described:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("npmrc"),
+        "a dry run described content the materialization does not hold:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_dry_run_refuses_a_source_in_a_remote_that_is_not_materialized() {
+    // A dry run materializes nothing, so it stands where an apply command
+    // stands: there is no tree to read, and a plan drawn from one that is not
+    // there would be an invention rather than a report.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&declaring(
+        &origin,
+        &one_copy("@core/seed/gitconfig", "~/.gitconfig"),
+    ));
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .failure()
+        .code(1);
+
+    for expected in ["remote `core` is not materialized", "batfiles sync"] {
+        assert!(
+            stderr_of(&assertion).contains(expected),
+            "no `{expected}` in:\n{}",
+            stderr_of(&assertion)
+        );
+    }
+}
+
+#[test]
+fn an_excluded_remote_is_passed_over_in_both_modes() {
+    // An exclusion is a decision rather than an act, so it is the one line that
+    // takes no tense: both runs pass over exactly the same remote and say so in
+    // the same words.
+    let origin = BareRepo::new();
+    for arguments in [&["sync", "-v"][..], &["sync", "-v", "--dry-run"][..]] {
+        let tree = Tree::new();
+        tree.write_manifest(&conditioned(
+            &origin,
+            "when",
+            "work",
+            "[vars]\nwork = \"false\"\n\n",
+            &one_create_dir("~/.cache/zsh"),
+        ));
+
+        let assertion = tree.batfiles().args(arguments).assert().success();
+
+        assert!(
+            stderr_of(&assertion).contains("remote core - skipped: when \"work\" is false"),
+            "{arguments:?} did not report the exclusion:\n{}",
+            stderr_of(&assertion)
+        );
+        assert_eq!(
+            entries(&tree.path("repo")),
+            ["batfiles.toml"],
+            "{arguments:?} brought an excluded remote down"
+        );
+    }
+}
+
+#[test]
+fn a_dry_run_reads_no_more_of_an_excluded_remote_than_a_real_run_does() {
+    // The materialization is there and still not content this machine may
+    // install from, so the refusal is the exclusion rather than the absence
+    // above. A dry run is where someone would look to find out what the
+    // condition costs them, and it must not answer from a tree a real run
+    // would refuse.
+    let origin = stocked();
+    let tree = Tree::new();
+    tree.write_manifest(&conditioned(
+        &origin,
+        "when",
+        "work",
+        "[vars]\nwork = \"false\"\n\n",
+        &one_copy("@core/seed/gitconfig", "~/.gitconfig"),
+    ));
+    tree.batfiles()
+        .args(["sync", "--var", "work=true"])
+        .assert()
+        .success();
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .failure()
+        .code(1);
+
+    assert!(
+        stderr_of(&assertion).contains("remote `core` is excluded on this machine"),
+        "the stale materialization was read:\n{}",
+        stderr_of(&assertion)
     );
 }

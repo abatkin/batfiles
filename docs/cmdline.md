@@ -749,6 +749,16 @@ and modifies a checkout it was asked only to describe, and doing neither of thos
 is the whole value of the flag. To see the current picture, update the clone and
 run it again.
 
+**A declared remote is described, not materialized.** `sync`
+[brings every declared remote down](repoformat.md#materialization) before its
+first action; under `--dry-run` it says what it would clone or update for each
+of them on exactly the terms above, runs no git, and creates no `remotes/` tree
+to say it in. The one command that fetches a remote fetches none here, so a dry
+run leaves the repository as untouched as it leaves the home. A remote whose
+[condition](repoformat.md#a-remotes-condition) closes is passed over instead,
+and reports the line it reports in a real run — a skip is the line that takes no
+tense, and neither mode reads the tree.
+
 What the manifest names is still read. A `source` that is missing or unreadable
 fails in either mode, before the destination is considered — including where the
 destination is occupied and a real run would have kept it. A manifest naming a
@@ -756,6 +766,15 @@ source that is not there is a repository error, and reporting it only on the day
 the destination happens to be empty would be the less useful behavior. A
 destination batfiles will not install over is refused in either mode too, for
 the same reason: the refusal is a decision, and inspection is what decides it.
+
+A source inside a remote is that rule applied to a whole tree. What a dry run
+reads is the materialization already on this machine, which is as current as the
+last `sync` left it and no more — the report says what that tree holds, and
+knowingly so, rather than what the remote has published since. Where there is no
+materialization at all the action is refused by name, as it is under an
+[apply command](#apply-action): a dry run materializes nothing, so it is in the
+same position, and a plan drawn from a tree that is not there would be an
+invention.
 
 ## Unimplemented Options
 

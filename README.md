@@ -126,7 +126,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   plan — one line per link, copy, and directory, in the tense that says it has
   not happened — and writes nothing. Every action inspects the real filesystem
   and then stops short of the write, so what you read is what the run decided,
-  not a simulation of one.
+  not a simulation of one. It brings no remote down either, so what it says
+  about one is read from the copy already on the machine, however old that is.
 - **An option that is not live yet is refused rather than ignored.** `sync
   --refresh-content` exits 2 naming the option, because silently accepting it
   would let you believe your content had been refreshed.

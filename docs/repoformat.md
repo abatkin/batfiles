@@ -215,10 +215,14 @@ that is not a clone is refused the same way a `git-clone` destination is, and
 way a failed action stops it. What `sync` reports while doing all this is in
 [`cmdline.md`](cmdline.md#sync).
 
-**Only `sync` materializes.** The [apply commands](cmdline.md#apply-action) use
-whatever is on the machine already and fetch nothing, so an action they run that
-installs from a remote reads the materialization as it stands. Where there is
-none, the action is refused by name rather than reported as a missing file.
+**Only `sync` materializes, and not `sync --dry-run`.** The
+[apply commands](cmdline.md#apply-action) use whatever is on the machine already
+and fetch nothing, and a dry run is in the same position by the
+[dry-run rule](cmdline.md#dry-run-behavior): it says what it would clone or
+update and does neither. So an action any of them runs that installs from a
+remote reads the materialization as it stands, however stale that is. Where
+there is none, the action is refused by name rather than reported as a missing
+file.
 
 ### A remote's condition
 

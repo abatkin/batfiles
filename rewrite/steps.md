@@ -81,20 +81,17 @@ No inclusion of remote actions yet.
 - **6.3** ✅ Add parsed `@remote/path` values to the shared repository-path resolver.
 - **6.4** ✅ Source leaf-action content from a remote's materialization.
 - **6.5** ✅ Gate remotes on `when` and `unless`.
-- **6.6** Document and test that dry runs neither clone nor update materializations.
-  Test absent and existing materializations against the local bare fixture,
-  snapshot the whole remotes tree, and check direct evidence that no fetch ran.
-  Cover an excluded remote in both modes, since a dry run reports the exclusion
-  a real run reports and neither mode reads the tree.
-  Stale materializations remain usable for inspection; 7.1 handles missing ones.
+- **6.6** ✅ Document and test that dry runs neither clone nor update
+  materializations.
 - **6.7** Add a separate local bare repository fixture for remotes.
 
 ## Slice 7 — `include-remote`
 
 - **7.1** Read an included remote's manifest. A dry run uses its existing
   materialization, possibly stale. A missing materialization produces a partial
-  action list. Add complete/partial reporting here and promote both the staleness
-  and partiality rules from `docs/future/cmdline.md`.
+  action list. Add complete/partial reporting here and promote the remaining
+  inclusion rules from `docs/future/cmdline.md`; 6.6 promoted the half about
+  what a dry run does to a materialization.
 - **7.2** Splice included actions into declaration order before capturing
   selection or preparing clone lists. Resolve included list sources from their
   materialization. Give included actions qualified addresses and extend
