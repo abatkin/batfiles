@@ -30,7 +30,8 @@ The **leaf repository** is the one a command works on, selected by
 `--batfiles-dir` or `BATFILES_DIR`, then by a `batfiles.toml` in the current
 directory, and finally by `<selected-home>/dotfiles`; see
 [location selection](environment.md#location-selection). A [remote](#remotes)
-repository may carry its own `batfiles.toml`, and nothing reads one yet.
+repository may carry its own `batfiles.toml`; it is optional, and it is read only
+when an [`include-remote`](#include-remote) selects that remote.
 
 ## Reading the manifest
 
@@ -340,7 +341,7 @@ required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, and `git-clone-list` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, and `include-remote` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 | `when`  | condition          |    no    | Runs the action only where the condition is true. See [conditions](#conditions). |
@@ -357,6 +358,10 @@ directory. Choose the type explicitly; it is not inferred from the source's
 filesystem type. To download and unpack an archive, use
 [`fetch-archive`](#fetch-archive); [`fetch-file`](#fetch-file) installs the
 downloaded bytes as one file.
+
+[`include-remote`](#include-remote) is the one record that installs nothing of
+its own: it names a [remote](#remotes) and takes what that repository's manifest
+declares, at its position in this list.
 
 ### Groups
 
@@ -816,6 +821,72 @@ behavior, including its [ref rules](#ref-following-one-branch-tag-or-commit).
 Entries are processed independently: recoverable failures warn and leave later
 entries eligible to run. The command reference owns
 [clone-list warning and exit semantics](cmdline.md#clone-list-entry-failures).
+
+### `include-remote`
+
+Takes the actions another repository declares into this one, at this position in
+the list.
+
+```toml
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+```
+
+| Field    | Type   | Required | Description                                       |
+|----------|--------|:--------:|---------------------------------------------------|
+| `remote` | ID     |   yes    | A [remote](#remotes) this same manifest declares. |
+
+**`remote` names a declaration, not a URL.** It must be a key of `[remotes]` in
+the manifest writing the inclusion; naming one nothing declares is refused as the
+manifest is read, the way a source naming an undeclared remote is. One remote may
+be included more than once, and every inclusion of it reads the one
+[materialization](#materialization) its ID owns.
+
+**What is read is `remotes/<remote>/batfiles.toml`.** A remote's manifest is
+optional, because a remote whose content an action merely installs from has no
+use for one; an inclusion is what asks for one, so a materialization without one
+is refused by name rather than treated as a repository that includes nothing.
+Everything in it is an ordinary manifest, read and checked exactly as a leaf's
+is, with [one rule of its own](#what-an-included-action-may-not-write).
+
+**Which tree is read is settled before the list runs.** `sync` materializes
+declared remotes ahead of the first action, so an inclusion reads what that run
+brought down. Every other command reads what is already on the machine and
+fetches nothing, which is where a plan can come out [partial](cmdline.md#plan-completeness).
+
+**A remote its own [condition](#a-remotes-condition) closes includes nothing.**
+The inclusion reports that and the run carries on: a manifest leaving something
+out on this machine is the manifest working as written, and the plan is still
+whole. The inclusion takes a `when` or `unless` of its own as well, deciding the
+inclusion rather than the remote, and one closed that way is skipped like any
+other action.
+
+The `id` is what makes the included actions and groups addressable, by standing
+as the first segment of a qualified address such as `corp.zshrc`. It is the
+inclusion's own name and need not match `remote`. The inclusion itself is not
+applyable: `apply-action` naming one is refused, because the address reaches a
+position in the list rather than something to carry out.
+
+**Including what it read is step 7.2.** Today the action reads the manifest,
+reports the actions it declares, and runs none of them. The selection filters and
+per-inclusion variables the record will also take — `install-actions`,
+`install-groups`, `exclude-actions`, `exclude-groups`, and `vars` — are specified
+in [`future/repoformat.md`](future/repoformat.md#include-remote) and refused as
+unknown fields until steps 7.3 and 7.4.
+
+#### What an included action may not write
+
+An included action's `source` names a path in the repository that declared it,
+and nothing else. The [remote reference](#sources-and-destinations) spellings —
+`@core/files/zshrc` and `{ remote = "core", path = "files/zshrc" }` — are refused
+in a manifest read as an inclusion, whether or not that manifest declares a
+remote by the name.
+
+Remote references belong to the leaf repository. That is what keeps inclusion one
+level deep: an included repository does not reach further repositories, and it
+cannot reinterpret a name the leaf declared as one of its own.
 
 ## The clone list format
 

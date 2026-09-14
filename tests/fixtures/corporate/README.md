@@ -14,5 +14,7 @@ seeds to copy. A clone list is not, because a list names repositories by path
 and the ones a test creates live in a temporary directory no committed file can
 know; those tests publish their own list.
 
-This repository declares nothing of its own yet. A `batfiles.toml` arrives with
-`include-remote` at step 7.1, when something reads one.
+The `batfiles.toml` here is what an `include-remote` reads, and it installs the
+same two things this tree holds. A leaf repository sources them either way: with
+an action of its own naming `@corporate/...`, or by including the manifest that
+already declares them. The `inclusion` fixture is the leaf that does the second.

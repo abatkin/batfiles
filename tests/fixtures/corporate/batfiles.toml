@@ -1,0 +1,25 @@
+# What the corporate repository installs, for a leaf repository that includes
+# it. Only an `include-remote` reads this file: a remote an action merely
+# installs *from* never has its manifest opened, which is why the other fixtures
+# committed into bare repositories do not carry one.
+#
+# Everything here is an ordinary action, declared exactly as a leaf would
+# declare it. The one rule that is not a leaf's is what an included action may
+# not write: a source naming a remote, which belongs to the leaf repository.
+
+# The settings an employer publishes once, kept beside the personal `~/.zshrc`
+# rather than replacing it: a leaf repository sources this from its own.
+[[actions]]
+type = "symlink"
+id = "zshrc"
+group = "shell"
+source = "files/zshrc"
+dest = "~/.zshrc.corporate"
+
+# The two files a new machine starts from and then edits: a registry and a
+# commit identity nobody wants overwritten on the next sync.
+[[actions]]
+type = "copy-dir"
+id = "seeds"
+source-dir = "seed"
+dest-dir = "~/.config/corporate"

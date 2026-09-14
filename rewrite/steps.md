@@ -87,11 +87,7 @@ No inclusion of remote actions yet.
 
 ## Slice 7 — `include-remote`
 
-- **7.1** Read an included remote's manifest. A dry run uses its existing
-  materialization, possibly stale. A missing materialization produces a partial
-  action list. Add complete/partial reporting here and promote the remaining
-  inclusion rules from `docs/future/cmdline.md`; 6.6 promoted the half about
-  what a dry run does to a materialization.
+- **7.1** ✅ Read an included remote's manifest and report plan completeness.
 - **7.2** Splice included actions into declaration order before capturing
   selection or preparing clone lists. Resolve included list sources from their
   materialization. Give included actions qualified addresses and extend
@@ -107,7 +103,10 @@ No inclusion of remote actions yet.
   origin must tell one inclusion's `[vars]` from another's and from the leaf's,
   which the bare document name no longer does; use 7.7's display label.
 - **7.6** Enforce one-level inclusion: ignore an included remote's own remotes
-  and inclusions.
+  and inclusions. The other half of the rule is built: 7.1 refuses an included
+  action whose source names a remote, wherever the included manifest declares
+  one. Decide there whether an included `[remotes]` map holding a `file` or
+  `archive` record should still fail the inclusion, as it does today.
 - **7.7** Give every inclusion a stable, unique display label.
 - **7.8** Add a synthetic two-remote fixture with overlapping paths and
   overrides, beside the realistic `corporate` repository 6.7 added.

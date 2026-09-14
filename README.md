@@ -35,7 +35,7 @@ nothing in the repository you cannot read with `cat`.
 
 ## What works today
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`.
+Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, `include-remote`.
 
 - **Install local files and directories.** `symlink` and `symlink-dir` create
   links; `copy` and `copy-dir` seed editable copies; `create-dir` creates a
@@ -54,8 +54,11 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   so check warnings even when the command succeeds.
 - **Install content from other repositories.** `[remotes]` declares Git sources
   that `sync` materializes under `remotes/<id>/`. Actions reference their content
-  with paths such as `@core/files/zshrc`. Remote actions cannot yet be included.
-  See [remotes](docs/repoformat.md#remotes); add `remotes/` to your `.gitignore`.
+  with paths such as `@core/files/zshrc`. `include-remote` reads the manifest a
+  remote declares and reports what it would contribute; running those actions
+  arrives at step 7.2. See [remotes](docs/repoformat.md#remotes) and
+  [include-remote](docs/repoformat.md#include-remote); add `remotes/` to your
+  `.gitignore`.
 - **Apply all or part of a manifest.** `sync` executes actions in declaration
   order. `apply-action --id zshrc` and `apply-group --group shell` select one
   part. See [selection by command](docs/cmdline.md#selection-by-command) for

@@ -540,13 +540,25 @@ fn documented_action_types(document: &str) -> Option<Vec<String>> {
 }
 
 /// The action types a manifest declares, sorted and without repeats.
+///
+/// A `type` field belongs to whichever table it was written under, and
+/// `[remotes]` has one too, so the scan tracks the last header it passed rather
+/// than reading every `type = ` in the file. It is still a scanner and not a
+/// TOML parser: what it needs to know is which section a line sits in.
 fn declared_action_types(manifest: &str) -> Vec<String> {
-    let mut types: Vec<String> = manifest
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("type = \""))
-        .filter_map(|rest| rest.split('"').next())
-        .map(str::to_string)
-        .collect();
+    let mut in_actions = false;
+    let mut types: Vec<String> = Vec::new();
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_actions = line.starts_with("[[actions]]");
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("type = \"").filter(|_| in_actions)
+            && let Some(kind) = rest.split('"').next()
+        {
+            types.push(kind.to_owned());
+        }
+    }
     types.sort();
     types.dedup();
     types

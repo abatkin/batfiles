@@ -81,6 +81,15 @@ pub(crate) enum Error {
     #[error("no action in {} is in the group `{group}`", .path.display())]
     UnknownGroup { path: PathBuf, group: ItemAddress },
 
+    /// An `apply-action` naming an `include-remote`. The record carries an `id`
+    /// so that what it brings in can be addressed under it; the inclusion
+    /// itself is a position in the list rather than a thing to carry out.
+    #[error(
+        "`{id}` is an include-remote action, which cannot be applied on its own; \
+         name one of the actions it includes, as `{id}.<action>`"
+    )]
+    InclusionNotApplyable { id: ItemAddress },
+
     // Carrying an action out.
     /// An action naming a source the repository does not contain.
     #[error("no such file in the repository: {}", .path.display())]
@@ -102,6 +111,19 @@ pub(crate) enum Error {
     /// The reason is the one the run reports for the remote itself.
     #[error("remote `{remote}` is excluded on this machine: {reason}")]
     RemoteExcluded { remote: ItemId, reason: String },
+
+    /// An `include-remote` whose remote is on the machine and declares nothing.
+    /// A remote's manifest is optional, since a remote an action only installs
+    /// *from* has no use for one; an inclusion is what asks for one, so its
+    /// absence is the manifest asking for something that is not there rather
+    /// than a tree batfiles has yet to fetch.
+    #[error(
+        "remote `{remote}` has no {} at {}; an include-remote reads one, \
+         and a remote that only supplies content to install does not have one",
+        crate::manifest::Manifest::FILE_NAME,
+        .path.display()
+    )]
+    IncludedManifestMissing { remote: ItemId, path: PathBuf },
 
     /// A `source-dir` naming something the repository holds, but not a directory.
     #[error("not a directory: {}", .path.display())]

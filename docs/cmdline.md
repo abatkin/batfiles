@@ -23,7 +23,11 @@ roots before saying the same.
 `sync` materializes the [remotes](repoformat.md#materialization) the manifest
 declares and executes the action types that exist, `--dry-run` reports what it
 would do without doing any of it, and `--skip-action`/`--skip-group` leave part
-of it out for one run.
+of it out for one run. One action type does not execute yet:
+[`include-remote`](repoformat.md#include-remote) reads the manifest of the remote
+it names and reports the actions it declares, and running those arrives at step
+7.2. An inclusion it could not read at all warns, which is what leaves a
+[plan partial](#plan-completeness).
 
 `apply-action` and `apply-group` carry out part of the same manifest, named
 rather than filtered — the same actions, in the same order, with the same
@@ -278,6 +282,12 @@ so it exits 1 naming the address and the manifest, and writes nothing. That
 covers a well-formed [address](#addresses) no action carries, qualified or not.
 A value that is not a valid address fails the same way, before the repository is
 opened.
+
+**An `--id` naming an [`include-remote`](repoformat.md#include-remote) is
+refused**, and refused as that rather than as an unknown action. The inclusion's
+`id` is the prefix its included actions are addressed under; the record itself is
+a position in the list, not something to carry out, so the address named the
+wrong thing rather than nothing.
 
 | Option      | Purpose                                                                    |
 |-------------|------------------------------------------------------------------------------|
@@ -775,6 +785,48 @@ materialization at all the action is refused by name, as it is under an
 [apply command](#apply-action): a dry run materializes nothing, so it is in the
 same position, and a plan drawn from a tree that is not there would be an
 invention.
+
+**An inclusion is described from the same tree, and costs more when it is not
+there.** What comes out of a materialization an
+[`include-remote`](repoformat.md#include-remote) reads is not one action's
+content but the actions themselves, so an inclusion is described exactly as the
+tree on this machine declares it, which may be out of date and knowingly so. An
+inclusion with no materialization at all contributes actions that cannot be
+listed, and that is the one case where an absent tree is *not* a refusal: one
+action's source is something the rest of the plan can do without, and the list
+itself is not. It is reported with a reason, and the plan is marked partial
+rather than pretending to be whole. To see the rest, refresh the remote — by
+running `sync`, or by updating that checkout by hand — and repeat the dry run.
+
+## Plan Completeness
+
+An [`include-remote`](repoformat.md#include-remote) that cannot be listed at all
+**warns, naming the remote, the reason, and the remedy**:
+
+```text
+warning: remote `corporate` is not materialized at /home/me/dotfiles/remotes/corporate,
+         so what it includes cannot be listed; run `batfiles sync` to bring it down
+```
+
+That warning is what marks a plan **partial**. A plan in which nothing was
+reported that way is **complete**, and batfiles says nothing further about it:
+completeness is the absence of that warning rather than a verdict printed at the
+end, so a run with no inclusions in it and a run whose every inclusion was read
+look alike, as they should.
+
+A remote [whose own condition closed](repoformat.md#a-remotes-condition) is not
+one of these. The inclusion reports that it brought nothing in and the plan stays
+whole — a manifest leaving something out as written has left nothing unanswered.
+Neither is an inclusion the run never reached, one a condition, a disable, or a
+skip excluded.
+
+Completeness is about what the run could describe, not about whether it
+succeeded: a partial plan exits 0, and everything else the run was able to list
+runs or is reported exactly as it would be otherwise. Only a run that
+materializes can turn a partial plan complete. `sync` does that before its first
+action, so its plans are complete unless a remote's condition closed;
+`sync --dry-run` and the apply commands read what is already on the machine and
+fetch nothing, which is where a missing materialization shows up.
 
 ## Unimplemented Options
 

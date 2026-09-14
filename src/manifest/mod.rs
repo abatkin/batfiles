@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::error::Error as CrateError;
 use crate::item::ItemId;
 use crate::manifest::action::Action;
-use crate::manifest::check::RecordName;
+use crate::manifest::check::{RecordName, check_included_source};
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::manifest::remote::Remote;
 use crate::tomlfile;
@@ -24,6 +24,22 @@ use crate::var::VarName;
 /// [`archive`](crate::archive::Invalid)'s are: which module within `manifest`
 /// holds it is not something a caller needs to track.
 pub(crate) use crate::manifest::check::Invalid;
+
+/// Which repository's manifest is being read, for the one rule that depends on
+/// the answer.
+///
+/// An action an inclusion brings in may not source from a remote: remote
+/// references belong to the leaf repository, which is what keeps inclusion one
+/// level deep. Everything else a manifest has to satisfy it satisfies the same
+/// way in both, so this is a mode rather than a second reader.
+#[derive(Debug, Clone, Copy)]
+enum ReadAs {
+    /// The repository batfiles was pointed at.
+    Leaf,
+    /// The manifest inside a remote's materialization, read because a leaf
+    /// `include-remote` selected it.
+    Included,
+}
 
 /// A parsed `batfiles.toml`.
 #[derive(Debug, Deserialize)]
@@ -60,11 +76,21 @@ impl Manifest {
     /// The manifest's name within a repository root.
     pub const FILE_NAME: &'static str = "batfiles.toml";
 
-    /// Read, parse, and check one manifest.
+    /// Read, parse, and check the leaf repository's own manifest.
     pub fn load(path: &Path) -> Result<Self, CrateError> {
+        Self::load_as(path, ReadAs::Leaf)
+    }
+
+    /// The same, for the manifest of a remote an `include-remote` selects,
+    /// which is checked against [one extra rule](ReadAs).
+    pub fn load_included(path: &Path) -> Result<Self, CrateError> {
+        Self::load_as(path, ReadAs::Included)
+    }
+
+    fn load_as(path: &Path, read_as: ReadAs) -> Result<Self, CrateError> {
         let manifest: Self = tomlfile::read(path)?;
         manifest
-            .validate()
+            .validate(read_as)
             .map_err(|source| CrateError::InvalidManifest {
                 path: path.to_path_buf(),
                 source,
@@ -77,7 +103,7 @@ impl Manifest {
     /// The ones spanning more than one record are here, since nothing smaller
     /// than the document can see them; each record's own rules are its to
     /// apply, over the [checks](check) they share.
-    fn validate(&self) -> Result<(), Invalid> {
+    fn validate(&self, read_as: ReadAs) -> Result<(), Invalid> {
         // Ahead of the actions, since an action reaching a remote's content is
         // reaching one of these.
         //
@@ -115,6 +141,16 @@ impl Manifest {
 
             if action.metadata().writes_both_conditions() {
                 return Err(Invalid::BothConditions { record });
+            }
+
+            // Ahead of the shared rules, and the more specific answer where a
+            // record breaks both: an included action naming a remote is refused
+            // for naming one at all, rather than for naming one that the
+            // included manifest happens not to declare.
+            if let ReadAs::Included = read_as
+                && let Some(source) = action.source()
+            {
+                check_included_source(source, &record)?;
             }
 
             // Which of a record's fields are paths, and which rule each one

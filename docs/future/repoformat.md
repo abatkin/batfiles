@@ -24,12 +24,10 @@ dotfiles/
 └── ...
 ```
 
-What is not built is the reading of what a materialization holds. A Git remote
-may have a `batfiles.toml` of its own; it is optional and is read only when a
-leaf `include-remote` action selects it, so an included remote's manifest is
-`remotes/<remote-id>/batfiles.toml`. Because a materialization is keyed by the
-remote's map key rather than by the ID of any inclusion that selects it, two
-inclusions of one remote share the single materialization at that path.
+That a Git remote may have a `batfiles.toml` of its own, read only when a leaf
+`include-remote` selects that remote, is built and specified with
+[`include-remote`](../repoformat.md#include-remote), along with the rule that two
+inclusions of one remote share its single materialization.
 
 ## Top-Level `batfiles.toml` Schema
 
@@ -104,20 +102,12 @@ For concision, schema tables below list only `when`. Every record that accepts
 
 ### Repository path
 
-The three spellings, the `@` reservation, and the rule that a named remote must
-be one the manifest declares are built and specified in
-[`docs/repoformat.md`](../repoformat.md#sources-and-destinations). What is not
-built is who may write a remote reference.
-
-Remote references are available only to actions declared by the leaf
-repository. An action included from a Git remote may use only an ordinary
-repository-relative string, which resolves within that Git remote's
-materialization; `@remote/path` and
-`{ remote = "remote", path = "path" }` are invalid in an included action. An
-included repository does not get its own remotes, and its actions do not
-inherit access to the leaf repository's remotes. This keeps inclusion limited
-to one level and prevents an included action from reinterpreting a remote name
-from the leaf repository.
+The three spellings, the `@` reservation, the rule that a named remote must be
+one the manifest declares, and the rule that only the leaf repository's own
+actions may write a remote reference are all built and specified in
+[`docs/repoformat.md`](../repoformat.md#sources-and-destinations) and
+[what an included action may not write](../repoformat.md#what-an-included-action-may-not-write).
+Nothing about this value shape is outstanding.
 
 ### Glob filter
 
@@ -160,16 +150,12 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 map, the ID its keys follow, the shared `type` / `when` / `unless` fields, the
 whole of the `git` record, and [materializing
 one](../repoformat.md#materialization) are built and specified in
-[`docs/repoformat.md`](../repoformat.md#remotes). Three things about the section
+[`docs/repoformat.md`](../repoformat.md#remotes). Two things about the section
 are not.
 
 **The other two record variants**, below. A manifest declaring either is refused
 by name, so a remote that batfiles cannot fetch is never read as one it can.
 Nothing downloads or unpacks a remote; only a Git one materializes.
-
-**Reaching a materialization's content.** A remote is cloned into the repository,
-and no action can install from what is there: the [repository
-path](#repository-path) that names one is unbuilt.
 
 **One field of the `git` record**: `allow-dynamic-vars`, a boolean defaulting to
 `false`, which says whether an included remote's dynamic variable declarations
@@ -416,8 +402,12 @@ file remotes at step 9.3.
 
 ### `include-remote`
 
-Selects actions from a declared Git remote and inserts them at this position in
-the ordered action list.
+The record, its required `remote`, the manifest it reads, what it does with a
+remote that is excluded or not materialized, and the rule that an inclusion is
+never applyable are built and specified in
+[`docs/repoformat.md`](../repoformat.md#include-remote). Executing the actions it
+reads arrives at step 7.2. What is not built is the five fields below, each of
+which is refused as an unknown field until its step.
 
 ```toml
 [[actions]]
@@ -429,24 +419,21 @@ exclude-actions = ["p10k"]
 vars = { profile = "personal" }
 ```
 
-| Field             | Type                        | Required | Description                                   |
-|-------------------|-----------------------------|:--------:|-----------------------------------------------|
-| `remote`          | `ID`                        |   yes    | Name of a declared Git remote.                |
-| `install-actions` | `ID` or `list<ID>`          |    no    | Allow-list of unqualified remote action IDs.  |
-| `install-groups`  | `ID` or `list<ID>`          |    no    | Allow-list of unqualified remote group names. |
-| `exclude-actions` | `ID` or `list<ID>`          |    no    | Deny-list of unqualified remote action IDs.   |
-| `exclude-groups`  | `ID` or `list<ID>`          |    no    | Deny-list of unqualified remote group names.  |
-| `vars`            | `map<string, string>`       |    no    | Per-inclusion variable overrides.             |
+| Field             | Type                        | Step | Description                                   |
+|-------------------|-----------------------------|:----:|-----------------------------------------------|
+| `install-actions` | `ID` or `list<ID>`          | 7.3  | Allow-list of unqualified remote action IDs.  |
+| `install-groups`  | `ID` or `list<ID>`          | 7.3  | Allow-list of unqualified remote group names. |
+| `exclude-actions` | `ID` or `list<ID>`          | 7.3  | Deny-list of unqualified remote action IDs.   |
+| `exclude-groups`  | `ID` or `list<ID>`          | 7.3  | Deny-list of unqualified remote group names.  |
+| `vars`            | `map<string, string>`       | 7.4  | Per-inclusion variable overrides.             |
 
-The `remote` field must name a Git remote the same repository declares:
-naming an undeclared remote, or a declared `file` or `archive` remote, is
-invalid configuration.
+One thing about `remote` is also outstanding: naming a declared `file` or
+`archive` remote must be invalid configuration. Both types are refused by name as
+the manifest is read, so today no inclusion can reach one; the rule arrives with
+them at step 9.3.
 
-The common `id` is optional, but it is what makes included actions, groups, and
-manifest entries externally addressable. It becomes the `<remote>` prefix in a
-qualified address such as `core.zshrc`; it need not match the declared remote
-name in the `remote` field. Each selection field accepts either a single string
-or a list of strings; a string is equivalent to a one-item list.
+Each selection field accepts either a single string or a list of strings; a
+string is equivalent to a one-item list.
 
 The inclusion `id` is not used to namespace dynamic-variable cache entries.
 Allowed dynamic declarations are cached by the declared remote's map key, so

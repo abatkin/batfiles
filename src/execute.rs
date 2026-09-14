@@ -211,6 +211,11 @@ fn run(
         if !selection.wants(action) {
             continue;
         }
+        // Before anything is prepared or run: a target naming a record it
+        // cannot carry out is a complaint about the invocation.
+        if let Some(error) = selection.refusal(action) {
+            return Err(error);
+        }
         // Settled here, and reported below, so that a condition batfiles cannot
         // decide warns under the record's own heading and in manifest order
         // rather than ahead of the run.

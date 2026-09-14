@@ -13,6 +13,7 @@ mod conditions;
 mod disabled;
 mod fetching;
 mod groups;
+mod inclusion;
 mod locations;
 mod manifest;
 mod remotes;

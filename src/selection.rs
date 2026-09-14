@@ -210,6 +210,22 @@ impl<'a> Selection<'a> {
         self.target.unresolved(manifest)
     }
 
+    /// The failure for a target that matched a record it cannot carry out, or
+    /// `None` where it may.
+    ///
+    /// One record is like this: `apply-action` naming an `include-remote`. The
+    /// inclusion's `id` is a prefix for the addresses of what it brings in, so
+    /// an address reaching the record itself has named the wrong thing rather
+    /// than nothing, and saying so beats reporting an unknown action.
+    pub fn refusal(&self, action: &Action) -> Option<Error> {
+        match (&self.target, action) {
+            (Target::Action(id), Action::IncludeRemote(_)) => {
+                Some(Error::InclusionNotApplyable { id: (*id).clone() })
+            }
+            _ => None,
+        }
+    }
+
     /// Warn about every run-only skip that names nothing the manifest declares.
     pub fn warn_unmatched(&self, actions: &[Action], reporter: &Reporter) {
         let ids: BTreeSet<&ItemId> = actions.iter().filter_map(Action::id).collect();

@@ -16,6 +16,9 @@ use crate::repo_path::RepoPath;
 
 /// Anchored repository and home roots, execution mode, excluded remotes, and
 /// reporter for one run.
+///
+/// Everything here is settled before the first action and read by every one of
+/// them. Nothing an action does changes it.
 pub(crate) struct RunContext<'a> {
     repository: RepositoryRoot,
     home: PathBuf,

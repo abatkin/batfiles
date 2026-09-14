@@ -8,6 +8,7 @@ mod fetch_archive;
 mod fetch_file;
 mod git_clone;
 mod git_clone_list;
+mod include_remote;
 mod symlink;
 
 pub(crate) use context::RunContext;
@@ -27,5 +28,6 @@ pub(crate) fn run(action: &Action, context: &RunContext) -> Result<(), Error> {
         Action::FetchArchive(action) => fetch_archive::fetch_archive(action, context),
         Action::GitClone(action) => git_clone::git_clone(action, context),
         Action::GitCloneList(action) => git_clone_list::git_clone_list(action, context),
+        Action::IncludeRemote(action) => include_remote::include_remote(action, context),
     }
 }

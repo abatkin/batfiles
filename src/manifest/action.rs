@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use super::check::{
     Invalid, RecordName, check_archive_root, check_dest, check_digest, check_git_ref,
-    check_git_source, check_source, check_url,
+    check_git_source, check_inclusion_remote, check_source, check_url,
 };
 use super::remote::Remote;
 use crate::clone_list::Entry;
@@ -27,6 +27,7 @@ pub(crate) enum Action {
     FetchArchive(FetchArchiveAction),
     GitClone(GitCloneAction),
     GitCloneList(GitCloneListAction),
+    IncludeRemote(IncludeRemoteAction),
 }
 
 impl Action {
@@ -42,6 +43,7 @@ impl Action {
             Self::FetchArchive(it) => ("fetch-archive", &it.id, &it.group, &it.when, &it.unless),
             Self::GitClone(it) => ("git-clone", &it.id, &it.group, &it.when, &it.unless),
             Self::GitCloneList(it) => ("git-clone-list", &it.id, &it.group, &it.when, &it.unless),
+            Self::IncludeRemote(it) => ("include-remote", &it.id, &it.group, &it.when, &it.unless),
         };
         ActionMetadata {
             kind,
@@ -107,6 +109,30 @@ impl Action {
                 check_source(&action.source, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
+            // The one record with neither a source nor a destination: what it
+            // installs is whatever the included manifest says, wherever that
+            // says to put it.
+            Self::IncludeRemote(action) => check_inclusion_remote(&action.remote, record, remotes),
+        }
+    }
+
+    /// The repository path this record installs from, where it has one.
+    ///
+    /// The two fetching actions and `git-clone` name something off this machine
+    /// instead, and an `include-remote` names no path at all. No record has
+    /// more than one, so this is a value rather than a list.
+    pub fn source(&self) -> Option<&RepoPath> {
+        match self {
+            Self::Symlink(action) => Some(&action.source),
+            Self::SymlinkDir(action) => Some(&action.source_dir),
+            Self::Copy(action) => Some(&action.source),
+            Self::CopyDir(action) => Some(&action.source_dir),
+            Self::GitCloneList(action) => Some(&action.source),
+            Self::CreateDir(_)
+            | Self::FetchFile(_)
+            | Self::FetchArchive(_)
+            | Self::GitClone(_)
+            | Self::IncludeRemote(_) => None,
         }
     }
 
@@ -145,7 +171,7 @@ impl Action {
 /// The `type` tag and the four fields every `[[actions]]` record carries,
 /// borrowed from one.
 ///
-/// This is where those four are explained, for all nine record types: each
+/// This is where those four are explained, for all ten record types: each
 /// declares them itself, because each is a flat TOML table that rejects the
 /// fields it does not accept, and a struct below comments a shared field only
 /// where that record means something particular by it.
@@ -374,6 +400,30 @@ pub(crate) struct GitCloneListAction {
     pub entries: Option<Vec<Entry>>,
 }
 
+/// `include-remote`: the actions another repository declares, taken into this
+/// one at this position in the list.
+///
+/// The record is closed over the fields below, so the selection filters
+/// `docs/future/repoformat.md` gives it — `install-actions`, `install-groups`,
+/// `exclude-actions`, `exclude-groups` — and the `vars` overrides beside them
+/// are refused as unknown fields until steps 7.3 and 7.4 build them.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct IncludeRemoteAction {
+    /// What makes the included actions, groups, and entries addressable, by
+    /// standing as the first segment of a qualified `<inclusion>.<action>`. It
+    /// is this inclusion's name and need not match `remote`, since one remote
+    /// may be included more than once.
+    pub id: Option<ItemId>,
+    pub group: Option<ItemId>,
+    pub when: Option<Condition>,
+    pub unless: Option<Condition>,
+    /// The declared remote whose manifest is read, named by the key it was
+    /// declared under. Required: an inclusion that names no remote includes
+    /// nothing.
+    pub remote: ItemId,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,9 +470,50 @@ mod tests {
                 "type = \"git-clone-list\"\nsource = \"list.txt\"\ndest-dir = \"~/b\"\n",
                 "git-clone-list",
             ),
+            (
+                "type = \"include-remote\"\nremote = \"core\"\n",
+                "include-remote",
+            ),
         ] {
             assert_eq!(described(record, 1), format!("{kind} action 1"));
         }
+    }
+
+    #[test]
+    fn an_inclusion_is_closed_over_the_fields_it_accepts_so_far() {
+        // Each of these is specified for the record in
+        // `docs/future/repoformat.md` and arrives with the step that reads it,
+        // which is what an unknown field says about them until then.
+        for (unknown, value) in [
+            ("install-actions", "[\"zshrc\"]"),
+            ("install-groups", "[\"shell\"]"),
+            ("exclude-actions", "[\"p10k\"]"),
+            ("exclude-groups", "[\"gui\"]"),
+            ("vars", "{ profile = \"personal\" }"),
+        ] {
+            let document =
+                format!("type = \"include-remote\"\nremote = \"core\"\n{unknown} = {value}\n");
+            let error = toml::from_str::<Action>(&document)
+                .expect_err("a closed record should reject the field");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("unknown field `{unknown}`")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_inclusion_names_the_remote_it_includes() {
+        // The one required field. Without it the record selects nothing, which
+        // is not an inclusion that means anything.
+        let error = toml::from_str::<Action>("type = \"include-remote\"\n")
+            .expect_err("a record naming no remote should be refused");
+        assert!(
+            error.to_string().contains("missing field `remote`"),
+            "{error}"
+        );
     }
 
     #[test]

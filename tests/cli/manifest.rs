@@ -524,17 +524,17 @@ fn the_copy_types_paths_follow_the_same_rules_as_every_other() {
 }
 
 #[test]
-fn an_action_type_that_has_not_landed_is_rejected() {
-    // `include-remote` is the last action type the format specifies and this
-    // build does not have; it arrives at step 7.2. Until then a manifest
-    // declaring one fails rather than appearing to include anything.
+fn a_type_the_format_does_not_specify_is_not_an_action_at_all() {
+    // Every action type the format specifies now exists, so the only unknown
+    // type left is one nothing ever specified. It fails as the document is
+    // read, because there is no record behind the tag to check.
     let stderr = rejected(
         "[[actions]]\n\
-         type = \"include-remote\"\n\
-         remote = \"core\"\n",
+         type = \"rsync\"\n\
+         source = \"a\"\n",
     );
     assert!(
-        stderr.contains("include-remote"),
+        stderr.contains("rsync"),
         "the type was not named:\n{stderr}"
     );
 }

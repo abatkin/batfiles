@@ -61,26 +61,11 @@ reach of one, since nothing yet contributes what a qualified name asks for:
 
 ## Dry-Run Behavior
 
-The mechanism, the tense, and what a dry run promises are specified in
-[`docs/cmdline.md`](../cmdline.md#dry-run-behavior), which describes what runs
-today. What is left here is what the unbuilt half of the tool adds to it: the
-remotes an inclusion composes over, and the one thing a dry run does that is not
-describing.
-
-**An inclusion is described from the materialization on disk.** That a dry run
-neither clones nor updates a remote, and reads whatever tree the last `sync`
-left, is already specified in
-[`docs/cmdline.md`](../cmdline.md#dry-run-behavior); here it costs more, because
-what comes out of that tree is not one action's content but the actions
-themselves. An inclusion is described exactly as its materialization declares
-it, which may be out of date and knowingly so. An inclusion with no
-materialization at all contributes actions that cannot be listed, so it is
-reported with a reason and the plan is marked **partial** rather than pretending
-to be whole — where a leaf action reaching the same absent tree is simply
-refused, because one action's source is a thing the plan can do without and the
-list itself is not. A complete plan is one in which nothing was reported that
-way. To see the rest, refresh the remote — by running `sync`, or by updating
-that checkout by hand — and repeat the dry run.
+The mechanism, the tense, what a dry run promises, and what it makes of the
+remotes an inclusion composes over are specified in
+[`docs/cmdline.md`](../cmdline.md#dry-run-behavior), with the complete-or-partial
+plan that comes out of it in [plan completeness](../cmdline.md#plan-completeness).
+What is left here is the one thing a dry run does that is not describing.
 
 Dry run still performs normal dynamic-variable resolution. Allowed dynamic
 commands may run, and successful results are written to `dynamic-vars.toml`;
@@ -117,10 +102,12 @@ that needs something to refer to:
 
 - `--id` and `--group` take an [address](../cmdline.md#addresses), so a
   qualified one already parses and is already reported as naming nothing. What
-  arrives with `include-remote` is a spliced action or group for it to find.
+  arrives at step 7.2 is a spliced action or group for it to find.
 - An addressable entry inside a `git-clone-list` becomes applyable by
   `<action-id>.<entry-id>` when that action exists.
-- `include-remote` is never directly applyable, whatever its address.
+
+That an `include-remote` is never directly applyable is built, and is specified
+with [`apply-action`](../cmdline.md#apply-action).
 
 ### `vars set`, `vars get`, `vars list`, and `vars unset`
 

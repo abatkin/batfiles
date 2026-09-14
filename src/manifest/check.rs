@@ -185,6 +185,30 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
+    /// An action read from an included manifest whose source names a remote.
+    /// Refused wherever the included repository declares one or not: remote
+    /// references belong to the leaf repository, which is what keeps inclusion
+    /// one level deep and stops an included action from reinterpreting a name
+    /// the leaf declared.
+    #[error(
+        "{record}: source `{written}` names a remote, which an included action may not do; \
+         remote references belong to the leaf repository, and an included action installs \
+         from the repository that declared it"
+    )]
+    IncludedSourceNamesRemote {
+        record: RecordName,
+        written: RepoPath,
+    },
+
+    /// An `include-remote` naming a remote no `[remotes]` entry declares. The
+    /// same rule a source naming a remote follows, over the field that names one
+    /// outright rather than as part of a path.
+    #[error(
+        "{record}: remote `{remote}` is not declared by this manifest; \
+         add a `[remotes.{remote}]` record"
+    )]
+    InclusionRemoteUndeclared { record: RecordName, remote: ItemId },
+
     // A `dest` names a path on the machine, anchored to the selected home.
     #[error("{record}: dest is empty; write `~` for the home directory itself")]
     DestinationEmpty { record: RecordName },
@@ -317,6 +341,51 @@ pub(super) fn check_source(
         });
     }
     Ok(())
+}
+
+/// The rule an `include-remote`'s `remote` satisfies: it names one of the
+/// records the same manifest declares.
+///
+/// The field names a remote outright rather than as the head of a path, so
+/// there is nothing else about the value to check — an [`ItemId`] is already
+/// spelled the way a declaration key is.
+// CARRY(9.3): once a manifest can declare a `file` or `archive` remote, an
+// inclusion naming one has to be refused here too; today both are refused as the
+// manifest is read, so every declared remote reaching this point is a Git one.
+pub(super) fn check_inclusion_remote(
+    remote: &ItemId,
+    record: &RecordName,
+    remotes: &BTreeMap<ItemId, Remote>,
+) -> Result<(), Invalid> {
+    if remotes.contains_key(remote) {
+        Ok(())
+    } else {
+        Err(Invalid::InclusionRemoteUndeclared {
+            record: record.clone(),
+            remote: remote.clone(),
+        })
+    }
+}
+
+/// The rule an action read from an included manifest satisfies, over and above
+/// the ones every action follows: its source stays within the repository that
+/// declared it.
+///
+/// Decided from the record alone, but only for a manifest read as an inclusion,
+/// which is why it is applied by [`Manifest::validate`](super::Manifest::validate)
+/// rather than from within [`check_source`].
+pub(super) fn check_included_source(
+    written: &RepoPath,
+    record: &RecordName,
+) -> Result<(), Invalid> {
+    if written.remote().is_none() {
+        Ok(())
+    } else {
+        Err(Invalid::IncludedSourceNamesRemote {
+            record: record.clone(),
+            written: written.clone(),
+        })
+    }
 }
 
 /// Whether a path starts from somewhere of its own rather than from wherever it
@@ -671,6 +740,33 @@ mod tests {
                 .expect_err("expected the source to be refused"),
             Invalid::SourceStartsWithRemotePrefix { .. }
         ));
+    }
+
+    #[test]
+    fn an_inclusion_may_only_name_a_remote_the_manifest_declares() {
+        let core = ItemId::try_from("core".to_owned()).expect("valid ID");
+        assert!(check_inclusion_remote(&core, &record(), &declaring(&["core"])).is_ok());
+        let refused = check_inclusion_remote(&core, &record(), &declaring(&["work"]))
+            .expect_err("expected an undeclared remote to be refused");
+        let message = refused.to_string();
+        // The remedy is a declaration, as it is for a source naming one.
+        assert!(message.contains("is not declared"), "{message}");
+        assert!(message.contains("[remotes.core]"), "{message}");
+    }
+
+    #[test]
+    fn an_included_action_installs_from_the_repository_that_declared_it() {
+        // The rule that keeps inclusion one level deep. It is about the
+        // spelling alone: whether the included manifest declares a remote of
+        // that name makes no difference, because the reference is not one an
+        // included action may write.
+        assert!(check_included_source(&local("files/zshrc"), &record()).is_ok());
+        let message = check_included_source(&remote_path("@shared/vimrc"), &record())
+            .expect_err("expected a remote reference to be refused")
+            .to_string();
+        assert!(message.contains("`@shared/vimrc`"), "{message}");
+        assert!(message.contains("names a remote"), "{message}");
+        assert!(message.contains("leaf repository"), "{message}");
     }
 
     #[test]

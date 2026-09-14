@@ -1,0 +1,26 @@
+# A leaf repository that composes another one over its own actions: the work
+# half of the acceptance in `rewrite/README.md`, at the size a test can drive.
+# Kept apart from `leaf` for the reason `cloning` is, and from `cloning` for a
+# second: this one needs a bare repository that holds a manifest rather than one
+# that holds a file.
+#
+# `{origin}` is replaced with the path of the bare repository the test created,
+# because a fixture cannot know which temporary directory one lands in.
+
+[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+# Declared ahead of the inclusion, so that what the leaf does for itself and
+# what it takes from elsewhere are two positions in one list rather than two
+# phases.
+[[actions]]
+type = "create-dir"
+id = "zsh-cache"
+dest = "~/.cache/zsh"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+group = "work"
+remote = "corporate"
