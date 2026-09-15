@@ -14,6 +14,7 @@ mod disabled;
 mod fetching;
 mod groups;
 mod inclusion;
+mod inclusion_addresses;
 mod locations;
 mod manifest;
 mod remotes;

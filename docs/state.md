@@ -51,9 +51,11 @@ groups = ["shell", "core.gui"]
 A syntactically valid address is persisted as given, whatever its segment count.
 These commands resolve nothing, so an address with more segments than any
 resolvable [form](cmdline.md#addresses) — `a.b.c.d.e` — is accepted and recorded.
-A qualified address names an action or a group spliced in from an included
-remote; nothing includes a remote yet, so one recorded today matches nothing,
-which is the same outcome as any other name a manifest does not answer to.
+A qualified address names an action or a group an
+[`include-remote`](repoformat.md#include-remote) spliced in. One naming an
+inclusion that contributes nothing by that name matches nothing, which is the
+same outcome as any other name a manifest does not answer to — and one recorded
+before the inclusion existed starts matching when it does.
 
 ### Semantics and lifecycle
 

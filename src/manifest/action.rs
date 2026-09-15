@@ -11,7 +11,7 @@ use super::check::{
 use super::remote::Remote;
 use crate::clone_list::Entry;
 use crate::condition::{Condition, Gate};
-use crate::item::ItemId;
+use crate::item::{ItemAddress, ItemId};
 use crate::repo_path::RepoPath;
 
 /// One entry of `[[actions]]`.
@@ -153,16 +153,29 @@ impl Action {
 
     /// How the action introduces itself in a report: what kind it is, what it is
     /// called, and the group it is in.
-    pub fn describe(&self, number: usize) -> String {
+    ///
+    /// `qualifier` is the `id` of the inclusion that contributed the record, so
+    /// that what a line calls it is the address a reader would type. A record an
+    /// inclusion written without an `id` contributed is named as the manifest
+    /// that declared it names it, since no address reaches it.
+    // CARRY(7.7): every inclusion gains a display label, which is what tells two
+    // inclusions of one remote apart in a line like that.
+    pub fn describe(&self, number: usize, qualifier: Option<&ItemId>) -> String {
         let ActionMetadata {
             kind, id, group, ..
         } = self.metadata();
+        // A record with no `id` is named by its position, which is a position in
+        // the manifest that declared it rather than an address, so it is not
+        // qualified.
         let name = match id {
-            Some(id) => id.to_string(),
+            Some(id) => ItemAddress::qualified(qualifier, id).to_string(),
             None => format!("action {number}"),
         };
         match group {
-            Some(group) => format!("{kind} {name} (group {group})"),
+            Some(group) => format!(
+                "{kind} {name} (group {})",
+                ItemAddress::qualified(qualifier, group)
+            ),
             None => format!("{kind} {name}"),
         }
     }
@@ -430,7 +443,15 @@ mod tests {
 
     fn described(record: &str, number: usize) -> String {
         let action: Action = toml::from_str(record).expect("the record should parse");
-        action.describe(number)
+        action.describe(number, None)
+    }
+
+    /// The same record as an inclusion contributed it, named under that
+    /// inclusion's `id`.
+    fn described_under(record: &str, number: usize, inclusion: &str) -> String {
+        let action: Action = toml::from_str(record).expect("the record should parse");
+        let inclusion = ItemId::try_from(inclusion.to_owned()).expect("valid ID");
+        action.describe(number, Some(&inclusion))
     }
 
     /// One complete record per variant, so a swapped or misspelled label fails
@@ -524,6 +545,26 @@ mod tests {
                 3
             ),
             "copy gitconfig"
+        );
+    }
+
+    #[test]
+    fn an_included_record_is_named_by_the_address_that_reaches_it() {
+        // What a line calls a record is what a reader would type to name it, so
+        // an inclusion's qualifier goes on both of a record's IDs.
+        assert_eq!(
+            described_under(
+                "type = \"symlink\"\nid = \"zshrc\"\ngroup = \"shell\"\nsource = \"a\"\ndest = \"~/b\"\n",
+                1,
+                "corp"
+            ),
+            "symlink corp.zshrc (group corp.shell)"
+        );
+        // A record with no `id` is named by its position in the manifest that
+        // declared it, which is not an address and so is not qualified.
+        assert_eq!(
+            described_under("type = \"create-dir\"\ndest = \"~/b\"\n", 2, "corp"),
+            "create-dir action 2"
         );
     }
 

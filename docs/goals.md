@@ -58,8 +58,9 @@ The stable bootstrap experience, *intended*, has three pieces:
 - Support Git, file, and archive remotes as named sources.
 - Let a leaf action reference a particular path from a particular remote.
 - Let a leaf repository splice a Git remote's actions into its own ordered
-  action list, with action/group selection and per-inclusion variables
-  (*intended*: [`include-remote`](future/repoformat.md#include-remote)).
+  action list ([`include-remote`](repoformat.md#include-remote)), with
+  action/group selection and per-inclusion variables
+  (*intended*: [the fields it will also take](future/repoformat.md#include-remote)).
 - Resolve every repository-backed source path against exactly one repository;
   never implicitly merge or search all sources.
 

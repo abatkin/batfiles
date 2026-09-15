@@ -51,13 +51,12 @@ when their cached values are fresh.
 `sync` and `clone` accept both run-only selectors; `apply-group` accepts
 `--skip-action` alone, and `apply-action` neither. Which command takes which, and
 why, is in [`docs/cmdline.md`](../cmdline.md#selecting-what-a-run-does). Both
-already take an [address](../cmdline.md#addresses); what is not built is the
-reach of one, since nothing yet contributes what a qualified name asks for:
+already take an [address](../cmdline.md#addresses), and a qualified one reaches
+what an inclusion contributed. What is not built is the rest of that reach:
 
-| Option                 | Comes to reach                                                                    |
-|------------------------|-------------------------------------------------------------------------------------|
-| `--skip-action <id>`   | An addressable remote, included action, or manifest entry, as well as a leaf action. |
-| `--skip-group <group>` | A qualified included group, as well as a leaf one.                                   |
+| Option                 | Comes to reach                                                  |
+|------------------------|-----------------------------------------------------------------|
+| `--skip-action <id>`   | An addressable clone-list entry, as well as an action.          |
 
 ## Dry-Run Behavior
 
@@ -100,11 +99,8 @@ Both are built, and are specified in
 [`docs/cmdline.md`](../cmdline.md#apply-action). What is not built is the half
 that needs something to refer to:
 
-- `--id` and `--group` take an [address](../cmdline.md#addresses), so a
-  qualified one already parses and is already reported as naming nothing. What
-  arrives at step 7.2 is a spliced action or group for it to find.
 - An addressable entry inside a `git-clone-list` becomes applyable by
-  `<action-id>.<entry-id>` when that action exists.
+  `<action-id>.<entry-id>` when that lookup exists.
 
 That an `include-remote` is never directly applyable is built, and is specified
 with [`apply-action`](../cmdline.md#apply-action).
@@ -203,27 +199,16 @@ requested data, so `--quiet` leaves only warnings and errors.
 
 ## Address Forms
 
-Address syntax, and the two forms that resolve against a leaf repository, are
-built and specified in [`docs/cmdline.md`](../cmdline.md#addresses). These are
-the forms that need something batfiles cannot yet contribute:
+Address syntax, and the four forms that resolve, are built and specified in
+[`docs/cmdline.md`](../cmdline.md#addresses) — including the rule that an
+unqualified name means the leaf repository alone, and that only items with the
+required IDs can be addressed individually. These are the forms that need
+something batfiles cannot yet contribute:
 
 | Form                                  | Meaning                                               |
 |---------------------------------------|-------------------------------------------------------|
 | `<action-id>.<entry-id>`              | Addressable entry in a leaf `git-clone-list`.         |
-| `<remote>.<action-id>`                | Action spliced from an addressable included remote.   |
-| `<remote>.<group>`                    | Group spliced from an addressable included remote.    |
-| `<remote>.<action-id>.<entry-id>`     | Manifest entry inside an addressable included action. |
+| `<inclusion>.<action-id>.<entry-id>`  | Entry inside a list an inclusion contributed.         |
 
-Each of these parses today and resolves to nothing, so what arrives with the
-`git-clone-list` action and with `include-remote` is the *lookup*, not the name.
-
-An unqualified action or group always refers to the leaf repository; batfiles
-does not search included remotes for a matching unqualified name. In a qualified
-address, `<remote>` is the `id` of the leaf's `include-remote` action. It is the
-address prefix for that particular inclusion and need not match the remote name
-in the action's `remote` field.
-
-Only configuration items with the required IDs can be addressed individually.
-Groups and included content from an `include-remote` action without an ID may
-still run during normal synchronization but cannot be targeted through a
-qualified command-line address.
+Each parses today and resolves to nothing, so what arrives is the *lookup*, not
+the name.

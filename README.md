@@ -54,9 +54,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   so check warnings even when the command succeeds.
 - **Install content from other repositories.** `[remotes]` declares Git sources
   that `sync` materializes under `remotes/<id>/`. Actions reference their content
-  with paths such as `@core/files/zshrc`. `include-remote` reads the manifest a
-  remote declares and reports what it would contribute; running those actions
-  arrives at step 7.2. See [remotes](docs/repoformat.md#remotes) and
+  with paths such as `@core/files/zshrc`. `include-remote` takes the actions a
+  remote's own manifest declares into the list at its position, addressable as
+  `corp.zshrc`. See [remotes](docs/repoformat.md#remotes) and
   [include-remote](docs/repoformat.md#include-remote); add `remotes/` to your
   `.gitignore`.
 - **Apply all or part of a manifest.** `sync` executes actions in declaration

@@ -67,9 +67,37 @@ pub(crate) struct ItemAddressError {
 }
 
 impl ItemAddress {
-    /// Whether this address names `id`, which is a leaf action or a leaf group.
-    pub fn names(&self, id: &ItemId) -> bool {
-        self.0 == id.as_str()
+    /// The address an item answers to: its own ID, under the `id` of the
+    /// inclusion that contributed it where one did.
+    ///
+    /// A leaf repository's action or group is addressed by its ID alone. One an
+    /// [`include-remote`](crate::manifest::action::IncludeRemoteAction) spliced
+    /// in is addressed under that inclusion, which is what makes `corp.zshrc` a
+    /// different address from the leaf's own `zshrc`.
+    ///
+    /// Both halves are already IDs, so the result satisfies the rule
+    /// [`try_from`](Self::try_from) enforces and is built rather than parsed.
+    /// An item no address reaches — one written without an `id`, or one an
+    /// inclusion written without one contributed — has `None` beside it instead
+    /// of a value of this type.
+    pub fn qualified(qualifier: Option<&ItemId>, id: &ItemId) -> Self {
+        match qualifier {
+            None => Self(id.as_str().to_owned()),
+            Some(qualifier) => Self(format!("{qualifier}{SEGMENT_SEPARATOR}{id}")),
+        }
+    }
+
+    /// Whether this address reaches inside the inclusion written with `id`.
+    ///
+    /// Asked of an inclusion rather than of an item: it is what decides whether
+    /// a run that named one thing reads the manifest that might hold it. A
+    /// deeper address than anything resolves — `corp.vim-bundles.p10k` — reaches
+    /// in and then names nothing, which is the outcome an unresolvable address
+    /// already has.
+    pub fn qualified_by(&self, id: &ItemId) -> bool {
+        self.0
+            .split_once(SEGMENT_SEPARATOR)
+            .is_some_and(|(first, _)| first == id.as_str())
     }
 }
 
@@ -152,12 +180,37 @@ mod tests {
         assert!(error.to_string().contains("`core._hidden`"), "{error}");
     }
 
+    fn id(id: &str) -> ItemId {
+        ItemId::try_from(id.to_owned()).expect("valid ID")
+    }
+
     #[test]
-    fn only_an_unqualified_address_names_a_leaf_item() {
-        let zshrc = ItemId::try_from("zshrc".to_owned()).expect("valid ID");
-        assert!(address("zshrc").names(&zshrc));
-        assert!(!address("core.zshrc").names(&zshrc));
-        assert!(!address("vimrc").names(&zshrc));
+    fn an_item_is_addressed_under_the_inclusion_that_contributed_it() {
+        // The rule an inclusion rests on: what a remote contributed is a
+        // different address from the leaf's own record of the same ID, and
+        // matching is then equality between addresses.
+        let (core, zshrc) = (id("core"), id("zshrc"));
+        assert_eq!(ItemAddress::qualified(None, &zshrc), address("zshrc"));
+        assert_eq!(
+            ItemAddress::qualified(Some(&core), &zshrc),
+            address("core.zshrc")
+        );
+        assert_ne!(
+            ItemAddress::qualified(Some(&core), &zshrc),
+            ItemAddress::qualified(None, &zshrc)
+        );
+    }
+
+    #[test]
+    fn an_address_reaches_into_the_inclusion_its_first_segment_names() {
+        // What decides whether an inclusion's manifest is read at all, which is
+        // a coarser question than which record the address goes on to name.
+        let core = id("core");
+        assert!(address("core.zshrc").qualified_by(&core));
+        assert!(address("core.vim-bundles.p10k").qualified_by(&core));
+        assert!(!address("work.zshrc").qualified_by(&core));
+        // The inclusion's own name reaches the record, not inside it.
+        assert!(!address("core").qualified_by(&core));
     }
 
     #[test]

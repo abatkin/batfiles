@@ -360,12 +360,6 @@ step of its own. A per-entry condition now covers the case that motivated it —
 a plugin one machine wants and the others do not — so what is left is per-machine
 selection the machine states for itself rather than the repository.
 
-#### When the list is read
-
-[Leaf clone lists](../repoformat.md#git-clone-list) are prepared before action
-writes. For remote inclusion, materialize the source first, then prepare the
-list before executing included actions. Step 7.2 owns this extension.
-
 ### `fetch-archive` entry filters
 
 [`fetch-archive`](../repoformat.md#fetch-archive) is built. Two of the fields
@@ -402,12 +396,12 @@ file remotes at step 9.3.
 
 ### `include-remote`
 
-The record, its required `remote`, the manifest it reads, what it does with a
-remote that is excluded or not materialized, and the rule that an inclusion is
-never applyable are built and specified in
-[`docs/repoformat.md`](../repoformat.md#include-remote). Executing the actions it
-reads arrives at step 7.2. What is not built is the five fields below, each of
-which is refused as an unknown field until its step.
+The record, its required `remote`, the manifest it reads, the actions it splices
+into the list, how those are addressed, what it does with a remote that is
+excluded or not materialized, and the rule that an inclusion is never applyable
+are built and specified in
+[`docs/repoformat.md`](../repoformat.md#include-remote). What is not built is the
+five fields below, each of which is refused as an unknown field until its step.
 
 ```toml
 [[actions]]

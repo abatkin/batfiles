@@ -88,25 +88,19 @@ No inclusion of remote actions yet.
 ## Slice 7 — `include-remote`
 
 - **7.1** ✅ Read an included remote's manifest and report plan completeness.
-- **7.2** Splice included actions into declaration order before capturing
-  selection or preparing clone lists. Resolve included list sources from their
-  materialization. Give included actions qualified addresses and extend
-  `ItemAddress::names` so stored exclusions can match them. Preserve the
-  distinction between an unread list and a validated empty list. Splice a copy
-  of each included record per inclusion: two inclusions of one remote share its
-  materialization but may differ in `vars`, so each prepares its own clone-list
-  entries against its own bindings. Preparation attaching entries to the
-  manifest record depends on that.
+- **7.2** ✅ Splice included actions into declaration order and address them
+  under their inclusion.
 - **7.3** Add inclusion action/group selection filters.
 - **7.4** Add per-inclusion variable overrides.
 - **7.5** Add per-inclusion scopes and layered precedence. A reported variable
   origin must tell one inclusion's `[vars]` from another's and from the leaf's,
   which the bare document name no longer does; use 7.7's display label.
-- **7.6** Enforce one-level inclusion: ignore an included remote's own remotes
-  and inclusions. The other half of the rule is built: 7.1 refuses an included
-  action whose source names a remote, wherever the included manifest declares
-  one. Decide there whether an included `[remotes]` map holding a `file` or
-  `archive` record should still fail the inclusion, as it does today.
+- **7.6** Ignore an included remote's own `[remotes]`, which is what is left of
+  one-level inclusion: 7.1 refuses an included action whose source names a
+  remote, and 7.2 drops an included `include-remote` with a reported line.
+  Nothing can name an included `[remotes]` entry any more, yet the map is still
+  read and validated. Decide whether one holding a `file` or `archive` record
+  should still fail the inclusion, as it does today.
 - **7.7** Give every inclusion a stable, unique display label.
 - **7.8** Add a synthetic two-remote fixture with overlapping paths and
   overrides, beside the realistic `corporate` repository 6.7 added.

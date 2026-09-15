@@ -155,7 +155,7 @@ impl<'a> Gate<'a> {
 }
 
 /// A reason to skip a record, classified for verbose output or a warning.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Exclusion {
     /// A disable, a run-only skip, or a gate this machine closes: all three are
     /// the run doing as it was asked.

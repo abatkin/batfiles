@@ -51,13 +51,23 @@ impl<'a> RunContext<'a> {
         self.excluded_remotes.get(id)
     }
 
-    /// Resolve a validated source against its declaring repository or remote tree.
+    /// Resolve a validated source against the tree it is read from.
+    ///
+    /// `remote` is the one whose materialization contributed the action, which
+    /// an [inclusion](crate::manifest::action::IncludeRemoteAction) sets and a
+    /// leaf action leaves `None`. It and the one a source names itself can never
+    /// disagree: an included action may not write a remote reference, so only a
+    /// leaf source carries one of its own.
+    ///
     /// The final node must exist; broken symlinks count as present.
     /// Returns an absolute path preserving repository symlinks.
     /// Excluded or missing remote materializations are errors.
-    pub fn source(&self, source: &RepoPath) -> Result<PathBuf, Error> {
-        let resolved =
-            paths::normalize_lexically(&self.tree_root(source.remote())?.join(source.path()));
+    pub fn source(&self, remote: Option<&ItemId>, source: &RepoPath) -> Result<PathBuf, Error> {
+        let resolved = paths::normalize_lexically(
+            &self
+                .tree_root(remote.or(source.remote()))?
+                .join(source.path()),
+        );
 
         // Presence, not reachability: a source that is itself a broken symlink
         // is there, and linking at it is what the repository asked for.
@@ -70,8 +80,12 @@ impl<'a> RunContext<'a> {
 
     /// Resolve a source directory, following its final symlink.
     /// Fails if the source is missing, unreadable, or does not resolve to a directory.
-    pub fn source_directory(&self, source_dir: &RepoPath) -> Result<PathBuf, Error> {
-        let resolved = self.source(source_dir)?;
+    pub fn source_directory(
+        &self,
+        remote: Option<&ItemId>,
+        source_dir: &RepoPath,
+    ) -> Result<PathBuf, Error> {
+        let resolved = self.source(remote, source_dir)?;
         if paths::reaches_directory(&resolved)? {
             Ok(resolved)
         } else {

@@ -209,7 +209,11 @@ Keep each decision centralized without building future abstractions:
 1. Effective variable values and their origins are produced by one function.
 2. Run settings are carried by `RunContext`; write helpers consult the mode.
 3. Execution captures selection once, prepares selected clone lists, and uses
-   one loop over those action positions.
-4. Repository source paths use one resolver.
-5. The manifest owns declaration order. Inclusion must finish expanding it
-   before selection and clone-list preparation.
+   one loop over the run's list.
+4. Repository source paths use one resolver, which takes the tree a record came
+   from.
+5. The manifest owns declaration order; `execute` assembles the run's list from
+   it, expanding every inclusion it reaches. Assembly and selection are one
+   pass, and both finish before clone-list preparation. The assembled list is
+   not a simulation and never becomes one: it is the same records, read from
+   more than one file. See [Dry-run](#dry-run).

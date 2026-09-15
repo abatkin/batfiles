@@ -8,21 +8,30 @@ use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::install::{self, SeedKind};
+use crate::item::ItemId;
 use crate::manifest::action::{CopyAction, CopyDirAction};
 use crate::output::Verb;
 use crate::paths;
 
 /// Carry out one `copy` action: one file or one directory, at one destination.
-pub(super) fn copy(action: &CopyAction, context: &RunContext) -> Result<(), Error> {
-    let source = context.source(&action.source)?;
+pub(super) fn copy(
+    action: &CopyAction,
+    remote: Option<&ItemId>,
+    context: &RunContext,
+) -> Result<(), Error> {
+    let source = context.source(remote, &action.source)?;
     let dest = context.destination(&action.dest);
     seed(&source, kind_of_source(&source)?, &dest, context)
 }
 
 /// Carry out one `copy-dir` action: one copy per direct child of a directory,
 /// all of them in one destination directory.
-pub(super) fn copy_dir(action: &CopyDirAction, context: &RunContext) -> Result<(), Error> {
-    let source_dir = context.source_directory(&action.source_dir)?;
+pub(super) fn copy_dir(
+    action: &CopyDirAction,
+    remote: Option<&ItemId>,
+    context: &RunContext,
+) -> Result<(), Error> {
+    let source_dir = context.source_directory(remote, &action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 

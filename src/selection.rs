@@ -8,6 +8,7 @@ use crate::condition::{Bindings, Exclusion};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
+use crate::execute::{Record, RunList};
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
@@ -36,11 +37,26 @@ pub(crate) enum Target<'a> {
 
 impl Target<'_> {
     /// Whether this record is one of the ones asked for.
-    fn wants(&self, action: &Action) -> bool {
+    fn wants(&self, record: &Record) -> bool {
         match self {
             Self::Everything => true,
-            Self::Action(id) => action.id().is_some_and(|declared| id.names(declared)),
-            Self::Group(group) => action.group().is_some_and(|declared| group.names(declared)),
+            Self::Action(id) => record.name.as_ref() == Some(*id),
+            Self::Group(group) => record.group.as_ref() == Some(*group),
+        }
+    }
+
+    /// Whether this target could name something inside the inclusion written
+    /// with `id`, which is what decides whether that inclusion's manifest is
+    /// read at all.
+    ///
+    /// An inclusion written without an `id` is reached by nothing qualified, so
+    /// only a run that asked for the whole manifest opens one of those.
+    fn reaches_into(&self, id: Option<&ItemId>) -> bool {
+        match self {
+            Self::Everything => true,
+            Self::Action(address) | Self::Group(address) => {
+                id.is_some_and(|id| address.qualified_by(id))
+            }
         }
     }
 
@@ -80,12 +96,12 @@ pub(crate) enum SkipReason<'a> {
     /// A `disabled.toml` entry. The noun says which of its two lists.
     Disabled {
         noun: &'static str,
-        name: &'a ItemId,
+        name: &'a ItemAddress,
     },
     /// A run-only skip, and the option or variable that supplied it — which
     /// says by itself whether an action or a group was named.
     Run {
-        name: &'a ItemId,
+        name: &'a ItemAddress,
         origin: &'static str,
     },
 }
@@ -122,18 +138,24 @@ impl SkipList {
     }
 
     /// The source that named `candidate`, if any did.
-    fn origin(&self, candidate: &ItemId) -> Option<&'static str> {
-        self.names
-            .iter()
-            .find_map(|(name, origin)| name.names(candidate).then_some(*origin))
+    fn origin(&self, candidate: &ItemAddress) -> Option<&'static str> {
+        self.names.get(candidate).copied()
     }
 
-    /// Warn once per name that nothing in the manifest answers to.
-    fn warn_unmatched(&self, present: &BTreeSet<&ItemId>, noun: &str, reporter: &Reporter) {
+    /// Warn once per name that nothing in the run's list answers to, passing
+    /// over the ones qualified by an inclusion the run never opened.
+    fn warn_unmatched(
+        &self,
+        present: &[&ItemAddress],
+        unread: &[ItemId],
+        noun: &str,
+        reporter: &Reporter,
+    ) {
         for (name, origin) in &self.names {
-            if !present.iter().any(|id| name.names(id)) {
-                reporter.warn(&format!("{origin} `{name}` matched no {noun}"));
+            if present.contains(&name) || unread.iter().any(|id| name.qualified_by(id)) {
+                continue;
             }
+            reporter.warn(&format!("{origin} `{name}` matched no {noun}"));
         }
     }
 }
@@ -200,8 +222,15 @@ impl<'a> Selection<'a> {
     }
 
     /// Whether this record is one of the ones the command asked for.
-    pub fn wants(&self, action: &Action) -> bool {
-        self.target.wants(action)
+    pub fn wants(&self, record: &Record) -> bool {
+        self.target.wants(record)
+    }
+
+    /// Whether the command named something inside the inclusion written with
+    /// `id`, which is how a run that named one record reaches past an inclusion
+    /// to open it.
+    pub fn reaches_into(&self, id: Option<&ItemId>) -> bool {
+        self.target.reaches_into(id)
     }
 
     /// The failure for a run whose target matched no record — or `None` where
@@ -226,12 +255,25 @@ impl<'a> Selection<'a> {
         }
     }
 
-    /// Warn about every run-only skip that names nothing the manifest declares.
-    pub fn warn_unmatched(&self, actions: &[Action], reporter: &Reporter) {
-        let ids: BTreeSet<&ItemId> = actions.iter().filter_map(Action::id).collect();
-        let groups: BTreeSet<&ItemId> = actions.iter().filter_map(Action::group).collect();
-        self.actions.warn_unmatched(&ids, "action", reporter);
-        self.groups.warn_unmatched(&groups, "group", reporter);
+    /// Warn about every run-only skip that names nothing in the run's list.
+    ///
+    /// Asked of the expanded list, because a qualified name is answered by what
+    /// an inclusion contributed. An inclusion this run did not open is the one
+    /// name that is neither answered nor unmatched: what would have answered it
+    /// was never read.
+    pub fn warn_unmatched(&self, run_list: &RunList, reporter: &Reporter) {
+        let names = |of: fn(&Record) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
+            run_list
+                .records
+                .iter()
+                .filter_map(|it| of(it).as_ref())
+                .collect()
+        };
+        let unread = &run_list.unread;
+        self.actions
+            .warn_unmatched(&names(|it| &it.name), unread, "action", reporter);
+        self.groups
+            .warn_unmatched(&names(|it| &it.group), unread, "group", reporter);
     }
 
     /// Why this run is passing the record over, or `None` where it carries it
@@ -246,14 +288,17 @@ impl<'a> Selection<'a> {
     /// already excludes is never evaluated: a condition that cannot be
     /// evaluated then costs only the runs that would otherwise have carried the
     /// record out.
-    pub fn exclusion(&self, action: &Action, bindings: &Bindings<'_>) -> Option<Exclusion> {
-        if let Some(reason) = self.listed_reason(action) {
+    pub fn exclusion(&self, record: &Record, bindings: &Bindings<'_>) -> Option<Exclusion> {
+        if let Some(reason) = self.listed_reason(record) {
             return Some(Exclusion::Expected(reason.to_string()));
         }
         // Waived exactly where the action's own name is. `apply-action` names
         // one record and nothing is finer-grained than that, so naming it
         // reaches it whatever this machine makes of its condition.
-        let gate = action.gate().filter(|_| self.target.honors_actions())?;
+        let gate = record
+            .action
+            .gate()
+            .filter(|_| self.target.honors_actions())?;
         gate.exclusion(bindings, Some(NOT_INSTALLED))
     }
 
@@ -261,13 +306,17 @@ impl<'a> Selection<'a> {
     /// Persistent disables precede run-only skips; action exclusions precede
     /// group exclusions within each source. The target determines which
     /// exclusions are honored.
-    fn listed_reason<'b>(&self, action: &'b Action) -> Option<SkipReason<'b>> {
-        let id = action.id().filter(|_| self.target.honors_actions());
-        let group = action.group().filter(|_| self.target.honors_groups());
+    fn listed_reason<'b>(&self, record: &'b Record) -> Option<SkipReason<'b>> {
+        let id = record
+            .name
+            .as_ref()
+            .filter(|_| self.target.honors_actions());
+        let group = record
+            .group
+            .as_ref()
+            .filter(|_| self.target.honors_groups());
 
-        let listed = |list: &BTreeSet<ItemAddress>, id: &ItemId| {
-            list.iter().any(|address| address.names(id))
-        };
+        let listed = |list: &BTreeSet<ItemAddress>, item: &ItemAddress| list.contains(item);
 
         if let Some(name) = id.filter(|id| listed(&self.disabled.actions, id)) {
             return Some(SkipReason::Disabled {
@@ -314,12 +363,32 @@ mod tests {
     }
 
     /// One `create-dir` naming both an action and a group, which is the record
-    /// every rule below is decided against.
-    fn action(id: &str, group: &str) -> Action {
+    /// every rule below is decided against, as the leaf repository declared it.
+    fn action(id: &str, group: &str) -> Record {
+        Record::leaf(create_dir(id, group), 1)
+    }
+
+    /// The same record as the inclusion written with `inclusion` contributed it.
+    /// `None` is an inclusion written without an `id`, whose contents answer to
+    /// no address at all.
+    fn included(id: &str, group: &str, inclusion: Option<&str>) -> Record {
+        Record::contributed(
+            create_dir(id, group),
+            1,
+            inclusion.map(item).as_ref(),
+            item("corporate"),
+        )
+    }
+
+    fn create_dir(id: &str, group: &str) -> Action {
         toml::from_str(&format!(
             "type = \"create-dir\"\nid = \"{id}\"\ngroup = \"{group}\"\ndest = \"~/x\"\n"
         ))
         .expect("the record should parse")
+    }
+
+    fn item(id: &str) -> ItemId {
+        ItemId::try_from(id.to_owned()).expect("valid ID")
     }
 
     fn disabled(actions: &[&str], groups: &[&str]) -> Disabled {
@@ -363,13 +432,13 @@ mod tests {
     /// What a selection says about one record, rendered the way a run reports
     /// it. The bindings are empty, since most of the rules below decide a
     /// record that declares no condition at all.
-    fn reason(selection: &Selection, action: &Action) -> Option<String> {
-        decided(selection, action, &[]).map(|exclusion| exclusion.reason().to_owned())
+    fn reason(selection: &Selection, record: &Record) -> Option<String> {
+        decided(selection, record, &[]).map(|exclusion| exclusion.reason().to_owned())
     }
 
     /// The same, against a variable set, and keeping which kind of exclusion
     /// it is.
-    fn decided(selection: &Selection, action: &Action, vars: &[(&str, &str)]) -> Option<Exclusion> {
+    fn decided(selection: &Selection, record: &Record, vars: &[(&str, &str)]) -> Option<Exclusion> {
         let variables = Rc::new(VarSet::stack(
             vars.iter()
                 .map(|(name, value)| {
@@ -386,17 +455,17 @@ mod tests {
         let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
         let host = HostNamespaces::capture(&empty);
         let bindings = Bindings::new(&variables, &host);
-        selection.exclusion(action, &bindings)
+        selection.exclusion(record, &bindings)
     }
 
     /// The reason a record was passed over as asked, for a case that expects
     /// one rather than a condition batfiles could not decide.
     fn expected_reason(
         selection: &Selection,
-        action: &Action,
+        record: &Record,
         vars: &[(&str, &str)],
     ) -> Option<String> {
-        match decided(selection, action, vars) {
+        match decided(selection, record, vars) {
             Some(Exclusion::Expected(reason)) => Some(reason),
             Some(other) => panic!("expected an ordinary exclusion, got {other:?}"),
             None => None,
@@ -404,12 +473,15 @@ mod tests {
     }
 
     /// A `create-dir` carrying one condition, in the spelling named.
-    fn conditioned(spelling: &str, condition: &str) -> Action {
-        toml::from_str(&format!(
-            "type = \"create-dir\"\nid = \"zshrc\"\ngroup = \"shell\"\n\
-             dest = \"~/x\"\n{spelling} = \"{condition}\"\n"
-        ))
-        .expect("the record should parse")
+    fn conditioned(spelling: &str, condition: &str) -> Record {
+        Record::leaf(
+            toml::from_str(&format!(
+                "type = \"create-dir\"\nid = \"zshrc\"\ngroup = \"shell\"\n\
+                 dest = \"~/x\"\n{spelling} = \"{condition}\"\n"
+            ))
+            .expect("the record should parse"),
+            1,
+        )
     }
 
     #[test]
@@ -671,10 +743,7 @@ mod tests {
         // and takes no part in the filtering.
         let mut skips = SkipList::default();
         skips.extend(&names_of(&["a..b", "zshrc"]), "--skip-action", &quiet());
-        assert_eq!(
-            skips.origin(&ItemId::try_from("zshrc".to_owned()).expect("valid ID")),
-            Some("--skip-action")
-        );
+        assert_eq!(skips.origin(&address("zshrc")), Some("--skip-action"));
         assert_eq!(skips.names.len(), 1);
     }
 
@@ -686,5 +755,105 @@ mod tests {
         // Same shape in the persistent lists, which are silent about it.
         let by_disable = selection(&[], &[], &[], disabled(&["core.zshrc"], &["core.shell"]));
         assert_eq!(reason(&by_disable, &action("zshrc", "shell")), None);
+    }
+
+    // What an inclusion contributed, which is the same rule read from the other
+    // side: a qualified name reaches it and an unqualified one does not.
+
+    #[test]
+    fn an_included_record_answers_to_its_qualified_name_alone() {
+        let contributed = included("zshrc", "shell", Some("core"));
+
+        for (skips, groups, expected) in [
+            (["core.zshrc"], [""; 1], "`core.zshrc` from --skip-action"),
+            ([""; 1], ["core.shell"], "`core.shell` from --skip-group"),
+        ] {
+            let selection = selection(&skips, &groups, &[], Disabled::default());
+            assert_eq!(reason(&selection, &contributed).as_deref(), Some(expected));
+        }
+
+        // The leaf's own names, which mean the leaf's own records. A repository
+        // that disables `zshrc` has said nothing about what a remote contributed
+        // under that ID.
+        let unqualified = selection(
+            &["zshrc"],
+            &["shell"],
+            &[],
+            disabled(&["zshrc"], &["shell"]),
+        );
+        assert_eq!(reason(&unqualified, &contributed), None);
+    }
+
+    #[test]
+    fn a_record_from_an_unnamed_inclusion_answers_to_nothing() {
+        // An inclusion written without an `id` gives its contents no address, so
+        // they run and no list can name them: not the qualified spelling, which
+        // has no first segment to match, and not the unqualified one, which
+        // means the leaf.
+        let contributed = included("zshrc", "shell", None);
+        let selection = selection(
+            &["zshrc", "core.zshrc"],
+            &["shell", "core.shell"],
+            &[],
+            disabled(&["zshrc", "core.zshrc"], &["shell", "core.shell"]),
+        );
+        assert_eq!(reason(&selection, &contributed), None);
+    }
+
+    #[test]
+    fn a_target_names_an_included_record_by_its_qualified_address() {
+        let contributed = included("zshrc", "shell", Some("core"));
+        let leaf = action("zshrc", "shell");
+
+        let qualified = address("core.zshrc");
+        let by_action = filter(
+            Target::Action(&qualified),
+            &[],
+            &[],
+            &[],
+            Disabled::default(),
+        );
+        assert!(by_action.wants(&contributed));
+        assert!(!by_action.wants(&leaf));
+
+        let qualified = address("core.shell");
+        let by_group = filter(
+            Target::Group(&qualified),
+            &[],
+            &[],
+            &[],
+            Disabled::default(),
+        );
+        assert!(by_group.wants(&contributed));
+        assert!(!by_group.wants(&leaf));
+    }
+
+    #[test]
+    fn a_target_reaches_into_the_inclusion_its_address_is_qualified_by() {
+        // Which inclusions a run opens, decided before anything inside one can
+        // be named. Asking for the whole manifest opens all of them, including
+        // the ones no address could reach.
+        let core = item("core");
+        let everything = selection(&[], &[], &[], Disabled::default());
+        assert!(everything.reaches_into(Some(&core)));
+        assert!(everything.reaches_into(None));
+
+        let qualified = address("core.zshrc");
+        let named = filter(
+            Target::Action(&qualified),
+            &[],
+            &[],
+            &[],
+            Disabled::default(),
+        );
+        assert!(named.reaches_into(Some(&core)));
+        assert!(!named.reaches_into(Some(&item("work"))));
+        assert!(!named.reaches_into(None));
+
+        // An address naming the inclusion itself reaches the record, not inside
+        // it; `apply-action` refuses that one rather than opening it.
+        let record = address("core");
+        let inclusion = filter(Target::Action(&record), &[], &[], &[], Disabled::default());
+        assert!(!inclusion.reaches_into(Some(&core)));
     }
 }

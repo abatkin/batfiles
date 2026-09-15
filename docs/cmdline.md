@@ -21,13 +21,12 @@ written nothing. `init` operates on the current directory, so it resolves no
 roots before saying the same.
 
 `sync` materializes the [remotes](repoformat.md#materialization) the manifest
-declares and executes the action types that exist, `--dry-run` reports what it
-would do without doing any of it, and `--skip-action`/`--skip-group` leave part
-of it out for one run. One action type does not execute yet:
-[`include-remote`](repoformat.md#include-remote) reads the manifest of the remote
-it names and reports the actions it declares, and running those arrives at step
-7.2. An inclusion it could not read at all warns, which is what leaves a
-[plan partial](#plan-completeness).
+declares and executes every action type, `--dry-run` reports what it would do
+without doing any of it, and `--skip-action`/`--skip-group` leave part of it out
+for one run. [`include-remote`](repoformat.md#include-remote) contributes the
+actions of the remote it names, at its own position in the list, and they run
+like any other. An inclusion it could not read at all warns, which is what leaves
+a [plan partial](#plan-completeness).
 
 `apply-action` and `apply-group` carry out part of the same manifest, named
 rather than filtered — the same actions, in the same order, with the same
@@ -309,14 +308,20 @@ separate empty-group case to succeed quietly over.
 Naming a group bypasses group exclusions; each member's own exclusions still
 apply. See the [selection table](#selection-by-command) for the complete rules.
 
-Where every action in the group is passed over, the run says so in one line and
-exits 0 — the group exists and the command did what was asked. Which record was
-passed over, and why, is `-v` detail as it is in a `sync`.
+Where the group applies no action, the run says so in one line and exits 0 — the
+group exists and the command did what was asked. Which record was passed over,
+and why, is `-v` detail as it is in a `sync`.
 
 ```console
 $ batfiles apply-group --group shell --skip-action aliases
-nothing to apply: every action in the group is disabled, skipped, or excluded by its own condition
+nothing to apply: every action in the group is disabled, skipped, excluded by its own condition, or was not contributed
 ```
+
+The last of those is what an [inclusion](repoformat.md#include-remote) adds: a
+group may hold one, and one that brought nothing in leaves the group with no
+action to apply and none that was passed over. An inclusion is never itself an
+applied action — it installs nothing, and what it contributed is counted as
+itself.
 
 | Option                 | Purpose                                                             |
 |------------------------|-----------------------------------------------------------------------|
@@ -493,7 +498,17 @@ warning: --skip-group `editor` matched no group
 ```
 
 Both come before the first action, because they are complaints about the
-invocation and a run that fails partway should not swallow them.
+invocation and a run that fails partway should not swallow them. A malformed
+address is reported as the options are read; whether a well-formed one matched
+anything waits until every [inclusion](repoformat.md#include-remote) the run
+reaches has contributed what it contributes, since until then there is nothing to
+match it against.
+
+**An [inclusion](repoformat.md#include-remote) is excluded as a unit.** It is a
+record in the list like any other, so every source above can name it — and what
+it names is the inclusion together with everything it contributed, which is left
+out unread. The qualified address of one contributed record is the finer way to
+leave out part of it.
 
 **A `disabled.toml` entry that matches nothing is silent.** Pre-registering a
 name that a later branch or Git update introduces is the point of that document,
@@ -512,6 +527,11 @@ so the same non-match that warns above is expected there.
 `apply-action` bypasses its record's condition even if evaluation would fail.
 Conditions on entries inside a selected clone list still apply. These overrides
 affect only the invocation; they do not edit persistent disabled state.
+
+A record an [inclusion](repoformat.md#include-remote) contributed answers to
+every row above under its qualified address, and the inclusion that contributed
+it answers under its own. Asking for the inclusion — `apply-group` naming the
+group it is in — reaches everything it brought in.
 
 All three commands load the leaf manifest and `disabled.toml`, even when lists
 are waived. A missing manifest fails; a missing state document is empty under
@@ -533,10 +553,12 @@ only `sync` had work to pass over.
 
 ### Clone-list preparation
 
-After selection and action conditions are settled, all selected, unskipped
-clone lists are read and validated before any action writes. Skipped lists are
-not opened. A missing or malformed executable list fails the run before
-installation begins, even if its action appears later in the manifest. A list
+After the run's list is expanded and selection and action conditions are settled,
+all selected, unskipped clone lists are read and validated before any action
+writes. This includes the lists an [inclusion](repoformat.md#include-remote)
+contributed, each read from the materialization its record came from. Skipped
+lists are not opened. A missing or malformed executable list fails the run before
+installation begins, even if its action appears later in the list. A list
 produced by an earlier action in the same run is therefore unavailable for
 preparation. Entry conditions are evaluated during preparation, but their
 exclusions are reported when the parent action runs, in list order.
@@ -550,30 +572,46 @@ a nonempty list of [IDs](repoformat.md#names-and-ids) joined by `.`, with no
 upper bound on the number of segments. Dots are the separators and are not part
 of an individual ID.
 
-Two forms resolve today:
+Four forms resolve today:
 
-| Form            | Meaning                                  |
-|-----------------|------------------------------------------|
-| `<action-id>`   | Top-level action in the leaf repository. |
-| `<group>`       | Group in the leaf repository.            |
+| Form                       | Meaning                                                 |
+|----------------------------|---------------------------------------------------------|
+| `<action-id>`              | Top-level action in the leaf repository.                |
+| `<group>`                  | Group in the leaf repository.                           |
+| `<inclusion>.<action-id>`  | Action an [`include-remote`](repoformat.md#include-remote) contributed. |
+| `<inclusion>.<group>`      | Group a contributed action names.                       |
 
-The remaining forms — an addressable entry inside a `git-clone-list`, and
-anything qualified by the remote that contributed it — are in
-[`future/cmdline.md`](future/cmdline.md#address-forms) with the slices that give
-a dotted name something to refer to.
+**An unqualified address names the leaf repository and nothing else.** Batfiles
+does not search what an inclusion contributed for a matching unqualified name, so
+a leaf `zshrc` and a contributed `corp.zshrc` are two records with one ID and two
+addresses. In a qualified address, `<inclusion>` is the `id` of the leaf's
+`include-remote` record, which need not match the remote it names; content from
+an inclusion written without an `id` runs and answers to no address at all.
 
-**Syntax and resolution are separate questions**, which is why a qualified
-address is accepted now rather than waiting for remotes. A well-formed address
-that no form above can resolve — `core.zshrc`, `a.b.c.d.e` — simply names
-nothing, so a command reports that it was **not found** rather than that it was
-malformed. Only a malformed address, one with an empty or non-ID segment, is
-refused as a name. Commands that record an address without resolving it accept
-any well-formed one.
+An address qualified by an inclusion is also what makes a command read that
+inclusion's manifest, which is how `apply-action --id corp.zshrc` reaches past a
+record it does not name.
+
+The remaining form — an addressable entry inside a `git-clone-list` — is in
+[`future/cmdline.md`](future/cmdline.md#address-forms) with the slice that gives
+it something to refer to.
+
+**Syntax and resolution are separate questions.** A well-formed address that no
+form above can resolve — one naming an inclusion that declares nothing by that
+name, or `a.b.c.d.e` — simply names nothing, so a command reports that it was
+**not found** rather than that it was malformed. Only a malformed address, one
+with an empty or non-ID segment, is refused as a name. Commands that record an
+address without resolving it accept any well-formed one, which is what lets a
+`disabled.toml` written today name what an inclusion added since.
 
 ```console
-$ batfiles apply-action --id core.zshrc
-error: no action in /home/you/dotfiles/batfiles.toml has the id `core.zshrc`
+$ batfiles apply-action --id corp.nowhere
+error: no action in /home/you/dotfiles/batfiles.toml has the id `corp.nowhere`
 ```
+
+A run-only skip is warned about when nothing answers it, with one exception: a
+name qualified by an inclusion this run did not read is neither matched nor
+unmatched, since what would have answered it was never read.
 
 ### Exclusion reporting
 

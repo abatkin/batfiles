@@ -851,29 +851,53 @@ is refused by name rather than treated as a repository that includes nothing.
 Everything in it is an ordinary manifest, read and checked exactly as a leaf's
 is, with [one rule of its own](#what-an-included-action-may-not-write).
 
+**What it reads is spliced into the list where the inclusion is written.** The
+actions it contributes run in the order the included manifest declares them, in
+the inclusion's position among the leaf's own records, and each is carried out
+exactly as the leaf declaring it would have been. An included action's
+[repository paths](#sources-and-destinations) are read from that remote's
+materialization rather than from the leaf repository, including the file a
+[`git-clone-list`](#git-clone-list) names.
+
 **Which tree is read is settled before the list runs.** `sync` materializes
 declared remotes ahead of the first action, so an inclusion reads what that run
 brought down. Every other command reads what is already on the machine and
 fetches nothing, which is where a plan can come out [partial](cmdline.md#plan-completeness).
+The whole list is expanded before the first action runs, so an inclusion that
+cannot be read fails the run having installed nothing, as a malformed clone list
+does.
 
 **A remote its own [condition](#a-remotes-condition) closes includes nothing.**
-The inclusion reports that and the run carries on: a manifest leaving something
-out on this machine is the manifest working as written, and the plan is still
-whole. The inclusion takes a `when` or `unless` of its own as well, deciding the
+The inclusion is skipped for that reason, as a record its own condition closed
+would be, and the run carries on: a manifest leaving something out on this
+machine is the manifest working as written, and the plan is still whole.
+
+```text
+include-remote corp (group work) - skipped: remote `corporate` is excluded here: when "work" is false
+```
+
+The inclusion takes a `when` or `unless` of its own as well, deciding the
 inclusion rather than the remote, and one closed that way is skipped like any
 other action.
 
 The `id` is what makes the included actions and groups addressable, by standing
-as the first segment of a qualified address such as `corp.zshrc`. It is the
-inclusion's own name and need not match `remote`. The inclusion itself is not
-applyable: `apply-action` naming one is refused, because the address reaches a
-position in the list rather than something to carry out.
+as the first segment of a qualified [address](cmdline.md#addresses) such as
+`corp.zshrc`. It is the inclusion's own name and need not match `remote`. An
+inclusion written without an `id` still contributes its actions, and nothing can
+name them: running and being addressable are separate questions. The inclusion
+itself is not applyable: `apply-action` naming one is refused, because the
+address reaches a position in the list rather than something to carry out.
 
-**Including what it read is step 7.2.** Today the action reads the manifest,
-reports the actions it declares, and runs none of them. The selection filters and
-per-inclusion variables the record will also take — `install-actions`,
-`install-groups`, `exclude-actions`, `exclude-groups`, and `vars` — are specified
-in [`future/repoformat.md`](future/repoformat.md#include-remote) and refused as
+**Naming the inclusion names everything it contributed.** It is a record in the
+list rather than a phase beside it, so a [group](#groups) holding one reaches
+what it brought in, and a disable, a skip, or a closed condition on it leaves the
+included manifest unread. An unqualified name reaches the leaf repository alone;
+the qualified spelling is the finer way to reach one contributed record.
+
+The selection filters and per-inclusion variables the record will also take —
+`install-actions`, `install-groups`, `exclude-actions`, `exclude-groups`, and
+`vars` — are specified in
+[`future/repoformat.md`](future/repoformat.md#include-remote) and refused as
 unknown fields until steps 7.3 and 7.4.
 
 #### What an included action may not write
@@ -887,6 +911,17 @@ remote by the name.
 Remote references belong to the leaf repository. That is what keeps inclusion one
 level deep: an included repository does not reach further repositories, and it
 cannot reinterpret a name the leaf declared as one of its own.
+
+An `include-remote` in an included manifest follows from the same rule, and is
+**left out rather than refused**: the record warns and the rest of the manifest
+is contributed as usual. The manifest breaking the rule belongs to someone else,
+and what it declares beside the nested inclusion is still good — but a
+declaration that is not honored is worth saying out loud rather than passing over
+in silence.
+
+```text
+warning: not included: include-remote corp.shared; an included repository does not reach further repositories
+```
 
 ## The clone list format
 

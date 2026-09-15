@@ -10,6 +10,7 @@ use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
 use crate::directory;
 use crate::error::Error;
+use crate::item::ItemId;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
 use crate::output::Verb;
 use crate::paths::{self, Occupancy};
@@ -20,20 +21,28 @@ fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
 }
 
 /// Carry out one `symlink` action: the whole of it is one link.
-pub(super) fn link(action: &SymlinkAction, context: &RunContext) -> Result<(), Error> {
+pub(super) fn link(
+    action: &SymlinkAction,
+    remote: Option<&ItemId>,
+    context: &RunContext,
+) -> Result<(), Error> {
     require_symlink_support("symlink")?;
 
-    let target = context.source(&action.source)?;
+    let target = context.source(remote, &action.source)?;
     let dest = context.destination(&action.dest);
     link_one(&target, &dest, context)
 }
 
 /// Carry out one `symlink-dir` action: one link per direct child of a
 /// directory, all of them in one destination directory.
-pub(super) fn link_dir(action: &SymlinkDirAction, context: &RunContext) -> Result<(), Error> {
+pub(super) fn link_dir(
+    action: &SymlinkDirAction,
+    remote: Option<&ItemId>,
+    context: &RunContext,
+) -> Result<(), Error> {
     require_symlink_support("symlink-dir")?;
 
-    let source_dir = context.source_directory(&action.source_dir)?;
+    let source_dir = context.source_directory(remote, &action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
