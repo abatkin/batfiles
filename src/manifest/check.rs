@@ -14,6 +14,7 @@ use std::path::{Component, Path};
 
 use thiserror::Error;
 
+use super::action::IncludeRemoteAction;
 use super::remote::Remote;
 use crate::item::ItemId;
 use crate::repo_path::{REMOTE_PREFIX, RepoPath};
@@ -209,6 +210,24 @@ pub(crate) enum Invalid {
     )]
     InclusionRemoteUndeclared { record: RecordName, remote: ItemId },
 
+    /// An `include-remote` writing two selection filters that do not compose.
+    ///
+    /// Refused rather than resolved, for the reason [`Self::BothConditions`] is:
+    /// an allow-list and a second list over the same items have no reading that
+    /// is obviously the one that was meant. The message names both fields and
+    /// the combinations that do compose, since the remedy is to drop one of the
+    /// two or to spell the intent the other way round.
+    #[error(
+        "{record}: writes both `{one}` and `{other}`; an inclusion names at most one of \
+         `install-actions`, `install-groups`, and `exclude-groups`, and `exclude-actions` \
+         goes with either group filter or alone"
+    )]
+    InclusionFiltersConflict {
+        record: RecordName,
+        one: &'static str,
+        other: &'static str,
+    },
+
     // A `dest` names a path on the machine, anchored to the selected home.
     #[error("{record}: dest is empty; write `~` for the home directory itself")]
     DestinationEmpty { record: RecordName },
@@ -364,6 +383,44 @@ pub(super) fn check_inclusion_remote(
             record: record.clone(),
             remote: remote.clone(),
         })
+    }
+}
+
+/// The rules an `include-remote`'s selection filters satisfy as written.
+///
+/// Each field is well-formed on its own, so what is checked here is which of
+/// them appear together. Three of the four select outright — `install-actions`
+/// and `install-groups` say what to take, `exclude-groups` says what to leave —
+/// and a record writing two of those has described the selection twice.
+/// `exclude-actions` narrows a selection rather than making one, so it composes
+/// with either group filter; with `install-actions`, which already names every
+/// action to take, it would only contradict it.
+pub(super) fn check_inclusion_filters(
+    action: &IncludeRemoteAction,
+    record: &RecordName,
+) -> Result<(), Invalid> {
+    // In the order a diagnostic reads best: the pair it names is the pair the
+    // record wrote, first field first.
+    let selectors = [
+        ("install-actions", action.install_actions.is_some()),
+        ("install-groups", action.install_groups.is_some()),
+        ("exclude-groups", action.exclude_groups.is_some()),
+    ];
+    let mut written = selectors.iter().filter(|(_, present)| *present);
+    let conflict = match (written.next(), written.next()) {
+        (Some((one, _)), Some((other, _))) => Some((*one, *other)),
+        (Some((one, _)), None) if *one == "install-actions" && action.exclude_actions.is_some() => {
+            Some((*one, "exclude-actions"))
+        }
+        _ => None,
+    };
+    match conflict {
+        None => Ok(()),
+        Some((one, other)) => Err(Invalid::InclusionFiltersConflict {
+            record: record.clone(),
+            one,
+            other,
+        }),
     }
 }
 
@@ -752,6 +809,77 @@ mod tests {
         // The remedy is a declaration, as it is for a source naming one.
         assert!(message.contains("is not declared"), "{message}");
         assert!(message.contains("[remotes.core]"), "{message}");
+    }
+
+    /// An inclusion carrying the filters named, read as a manifest hands one
+    /// over, and checked.
+    fn filters(written: &str) -> Result<(), Invalid> {
+        let action: IncludeRemoteAction =
+            toml::from_str(&format!("id = \"corp\"\nremote = \"core\"\n{written}"))
+                .expect("the record should parse");
+        check_inclusion_filters(&action, &record())
+    }
+
+    #[test]
+    fn an_inclusion_may_select_once_and_then_narrow_it() {
+        for accepted in [
+            "",
+            "install-actions = [\"zshrc\"]",
+            "install-groups = [\"shell\"]",
+            "exclude-groups = [\"gui\"]",
+            "exclude-actions = [\"p10k\"]",
+            // The two combinations the narrowing half is written for.
+            "install-groups = [\"shell\"]\nexclude-actions = [\"p10k\"]",
+            "exclude-groups = [\"gui\"]\nexclude-actions = [\"p10k\"]",
+        ] {
+            assert!(
+                filters(accepted).is_ok(),
+                "`{accepted}` was refused: {:?}",
+                filters(accepted).expect_err("just checked")
+            );
+        }
+    }
+
+    #[test]
+    fn an_inclusion_may_not_describe_its_selection_twice() {
+        for (refused, one, other) in [
+            (
+                "install-actions = [\"zshrc\"]\ninstall-groups = [\"shell\"]",
+                "install-actions",
+                "install-groups",
+            ),
+            (
+                "install-actions = [\"zshrc\"]\nexclude-groups = [\"gui\"]",
+                "install-actions",
+                "exclude-groups",
+            ),
+            (
+                "install-groups = [\"shell\"]\nexclude-groups = [\"gui\"]",
+                "install-groups",
+                "exclude-groups",
+            ),
+            // The allow-list already names every action to take, so a list of
+            // actions to leave out could only contradict it.
+            (
+                "install-actions = [\"zshrc\"]\nexclude-actions = [\"p10k\"]",
+                "install-actions",
+                "exclude-actions",
+            ),
+        ] {
+            let message = filters(refused)
+                .expect_err("the combination should be refused")
+                .to_string();
+            assert!(message.contains(&format!("`{one}`")), "{message}");
+            assert!(message.contains(&format!("`{other}`")), "{message}");
+        }
+    }
+
+    #[test]
+    fn an_empty_filter_is_written_as_much_as_a_full_one() {
+        // Absent and empty differ everywhere else, so they differ here: an
+        // empty allow-list is a selection, and a second one still conflicts.
+        assert!(filters("install-actions = []").is_ok());
+        assert!(filters("install-actions = []\ninstall-groups = []").is_err());
     }
 
     #[test]

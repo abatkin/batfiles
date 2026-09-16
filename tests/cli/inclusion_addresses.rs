@@ -8,8 +8,9 @@
 //! excluding it drops all of that unread.
 //!
 //! The leaf is the `inclusion` fixture, whose `corp` inclusion sits in the leaf
-//! group `work` and contributes `zshrc` (in the included group `shell`) and
-//! `seeds`.
+//! group `work` and contributes `zshrc` (in the included group `shell`), `p10k`
+//! (in `prompt`), and `seeds` (in no group). Which of those an inclusion takes
+//! is `inclusion_filters.rs`; this one is about what they are called.
 
 use crate::support::*;
 
@@ -27,7 +28,7 @@ fn synchronized() -> (BareRepo, Tree) {
 /// been installed, for the cases about what a later run does or does not do.
 fn ready() -> (BareRepo, Tree) {
     let (origin, tree) = synchronized();
-    for dest in [".zshrc.corporate", ".config/corporate"] {
+    for dest in [".zshrc.corporate", ".p10k.zsh", ".config/corporate"] {
         let path = tree.home(dest);
         if path.is_dir() {
             std::fs::remove_dir_all(&path).expect("the installed directory");

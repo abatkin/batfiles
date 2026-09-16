@@ -16,8 +16,18 @@ group = "shell"
 source = "files/zshrc"
 dest = "~/.zshrc.corporate"
 
+# A second group, so that a leaf repository can take the shell settings without
+# the prompt that comes with them, or the other way round.
+[[actions]]
+type = "symlink"
+id = "p10k"
+group = "prompt"
+source = "files/p10k.zsh"
+dest = "~/.p10k.zsh"
+
 # The two files a new machine starts from and then edits: a registry and a
-# commit identity nobody wants overwritten on the next sync.
+# commit identity nobody wants overwritten on the next sync. Declared in no
+# group, which is what a group filter cannot name.
 [[actions]]
 type = "copy-dir"
 id = "seeds"

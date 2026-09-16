@@ -12,13 +12,14 @@ mod include_remote;
 mod symlink;
 
 pub(crate) use context::RunContext;
+pub(crate) use include_remote::IncludedAction;
 
 use crate::error::Error;
 use crate::item::ItemId;
 use crate::manifest::action::{Action, IncludeRemoteAction};
 
-/// Read what one `include-remote` contributes to the run's list, each action
-/// with the position it was declared at, or `None` where there was no
+/// Read the records of the manifest one `include-remote` includes, each with
+/// what that inclusion's filters made of it, or `None` where there was no
 /// materialization to read.
 ///
 /// Called while the list is assembled rather than while it is executed: what an
@@ -27,8 +28,15 @@ use crate::manifest::action::{Action, IncludeRemoteAction};
 pub(crate) fn read_inclusion(
     action: &IncludeRemoteAction,
     context: &RunContext<'_>,
-) -> Result<Option<Vec<(usize, Action)>>, Error> {
+) -> Result<Option<Vec<IncludedAction>>, Error> {
     include_remote::read(action, context)
+}
+
+/// How a report names one `include-remote`, for the lines about a record it
+/// contributed that are said where the record is rather than where the
+/// inclusion is.
+pub(crate) fn inclusion_label(action: &IncludeRemoteAction) -> String {
+    include_remote::label(action)
 }
 
 /// Carry out one action, whichever kind it is.

@@ -90,7 +90,7 @@ No inclusion of remote actions yet.
 - **7.1** ✅ Read an included remote's manifest and report plan completeness.
 - **7.2** ✅ Splice included actions into declaration order and address them
   under their inclusion.
-- **7.3** Add inclusion action/group selection filters.
+- **7.3** ✅ Add inclusion action/group selection filters.
 - **7.4** Add per-inclusion variable overrides.
 - **7.5** Add per-inclusion scopes and layered precedence. A reported variable
   origin must tell one inclusion's `[vars]` from another's and from the leaf's,
@@ -164,8 +164,10 @@ carry markers and withheld options cannot refer to them as implementation steps.
   continuation, avoid repeated diagnostics for one failed parent, and specify
   final status and partial-success output. Review alongside backup behavior.
 - **Entry filters.** Add include/exclude filters to archives and local directory
-  actions. Archive filters match paths after root stripping. Consider sharing the
-  filter implementation introduced for inclusions at 7.3.
+  actions. Archive filters match paths after root stripping. There is nothing to
+  share with the inclusion filters 7.3 built beyond the one-or-many spelling:
+  those compare IDs for equality against what a manifest declared, and these
+  match globs against paths. Building `GlobFilter` is this proposal's own work.
 - **Additional archive formats.** Consider ZIP and other compressed tar formats.
   The existing scratch file permits random access; assess dependencies and
   cross-platform builds for each reader.

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use crate::action::{self, RunContext};
+use crate::action::{self, IncludedAction, RunContext};
 use crate::clone_list;
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::disabled::Disabled;
@@ -74,7 +74,19 @@ pub(crate) fn apply_action(invocation: &Invocation<'_>, id: &str) -> Result<(), 
         disabled,
         invocation.reporter,
     );
-    run(manifest, &selection, RemotePolicy::UseExisting, invocation)?;
+    let executed_count = run(manifest, &selection, RemotePolicy::UseExisting, invocation)?;
+
+    if executed_count == 0 {
+        // A target that matched nothing is the error `run` already raised, so
+        // reaching here means the record was found and passed over. One thing
+        // does that to a record this command named: the inclusion that
+        // contributed it did not select it, which is the leaf's own description
+        // of what it took and not something naming the record waives. The
+        // record's own line, with the reason on it, is at `-v`.
+        invocation
+            .reporter
+            .info("nothing to apply: the inclusion that contributed the action did not select it");
+    }
     Ok(())
 }
 
@@ -394,11 +406,15 @@ fn assemble(
             continue;
         };
         let (remote, qualifier) = (inclusion.remote.clone(), inclusion.id.clone());
+        // What the run says about a record this inclusion's filters left out.
+        // One reason for all of them, taken while the record that wrote the
+        // filters is still to hand and before the list is borrowed to push on.
+        let not_selected = format!("not selected by {}", action::inclusion_label(inclusion));
         // Either the run was not asked to look inside this one, or an exclusion
         // closed it, or the remote's own condition did. All three leave its
         // contents unread, which is what a qualified skip has to be told apart
         // from — and the last is an exclusion on the record like any other.
-        let contributed = match context.excluded_remote(&remote) {
+        let included_actions = match context.excluded_remote(&remote) {
             Some(exclusion) if matches!(record.disposition, Disposition::Run) => {
                 record.disposition = Disposition::Excluded(closed_by_remote(exclusion, &remote));
                 None
@@ -406,29 +422,45 @@ fn assemble(
             _ if !opened || !matches!(record.disposition, Disposition::Run) => None,
             _ => action::read_inclusion(inclusion, context)?,
         };
-        let Some(contributed) = contributed else {
+        let Some(included_actions) = included_actions else {
             run_list.unread.extend(qualifier);
             run_list.records.push(record);
             continue;
         };
         run_list.records.push(record);
 
-        for (number, action) in contributed {
-            let mut included =
+        for IncludedAction {
+            number,
+            action,
+            selected,
+        } in included_actions
+        {
+            let mut contributed =
                 Record::contributed(action, number, qualifier.as_ref(), remote.clone());
             // Asking for the inclusion asks for everything it brought in; the
             // record's own qualified name is the finer way to reach one.
-            let named = selection.wants(&included);
+            let named = selection.wants(&contributed);
             if named {
                 run_list.target_found = true;
             }
             if wanted || named {
-                included.disposition = match selection.exclusion(&included, bindings) {
-                    Some(exclusion) => Disposition::Excluded(exclusion),
-                    None => Disposition::Run,
+                // The inclusion's own filters first, and not through the
+                // selection: they are the leaf saying what it composes rather
+                // than what this machine leaves out, so `apply-action` naming
+                // one record does not waive them, as it does not waive a
+                // remote's condition. Deciding them here also keeps the rule
+                // that a record something already excludes never has its own
+                // condition evaluated.
+                contributed.disposition = if selected {
+                    match selection.exclusion(&contributed, bindings) {
+                        Some(exclusion) => Disposition::Excluded(exclusion),
+                        None => Disposition::Run,
+                    }
+                } else {
+                    Disposition::Excluded(Exclusion::Expected(not_selected.clone()))
                 };
             }
-            run_list.records.push(included);
+            run_list.records.push(contributed);
         }
     }
 

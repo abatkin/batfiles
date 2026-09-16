@@ -388,8 +388,11 @@ rejected, rather than installing more of an archive than it asked for.
 
 They have no step. A named `archive-root` already installs one directory out of
 an archive and nothing beside it, which is what the two repositories driving this
-project would have wanted a filter for, and `GlobFilter` itself is not built
-until step 7.3. Whichever of those arrives first is when this is worth revisiting.
+project would have wanted a filter for, and nothing matches a glob anywhere in
+batfiles yet. The one-or-many spelling these share with an inclusion's selection
+fields is built, but that is the spelling alone: what an inclusion's fields hold
+are IDs, compared for equality against what a manifest declared. A caller that
+wants a glob is what makes `GlobFilter` worth building.
 
 A `file://` source is not fetched by either fetching action yet; it arrives with
 file remotes at step 9.3.
@@ -397,37 +400,28 @@ file remotes at step 9.3.
 ### `include-remote`
 
 The record, its required `remote`, the manifest it reads, the actions it splices
-into the list, how those are addressed, what it does with a remote that is
-excluded or not materialized, and the rule that an inclusion is never applyable
-are built and specified in
-[`docs/repoformat.md`](../repoformat.md#include-remote). What is not built is the
-five fields below, each of which is refused as an unknown field until its step.
+into the list, how those are addressed, the four selection fields that say which
+of them it takes, what it does with a remote that is excluded or not
+materialized, and the rule that an inclusion is never applyable are built and
+specified in [`docs/repoformat.md`](../repoformat.md#include-remote). What is not
+built is the one field below, refused as an unknown field until its step.
 
 ```toml
 [[actions]]
 type = "include-remote"
 id = "core"
 remote = "core"
-install-groups = ["editor"]
-exclude-actions = ["p10k"]
 vars = { profile = "personal" }
 ```
 
-| Field             | Type                        | Step | Description                                   |
-|-------------------|-----------------------------|:----:|-----------------------------------------------|
-| `install-actions` | `ID` or `list<ID>`          | 7.3  | Allow-list of unqualified remote action IDs.  |
-| `install-groups`  | `ID` or `list<ID>`          | 7.3  | Allow-list of unqualified remote group names. |
-| `exclude-actions` | `ID` or `list<ID>`          | 7.3  | Deny-list of unqualified remote action IDs.   |
-| `exclude-groups`  | `ID` or `list<ID>`          | 7.3  | Deny-list of unqualified remote group names.  |
-| `vars`            | `map<string, string>`       | 7.4  | Per-inclusion variable overrides.             |
+| Field  | Type                  | Step | Description                       |
+|--------|-----------------------|:----:|-----------------------------------|
+| `vars` | `map<string, string>` | 7.4  | Per-inclusion variable overrides. |
 
 One thing about `remote` is also outstanding: naming a declared `file` or
 `archive` remote must be invalid configuration. Both types are refused by name as
 the manifest is read, so today no inclusion can reach one; the rule arrives with
 them at step 9.3.
-
-Each selection field accepts either a single string or a list of strings; a
-string is equivalent to a one-item list.
 
 The inclusion `id` is not used to namespace dynamic-variable cache entries.
 Allowed dynamic declarations are cached by the declared remote's map key, so
@@ -435,18 +429,6 @@ multiple inclusions of the same remote share their declaration captures even
 when the inclusions have different IDs or `vars` overrides. The state
 specification defines the [remote cache-key
 format](state.md#dynamic-varstoml-dynamic-variable-cache).
-
-If none of the `install-*` or `exclude-*` fields is specified, all actions in
-the remote are selected. Selection does not force an action to run: the
-included actions remain subject to their usual conditions, repository-wide
-disabled and run-only skip lists, and all other normal planning and application
-rules.
-
-At most one of `install-actions`, `install-groups`, and `exclude-groups` may be
-specified. `exclude-actions` may be used by itself or together with either
-`install-groups` or `exclude-groups`, allowing specific actions to be removed
-from the group-selected set. It cannot be combined with `install-actions`. No
-other combinations are valid.
 
 ## Serializer-Oriented Summary
 

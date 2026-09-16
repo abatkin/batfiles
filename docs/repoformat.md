@@ -832,11 +832,17 @@ the list.
 type = "include-remote"
 id = "corp"
 remote = "corporate"
+install-groups = ["shell"]
+exclude-actions = ["p10k"]
 ```
 
-| Field    | Type   | Required | Description                                       |
-|----------|--------|:--------:|---------------------------------------------------|
-| `remote` | ID     |   yes    | A [remote](#remotes) this same manifest declares. |
+| Field             | Type               | Required | Description                                       |
+|-------------------|--------------------|:--------:|---------------------------------------------------|
+| `remote`          | ID                 |   yes    | A [remote](#remotes) this same manifest declares. |
+| `install-actions` | ID or list of IDs  |    no    | Take only the actions named.                      |
+| `install-groups`  | ID or list of IDs  |    no    | Take only the actions naming these groups.        |
+| `exclude-actions` | ID or list of IDs  |    no    | Leave out the actions named.                      |
+| `exclude-groups`  | ID or list of IDs  |    no    | Leave out the actions naming these groups.        |
 
 **`remote` names a declaration, not a URL.** It must be a key of `[remotes]` in
 the manifest writing the inclusion; naming one nothing declares is refused as the
@@ -894,11 +900,63 @@ what it brought in, and a disable, a skip, or a closed condition on it leaves th
 included manifest unread. An unqualified name reaches the leaf repository alone;
 the qualified spelling is the finer way to reach one contributed record.
 
-The selection filters and per-inclusion variables the record will also take —
-`install-actions`, `install-groups`, `exclude-actions`, `exclude-groups`, and
-`vars` — are specified in
-[`future/repoformat.md`](future/repoformat.md#include-remote) and refused as
-unknown fields until steps 7.3 and 7.4.
+The per-inclusion `vars` overrides the record will also take are specified in
+[`future/repoformat.md`](future/repoformat.md#include-remote) and refused as an
+unknown field until step 7.4.
+
+#### Selecting part of a remote
+
+The four selection fields say which of the remote's actions this inclusion
+takes. Each is written as one ID or a list of them — `exclude-actions = "p10k"`
+and `exclude-actions = ["p10k"]` are the same list — and each names records the
+way the manifest that declared them does: unqualified, since the qualifier is
+this inclusion's own `id`.
+
+**With none of them written, the inclusion takes everything.** An absent field
+and an empty list are different: `install-actions = []` is a selection that
+names nothing and takes nothing, while omitting the field makes no selection at
+all.
+
+**One selection, optionally narrowed.** At most one of `install-actions`,
+`install-groups`, and `exclude-groups` may be written: each describes the whole
+selection, and a record writing two of them has described it twice.
+`exclude-actions` narrows a selection rather than making one, so it goes with
+either group filter or by itself; with `install-actions`, which already names
+every action to take, it could only contradict it. Any other pair is refused as
+the manifest is read.
+
+**A filter names what the remote's manifest calls a record.** An included action
+written without an `id` is reached by no `install-actions` and named by no
+`exclude-actions`, and one written without a `group` likewise for the two group
+filters. So an allow-list leaves such a record out, nothing having selected it,
+and a deny-list keeps it, nothing having excluded it.
+
+**A record the filters leave out is skipped, not forgotten.** It keeps the
+[address](cmdline.md#addresses) that reaches it, so a skip or a disable naming it
+is answered rather than reported as matching nothing, and the run says why it was
+passed over.
+
+```text
+symlink corp.p10k (group corp.prompt) - skipped: not selected by include-remote `corp`
+```
+
+**Selection is not a waiver, and it is not waivable.** An action the filters take
+is still subject to its own condition, to `disabled.toml`, and to the run's
+skips. An action they leave out stays left out under every command, including
+`apply-action` naming it: the filters are the leaf repository describing what it
+composed, which is the same reason [a remote's own
+condition](#a-remotes-condition) holds under every command.
+
+**A filter name the remote does not declare warns.** The manifest has been read,
+so batfiles can tell, and a name matching nothing selects and excludes nothing.
+It is a warning rather than a failure, since a remote at an older revision than
+the leaf expects is a repository to update and not a run to stop. Action filters
+are answered by IDs and group filters by group names, so one namespace's name
+never satisfies the other's filter.
+
+```text
+warning: include-remote `corp`: install-actions `nowhere` matched no action in remote `corporate`
+```
 
 #### What an included action may not write
 

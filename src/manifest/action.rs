@@ -6,12 +6,12 @@ use serde::Deserialize;
 
 use super::check::{
     Invalid, RecordName, check_archive_root, check_dest, check_digest, check_git_ref,
-    check_git_source, check_inclusion_remote, check_source, check_url,
+    check_git_source, check_inclusion_filters, check_inclusion_remote, check_source, check_url,
 };
 use super::remote::Remote;
 use crate::clone_list::Entry;
 use crate::condition::{Condition, Gate};
-use crate::item::{ItemAddress, ItemId};
+use crate::item::{ItemAddress, ItemId, ItemIdList};
 use crate::repo_path::RepoPath;
 
 /// One entry of `[[actions]]`.
@@ -112,7 +112,10 @@ impl Action {
             // The one record with neither a source nor a destination: what it
             // installs is whatever the included manifest says, wherever that
             // says to put it.
-            Self::IncludeRemote(action) => check_inclusion_remote(&action.remote, record, remotes),
+            Self::IncludeRemote(action) => {
+                check_inclusion_remote(&action.remote, record, remotes)?;
+                check_inclusion_filters(action, record)
+            }
         }
     }
 
@@ -416,10 +419,9 @@ pub(crate) struct GitCloneListAction {
 /// `include-remote`: the actions another repository declares, taken into this
 /// one at this position in the list.
 ///
-/// The record is closed over the fields below, so the selection filters
-/// `docs/future/repoformat.md` gives it — `install-actions`, `install-groups`,
-/// `exclude-actions`, `exclude-groups` — and the `vars` overrides beside them
-/// are refused as unknown fields until steps 7.3 and 7.4 build them.
+/// The record is closed over the fields below, so the `vars` overrides
+/// `docs/future/repoformat.md` gives it are refused as an unknown field until
+/// step 7.4 builds them.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct IncludeRemoteAction {
@@ -435,6 +437,20 @@ pub(crate) struct IncludeRemoteAction {
     /// declared under. Required: an inclusion that names no remote includes
     /// nothing.
     pub remote: ItemId,
+
+    /// Which of the remote's actions this inclusion takes, named as the
+    /// manifest that declared them names them: unqualified, since the
+    /// qualifier is this record's own `id`.
+    ///
+    /// Each is absent, one ID, or a list of IDs, and absent is not the same as
+    /// empty: with none of the four written every action in the remote is
+    /// selected, while an empty allow-list selects none. Which combinations
+    /// mean something is [`check_inclusion_filters`]'s rule; what each one
+    /// selects is [`Filter`](crate::action::include_remote::Filter)'s.
+    pub install_actions: Option<ItemIdList>,
+    pub install_groups: Option<ItemIdList>,
+    pub exclude_actions: Option<ItemIdList>,
+    pub exclude_groups: Option<ItemIdList>,
 }
 
 #[cfg(test)]
@@ -502,27 +518,49 @@ mod tests {
 
     #[test]
     fn an_inclusion_is_closed_over_the_fields_it_accepts_so_far() {
-        // Each of these is specified for the record in
-        // `docs/future/repoformat.md` and arrives with the step that reads it,
-        // which is what an unknown field says about them until then.
-        for (unknown, value) in [
-            ("install-actions", "[\"zshrc\"]"),
-            ("install-groups", "[\"shell\"]"),
-            ("exclude-actions", "[\"p10k\"]"),
-            ("exclude-groups", "[\"gui\"]"),
-            ("vars", "{ profile = \"personal\" }"),
-        ] {
-            let document =
-                format!("type = \"include-remote\"\nremote = \"core\"\n{unknown} = {value}\n");
-            let error = toml::from_str::<Action>(&document)
-                .expect_err("a closed record should reject the field");
-            assert!(
-                error
-                    .to_string()
-                    .contains(&format!("unknown field `{unknown}`")),
-                "{error}"
-            );
-        }
+        // Specified for the record in `docs/future/repoformat.md` and arriving
+        // with the step that reads it, which is what an unknown field says
+        // about it until then.
+        let document =
+            "type = \"include-remote\"\nremote = \"core\"\nvars = { profile = \"personal\" }\n";
+        let error = toml::from_str::<Action>(document)
+            .expect_err("a closed record should reject the field");
+        assert!(
+            error.to_string().contains("unknown field `vars`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_inclusions_filters_are_read_in_either_spelling() {
+        let Action::IncludeRemote(inclusion) = parse_inclusion(
+            "install-groups = \"shell\"\nexclude-actions = [\"p10k\", \"seeds\"]\n",
+        ) else {
+            panic!("the record should be an inclusion");
+        };
+        assert_eq!(
+            inclusion.install_groups,
+            Some(ItemIdList::from_iter([item("shell")]))
+        );
+        assert_eq!(
+            inclusion.exclude_actions,
+            Some(ItemIdList::from_iter([item("p10k"), item("seeds")]))
+        );
+        // The two that were not written, which is a different answer from an
+        // empty list: these select everything rather than nothing.
+        assert_eq!(inclusion.install_actions, None);
+        assert_eq!(inclusion.exclude_groups, None);
+    }
+
+    fn parse_inclusion(filters: &str) -> Action {
+        toml::from_str(&format!(
+            "type = \"include-remote\"\nid = \"corp\"\nremote = \"core\"\n{filters}"
+        ))
+        .expect("the record should parse")
+    }
+
+    fn item(id: &str) -> ItemId {
+        ItemId::try_from(id.to_owned()).expect("valid ID")
     }
 
     #[test]

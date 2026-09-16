@@ -288,6 +288,17 @@ refused**, and refused as that rather than as an unknown action. The inclusion's
 a position in the list, not something to carry out, so the address named the
 wrong thing rather than nothing.
 
+One thing leaves a named action uncarried out rather than failing: an inclusion's
+[selection filters](repoformat.md#selecting-part-of-a-remote) left the record out,
+which naming it does not waive. The record exists and answers to the address, so
+the run says so in one line and exits 0, as `apply-group` does where its group
+applies nothing. Which record it was, and why, is `-v` detail.
+
+```console
+$ batfiles apply-action --id corp.p10k
+nothing to apply: the inclusion that contributed the action did not select it
+```
+
 | Option      | Purpose                                                                    |
 |-------------|------------------------------------------------------------------------------|
 | `--id <id>` | Required. The [address](#addresses) of the action to carry out.              |
@@ -471,6 +482,13 @@ Three things say an action should be passed over, and a run honors all three:
 - the record's own [`when` or `unless`](repoformat.md#conditions), which is the
   repository saying the action does not belong on this machine.
 
+A record an [inclusion](repoformat.md#include-remote) contributed answers to a
+fourth, which comes before all of these: the [selection
+filters](repoformat.md#selecting-part-of-a-remote) on the record that brought it
+in. Those say what the leaf repository took from the remote rather than what this
+machine leaves out of a run, so a record they left out is reported as not
+selected without its condition being evaluated or its lists consulted.
+
 The first two select over the same two namespaces. An action is named by its
 `id`, and a [group](repoformat.md#groups) is named by the `group` field its
 members carry — so an action written with no `id` can be left out only through
@@ -518,6 +536,7 @@ so the same non-match that warns above is expected there.
 
 | Exclusion source | `sync` | `apply-action` | `apply-group` |
 | --- | --- | --- | --- |
+| An inclusion's selection filters | Honor | Honor | Honor |
 | Disabled action IDs | Honor | Waive | Honor |
 | Disabled groups | Honor | Waive | Waive |
 | `--skip-action` / `BATFILES_SKIP_ACTIONS` | Honor | Option rejected; environment ignored | Honor |
@@ -532,6 +551,14 @@ A record an [inclusion](repoformat.md#include-remote) contributed answers to
 every row above under its qualified address, and the inclusion that contributed
 it answers under its own. Asking for the inclusion — `apply-group` naming the
 group it is in — reaches everything it brought in.
+
+**An inclusion's [selection filters](repoformat.md#selecting-part-of-a-remote)
+are honored everywhere**, which is the one row no command waives. They are the
+leaf repository describing what it composed rather than a list this machine
+keeps, for the same reason a remote's own condition below is not waived either.
+So [`apply-action`](#apply-action) naming a record the filters left out installs
+nothing and says so, rather than reaching past the description to the remote's
+manifest.
 
 All three commands load the leaf manifest and `disabled.toml`, even when lists
 are waived. A missing manifest fails; a missing state document is empty under

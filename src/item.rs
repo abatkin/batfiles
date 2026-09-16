@@ -1,8 +1,10 @@
-//! Item IDs and the dotted addresses built from them.
+//! Item IDs, the lists a record names several of them in, and the dotted
+//! addresses built from them.
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 /// An ASCII alphanumeric ID, with hyphens and underscores allowed after the first character.
@@ -45,6 +47,66 @@ impl ItemId {
 impl fmt::Display for ItemId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// One ID or a list of them, read as a list either way.
+///
+/// The spelling a field accepts where naming exactly one thing is the common
+/// case: `exclude-actions = "p10k"` and `exclude-actions = ["p10k"]` are the
+/// same list, and which one was written carries no meaning worth keeping. An
+/// absent field and an empty list are not the same, so a record holds an
+/// `Option<ItemIdList>` and this type never stands for the absent one.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ItemIdList(Vec<ItemId>);
+
+impl ItemIdList {
+    /// The IDs as written, in the order they were written.
+    pub fn as_slice(&self) -> &[ItemId] {
+        &self.0
+    }
+
+    /// Whether the list names `id`.
+    pub fn contains(&self, id: &ItemId) -> bool {
+        self.0.contains(id)
+    }
+}
+
+impl<'de> Deserialize<'de> for ItemIdList {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ItemIdListVisitor;
+
+        impl<'de> Visitor<'de> for ItemIdListVisitor {
+            type Value = ItemIdList;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an ID or a list of IDs")
+            }
+
+            /// The short form, which is the one-item list. `ItemId`'s own rule
+            /// decides it, so a dotted address is refused here as it is
+            /// anywhere else an ID is written.
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<ItemIdList, E> {
+                let id = ItemId::try_from(value.to_owned()).map_err(E::custom)?;
+                Ok(ItemIdList(vec![id]))
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ItemIdList, A::Error> {
+                let mut ids = Vec::with_capacity(seq.size_hint().unwrap_or_default());
+                while let Some(id) = seq.next_element()? {
+                    ids.push(id);
+                }
+                Ok(ItemIdList(ids))
+            }
+        }
+
+        deserializer.deserialize_any(ItemIdListVisitor)
+    }
+}
+
+impl FromIterator<ItemId> for ItemIdList {
+    fn from_iter<I: IntoIterator<Item = ItemId>>(ids: I) -> Self {
+        Self(ids.into_iter().collect())
     }
 }
 
@@ -148,6 +210,59 @@ mod tests {
         assert!(!accepted("core.zshrc"));
         assert!(!accepted("zshrc,vimrc"));
         assert!(!accepted("two words"));
+    }
+
+    /// An `ItemIdList` read the way a manifest hands one over, so that the
+    /// short and long spellings go through the same deserializer a record does.
+    fn id_list(value: &str) -> Result<ItemIdList, toml::de::Error> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            value: ItemIdList,
+        }
+
+        toml::from_str::<Wrapper>(&format!("value = {value}\n")).map(|wrapper| wrapper.value)
+    }
+
+    #[test]
+    fn one_id_and_a_one_item_list_are_the_same_list() {
+        let expected = ItemIdList::from_iter([id("p10k")]);
+        assert_eq!(id_list("'p10k'").expect("the short form"), expected);
+        assert_eq!(id_list("['p10k']").expect("the long form"), expected);
+    }
+
+    #[test]
+    fn an_id_list_keeps_what_was_written_in_the_order_it_was_written() {
+        let list = id_list("['zshrc', 'p10k', 'oh-my-zsh']").expect("a list of IDs");
+        assert_eq!(
+            list.as_slice(),
+            [id("zshrc"), id("p10k"), id("oh-my-zsh")].as_slice()
+        );
+        assert!(list.contains(&id("p10k")));
+        assert!(!list.contains(&id("seeds")));
+    }
+
+    #[test]
+    fn an_empty_list_is_a_list_that_names_nothing() {
+        // Distinct from an absent field, which is why a record holds an
+        // `Option` and this type has no spelling for "not written".
+        let empty = id_list("[]").expect("an empty list");
+        assert_eq!(empty, ItemIdList::default());
+        assert!(!empty.contains(&id("zshrc")));
+    }
+
+    #[test]
+    fn every_element_of_an_id_list_is_an_id() {
+        // An address is not an ID: a filter names what the included manifest
+        // calls a record, and qualifying it would name it twice over.
+        for malformed in ["'corp.p10k'", "['zshrc', 'corp.p10k']", "['ok', 2]", "''"] {
+            let error = id_list(malformed).expect_err("the value should be refused");
+            assert!(
+                !error.to_string().is_empty(),
+                "`{malformed}` was accepted as a list of IDs"
+            );
+        }
+        let error = id_list("'corp.p10k'").expect_err("a dotted value is not an ID");
+        assert!(error.to_string().contains("`corp.p10k`"), "{error}");
     }
 
     fn address(address: &str) -> ItemAddress {

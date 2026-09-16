@@ -28,15 +28,16 @@ fn included_manifest(tree: &Tree) -> String {
     display(&tree.path("repo").join("remotes/corporate/batfiles.toml"))
 }
 
-/// The two actions the `corporate` fixture declares, as a report names them:
-/// under the `corp` inclusion that contributed them.
-const INCLUDED_ACTIONS: [&str; 2] = [
+/// The three actions the `corporate` fixture declares, as a report names them:
+/// under the `corp` inclusion that contributed them, in declaration order.
+const INCLUDED_ACTIONS: [&str; 3] = [
     "symlink corp.zshrc (group corp.shell)",
+    "symlink corp.p10k (group corp.prompt)",
     "copy-dir corp.seeds",
 ];
 
-/// The destinations those two install at.
-const INCLUDED_DESTS: [&str; 2] = [".zshrc.corporate", ".config/corporate"];
+/// The destinations those three install at.
+const INCLUDED_DESTS: [&str; 3] = [".zshrc.corporate", ".p10k.zsh", ".config/corporate"];
 
 fn assert_included_ran(tree: &Tree) {
     for dest in INCLUDED_DESTS {
@@ -111,7 +112,8 @@ fn an_inclusion_contributes_at_its_position_in_the_list() {
         "the inclusion's contents were not spliced where it is written:\n{stderr}"
     );
     assert!(
-        at(INCLUDED_ACTIONS[0]) < at(INCLUDED_ACTIONS[1]),
+        at(INCLUDED_ACTIONS[0]) < at(INCLUDED_ACTIONS[1])
+            && at(INCLUDED_ACTIONS[1]) < at(INCLUDED_ACTIONS[2]),
         "the contributed actions lost the order the included manifest declares:\n{stderr}"
     );
 }

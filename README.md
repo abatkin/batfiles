@@ -56,7 +56,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   that `sync` materializes under `remotes/<id>/`. Actions reference their content
   with paths such as `@core/files/zshrc`. `include-remote` takes the actions a
   remote's own manifest declares into the list at its position, addressable as
-  `corp.zshrc`. See [remotes](docs/repoformat.md#remotes) and
+  `corp.zshrc`, either all of them or the ones its `install-actions`,
+  `install-groups`, `exclude-actions`, and `exclude-groups` select. See
+  [remotes](docs/repoformat.md#remotes) and
   [include-remote](docs/repoformat.md#include-remote); add `remotes/` to your
   `.gitignore`.
 - **Apply all or part of a manifest.** `sync` executes actions in declaration
