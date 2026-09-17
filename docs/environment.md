@@ -106,7 +106,8 @@ error.
 Layers can declare a user variable. Each overrides the ones before it:
 
 ```text
-leaf [vars]
+included remote [vars]
+< leaf [vars]
 < include-remote vars overrides
 < persisted machine-local vars.toml
 < BATFILES_VAR_*
@@ -120,14 +121,20 @@ layer's empty value overrides a lower layer's non-empty one. Repeating `--var`
 for one key is the same rule applied within a layer, so the last value written
 wins.
 
-**The second layer is written per inclusion, and reaches only what that
+**The first and third layers belong to one inclusion, and reach only what that
 inclusion contributed.** The set a leaf repository's own records are decided
-against has four layers; a record an
-[`include-remote`](repoformat.md#include-remote) contributed is decided against
-the same set with that inclusion's [`vars`](repoformat.md#variables-for-one-inclusion)
-inserted above the leaf's `[vars]`. So two inclusions of one remote can get
-different answers out of it, while nothing either of them writes reaches the
-leaf's own records, the inclusion's own condition, or the remote's.
+against has four layers: the middle four of the list above, starting at the
+leaf's `[vars]`. A record an [`include-remote`](repoformat.md#include-remote)
+contributed is decided against that set with two more in it — the included
+remote's own [`[vars]`](repoformat.md#variables-an-included-remote-declares)
+beneath every other layer, and that inclusion's
+[`vars`](repoformat.md#variables-for-one-inclusion) above the leaf's `[vars]`.
+
+So a remote says what its own conditions read, a leaf composing it overrides
+that without having to know it is there, and this machine overrides both. Two
+inclusions of one remote are two scopes and can get different answers out of the
+same manifest, while nothing in either scope reaches the leaf's own records, the
+inclusion's own condition, or the remote's.
 
 Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables),
 a malformed or unreadable one now fails these commands as a malformed manifest
@@ -135,11 +142,9 @@ does.
 
 The merged set supplies [condition](repoformat.md#conditions) values. Use
 `vars list` or an action command's `-vv` output to inspect values and origins;
-the command reference owns the [listing format](cmdline.md#vars-list).
-
-An included remote's own `[vars]` will add one more layer, beneath the leaf's,
-specified in
-[`future/environment.md`](future/environment.md#runtime-variable-precedence).
+the command reference owns the [listing format](cmdline.md#vars-list). A line
+naming a layer one inclusion derived says which inclusion, since `batfiles.toml`
+alone names three documents in a run that includes two remotes.
 
 ## Host facts in conditions
 

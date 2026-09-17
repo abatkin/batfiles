@@ -117,10 +117,10 @@ layer they would have to account for:
   It has no additional effect alongside `--machine-only`, which reads neither.
 - A listing shows the leaf repository's flat set, which is
   [specified](../cmdline.md#vars-list) and deliberately leaves out what an
-  inclusion overrides: those values hold inside one inclusion's records, and an
-  action command's `-vv` output reports them. Whether a listing should grow a
-  section per inclusion is open, and a remote's own `[vars]` arrive at 7.5,
-  whose labels such a line would have to name.
+  inclusion's scope holds: those values hold inside one inclusion's records, and
+  an action command's `-vv` output reports them. Whether a listing should grow a
+  section per inclusion is open; such a section would have to read every
+  inclusion this machine would open, which is work a listing does not do today.
 
 `vars refresh`, below, is the rest of the family.
 

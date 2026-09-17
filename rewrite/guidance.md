@@ -196,10 +196,11 @@ code review and behavioral tests. Keep the scanner small.
 Variables feed `when` and `unless`; they do not interpolate paths or strings.
 Slice 5 resolved the four sources into one flat scope: one namespace, in which
 a name resolves the same way whatever declared it. The representation is not
-prescribed; the seam below is. An inclusion's `vars` derive a second scope from
-that one at 7.4, and 7.5 adds the included remote's own layer to it: a scope is
-derived once per opened inclusion, carried by the records it contributed, and
-every condition on a record is decided against the scope that record holds.
+prescribed; the seam below is. An opened inclusion derives a second scope from
+that one, holding its `vars` overrides and the included remote's own `[vars]`: a
+scope is derived once per opened inclusion, carried by the records it
+contributed, and every condition on a record is decided against the scope that
+record holds.
 Conditions and precedence are specified in
 [`docs/repoformat.md`](../docs/repoformat.md#conditions) and
 [`docs/environment.md`](../docs/environment.md#variable-precedence); the

@@ -93,17 +93,18 @@ No inclusion of remote actions yet.
 - **7.3** ✅ Add inclusion action/group selection filters.
 - **7.4** ✅ Add per-inclusion variable overrides, each reaching the records its
   inclusion contributed.
-- **7.5** Layer an included remote's own `[vars]` beneath the leaf's, in the
-  scopes 7.4 built. A reported variable origin must tell one remote's `[vars]`
-  from another's and from the leaf's, which the bare document name does not;
-  use 7.7's display label.
+- **7.5** ✅ Layer an included remote's own `[vars]` beneath the leaf's, in the
+  scopes 7.4 built, with an origin naming the inclusion that opened the manifest.
 - **7.6** Ignore an included remote's own `[remotes]`, which is what is left of
   one-level inclusion: 7.1 refuses an included action whose source names a
   remote, and 7.2 drops an included `include-remote` with a reported line.
   Nothing can name an included `[remotes]` entry any more, yet the map is still
   read and validated. Decide whether one holding a `file` or `archive` record
   should still fail the inclusion, as it does today.
-- **7.7** Give every inclusion a stable, unique display label.
+- **7.7** Give every inclusion a stable, unique display label. It names the
+  inclusion in its skip lines, its filter warnings, and both variable origins
+  7.5 derived, so two inclusions of one remote written without IDs must not
+  share one.
 - **7.8** Add a synthetic two-remote fixture with overlapping paths and
   overrides, beside the realistic `corporate` repository 6.7 added.
 - **7.9** Acceptance: assemble the personal and corporate repositories under `sync`.

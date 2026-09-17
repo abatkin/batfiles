@@ -57,8 +57,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   with paths such as `@core/files/zshrc`. `include-remote` takes the actions a
   remote's own manifest declares into the list at its position, addressable as
   `corp.zshrc`, either all of them or the ones its `install-actions`,
-  `install-groups`, `exclude-actions`, and `exclude-groups` select, and its
-  `vars` say what the remote's conditions read for this inclusion. See
+  `install-groups`, `exclude-actions`, and `exclude-groups` select. The remote's
+  conditions read what it declared in its own `[vars]`, which the inclusion's
+  `vars` and the leaf's `[vars]` override. See
   [remotes](docs/repoformat.md#remotes) and
   [include-remote](docs/repoformat.md#include-remote); add `remotes/` to your
   `.gitignore`.

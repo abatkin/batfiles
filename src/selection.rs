@@ -8,7 +8,7 @@ use crate::condition::{Bindings, Exclusion};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute::{Record, RunList};
+use crate::execute::{RunList, RunRecord};
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
@@ -37,7 +37,7 @@ pub(crate) enum Target<'a> {
 
 impl Target<'_> {
     /// Whether this record is one of the ones asked for.
-    fn wants(&self, record: &Record) -> bool {
+    fn wants(&self, record: &RunRecord) -> bool {
         match self {
             Self::Everything => true,
             Self::Action(id) => record.name.as_ref() == Some(*id),
@@ -222,7 +222,7 @@ impl<'a> Selection<'a> {
     }
 
     /// Whether this record is one of the ones the command asked for.
-    pub fn wants(&self, record: &Record) -> bool {
+    pub fn wants(&self, record: &RunRecord) -> bool {
         self.target.wants(record)
     }
 
@@ -262,7 +262,7 @@ impl<'a> Selection<'a> {
     /// name that is neither answered nor unmatched: what would have answered it
     /// was never read.
     pub fn warn_unmatched(&self, run_list: &RunList, reporter: &Reporter) {
-        let names = |of: fn(&Record) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
+        let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
             run_list
                 .records
                 .iter()
@@ -288,7 +288,7 @@ impl<'a> Selection<'a> {
     /// already excludes is never evaluated: a condition that cannot be
     /// evaluated then costs only the runs that would otherwise have carried the
     /// record out.
-    pub fn exclusion(&self, record: &Record, bindings: &Bindings<'_>) -> Option<Exclusion> {
+    pub fn exclusion(&self, record: &RunRecord, bindings: &Bindings<'_>) -> Option<Exclusion> {
         if let Some(reason) = self.listed_reason(record) {
             return Some(Exclusion::Expected(reason.to_string()));
         }
@@ -306,7 +306,7 @@ impl<'a> Selection<'a> {
     /// Persistent disables precede run-only skips; action exclusions precede
     /// group exclusions within each source. The target determines which
     /// exclusions are honored.
-    fn listed_reason<'b>(&self, record: &'b Record) -> Option<SkipReason<'b>> {
+    fn listed_reason<'b>(&self, record: &'b RunRecord) -> Option<SkipReason<'b>> {
         let id = record
             .name
             .as_ref()
@@ -364,19 +364,29 @@ mod tests {
 
     /// One `create-dir` naming both an action and a group, which is the record
     /// every rule below is decided against, as the leaf repository declared it.
-    fn action(id: &str, group: &str) -> Record {
-        Record::leaf(create_dir(id, group), 1)
+    fn action(id: &str, group: &str) -> RunRecord {
+        RunRecord::leaf(create_dir(id, group), 1)
     }
 
     /// The same record as the inclusion written with `inclusion` contributed it.
     /// `None` is an inclusion written without an `id`, whose contents answer to
     /// no address at all.
-    fn included(id: &str, group: &str, inclusion: Option<&str>) -> Record {
-        Record::contributed(
+    ///
+    /// The scope is empty, since these cases decide addressing and exclusion
+    /// rather than conditions; the record the [`decided`] cases carry a
+    /// condition on is the leaf's own.
+    fn included(id: &str, group: &str, inclusion: Option<&str>) -> RunRecord {
+        RunRecord::contributed(
             create_dir(id, group),
             1,
             inclusion.map(item).as_ref(),
             item("corporate"),
+            &Rc::new(VarSet::stack(
+                BTreeMap::new(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+                &[],
+            )),
         )
     }
 
@@ -432,13 +442,17 @@ mod tests {
     /// What a selection says about one record, rendered the way a run reports
     /// it. The bindings are empty, since most of the rules below decide a
     /// record that declares no condition at all.
-    fn reason(selection: &Selection, record: &Record) -> Option<String> {
+    fn reason(selection: &Selection, record: &RunRecord) -> Option<String> {
         decided(selection, record, &[]).map(|exclusion| exclusion.reason().to_owned())
     }
 
     /// The same, against a variable set, and keeping which kind of exclusion
     /// it is.
-    fn decided(selection: &Selection, record: &Record, vars: &[(&str, &str)]) -> Option<Exclusion> {
+    fn decided(
+        selection: &Selection,
+        record: &RunRecord,
+        vars: &[(&str, &str)],
+    ) -> Option<Exclusion> {
         let variables = Rc::new(VarSet::stack(
             vars.iter()
                 .map(|(name, value)| {
@@ -462,7 +476,7 @@ mod tests {
     /// one rather than a condition batfiles could not decide.
     fn expected_reason(
         selection: &Selection,
-        record: &Record,
+        record: &RunRecord,
         vars: &[(&str, &str)],
     ) -> Option<String> {
         match decided(selection, record, vars) {
@@ -473,8 +487,8 @@ mod tests {
     }
 
     /// A `create-dir` carrying one condition, in the spelling named.
-    fn conditioned(spelling: &str, condition: &str) -> Record {
-        Record::leaf(
+    fn conditioned(spelling: &str, condition: &str) -> RunRecord {
+        RunRecord::leaf(
             toml::from_str(&format!(
                 "type = \"create-dir\"\nid = \"zshrc\"\ngroup = \"shell\"\n\
                  dest = \"~/x\"\n{spelling} = \"{condition}\"\n"

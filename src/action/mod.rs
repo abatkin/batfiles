@@ -12,15 +12,15 @@ mod include_remote;
 mod symlink;
 
 pub(crate) use context::RunContext;
-pub(crate) use include_remote::IncludedAction;
+pub(crate) use include_remote::{IncludedAction, InclusionContents};
 
 use crate::error::Error;
 use crate::item::ItemId;
 use crate::manifest::action::{Action, IncludeRemoteAction};
 
-/// Read the records of the manifest one `include-remote` includes, each with
-/// what that inclusion's filters made of it, or `None` where there was no
-/// materialization to read.
+/// Read the manifest one `include-remote` includes: its `[vars]`, and its
+/// records with what that inclusion's filters made of each. `None` where there
+/// was no materialization to read.
 ///
 /// Called while the list is assembled rather than while it is executed: what an
 /// inclusion brings in has to be in the list before selection is captured or a
@@ -28,7 +28,7 @@ use crate::manifest::action::{Action, IncludeRemoteAction};
 pub(crate) fn read_inclusion(
     action: &IncludeRemoteAction,
     context: &RunContext<'_>,
-) -> Result<Option<Vec<IncludedAction>>, Error> {
+) -> Result<Option<InclusionContents>, Error> {
     include_remote::read(action, context)
 }
 

@@ -1,17 +1,12 @@
-//! `include-remote`: the actions another repository declares, read from the
-//! materialization this machine has of it.
+//! `include-remote`: the actions and `[vars]` another repository declares, read
+//! from the materialization this machine has of it, however stale.
 //!
-//! Reading is all this module does, and it happens while the run's list is being
-//! assembled rather than while it is executed: what an inclusion brings in has
-//! to be in the list before anything can select it. The record itself installs
-//! nothing once the list holds what it read.
-//!
-//! What the reading can and cannot promise: a manifest is read from the tree
-//! that is on the machine, however stale the last `sync` left it, and an
-//! inclusion with no tree at all says so rather than contributing a list it
-//! never saw. That warning is what makes a plan
-//! [partial](../../docs/cmdline.md#plan-completeness); a run in which nothing
-//! reported one is complete, and has nothing of its own to say.
+//! Reading is all this module does, while the run's list is assembled rather
+//! than while it is executed; the record installs nothing. An inclusion with no
+//! materialization warns and contributes nothing, which is what makes a plan
+//! [partial](../../docs/cmdline.md#plan-completeness).
+
+use std::collections::BTreeMap;
 
 use crate::action::RunContext;
 use crate::error::Error;
@@ -20,6 +15,16 @@ use crate::manifest::Manifest;
 use crate::manifest::action::{Action, IncludeRemoteAction};
 use crate::output::Reporter;
 use crate::paths;
+use crate::var::VarName;
+
+/// What one `include-remote` read out of the manifest it opened.
+pub(crate) struct InclusionContents {
+    /// The included manifest's own `[vars]`, which becomes the layer beneath the
+    /// leaf's in the [scope](crate::var_set::VarSet::with_inclusion) these
+    /// records are decided against. Empty is a remote that declared none.
+    pub vars: BTreeMap<VarName, String>,
+    pub actions: Vec<IncludedAction>,
+}
 
 /// One record of an included manifest, and what the inclusion's filters made
 /// of it.
@@ -38,29 +43,29 @@ pub(crate) struct IncludedAction {
     pub selected: bool,
 }
 
-/// Read the manifest of the remote this record includes, and return the records
-/// it declares with what this inclusion's filters made of each.
+/// Read the manifest of the remote this record includes, and return its `[vars]`
+/// with the records it declares and what this inclusion's filters made of each.
 ///
 /// `None` is an inclusion whose list was never read, because there was no
-/// materialization to read it from; `Some([])` is a manifest that was read and
-/// declares nothing. Only the second can answer whether a qualified name matches
-/// something, which is the distinction a clone list's
-/// [entries](crate::manifest::action::GitCloneListAction::entries) also draw.
-/// A record the filters leave out is returned unselected rather than left out
-/// of the list, so both remain distinct from it.
+/// materialization to read it from; [`InclusionContents`] holding no records is
+/// a manifest that was read but contributed no actions. Only the second can
+/// answer whether a qualified name matches something, which is the distinction a
+/// clone list's [entries](crate::manifest::action::GitCloneListAction::entries)
+/// also draw. A record the filters leave out is returned unselected rather than
+/// left out of the list, so both remain distinct from it.
 ///
-/// A materialization with no manifest in it is the one failure: a remote's
-/// manifest is optional, since a remote an action only installs *from* has no
-/// use for one, so an inclusion asking for one that is not there is the leaf
-/// asking for something absent rather than a tree batfiles has yet to fetch.
+/// Fails where the materialization cannot be inspected, and where its manifest
+/// cannot be read, parsed, or validated. A materialized tree holding no manifest
+/// at all is one of these: a remote's manifest is optional, so an inclusion
+/// asking for one that is not there is asking for something absent rather than
+/// for a tree batfiles has yet to fetch.
 ///
 /// A remote its own condition closed is the caller's to decide, and is settled
-/// before asking: that is an exclusion on the record rather than something read
-/// from a tree.
+/// before asking.
 pub(super) fn read(
     action: &IncludeRemoteAction,
     context: &RunContext<'_>,
-) -> Result<Option<Vec<IncludedAction>>, Error> {
+) -> Result<Option<InclusionContents>, Error> {
     let remote = &action.remote;
     let reporter = context.reporter();
 
@@ -121,7 +126,13 @@ pub(super) fn read(
         });
     }
     filter.warn_unmatched(&records, &label(action), remote, reporter);
-    Ok(Some(records))
+    Ok(Some(InclusionContents {
+        // The filters have nothing to say about these: a remote declares
+        // variables for all of its records, and this inclusion takes them
+        // whichever records it took.
+        vars: included.vars,
+        actions: records,
+    }))
 }
 
 /// How a report names one inclusion.

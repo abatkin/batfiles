@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::action::{self, IncludedAction, RunContext};
+use crate::action::{self, IncludedAction, InclusionContents, RunContext};
 use crate::clone_list;
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::disabled::Disabled;
@@ -131,21 +131,25 @@ fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
     Ok((manifest, disabled))
 }
 
-/// One record in the run's list: the action, the addresses it answers to, how a
-/// report names it, and what this run does with it.
-///
-/// A leaf manifest's record and one an [inclusion](assemble) contributed differ
-/// in exactly three ways, and all three are fields here rather than a kind of
-/// their own: a contributed record is addressed under the inclusion that
-/// brought it in, its repository paths are read from that remote's tree, and its
-/// conditions may be decided against a variable set that inclusion's `vars`
-/// derived.
-pub(crate) struct Record {
+/// What an [inclusion](assemble) gave a record, and a leaf repository's own
+/// record has none of.
+struct Contributed {
+    /// The remote whose materialization the record's repository paths are read
+    /// from.
+    remote: ItemId,
+    /// The scope the record's own condition and its clone list's entry
+    /// conditions are decided against: what the inclusion derived, which is the
+    /// run's own set where neither it nor its remote declared anything.
+    vars: Rc<VarSet>,
+}
+
+/// One entry in the run's list: a manifest action, the addresses it answers to,
+/// how a report names it, and what this run does with it.
+pub(crate) struct RunRecord {
     pub action: Action,
-    /// The remote whose materialization this record's paths are read from, or
-    /// `None` for one the leaf repository declared. Set for every contributed
-    /// record and for no other, so it is also what says where one came from.
-    pub remote: Option<ItemId>,
+    /// What an inclusion contributed, or `None` for a record the leaf
+    /// repository declared. Also what says which of the two a record is.
+    contributed: Option<Contributed>,
     /// The address the record's `id` answers to, or `None` where it answers to
     /// none: a record written without one, or one contributed by an inclusion
     /// written without one. An unqualified address never reaches a contributed
@@ -156,14 +160,10 @@ pub(crate) struct Record {
     /// How a report names it, settled as the list is built so that the record
     /// and the line naming it cannot come apart.
     pub heading: String,
-    /// The variable set this record's conditions are decided against, where an
-    /// inclusion's `vars` derived one for it. `None` is every other record,
-    /// which is decided against the run's own set: see [`Self::scope`].
-    vars: Option<Rc<VarSet>>,
     pub disposition: Disposition,
 }
 
-impl Record {
+impl RunRecord {
     /// A record the leaf manifest declared, at its one-based position in it.
     pub fn leaf(action: Action, number: usize) -> Self {
         Self::new(action, number, None, None)
@@ -171,29 +171,35 @@ impl Record {
 
     /// A record an inclusion contributed, at its one-based position in the
     /// manifest that declared it. `inclusion` is the `id` of the record that
-    /// brought it in, absent where that record was written without one, and
-    /// `remote` the tree its paths are read from.
+    /// brought it in, absent where that record was written without one; `remote`
+    /// is the tree its paths are read from and `vars` the scope its conditions
+    /// are decided in.
     pub fn contributed(
         action: Action,
         number: usize,
         inclusion: Option<&ItemId>,
         remote: ItemId,
+        vars: &Rc<VarSet>,
     ) -> Self {
-        Self::new(action, number, inclusion, Some(remote))
+        let contributed = Contributed {
+            remote,
+            vars: Rc::clone(vars),
+        };
+        Self::new(action, number, inclusion, Some(contributed))
     }
 
     fn new(
         action: Action,
         number: usize,
         inclusion: Option<&ItemId>,
-        remote: Option<ItemId>,
+        contributed: Option<Contributed>,
     ) -> Self {
         // A record an inclusion written without an `id` contributed answers to
         // no address at all: the qualified spelling has no first segment to
         // match, and the unqualified one means the leaf's own record of that ID.
-        // A contributed record is the one with a remote, which is what tells it
-        // from a leaf record whose own `id` is missing.
-        let addressed = inclusion.is_some() || remote.is_none();
+        // That is a contributed record, which is what tells it from a leaf
+        // record whose own `id` is missing.
+        let addressed = inclusion.is_some() || contributed.is_none();
         let address = |id: Option<&ItemId>| {
             id.filter(|_| addressed)
                 .map(|id| ItemAddress::qualified(inclusion, id))
@@ -202,29 +208,22 @@ impl Record {
         Self {
             heading: action.describe(number, inclusion),
             action,
-            remote,
+            contributed,
             name,
             group,
-            vars: None,
             disposition: Disposition::Unwanted,
         }
     }
 
-    /// Put the record in the scope an inclusion's `vars` derived, which is the
-    /// set its own condition and its clone list's entry conditions are then
-    /// decided against.
-    fn in_scope(mut self, vars: &Rc<VarSet>) -> Self {
-        self.vars = Some(Rc::clone(vars));
-        self
+    /// The remote this record's repository paths are read from, or `None` for
+    /// one the leaf repository declared.
+    pub fn remote(&self) -> Option<&ItemId> {
+        self.contributed.as_ref().map(|it| &it.remote)
     }
 
-    /// The variable set this record's conditions are decided against: the one
-    /// an inclusion derived for it, or `run`'s own where no inclusion did.
-    ///
-    /// One accessor rather than two call sites choosing, so that the set a
-    /// record was selected against is the set its clone list is read against.
+    /// The inclusion's variable scope, or `run` for a leaf record.
     fn scope<'a>(&'a self, run: &'a Rc<VarSet>) -> &'a Rc<VarSet> {
-        self.vars.as_ref().unwrap_or(run)
+        self.contributed.as_ref().map_or(run, |it| &it.vars)
     }
 }
 
@@ -243,12 +242,12 @@ pub(crate) enum Disposition {
 /// Attach entries to each record of the run's list once per run, retaining
 /// excluded entries for reporting. A list an inclusion contributed is read from
 /// that remote's materialization, as its record's other paths are, and its
-/// entry conditions are decided against the same [scope](Record::scope) the
+/// entry conditions are decided against the same [scope](RunRecord::scope) the
 /// record was.
 /// Unread lists keep `None`; a validated empty list holds `Some([])`.
 /// Missing or malformed lists fail before any action executes.
 fn prepare_clone_lists(
-    records: &mut [Record],
+    records: &mut [RunRecord],
     context: &RunContext<'_>,
     variables: &Rc<VarSet>,
     host: &HostNamespaces,
@@ -260,7 +259,7 @@ fn prepare_clone_lists(
         // Both taken before the record is borrowed to be written on: the
         // entries are settled on the record that holds the remote they are read
         // from and the variables they are decided against.
-        let remote = record.remote.clone();
+        let remote = record.remote().cloned();
         let vars = Rc::clone(record.scope(variables));
         if let Action::GitCloneList(list) = &mut record.action {
             let bindings = Bindings::new(&vars, host);
@@ -346,7 +345,7 @@ fn run(
             }
             Disposition::Run => {
                 reporter.detail(1, &record.heading);
-                action::run(&record.action, record.remote.as_ref(), &context)?;
+                action::run(&record.action, record.remote(), &context)?;
                 // An inclusion carries nothing out: what it contributed is in
                 // this list and counts for itself. Counting the record too would
                 // let an inclusion the run only opened to reach a group stand in
@@ -366,7 +365,7 @@ fn run(
 
 /// The run's list, and the two things about assembling it that a report needs.
 pub(crate) struct RunList {
-    pub records: Vec<Record>,
+    pub records: Vec<RunRecord>,
     /// Whether the command's target named one of these records. An inclusion
     /// opened only to look inside does not count: a target that found nothing
     /// within it found nothing.
@@ -390,8 +389,8 @@ pub(crate) struct RunList {
 ///
 /// `context` must already hold whatever materializations this command provides,
 /// since an inclusion reads one. `variables` is the run's own set, which is what
-/// every record is decided against except one an inclusion writing `vars` put in
-/// a [scope](Record::scope) of its own; `host` is what a scope's bindings are
+/// every record is decided against except one an inclusion put in a
+/// [scope](RunRecord::scope) of its own; `host` is what a scope's bindings are
 /// built over.
 fn assemble(
     actions: Vec<Action>,
@@ -408,7 +407,7 @@ fn assemble(
     };
 
     for (index, action) in actions.into_iter().enumerate() {
-        let mut record = Record::leaf(action, index + 1);
+        let mut record = RunRecord::leaf(action, index + 1);
 
         let wanted = selection.wants(&record);
         if wanted {
@@ -454,7 +453,7 @@ fn assemble(
         // closed it, or the remote's own condition did. All three leave its
         // contents unread, which is what a qualified skip has to be told apart
         // from — and the last is an exclusion on the record like any other.
-        let included_actions = match context.excluded_remote(&remote) {
+        let included = match context.excluded_remote(&remote) {
             Some(exclusion) if matches!(record.disposition, Disposition::Run) => {
                 record.disposition = Disposition::Excluded(closed_by_remote(exclusion, &remote));
                 None
@@ -462,15 +461,25 @@ fn assemble(
             _ if !opened || !matches!(record.disposition, Disposition::Run) => None,
             _ => action::read_inclusion(inclusion, context)?,
         };
-        let Some(included_actions) = included_actions else {
+        let Some(InclusionContents {
+            vars: remote_vars,
+            actions: included_actions,
+        }) = included
+        else {
             run_list.unread.extend(qualifier);
             run_list.records.push(record);
             continue;
         };
         // Derived once for the inclusion, and only now that it has been opened:
-        // an inclusion the run passed over hands its overrides to nothing and
-        // has nothing to report about them.
-        let scope = inclusion_scope(&inclusion.vars, &label, variables, context.reporter());
+        // an inclusion the run passed over hands nothing to anything and has
+        // nothing to report about it.
+        let scope = inclusion_scope(
+            &remote_vars,
+            &inclusion.vars,
+            &label,
+            variables,
+            context.reporter(),
+        );
         let scoped = Bindings::new(&scope, host);
         run_list.records.push(record);
 
@@ -481,8 +490,7 @@ fn assemble(
         } in included_actions
         {
             let mut contributed =
-                Record::contributed(action, number, qualifier.as_ref(), remote.clone())
-                    .in_scope(&scope);
+                RunRecord::contributed(action, number, qualifier.as_ref(), remote.clone(), &scope);
             // Asking for the inclusion asks for everything it brought in; the
             // record's own qualified name is the finer way to reach one.
             let named = selection.wants(&contributed);
@@ -513,23 +521,26 @@ fn assemble(
     Ok(run_list)
 }
 
-/// The variable set the records one inclusion contributes are decided against:
-/// the run's own where the inclusion wrote no `vars`, and the run's own with
-/// those overrides above the leaf's `[vars]` where it did.
+/// The scope the records one inclusion contributes are decided against: the
+/// run's own set with the included remote's `[vars]` beneath it and the
+/// inclusion's `vars` overrides above the leaf's, or the run's own where neither
+/// declared anything.
 ///
-/// Derived once per opened inclusion and reported at `-vv` as it is derived, so
-/// that what a contributed record's condition read is visible beside the run's
-/// own variables rather than only in the record's outcome.
+/// Called once per opened inclusion, and reports the scope at `-vv` as it is
+/// derived.
 fn inclusion_scope(
+    remote: &BTreeMap<VarName, String>,
     overrides: &BTreeMap<VarName, String>,
     label: &str,
     run: &Rc<VarSet>,
     reporter: &Reporter,
 ) -> Rc<VarSet> {
-    if overrides.is_empty() {
+    // Two empty layers decide every name the way the run's set already does, so
+    // there is nothing to derive and nothing to report.
+    if remote.is_empty() && overrides.is_empty() {
         return Rc::clone(run);
     }
-    let scope = Rc::new(run.with_inclusion(overrides, label));
+    let scope = Rc::new(run.with_inclusion(remote, overrides, label));
     scope.report_inclusion(reporter);
     scope
 }

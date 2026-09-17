@@ -402,17 +402,13 @@ file remotes at step 9.3.
 
 The record, its required `remote`, the manifest it reads, the actions it splices
 into the list, how those are addressed, the four selection fields that say which
-of them it takes, its `vars` overrides and what they reach, what it does with a
-remote that is excluded or not materialized, and the rule that an inclusion is
-never applyable are built and specified in
-[`docs/repoformat.md`](../repoformat.md#include-remote). Every field the record
-accepts is built; what is outstanding is below.
+of them it takes, its `vars` overrides and the included remote's own `[vars]`
+with what each reaches, what it does with a remote that is excluded or not
+materialized, and the rule that an inclusion is never applyable are built and
+specified in [`docs/repoformat.md`](../repoformat.md#include-remote). Every field
+the record accepts is built; what is outstanding is below.
 
-An included remote's own `[vars]` is read and takes no part in any scope yet. It
-becomes the layer beneath the leaf's at step 7.5, where the two need
-[origins](environment.md#runtime-variable-precedence) that tell them apart.
-
-One thing about `remote` is also outstanding: naming a declared `file` or
+One thing about `remote` is outstanding: naming a declared `file` or
 `archive` remote must be invalid configuration. Both types are refused by name as
 the manifest is read, so today no inclusion can reach one; the rule arrives with
 them at step 9.3.

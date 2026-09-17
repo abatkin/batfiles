@@ -1,45 +1,64 @@
-//! `vars` on an `include-remote`: the values the leaf hands to what it
-//! contributes.
+//! The two variable layers an `include-remote` derives: the values the leaf
+//! hands to what it contributes, and the ones the remote declared for itself.
 //!
-//! The overrides reach one inclusion's records and nothing else. They sit above
-//! the leaf's `[vars]` and below everything this machine says, which is the
-//! [variable precedence](../../docs/environment.md#variable-precedence) read from
-//! both ends: a leaf may tell a remote what it is being included for, and the
-//! machine may still disagree with the leaf.
-//!
-//! The remote is written inline rather than committed as a fixture, because what
-//! a case needs from it is a condition to decide rather than content to install:
-//! the synthetic repository with overlapping paths and overrides arrives at 7.8.
+//! Both reach one inclusion's records and nothing else. The overrides sit above
+//! the leaf's `[vars]` and the remote's own beneath it, which is the
+//! [variable precedence](../../docs/environment.md#variable-precedence) read
+//! from both ends.
 
 use crate::support::*;
 
 /// The remote both destinations below come from: two records decided by
-/// `profile`, exactly one of which runs whatever it is.
-fn remote() -> BareRepo {
+/// `profile`, exactly one of which runs whatever it is. `vars` is whatever
+/// `[vars]` the remote declares for itself, which is nothing in most cases.
+fn remote_declaring(vars: &str) -> BareRepo {
     let origin = BareRepo::new();
     origin.publish(
         "batfiles.toml",
-        "[[actions]]\ntype = \"create-dir\"\nid = \"work-tools\"\n\
-         dest = \"~/.cache/work-tools\"\nwhen = \"profile == 'work'\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"personal-tools\"\n\
-         dest = \"~/.cache/personal-tools\"\nunless = \"profile == 'work'\"\n",
+        &format!(
+            "{vars}[[actions]]\ntype = \"create-dir\"\nid = \"work-tools\"\n\
+             dest = \"~/.cache/work-tools\"\nwhen = \"profile == 'work'\"\n\n\
+             [[actions]]\ntype = \"create-dir\"\nid = \"personal-tools\"\n\
+             dest = \"~/.cache/personal-tools\"\nunless = \"profile == 'work'\"\n"
+        ),
         "two records one variable decides",
     );
     origin
 }
 
-/// A leaf declaring `profile = "personal"` and including that remote, with
-/// whatever the case writes on the inclusion.
-fn including(record: &str) -> (BareRepo, Tree) {
-    let origin = remote();
+/// The same remote, declaring no variables of its own.
+fn remote() -> BareRepo {
+    remote_declaring("")
+}
+
+/// A leaf including that remote, with `leaf_vars` in its own `[vars]` and
+/// whatever the case writes on the inclusion. `remote_vars` is what the remote
+/// declares for itself.
+fn composed(remote_vars: &str, leaf_vars: &str, record: &str) -> (BareRepo, Tree) {
+    let origin = remote_declaring(remote_vars);
     let tree = Tree::new();
     tree.write_manifest(&format!(
         "[remotes.corporate]\ntype = \"git\"\nurl = \"{{origin}}\"\n\n\
-         [vars]\nprofile = \"personal\"\n\n\
+         {leaf_vars}\
          [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n{record}"
     ));
     tree.point_at_origin(&origin);
     (origin, tree)
+}
+
+/// A leaf declaring `profile = "personal"` and including a remote that declares
+/// nothing of its own.
+fn including(record: &str) -> (BareRepo, Tree) {
+    composed("", "[vars]\nprofile = \"personal\"\n\n", record)
+}
+
+/// Whether a `-vv` block was headed by exactly `heading`.
+///
+/// A whole line rather than a substring: an origin that renders one of the
+/// layers as a document ends in the inclusion's own label, so a heading built
+/// from the wrong one still contains the right one.
+fn headed_by(stderr: &str, heading: &str) -> bool {
+    stderr.lines().any(|line| line.trim() == heading)
 }
 
 /// What the contributed records' conditions read, as the destinations say it.
@@ -297,7 +316,7 @@ fn an_inclusions_overrides_are_reported_at_the_second_verbose_level() {
     let stderr = stderr_of(&assertion);
 
     assert!(
-        stderr.contains("include-remote `corp` variables:"),
+        headed_by(&stderr, "include-remote `corp` variables:"),
         "the block was not reported:\n{stderr}"
     );
     assert!(
@@ -340,7 +359,10 @@ fn an_inclusion_with_no_id_names_the_remote_in_its_block() {
     let stderr = stderr_of(&assertion);
 
     assert!(
-        stderr.contains("the include-remote of remote `corporate` variables:"),
+        headed_by(
+            &stderr,
+            "the include-remote of remote `corporate` variables:"
+        ),
         "the block did not name the inclusion the only way it can be named:\n{stderr}"
     );
 }
@@ -388,5 +410,281 @@ fn an_unopened_inclusion_reports_nothing_about_its_overrides() {
     assert!(
         !stderr.contains("include-remote `corp` variables:"),
         "an inclusion this command never opened reported its overrides:\n{stderr}"
+    );
+}
+
+// The layer beneath the leaf's: what the included remote declared for itself.
+
+/// The `[vars]` a remote declares in its own manifest, for the cases below.
+const REMOTE_VARS: &str = "[vars]\nprofile = \"work\"\n\n";
+
+#[test]
+fn a_remotes_own_vars_decide_its_records_where_nothing_overrides_them() {
+    // The layer the leaf does not have to know about: a remote composed by a
+    // repository that declares no `profile` at all still gets the answer it
+    // wrote for itself.
+    let (_origin, tree) = composed(REMOTE_VARS, "", "");
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert_eq!(
+        included_profile(&tree),
+        "work",
+        "the remote's own declaration did not reach its records:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_leaf_the_inclusion_and_this_machine_all_beat_a_remotes_own_vars() {
+    // The four layers above it, each checked against a remote that declared
+    // `work` for itself and records that read the answer.
+    for (what, leaf_vars, record, machine, env, args) in [
+        (
+            "the leaf's own [vars]",
+            "[vars]\nprofile = \"personal\"\n\n",
+            "",
+            "",
+            None,
+            Vec::new(),
+        ),
+        (
+            "the inclusion's overrides",
+            "",
+            "vars = { profile = \"personal\" }\n",
+            "",
+            None,
+            Vec::new(),
+        ),
+        (
+            "vars.toml",
+            "",
+            "",
+            "profile = \"personal\"\n",
+            None,
+            vec![],
+        ),
+        ("the environment", "", "", "", Some("personal"), Vec::new()),
+        (
+            "the command line",
+            "",
+            "",
+            "",
+            None,
+            vec!["--var", "profile=personal"],
+        ),
+    ] {
+        let (_origin, tree) = composed(REMOTE_VARS, leaf_vars, record);
+        if !machine.is_empty() {
+            tree.write_machine_vars(machine);
+        }
+        let mut command = tree.batfiles();
+        command.arg("sync").args(&args);
+        if let Some(value) = env {
+            command.env("BATFILES_VAR_profile", value);
+        }
+        command.assert().success();
+
+        assert_eq!(
+            included_profile(&tree),
+            "personal",
+            "a remote's own declaration beat {what}"
+        );
+    }
+}
+
+#[test]
+fn a_remotes_own_vars_do_not_reach_the_leafs_own_records() {
+    // The layer is the remote's, and it holds inside the inclusion that read
+    // it: the leaf's own records are decided by a set that never saw it, so a
+    // record naming `profile` there has no such variable at all.
+    let origin = remote_declaring(REMOTE_VARS);
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
+         [[actions]]\ntype = \"create-dir\"\nid = \"leaf-work\"\n\
+         dest = \"~/.cache/leaf-work\"\nwhen = \"vars.profile == 'work'\"\n\n\
+         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+    );
+    tree.point_at_origin(&origin);
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert_eq!(included_profile(&tree), "work");
+    assert!(
+        !tree.home(".cache/leaf-work").exists(),
+        "a remote's own declaration decided the leaf's record:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_remotes_own_vars_do_not_reach_another_inclusions_records() {
+    // Two remotes, each declaring `profile` for itself. Neither scope holds the
+    // other's declaration, which is what a leaf composing two repositories that
+    // happen to use one name depends on.
+    let work = remote_declaring(REMOTE_VARS);
+    let lab = remote_declaring("[vars]\nprofile = \"personal\"\n\n");
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        "[remotes.corporate]\ntype = \"git\"\nurl = \"{}\"\n\n\
+         [remotes.laboratory]\ntype = \"git\"\nurl = \"{}\"\n\n\
+         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\n\
+         [[actions]]\ntype = \"include-remote\"\nid = \"lab\"\nremote = \"laboratory\"\n",
+        display(&work.origin()),
+        display(&lab.origin())
+    ));
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    for expected in [
+        "create-dir corp.personal-tools - skipped:",
+        "create-dir lab.work-tools - skipped:",
+    ] {
+        assert!(
+            stderr.contains(expected),
+            "`{expected}` was not reported:\n{stderr}"
+        );
+    }
+    for unexpected in [
+        "create-dir corp.work-tools - skipped:",
+        "create-dir lab.personal-tools - skipped:",
+    ] {
+        assert!(
+            !stderr.contains(unexpected),
+            "one remote's own declaration decided the other's records:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn an_inclusions_own_condition_is_decided_without_its_remotes_vars() {
+    // The scope is derived from the manifest the inclusion opened, so nothing
+    // in that manifest can decide whether it is opened. The leaf declares
+    // nothing, so the condition reads an undeclared name and cannot be decided.
+    let (_origin, tree) = composed(REMOTE_VARS, "", "when = \"profile == 'work'\"\n");
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains("include-remote corp: when \"profile == 'work'\" cannot be evaluated")
+            && stderr.contains("`profile` is not declared"),
+        "the inclusion's own condition read its remote's variables:\n{stderr}"
+    );
+    for dest in [".cache/work-tools", ".cache/personal-tools"] {
+        assert!(
+            !tree.home(dest).exists(),
+            "a closed inclusion contributed `{dest}`:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn an_included_clone_lists_entries_read_the_remotes_own_vars() {
+    // The second of the two places a contributed record's conditions are
+    // decided, reached by the layer the remote wrote rather than by the leaf.
+    let origin = BareRepo::new();
+    let plugin = origin.another("zsh-z");
+    origin.publish(
+        "plugins.txt",
+        &format!("{} when=\"profile == 'work'\"\n", display(&plugin)),
+        "a list one variable decides",
+    );
+    origin.publish(
+        "batfiles.toml",
+        "[vars]\nprofile = \"work\"\n\n\
+         [[actions]]\ntype = \"git-clone-list\"\nid = \"plugins\"\n\
+         source = \"plugins.txt\"\ndest-dir = \"~/.plugins\"\n",
+        "clone what the list names",
+    );
+
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
+         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+    );
+    tree.point_at_origin(&origin);
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        tree.home(".plugins/zsh-z").is_dir(),
+        "the entry's condition did not read the remote's own variables:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_remotes_own_vars_are_reported_under_the_inclusion_that_opened_them() {
+    // `batfiles.toml` names three documents in a run including two remotes, so
+    // the origin names the inclusion the block is headed by.
+    let (_origin, tree) = composed(REMOTE_VARS, "", "");
+
+    let assertion = tree.batfiles().args(["sync", "-vv"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        headed_by(&stderr, "include-remote `corp` variables:"),
+        "the block was not reported:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("profile = \"work\" (batfiles.toml of include-remote `corp`)"),
+        "the line did not name the manifest the value came from:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_remotes_declaration_the_leaf_overrode_is_reported_as_having_lost() {
+    // Both layers are in one block, each line naming the layer in force: this
+    // is what a leaf composing a remote looks like from inside the scope.
+    let (_origin, tree) = composed(REMOTE_VARS, "[vars]\nprofile = \"personal\"\n\n", "");
+
+    let assertion = tree.batfiles().args(["sync", "-vv"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert_eq!(included_profile(&tree), "personal");
+    assert!(
+        stderr.contains(
+            "profile = \"personal\" (batfiles.toml; over batfiles.toml of include-remote `corp`)"
+        ),
+        "the block did not say the remote's declaration lost:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_remote_declaring_nothing_leaves_an_inclusion_with_no_block() {
+    // The baseline the cases above depart from: a scope is derived, and a block
+    // reported, only where one of the two layers declares something.
+    let (_origin, tree) = composed("", "", "");
+
+    let assertion = tree.batfiles().args(["sync", "-vv"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        !stderr.contains("include-remote `corp` variables:"),
+        "an inclusion with nothing of its own reported a block:\n{stderr}"
+    );
+}
+
+#[test]
+fn vars_list_does_not_list_what_an_included_remote_declared() {
+    // The command lists the leaf's flat set. A remote's declarations hold
+    // inside one inclusion's records rather than in that set, as an
+    // inclusion's own overrides do.
+    let (_origin, tree) = composed(REMOTE_VARS, "[vars]\neditor = \"vi\"\n\n", "");
+    tree.batfiles().arg("sync").assert().success();
+
+    let assertion = tree.batfiles().args(["vars", "list"]).assert().success();
+    let stdout = stdout_of(&assertion);
+
+    assert!(
+        stdout.contains("editor = \"vi\" (batfiles.toml)"),
+        "the leaf's own variables were not listed:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("profile"),
+        "the listing reached into an inclusion's scope:\n{stdout}"
     );
 }

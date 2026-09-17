@@ -983,18 +983,58 @@ different answers out of the same included manifest. A contributed
 scope its own record was.
 
 **They sit above the leaf's `[vars]` and below everything this machine says.**
-Overriding the leaf's own value is the point of the field; `vars.toml`,
-`BATFILES_VAR_*`, and `--var` still override the field, because a leaf composing
-a remote does not get to overrule the machine it is being installed on. The whole
-order is [variable precedence](environment.md#variable-precedence), and an
-inclusion's overrides are reported at `-vv` under a heading naming the inclusion,
-in the [listing format](cmdline.md#vars-list) the run's own variables use.
+Overriding the leaf's own value, and [the remote's
+own](#variables-an-included-remote-declares), is the point of the field;
+`vars.toml`, `BATFILES_VAR_*`, and `--var` still override the field, because a
+leaf composing a remote does not get to overrule the machine it is being
+installed on. The whole order is [variable
+precedence](environment.md#variable-precedence), and an inclusion's overrides are
+reported at `-vv` under a heading naming the inclusion, in the [listing
+format](cmdline.md#vars-list) the run's own variables use.
 
 **The inclusion's own condition is not decided by them.** A `when` or `unless`
 on the record, and [the remote's own condition](#a-remotes-condition), are read
 against the leaf's variables: what an inclusion hands to the records it brings in
 cannot decide whether it brings them in, and a remote is materialized once for a
 run however many inclusions name it.
+
+#### Variables an included remote declares
+
+The included manifest's own [`[vars]`](#variables) is the lowest layer of the
+scope its records are decided against, beneath the leaf's `[vars]` and beneath
+everything above that. A remote can therefore say what its own conditions read
+without the leaf declaring anything:
+
+```toml
+# In the remote's own batfiles.toml.
+[vars]
+profile = "work"
+```
+
+**A leaf overrides it without having to know it is there.** Declaring the same
+name in the leaf's `[vars]`, in that inclusion's `vars`, or on this machine
+replaces the value the remote wrote; a name only the remote declares stands.
+That is what lets a repository be composed by leaves that have never read its
+variable list.
+
+**It holds inside the inclusion that read it.** The leaf's own records are
+decided against a set that never saw it, and so are a second inclusion's, so two
+remotes both declaring `profile` do not collide. It reaches a contributed
+[`git-clone-list`](#git-clone-list)'s entry conditions, as the rest of the scope
+does.
+
+**It cannot decide whether it is read.** The scope is derived from the manifest
+the inclusion opened, so the inclusion's own condition and [the remote's
+own](#a-remotes-condition) are settled before it — against the leaf's variables,
+exactly as the inclusion's `vars` are.
+
+At `-vv` its declarations appear in the same block as that inclusion's
+overrides, with an origin naming the inclusion that opened the manifest:
+
+```text
+include-remote `corp` variables:
+  profile = "work" (batfiles.toml of include-remote `corp`)
+```
 
 #### What an included action may not write
 
@@ -1151,15 +1191,16 @@ being read. Declaring the section changes no run on its own: a manifest whose
 records carry no [condition](#conditions) installs exactly what it would have
 installed without a `[vars]` at all.
 
-**This is the lowest layer.** Machine-local values in
-[`vars.toml`](state.md#varstoml-machine-local-variables), the `BATFILES_VAR_*`
-environment, and `--var` each override a name declared here, in that order.
-Every command that executes actions merges them into one flat set and prints it
-at `-vv`; the rule is [variable
+**This is the lowest layer of the leaf repository's own set.** Machine-local
+values in [`vars.toml`](state.md#varstoml-machine-local-variables), the
+`BATFILES_VAR_*` environment, and `--var` each override a name declared here, in
+that order. Every command that executes actions merges them into one flat set
+and prints it at `-vv`; the rule is [variable
 precedence](environment.md#variable-precedence). A record an
 [`include-remote`](#include-remote) contributed is decided against that set with
-one more layer in it, [the inclusion's own
-`vars`](#variables-for-one-inclusion), directly above this one.
+two more layers in it: [the inclusion's own `vars`](#variables-for-one-inclusion)
+directly above this one, and [the included remote's own
+`[vars]`](#variables-an-included-remote-declares) below it.
 
 ## Conditions
 

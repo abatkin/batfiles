@@ -2,6 +2,7 @@
 //! and CLI layers. Preserve shadowed declarations for provenance.
 //! See [`docs/environment.md`](../docs/environment.md#variable-precedence).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::env::Environment;
@@ -17,19 +18,25 @@ use crate::var::VarName;
 /// what a run did and this is the inputs it worked from.
 const DETAIL: u8 = 2;
 
+/// What a manifest's `[vars]` is named by. The leaf's answers to it alone; an
+/// included one is this and the inclusion that opened it.
+const MANIFEST_LABEL: &str = "batfiles.toml";
+
 /// Where a declaration came from. The order is the precedence order, lowest
 /// first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Origin {
+    /// The `[vars]` of a manifest one `include-remote` opened, reaching what
+    /// that inclusion contributed and nothing else. The label is the
+    /// inclusion's, not the remote's or the document's. One set holds at most
+    /// one of these.
+    IncludedManifest(String),
     /// The leaf repository's `[vars]`.
     Manifest,
     /// One `include-remote`'s own `vars` overrides, reaching what that
-    /// inclusion contributed and nothing else.
-    ///
-    /// The label is the record's rather than a field name, because two
-    /// inclusions writing overrides are two sources: what a report has to name
-    /// is which inclusion decided the value. One set holds at most one of
-    /// these, since an inclusion's scope is derived from the run's own.
+    /// inclusion contributed and nothing else. The label is the inclusion the
+    /// overrides were written on, since two inclusions writing overrides are
+    /// two sources. One set holds at most one of these.
     Inclusion(String),
     /// The machine-local `vars.toml`.
     Machine,
@@ -40,14 +47,27 @@ pub(crate) enum Origin {
 }
 
 impl Origin {
-    /// The document, input channel, or record to name in a report.
-    fn label(&self) -> &str {
+    /// The document, input channel, or record to name in a report. An included
+    /// manifest names both the document and the inclusion that opened it.
+    fn label(&self) -> Cow<'_, str> {
         match self {
-            Self::Manifest => "batfiles.toml",
-            Self::Inclusion(label) => label,
-            Self::Machine => "vars.toml",
-            Self::Environment => "BATFILES_VAR_*",
-            Self::CommandLine => "--var",
+            Self::IncludedManifest(label) => Cow::Owned(format!("{MANIFEST_LABEL} of {label}")),
+            Self::Manifest => Cow::Borrowed(MANIFEST_LABEL),
+            Self::Inclusion(label) => Cow::Borrowed(label),
+            Self::Machine => Cow::Borrowed("vars.toml"),
+            Self::Environment => Cow::Borrowed("BATFILES_VAR_*"),
+            Self::CommandLine => Cow::Borrowed("--var"),
+        }
+    }
+
+    /// The inclusion this layer was [derived](VarSet::with_inclusion) for, or
+    /// `None` for a layer of the run's own set. The label itself, not the
+    /// rendering [`Self::label`] wraps it in: this is what heads the block both
+    /// of an inclusion's layers are reported in.
+    fn inclusion(&self) -> Option<&str> {
+        match self {
+            Self::IncludedManifest(label) | Self::Inclusion(label) => Some(label),
+            _ => None,
         }
     }
 }
@@ -59,17 +79,22 @@ struct Layer {
     values: BTreeMap<VarName, String>,
 }
 
-/// The effective variable set for one run: every layer, lowest precedence
-/// first.
+/// Variable layers for one condition scope, stored in increasing precedence
+/// order. A run has its own; inclusions may derive their own scopes.
 #[derive(Debug)]
 pub(crate) struct VarSet {
     layers: Vec<Layer>,
 }
 
+/// Where an included remote's own `[vars]` goes: beneath every layer the run
+/// stacked.
+const REMOTE_LAYER: usize = 0;
+
 /// Where an inclusion's overrides go: directly above the leaf's `[vars]`, which
-/// is the position [`docs/environment.md`](../docs/environment.md#variable-precedence)
+/// once the remote's layer is beneath both is the third position. Both are the
+/// places [`docs/environment.md`](../docs/environment.md#variable-precedence)
 /// gives them.
-const INCLUSION_LAYER: usize = 1;
+const INCLUSION_LAYER: usize = 2;
 
 impl VarSet {
     /// Read the layers a run does not already hold, and stack all four.
@@ -124,17 +149,31 @@ impl VarSet {
         }
     }
 
-    /// The same layers with one inclusion's `vars` overrides above the leaf's
-    /// `[vars]`: the set every record that inclusion contributed is decided
-    /// against, in place of the run's own. `label` is how a report names the
-    /// inclusion.
+    /// The same layers with one inclusion's two of its own added: the included
+    /// remote's `[vars]` beneath them all, and the inclusion's `vars` overrides
+    /// above the leaf's `[vars]`. This is the scope every record that inclusion
+    /// contributed is decided against, in place of the run's own. `label` is how
+    /// a report names the inclusion, and names both layers.
     ///
-    /// Derived from the run's set rather than from another derived one, which is
-    /// the same rule that keeps inclusion one level deep: a set holds at most
-    /// one override layer. There is one of these per opened inclusion that wrote
-    /// overrides, not one per record it contributed.
-    pub fn with_inclusion(&self, overrides: &BTreeMap<VarName, String>, label: &str) -> Self {
+    /// Must be called on the run's own set rather than on another derived one:
+    /// a set holds at most one layer of each kind. One derived set per opened
+    /// inclusion, not one per record it contributed.
+    pub fn with_inclusion(
+        &self,
+        remote: &BTreeMap<VarName, String>,
+        overrides: &BTreeMap<VarName, String>,
+        label: &str,
+    ) -> Self {
         let mut layers = self.layers.clone();
+        // Lowest first, so the second insertion's index is read against a stack
+        // that already holds the first.
+        layers.insert(
+            REMOTE_LAYER,
+            Layer {
+                origin: Origin::IncludedManifest(label.to_owned()),
+                values: remote.clone(),
+            },
+        );
         layers.insert(
             INCLUSION_LAYER,
             Layer {
@@ -174,28 +213,40 @@ impl VarSet {
         self.report_lines("variables:", self.names(), reporter);
     }
 
-    /// Report what one inclusion's overrides did, under a heading naming the
-    /// inclusion: the names its own layer declares, and no others, so the block
-    /// is as long as the record is rather than as long as the run's set.
-    ///
-    /// A name a higher layer also declares is still listed, with that layer in
-    /// force: the override is what this block is about, and that it lost to
-    /// `vars.toml` is the thing worth seeing. A set with no override layer has
-    /// nothing of its own to say.
+    /// Report how one inclusion's scope differs from the run's set, at `-vv`
+    /// under a heading naming the inclusion: the names its own two layers
+    /// declare and no others, each with the layer in force, so a declaration a
+    /// higher layer beat is listed as having lost. A set no inclusion derived
+    /// produces no output.
     pub fn report_inclusion(&self, reporter: &Reporter) {
-        let Some(layer) = self.inclusion_layer() else {
+        let Some((heading, names)) = self.inclusion_block() else {
             return;
         };
-        let heading = format!("{} variables:", layer.origin.label());
-        self.report_lines(&heading, layer.values.keys().collect(), reporter);
+        self.report_lines(&heading, names, reporter);
     }
 
-    /// The override layer, for a set [derived](Self::with_inclusion) for one
-    /// inclusion.
-    fn inclusion_layer(&self) -> Option<&Layer> {
+    /// The heading and the names of that block, or `None` for a set no
+    /// inclusion derived.
+    fn inclusion_block(&self) -> Option<(String, BTreeSet<&VarName>)> {
+        let mut inclusion = None;
+        let mut names = BTreeSet::new();
+        for layer in self.derived_layers() {
+            // Both layers carry the same inclusion label, so either answers for
+            // the heading; it is that label rather than `Origin::label`'s
+            // rendering of it.
+            inclusion = layer.origin.inclusion();
+            names.extend(layer.values.keys());
+        }
+        Some((format!("{} variables:", inclusion?), names))
+    }
+
+    /// The layers [derived](Self::with_inclusion) for one inclusion: the
+    /// included remote's `[vars]` and the inclusion's own overrides, lowest
+    /// first. Empty for the run's own set.
+    fn derived_layers(&self) -> impl Iterator<Item = &Layer> {
         self.layers
             .iter()
-            .find(|layer| matches!(layer.origin, Origin::Inclusion(_)))
+            .filter(|layer| layer.origin.inclusion().is_some())
     }
 
     /// One `-vv` block: the heading, then a line for each name, indented under
@@ -259,7 +310,7 @@ impl VarSet {
         let (origin, winner) = declaring.next()?;
         let value = quoted_value(winner);
         let label = origin.label();
-        let shadowed: Vec<&str> = declaring.map(|(origin, _)| origin.label()).collect();
+        let shadowed: Vec<Cow<'_, str>> = declaring.map(|(origin, _)| origin.label()).collect();
         let over = if shadowed.is_empty() {
             String::new()
         } else {
@@ -511,24 +562,43 @@ mod tests {
         assert_eq!(winner(&set, "EDITOR"), ("vi".to_owned(), Origin::Machine));
     }
 
-    // What one inclusion's overrides do to the set.
+    // What one inclusion does to the set.
 
     /// The inclusion's own label, as `include_remote::label` spells one.
     const CORP: &str = "include-remote `corp`";
 
+    /// How a line names the `[vars]` of the manifest that inclusion opened.
+    const CORP_MANIFEST: &str = "batfiles.toml of include-remote `corp`";
+
     /// The set a record contributed by an inclusion writing `overrides` is
-    /// decided against.
+    /// decided against, where the remote it opened declared nothing of its own.
     fn derived<const N: usize>(base: &VarSet, overrides: [(&str, &str); N]) -> VarSet {
-        base.with_inclusion(&layer(overrides), CORP)
+        base.with_inclusion(&BTreeMap::new(), &layer(overrides), CORP)
+    }
+
+    /// The same, for an inclusion of a remote that declared `remote` in its own
+    /// `[vars]`.
+    fn derived_from<const M: usize, const N: usize>(
+        base: &VarSet,
+        remote: [(&str, &str); M],
+        overrides: [(&str, &str); N],
+    ) -> VarSet {
+        base.with_inclusion(&layer(remote), &layer(overrides), CORP)
     }
 
     /// The lines [`VarSet::report_inclusion`] would print, without a reporter to
-    /// print them to: the names the override layer declares and nothing else.
+    /// print them to: the names the inclusion's two layers declare and nothing
+    /// else.
     fn override_lines(set: &VarSet) -> Vec<String> {
-        let Some(layer) = set.inclusion_layer() else {
-            return Vec::new();
-        };
-        set.lines_for(layer.values.keys().collect())
+        match set.inclusion_block() {
+            Some((_, names)) => set.lines_for(names),
+            None => Vec::new(),
+        }
+    }
+
+    /// The heading that block is printed under.
+    fn block_heading(set: &VarSet) -> Option<String> {
+        set.inclusion_block().map(|(heading, _)| heading)
     }
 
     #[test]
@@ -612,6 +682,114 @@ mod tests {
         let set = derived(&stacked([("a", "1")], [], [], []), []);
         assert!(override_lines(&set).is_empty());
         assert_eq!(set.get("a"), Some("1"));
+    }
+
+    // What the included remote's own `[vars]` does to the set.
+
+    #[test]
+    fn an_included_remotes_vars_lose_to_every_other_layer() {
+        // The lowest layer, read against all five above it: a leaf composing a
+        // remote overrides what it declares without having to know it is there.
+        let base = stacked(
+            [("b", "leaf")],
+            [("c", "machine")],
+            [("d", "environment")],
+            [("e", "cli")],
+        );
+        let set = derived_from(
+            &base,
+            [
+                ("a", "remote"),
+                ("b", "remote"),
+                ("c", "remote"),
+                ("d", "remote"),
+                ("e", "remote"),
+            ],
+            [("a", "corp")],
+        );
+        assert_eq!(
+            winner(&set, "a"),
+            ("corp".to_owned(), Origin::Inclusion(CORP.to_owned()))
+        );
+        assert_eq!(winner(&set, "b"), ("leaf".to_owned(), Origin::Manifest));
+        assert_eq!(winner(&set, "c"), ("machine".to_owned(), Origin::Machine));
+        assert_eq!(
+            winner(&set, "d"),
+            ("environment".to_owned(), Origin::Environment)
+        );
+        assert_eq!(winner(&set, "e"), ("cli".to_owned(), Origin::CommandLine));
+    }
+
+    #[test]
+    fn an_included_remotes_declaration_stands_where_nothing_overrides_it() {
+        // What the layer is for: a remote's records decide against the values
+        // that remote wrote, wherever the machine it is being installed on has
+        // nothing to say about them.
+        let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
+        assert_eq!(
+            winner(&set, "profile"),
+            ("work".to_owned(), Origin::IncludedManifest(CORP.to_owned()))
+        );
+        assert!(shadowed(&set, "profile").is_empty());
+    }
+
+    #[test]
+    fn an_included_remotes_vars_stay_inside_the_scope_they_were_read_into() {
+        // The leaf's own records, and a second inclusion's, are decided against
+        // sets that never saw this remote's declarations.
+        let base = stacked([], [], [], []);
+        let corp = derived_from(&base, [("profile", "work")], []);
+        let other = derived_from(&base, [("profile", "lab")], []);
+        assert_eq!(base.get("profile"), None);
+        assert_eq!(corp.get("profile"), Some("work"));
+        assert_eq!(other.get("profile"), Some("lab"));
+    }
+
+    #[test]
+    fn a_remotes_declaration_is_listed_under_the_inclusion_that_opened_it() {
+        // `batfiles.toml` alone names three documents in a run including two
+        // remotes, so the line names the inclusion the block is headed by.
+        let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
+        assert_eq!(
+            override_lines(&set),
+            [format!("profile = \"work\" ({CORP_MANIFEST})")]
+        );
+    }
+
+    #[test]
+    fn a_remotes_declaration_the_leaf_overrode_reads_as_having_lost() {
+        // Both layers' names are in the block, and each line names the layer in
+        // force: this is what a leaf composing a remote looks like from inside
+        // the scope.
+        let base = stacked([("profile", "personal")], [], [], []);
+        let set = derived_from(&base, [("profile", "work"), ("editor", "vi")], []);
+        assert_eq!(
+            override_lines(&set),
+            [
+                format!("editor  = \"vi\" ({CORP_MANIFEST})"),
+                format!("profile = \"personal\" (batfiles.toml; over {CORP_MANIFEST})"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_block_is_headed_by_the_inclusion_and_not_by_either_document() {
+        // Both layers are named for the inclusion, and one of them renders that
+        // name as a document: the heading is the inclusion's own label, so the
+        // block is not headed `batfiles.toml of include-remote `corp``.
+        let set = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
+        assert_eq!(block_heading(&set), Some(format!("{CORP} variables:")));
+        assert_eq!(block_heading(&stacked([("a", "1")], [], [], [])), None);
+    }
+
+    #[test]
+    fn an_inclusion_overriding_nothing_still_reports_what_its_remote_declared() {
+        // The block is the account of how this scope differs from the run's
+        // set, and a remote declaring variables of its own is a difference
+        // whether or not the leaf wrote anything on the record.
+        let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
+        assert_eq!(set.derived_layers().count(), 2);
+        assert!(!override_lines(&set).is_empty());
     }
 
     // What `-vv` shows.

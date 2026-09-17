@@ -441,31 +441,39 @@ variables:
   profile = "work" (vars.toml; over batfiles.toml)
 ```
 
-An [inclusion](repoformat.md#variables-for-one-inclusion) writing `vars` of its
-own reports them in a block of their own, named for the inclusion and listing
-only the names it declared. The block appears where the inclusion was opened, as
-the run's list is assembled, so it comes before the action lines rather than
-beside the one that contributed a record:
+An [inclusion](repoformat.md#include-remote) reports a block of its own, named
+for the inclusion and listing only the names its two layers declared — the
+[`vars`](repoformat.md#variables-for-one-inclusion) written on the record, and
+the [`[vars]`](repoformat.md#variables-an-included-remote-declares) the remote
+declared for itself. The block appears where the inclusion was opened, as the
+run's list is assembled, so it comes before the action lines rather than beside
+the one that contributed a record:
 
 ```console
 $ batfiles sync -vv
 variables:
   profile = "personal" (batfiles.toml)
 include-remote `corp` variables:
+  editor  = "vim" (batfiles.toml of include-remote `corp`)
   profile = "work" (include-remote `corp`; over batfiles.toml)
 include-remote corp
 create-dir corp.work-tools
 ```
 
-A name the machine or the command line also declares is listed with the layer in
-force, so an override that lost reads as having lost:
+An origin reading `batfiles.toml of <inclusion>` is the included manifest's own
+`[vars]`, which the bare document name would not tell from the leaf's or from a
+second remote's.
+
+A name a higher layer also declares is listed with the layer in force, so a
+declaration that lost reads as having lost:
 
 ```text
 profile = "lab" (vars.toml; over include-remote `corp`, batfiles.toml)
+profile = "personal" (batfiles.toml; over batfiles.toml of include-remote `corp`)
 ```
 
-An inclusion this run did not open, and one that overrode nothing, report no
-block.
+An inclusion this run did not open reports no block, and neither does one whose
+record overrode nothing and whose remote declared nothing.
 
 Both listings explicitly print values; mutation reports name only the key to
 avoid disclosing values incidentally. `vars get` supplies a bare persisted value
@@ -476,9 +484,10 @@ The listing resolves the leaf repository's `[vars]`, `vars.toml`, and
 `vars list` does not accept `--var`. It does not list the `facts.*` or `env.*`
 namespaces; those are accessed through [conditions](repoformat.md#conditions).
 It also does not list what an
-[inclusion](repoformat.md#variables-for-one-inclusion) overrides: those values
-hold inside one inclusion's records rather than in the set this command lists,
-and an action command's `-vv` output is where they are reported.
+[inclusion](repoformat.md#variables-for-one-inclusion) overrides or what an
+[included remote declares](repoformat.md#variables-an-included-remote-declares):
+those values hold inside one inclusion's records rather than in the set this
+command lists, and an action command's `-vv` output is where they are reported.
 
 | Option           | Purpose                                                          |
 |------------------|--------------------------------------------------------------------|
