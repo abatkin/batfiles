@@ -16,6 +16,7 @@ mod groups;
 mod inclusion;
 mod inclusion_addresses;
 mod inclusion_filters;
+mod inclusion_vars;
 mod locations;
 mod manifest;
 mod remotes;

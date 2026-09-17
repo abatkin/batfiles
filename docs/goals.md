@@ -60,8 +60,9 @@ The stable bootstrap experience, *intended*, has three pieces:
 - Let a leaf repository splice a Git remote's actions into its own ordered
   action list ([`include-remote`](repoformat.md#include-remote)), taking all of
   them or [part of one](repoformat.md#selecting-part-of-a-remote), with
-  per-inclusion variables
-  (*intended*: [the field it will also take](future/repoformat.md#include-remote)).
+  [per-inclusion variables](repoformat.md#variables-for-one-inclusion)
+  (*intended*: [the remote's own `[vars]` beneath the
+  leaf's](future/environment.md#runtime-variable-precedence)).
 - Resolve every repository-backed source path against exactly one repository;
   never implicitly merge or search all sources.
 

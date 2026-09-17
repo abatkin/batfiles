@@ -19,10 +19,18 @@ const DETAIL: u8 = 2;
 
 /// Where a declaration came from. The order is the precedence order, lowest
 /// first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Origin {
     /// The leaf repository's `[vars]`.
     Manifest,
+    /// One `include-remote`'s own `vars` overrides, reaching what that
+    /// inclusion contributed and nothing else.
+    ///
+    /// The label is the record's rather than a field name, because two
+    /// inclusions writing overrides are two sources: what a report has to name
+    /// is which inclusion decided the value. One set holds at most one of
+    /// these, since an inclusion's scope is derived from the run's own.
+    Inclusion(String),
     /// The machine-local `vars.toml`.
     Machine,
     /// A `BATFILES_VAR_*` variable in this run's environment.
@@ -32,10 +40,11 @@ pub(crate) enum Origin {
 }
 
 impl Origin {
-    /// The document or input channel to name in a report.
-    fn label(self) -> &'static str {
+    /// The document, input channel, or record to name in a report.
+    fn label(&self) -> &str {
         match self {
             Self::Manifest => "batfiles.toml",
+            Self::Inclusion(label) => label,
             Self::Machine => "vars.toml",
             Self::Environment => "BATFILES_VAR_*",
             Self::CommandLine => "--var",
@@ -44,7 +53,7 @@ impl Origin {
 }
 
 /// One source and everything it declared.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Layer {
     origin: Origin,
     values: BTreeMap<VarName, String>,
@@ -56,6 +65,11 @@ struct Layer {
 pub(crate) struct VarSet {
     layers: Vec<Layer>,
 }
+
+/// Where an inclusion's overrides go: directly above the leaf's `[vars]`, which
+/// is the position [`docs/environment.md`](../docs/environment.md#variable-precedence)
+/// gives them.
+const INCLUSION_LAYER: usize = 1;
 
 impl VarSet {
     /// Read the layers a run does not already hold, and stack all four.
@@ -110,6 +124,27 @@ impl VarSet {
         }
     }
 
+    /// The same layers with one inclusion's `vars` overrides above the leaf's
+    /// `[vars]`: the set every record that inclusion contributed is decided
+    /// against, in place of the run's own. `label` is how a report names the
+    /// inclusion.
+    ///
+    /// Derived from the run's set rather than from another derived one, which is
+    /// the same rule that keeps inclusion one level deep: a set holds at most
+    /// one override layer. There is one of these per opened inclusion that wrote
+    /// overrides, not one per record it contributed.
+    pub fn with_inclusion(&self, overrides: &BTreeMap<VarName, String>, label: &str) -> Self {
+        let mut layers = self.layers.clone();
+        layers.insert(
+            INCLUSION_LAYER,
+            Layer {
+                origin: Origin::Inclusion(label.to_owned()),
+                values: overrides.clone(),
+            },
+        );
+        Self { layers }
+    }
+
     /// The highest-precedence value, or `None` if no layer declares the name.
     /// A declared empty string is a value. The result borrows only from the set.
     pub fn get<'a>(&'a self, name: &str) -> Option<&'a str> {
@@ -118,11 +153,11 @@ impl VarSet {
 
     /// Declarations of arbitrary `name` text, highest precedence first.
     /// Returns an empty iterator if no layer declares it.
-    fn declaring<'a>(&'a self, name: &str) -> impl Iterator<Item = (Origin, &'a str)> {
+    fn declaring<'a>(&'a self, name: &str) -> impl Iterator<Item = (&'a Origin, &'a str)> {
         self.layers
             .iter()
             .rev()
-            .filter_map(move |layer| Some((layer.origin, layer.values.get(name)?.as_str())))
+            .filter_map(move |layer| Some((&layer.origin, layer.values.get(name)?.as_str())))
     }
 
     /// Every name any layer declared, in order and without repeats.
@@ -136,14 +171,44 @@ impl VarSet {
     /// Report effective values and origins at `-vv`, indented under a heading.
     /// An empty set produces no output. Values are quoted for single-line output.
     pub fn report(&self, reporter: &Reporter) {
+        self.report_lines("variables:", self.names(), reporter);
+    }
+
+    /// Report what one inclusion's overrides did, under a heading naming the
+    /// inclusion: the names its own layer declares, and no others, so the block
+    /// is as long as the record is rather than as long as the run's set.
+    ///
+    /// A name a higher layer also declares is still listed, with that layer in
+    /// force: the override is what this block is about, and that it lost to
+    /// `vars.toml` is the thing worth seeing. A set with no override layer has
+    /// nothing of its own to say.
+    pub fn report_inclusion(&self, reporter: &Reporter) {
+        let Some(layer) = self.inclusion_layer() else {
+            return;
+        };
+        let heading = format!("{} variables:", layer.origin.label());
+        self.report_lines(&heading, layer.values.keys().collect(), reporter);
+    }
+
+    /// The override layer, for a set [derived](Self::with_inclusion) for one
+    /// inclusion.
+    fn inclusion_layer(&self) -> Option<&Layer> {
+        self.layers
+            .iter()
+            .find(|layer| matches!(layer.origin, Origin::Inclusion(_)))
+    }
+
+    /// One `-vv` block: the heading, then a line for each name, indented under
+    /// it. Nothing at all where no name has a line or the detail is not shown.
+    fn report_lines(&self, heading: &str, names: BTreeSet<&VarName>, reporter: &Reporter) {
         if !reporter.shows_detail(DETAIL) {
             return;
         }
-        let lines = self.lines();
+        let lines = self.lines_for(names);
         if lines.is_empty() {
             return;
         }
-        reporter.detail(DETAIL, "variables:");
+        reporter.detail(DETAIL, heading);
         for line in lines {
             reporter.detail(DETAIL, &format!("  {line}"));
         }
@@ -164,7 +229,12 @@ impl VarSet {
 
     /// One line for every name any layer declared.
     fn lines(&self) -> Vec<String> {
-        let names = self.names();
+        self.lines_for(self.names())
+    }
+
+    /// One line for each of `names`, aligned against each other: a block is as
+    /// wide as the names in it rather than as wide as the set they came from.
+    fn lines_for(&self, names: BTreeSet<&VarName>) -> Vec<String> {
         let width = names
             .iter()
             .map(|name| name.as_str().len())
@@ -266,14 +336,14 @@ mod tests {
             .next()
             .expect("some layer should declare it");
         // The same value `get` answers with, which is asserted below.
-        (value.to_owned(), origin)
+        (value.to_owned(), origin.clone())
     }
 
     /// The layers that value overrode, highest first.
     fn shadowed(set: &VarSet, key: &str) -> Vec<Origin> {
         set.declaring(key)
             .skip(1)
-            .map(|(origin, _)| origin)
+            .map(|(origin, _)| origin.clone())
             .collect()
     }
 
@@ -439,6 +509,109 @@ mod tests {
             ("nvim".to_owned(), Origin::Manifest)
         );
         assert_eq!(winner(&set, "EDITOR"), ("vi".to_owned(), Origin::Machine));
+    }
+
+    // What one inclusion's overrides do to the set.
+
+    /// The inclusion's own label, as `include_remote::label` spells one.
+    const CORP: &str = "include-remote `corp`";
+
+    /// The set a record contributed by an inclusion writing `overrides` is
+    /// decided against.
+    fn derived<const N: usize>(base: &VarSet, overrides: [(&str, &str); N]) -> VarSet {
+        base.with_inclusion(&layer(overrides), CORP)
+    }
+
+    /// The lines [`VarSet::report_inclusion`] would print, without a reporter to
+    /// print them to: the names the override layer declares and nothing else.
+    fn override_lines(set: &VarSet) -> Vec<String> {
+        let Some(layer) = set.inclusion_layer() else {
+            return Vec::new();
+        };
+        set.lines_for(layer.values.keys().collect())
+    }
+
+    #[test]
+    fn an_override_beats_the_leaf_and_loses_to_the_machine() {
+        // The position the layer is inserted at, read from both sides: the leaf
+        // `[vars]` an inclusion may override, and the three layers no inclusion
+        // reaches past.
+        let base = stacked(
+            [("a", "leaf"), ("b", "leaf"), ("c", "leaf"), ("d", "leaf")],
+            [("b", "machine")],
+            [("c", "environment")],
+            [("d", "cli")],
+        );
+        let set = derived(
+            &base,
+            [("a", "corp"), ("b", "corp"), ("c", "corp"), ("d", "corp")],
+        );
+        assert_eq!(
+            winner(&set, "a"),
+            ("corp".to_owned(), Origin::Inclusion(CORP.to_owned()))
+        );
+        assert_eq!(winner(&set, "b"), ("machine".to_owned(), Origin::Machine));
+        assert_eq!(
+            winner(&set, "c"),
+            ("environment".to_owned(), Origin::Environment)
+        );
+        assert_eq!(winner(&set, "d"), ("cli".to_owned(), Origin::CommandLine));
+    }
+
+    #[test]
+    fn an_override_adds_a_name_no_other_layer_declares() {
+        let set = derived(&stacked([], [], [], []), [("profile", "work")]);
+        assert_eq!(set.get("profile"), Some("work"));
+        assert!(shadowed(&set, "profile").is_empty());
+    }
+
+    #[test]
+    fn deriving_a_scope_leaves_the_runs_own_set_alone() {
+        // Two inclusions writing different overrides are two scopes, and both
+        // are derived from the same set: one of them changing it would decide
+        // the other's records, and the leaf's.
+        let base = stacked([("profile", "personal")], [], [], []);
+        let work = derived(&base, [("profile", "work")]);
+        let other = derived(&base, [("profile", "lab")]);
+        assert_eq!(base.get("profile"), Some("personal"));
+        assert_eq!(work.get("profile"), Some("work"));
+        assert_eq!(other.get("profile"), Some("lab"));
+    }
+
+    #[test]
+    fn an_override_block_lists_the_names_the_inclusion_declared() {
+        // Only those: the block is as long as the record is, rather than
+        // repeating the whole set under every inclusion.
+        let base = stacked([("editor", "vi"), ("profile", "personal")], [], [], []);
+        let set = derived(&base, [("profile", "work")]);
+        assert_eq!(
+            override_lines(&set),
+            ["profile = \"work\" (include-remote `corp`; over batfiles.toml)"]
+        );
+    }
+
+    #[test]
+    fn an_override_a_higher_layer_beat_is_listed_with_the_layer_that_won() {
+        // The reason such a name stays in the block: that the override lost to
+        // `vars.toml` is the thing worth seeing.
+        let base = stacked([("profile", "personal")], [("profile", "machine")], [], []);
+        let set = derived(&base, [("profile", "work")]);
+        assert_eq!(
+            override_lines(&set),
+            ["profile = \"machine\" (vars.toml; over include-remote `corp`, batfiles.toml)"]
+        );
+    }
+
+    #[test]
+    fn a_set_no_inclusion_derived_has_no_block_of_its_own() {
+        assert!(override_lines(&stacked([("a", "1")], [], [], [])).is_empty());
+    }
+
+    #[test]
+    fn an_override_map_declaring_nothing_has_nothing_to_report() {
+        let set = derived(&stacked([("a", "1")], [], [], []), []);
+        assert!(override_lines(&set).is_empty());
+        assert_eq!(set.get("a"), Some("1"));
     }
 
     // What `-vv` shows.

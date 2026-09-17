@@ -72,10 +72,11 @@ That a variable is read only by a condition, and that a static `[vars]` value is
 a string and nothing else, are specified in
 [`docs/repoformat.md`](../repoformat.md#variables). The persisted machine-local
 layer follows the same rule and is built; its document is specified in
-[`docs/state.md`](../state.md#varstoml-machine-local-variables). The rule extends
-to every remaining layer that can produce a variable, none of which is built:
-per-inclusion overrides and dynamic-command results are strings too, and batfiles
-does not infer types from their contents.
+[`docs/state.md`](../state.md#varstoml-machine-local-variables). An inclusion's
+[`vars`](../repoformat.md#variables-for-one-inclusion) follow it and are built
+too. The rule extends to the layers that are not: an included remote's own
+`[vars]` and dynamic-command results are strings as well, and batfiles does not
+infer types from their contents.
 
 The one exception is built and specified with the
 [truthiness table](../repoformat.md#truthiness): a condition is where a string
@@ -401,22 +402,15 @@ file remotes at step 9.3.
 
 The record, its required `remote`, the manifest it reads, the actions it splices
 into the list, how those are addressed, the four selection fields that say which
-of them it takes, what it does with a remote that is excluded or not
-materialized, and the rule that an inclusion is never applyable are built and
-specified in [`docs/repoformat.md`](../repoformat.md#include-remote). What is not
-built is the one field below, refused as an unknown field until its step.
+of them it takes, its `vars` overrides and what they reach, what it does with a
+remote that is excluded or not materialized, and the rule that an inclusion is
+never applyable are built and specified in
+[`docs/repoformat.md`](../repoformat.md#include-remote). Every field the record
+accepts is built; what is outstanding is below.
 
-```toml
-[[actions]]
-type = "include-remote"
-id = "core"
-remote = "core"
-vars = { profile = "personal" }
-```
-
-| Field  | Type                  | Step | Description                       |
-|--------|-----------------------|:----:|-----------------------------------|
-| `vars` | `map<string, string>` | 7.4  | Per-inclusion variable overrides. |
+An included remote's own `[vars]` is read and takes no part in any scope yet. It
+becomes the layer beneath the leaf's at step 7.5, where the two need
+[origins](environment.md#runtime-variable-precedence) that tell them apart.
 
 One thing about `remote` is also outstanding: naming a declared `file` or
 `archive` remote must be invalid configuration. Both types are refused by name as

@@ -13,6 +13,7 @@ use crate::clone_list::Entry;
 use crate::condition::{Condition, Gate};
 use crate::item::{ItemAddress, ItemId, ItemIdList};
 use crate::repo_path::RepoPath;
+use crate::var::VarName;
 
 /// One entry of `[[actions]]`.
 #[derive(Debug, Deserialize)]
@@ -418,10 +419,6 @@ pub(crate) struct GitCloneListAction {
 
 /// `include-remote`: the actions another repository declares, taken into this
 /// one at this position in the list.
-///
-/// The record is closed over the fields below, so the `vars` overrides
-/// `docs/future/repoformat.md` gives it are refused as an unknown field until
-/// step 7.4 builds them.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct IncludeRemoteAction {
@@ -451,6 +448,20 @@ pub(crate) struct IncludeRemoteAction {
     pub install_groups: Option<ItemIdList>,
     pub exclude_actions: Option<ItemIdList>,
     pub exclude_groups: Option<ItemIdList>,
+
+    /// Variable values for what this inclusion contributes, and for nothing
+    /// else: the leaf saying what the remote's conditions should decide against
+    /// on this machine.
+    ///
+    /// Read exactly as a manifest's own [`[vars]`](crate::manifest::Manifest::vars)
+    /// is, so a name that breaks [`VarName`]'s rule and a value that is not a
+    /// string each fail the document at the line they are written on. Where they
+    /// sit among the layers is
+    /// [`docs/environment.md`](../../docs/environment.md#variable-precedence)'s
+    /// rule and [`VarSet::with_inclusion`](crate::var_set::VarSet::with_inclusion)'s
+    /// job; an empty map is a record that overrides nothing.
+    #[serde(default)]
+    pub vars: BTreeMap<VarName, String>,
 }
 
 #[cfg(test)]
@@ -517,18 +528,52 @@ mod tests {
     }
 
     #[test]
-    fn an_inclusion_is_closed_over_the_fields_it_accepts_so_far() {
-        // Specified for the record in `docs/future/repoformat.md` and arriving
-        // with the step that reads it, which is what an unknown field says
-        // about it until then.
-        let document =
-            "type = \"include-remote\"\nremote = \"core\"\nvars = { profile = \"personal\" }\n";
-        let error = toml::from_str::<Action>(document)
-            .expect_err("a closed record should reject the field");
-        assert!(
-            error.to_string().contains("unknown field `vars`"),
-            "{error}"
+    fn an_inclusions_overrides_are_read_as_names_and_string_values() {
+        let Action::IncludeRemote(inclusion) =
+            parse_inclusion("vars = { profile = \"work\", editor = \"vi\" }\n")
+        else {
+            panic!("the record should be an inclusion");
+        };
+        assert_eq!(
+            inclusion.vars,
+            BTreeMap::from([
+                (var("editor"), "vi".to_owned()),
+                (var("profile"), "work".to_owned()),
+            ])
         );
+    }
+
+    #[test]
+    fn an_inclusion_writing_no_overrides_overrides_nothing() {
+        // The default a record without the field gets, which is also what an
+        // empty table says: the inclusion contributes actions and leaves the
+        // run's variables as they are.
+        for record in ["", "vars = {}\n"] {
+            let Action::IncludeRemote(inclusion) = parse_inclusion(record) else {
+                panic!("the record should be an inclusion");
+            };
+            assert!(inclusion.vars.is_empty(), "`{record}` declared a variable");
+        }
+    }
+
+    #[test]
+    fn an_override_follows_the_rules_a_manifests_own_vars_follow() {
+        // Both settled by serde as the document is read, which is why nothing
+        // re-checks either: a name the variable rule refuses, and a value that
+        // is not a string.
+        for (document, expected) in [
+            (
+                "vars = { \"has space\" = \"1\" }\n",
+                "must start with a letter or underscore",
+            ),
+            ("vars = { facts = \"1\" }\n", "reserved"),
+            ("vars = { rank = 9 }\n", "expected a string"),
+        ] {
+            let record = format!("type = \"include-remote\"\nremote = \"core\"\n{document}");
+            let error =
+                toml::from_str::<Action>(&record).expect_err("the record should be refused");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
     }
 
     #[test]
@@ -561,6 +606,10 @@ mod tests {
 
     fn item(id: &str) -> ItemId {
         ItemId::try_from(id.to_owned()).expect("valid ID")
+    }
+
+    fn var(name: &str) -> VarName {
+        VarName::try_from(name.to_owned()).expect("valid name")
     }
 
     #[test]

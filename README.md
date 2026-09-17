@@ -57,7 +57,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   with paths such as `@core/files/zshrc`. `include-remote` takes the actions a
   remote's own manifest declares into the list at its position, addressable as
   `corp.zshrc`, either all of them or the ones its `install-actions`,
-  `install-groups`, `exclude-actions`, and `exclude-groups` select. See
+  `install-groups`, `exclude-actions`, and `exclude-groups` select, and its
+  `vars` say what the remote's conditions read for this inclusion. See
   [remotes](docs/repoformat.md#remotes) and
   [include-remote](docs/repoformat.md#include-remote); add `remotes/` to your
   `.gitignore`.
@@ -72,8 +73,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   in `disabled.toml`; skip options and environment variables apply to one run.
   See [selection](docs/cmdline.md#selecting-what-a-run-does).
 - **Configure variables and conditions.** `vars set`, `get`, `unset`, and `list`
-  manage or inspect variables. Manifest defaults, machine values, environment
-  variables, and CLI overrides follow the [variable precedence rules](docs/environment.md#variable-precedence).
+  manage or inspect variables. Manifest defaults, per-inclusion overrides,
+  machine values, environment variables, and CLI overrides follow the
+  [variable precedence rules](docs/environment.md#variable-precedence).
   Actions, clone-list entries, and remotes accept [`when` or `unless`](docs/repoformat.md#conditions).
 - **Validate declarations.** Invalid manifests fail when read, under the
   [manifest validation rules](docs/repoformat.md#reading-the-manifest).

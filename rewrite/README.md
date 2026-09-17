@@ -3,8 +3,9 @@
 Slices 0–6 provide local installation, selection, dry-run, fetching, Git clone
 actions, variables and conditions, and Git remote materialization. Slice 7 is
 under way: an `include-remote` contributes a remote's actions to the run's list,
-they are addressed under it, and its four selection filters say which of them it
-takes, while per-inclusion variables and scopes remain unbuilt.
+they are addressed under it, its four selection filters say which of them it
+takes, and its `vars` decide the conditions of what it contributed. What remains
+is the layer an included remote's own `[vars]` adds beneath the leaf's.
 [steps.md](steps.md) tracks remaining implementation work.
 
 ## Acceptance repositories

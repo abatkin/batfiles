@@ -276,8 +276,9 @@ impl std::error::Error for ConditionError {}
 /// specifies.
 ///
 /// These are the same for every condition in one invocation, which is what
-/// separates them from the `vars` namespace [`Bindings`] builds: that one
-/// varies with the variable set, and will vary per inclusion at 7.5.
+/// separates them from the `vars` namespace [`Bindings`] builds: that one varies
+/// with the variable set, and an inclusion writing `vars` puts the records it
+/// contributes in a set of their own.
 ///
 /// Captured once because [`facts`] is not as cheap as it looks — three of the
 /// four are compile-time constants, but the host name is a syscall — and

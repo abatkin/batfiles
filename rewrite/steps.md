@@ -91,10 +91,12 @@ No inclusion of remote actions yet.
 - **7.2** ✅ Splice included actions into declaration order and address them
   under their inclusion.
 - **7.3** ✅ Add inclusion action/group selection filters.
-- **7.4** Add per-inclusion variable overrides.
-- **7.5** Add per-inclusion scopes and layered precedence. A reported variable
-  origin must tell one inclusion's `[vars]` from another's and from the leaf's,
-  which the bare document name no longer does; use 7.7's display label.
+- **7.4** ✅ Add per-inclusion variable overrides, each reaching the records its
+  inclusion contributed.
+- **7.5** Layer an included remote's own `[vars]` beneath the leaf's, in the
+  scopes 7.4 built. A reported variable origin must tell one remote's `[vars]`
+  from another's and from the leaf's, which the bare document name does not;
+  use 7.7's display label.
 - **7.6** Ignore an included remote's own `[remotes]`, which is what is left of
   one-level inclusion: 7.1 refuses an included action whose source names a
   remote, and 7.2 drops an included `include-remote` with a reported line.

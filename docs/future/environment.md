@@ -31,11 +31,11 @@ Existing [location rules](../environment.md#location-selection) apply.
 
 ### Runtime variable precedence
 
-The four leaf layers and the order they override each other in are built, and
-specified in [the environment
-reference](../environment.md#variable-precedence). What is proposed here is the
-rest: the layers an included remote adds, and how a declaration that yields no
-value behaves.
+The layers a run stacks, including the per-inclusion overrides an
+`include-remote` writes and what they reach, are built and specified in [the
+environment reference](../environment.md#variable-precedence). What is proposed
+here is the rest: the layer an included remote's own `[vars]` adds, and how a
+declaration that yields no value behaves.
 
 For actions spliced from an included remote, precedence is:
 
@@ -47,6 +47,12 @@ remote [vars]
 < BATFILES_VAR_*
 < one-shot --var
 ```
+
+Only the first line of that is outstanding. A remote's own declarations are the
+lowest layer, so a leaf composing the remote overrides them without having to
+know they are there. Reporting them needs an origin that tells one inclusion's
+`[vars]` from another's and from the leaf's, which the document name
+`batfiles.toml` no longer does on its own.
 
 All values follow the repository format's shared [string-valued variable
 model](repoformat.md#string-valued-variables). Any coercion during condition

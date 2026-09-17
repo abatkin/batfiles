@@ -103,10 +103,11 @@ error.
 
 ## Variable precedence
 
-Four layers can declare a user variable. Each overrides the ones before it:
+Layers can declare a user variable. Each overrides the ones before it:
 
 ```text
 leaf [vars]
+< include-remote vars overrides
 < persisted machine-local vars.toml
 < BATFILES_VAR_*
 < one-shot --var
@@ -119,6 +120,15 @@ layer's empty value overrides a lower layer's non-empty one. Repeating `--var`
 for one key is the same rule applied within a layer, so the last value written
 wins.
 
+**The second layer is written per inclusion, and reaches only what that
+inclusion contributed.** The set a leaf repository's own records are decided
+against has four layers; a record an
+[`include-remote`](repoformat.md#include-remote) contributed is decided against
+the same set with that inclusion's [`vars`](repoformat.md#variables-for-one-inclusion)
+inserted above the leaf's `[vars]`. So two inclusions of one remote can get
+different answers out of it, while nothing either of them writes reaches the
+leaf's own records, the inclusion's own condition, or the remote's.
+
 Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables),
 a malformed or unreadable one now fails these commands as a malformed manifest
 does.
@@ -127,8 +137,9 @@ The merged set supplies [condition](repoformat.md#conditions) values. Use
 `vars list` or an action command's `-vv` output to inspect values and origins;
 the command reference owns the [listing format](cmdline.md#vars-list).
 
-Actions spliced from an included remote will add layers of their own, specified
-in [`future/environment.md`](future/environment.md#runtime-variable-precedence).
+An included remote's own `[vars]` will add one more layer, beneath the leaf's,
+specified in
+[`future/environment.md`](future/environment.md#runtime-variable-precedence).
 
 ## Host facts in conditions
 

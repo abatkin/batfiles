@@ -115,8 +115,12 @@ layer they would have to account for:
   It says not to run dynamic commands or write the cache, and to show available
   cached state as fresh, stale, or missing — none of which exists to be shown.
   It has no additional effect alongside `--machine-only`, which reads neither.
-- A listing shows the leaf repository's variables. A remote's arrive with
-  per-inclusion scopes at 7.5, whose labels a line would have to name.
+- A listing shows the leaf repository's flat set, which is
+  [specified](../cmdline.md#vars-list) and deliberately leaves out what an
+  inclusion overrides: those values hold inside one inclusion's records, and an
+  action command's `-vv` output reports them. Whether a listing should grow a
+  section per inclusion is open, and a remote's own `[vars]` arrive at 7.5,
+  whose labels such a line would have to name.
 
 `vars refresh`, below, is the rest of the family.
 

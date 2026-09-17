@@ -836,13 +836,14 @@ install-groups = ["shell"]
 exclude-actions = ["p10k"]
 ```
 
-| Field             | Type               | Required | Description                                       |
-|-------------------|--------------------|:--------:|---------------------------------------------------|
-| `remote`          | ID                 |   yes    | A [remote](#remotes) this same manifest declares. |
-| `install-actions` | ID or list of IDs  |    no    | Take only the actions named.                      |
-| `install-groups`  | ID or list of IDs  |    no    | Take only the actions naming these groups.        |
-| `exclude-actions` | ID or list of IDs  |    no    | Leave out the actions named.                      |
-| `exclude-groups`  | ID or list of IDs  |    no    | Leave out the actions naming these groups.        |
+| Field             | Type                  | Required | Description                                             |
+|-------------------|-----------------------|:--------:|---------------------------------------------------------|
+| `remote`          | ID                    |   yes    | A [remote](#remotes) this same manifest declares.       |
+| `install-actions` | ID or list of IDs     |    no    | Take only the actions named.                            |
+| `install-groups`  | ID or list of IDs     |    no    | Take only the actions naming these groups.              |
+| `exclude-actions` | ID or list of IDs     |    no    | Leave out the actions named.                            |
+| `exclude-groups`  | ID or list of IDs     |    no    | Leave out the actions naming these groups.              |
+| `vars`            | map of name to string |    no    | [Values](#variables-for-one-inclusion) for what it takes. |
 
 **`remote` names a declaration, not a URL.** It must be a key of `[remotes]` in
 the manifest writing the inclusion; naming one nothing declares is refused as the
@@ -900,10 +901,6 @@ what it brought in, and a disable, a skip, or a closed condition on it leaves th
 included manifest unread. An unqualified name reaches the leaf repository alone;
 the qualified spelling is the finer way to reach one contributed record.
 
-The per-inclusion `vars` overrides the record will also take are specified in
-[`future/repoformat.md`](future/repoformat.md#include-remote) and refused as an
-unknown field until step 7.4.
-
 #### Selecting part of a remote
 
 The four selection fields say which of the remote's actions this inclusion
@@ -957,6 +954,47 @@ never satisfies the other's filter.
 ```text
 warning: include-remote `corp`: install-actions `nowhere` matched no action in remote `corporate`
 ```
+
+#### Variables for one inclusion
+
+`vars` declares [variable](#variables) values for what this inclusion
+contributes: the leaf saying what it is including the remote *for*, so that the
+conditions the remote wrote decide the way this repository wants them decided.
+
+```toml
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+vars = { profile = "work" }
+```
+
+Names and values follow the rules `[vars]` follows, checked as the document is
+read: a name the [variable rule](#names-and-ids) refuses, and a value that is not
+a string, each fail the manifest at the line they are written on. An omitted
+field and an empty table say the same thing, which is that the inclusion
+overrides nothing.
+
+**They reach what the inclusion contributes, and nothing else.** The leaf's own
+records are decided against the leaf's own values, and a second inclusion of the
+same remote is a separate scope: two inclusions writing different overrides get
+different answers out of the same included manifest. A contributed
+[`git-clone-list`](#git-clone-list) has its entry conditions decided in the same
+scope its own record was.
+
+**They sit above the leaf's `[vars]` and below everything this machine says.**
+Overriding the leaf's own value is the point of the field; `vars.toml`,
+`BATFILES_VAR_*`, and `--var` still override the field, because a leaf composing
+a remote does not get to overrule the machine it is being installed on. The whole
+order is [variable precedence](environment.md#variable-precedence), and an
+inclusion's overrides are reported at `-vv` under a heading naming the inclusion,
+in the [listing format](cmdline.md#vars-list) the run's own variables use.
+
+**The inclusion's own condition is not decided by them.** A `when` or `unless`
+on the record, and [the remote's own condition](#a-remotes-condition), are read
+against the leaf's variables: what an inclusion hands to the records it brings in
+cannot decide whether it brings them in, and a remote is materialized once for a
+run however many inclusions name it.
 
 #### What an included action may not write
 
@@ -1113,12 +1151,15 @@ being read. Declaring the section changes no run on its own: a manifest whose
 records carry no [condition](#conditions) installs exactly what it would have
 installed without a `[vars]` at all.
 
-**This is the lowest of four layers.** Machine-local values in
+**This is the lowest layer.** Machine-local values in
 [`vars.toml`](state.md#varstoml-machine-local-variables), the `BATFILES_VAR_*`
 environment, and `--var` each override a name declared here, in that order.
-Every command that executes actions merges all four into one flat set and prints
-it at `-vv`; the rule is [variable
-precedence](environment.md#variable-precedence).
+Every command that executes actions merges them into one flat set and prints it
+at `-vv`; the rule is [variable
+precedence](environment.md#variable-precedence). A record an
+[`include-remote`](#include-remote) contributed is decided against that set with
+one more layer in it, [the inclusion's own
+`vars`](#variables-for-one-inclusion), directly above this one.
 
 ## Conditions
 

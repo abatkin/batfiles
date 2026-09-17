@@ -441,6 +441,32 @@ variables:
   profile = "work" (vars.toml; over batfiles.toml)
 ```
 
+An [inclusion](repoformat.md#variables-for-one-inclusion) writing `vars` of its
+own reports them in a block of their own, named for the inclusion and listing
+only the names it declared. The block appears where the inclusion was opened, as
+the run's list is assembled, so it comes before the action lines rather than
+beside the one that contributed a record:
+
+```console
+$ batfiles sync -vv
+variables:
+  profile = "personal" (batfiles.toml)
+include-remote `corp` variables:
+  profile = "work" (include-remote `corp`; over batfiles.toml)
+include-remote corp
+create-dir corp.work-tools
+```
+
+A name the machine or the command line also declares is listed with the layer in
+force, so an override that lost reads as having lost:
+
+```text
+profile = "lab" (vars.toml; over include-remote `corp`, batfiles.toml)
+```
+
+An inclusion this run did not open, and one that overrode nothing, report no
+block.
+
 Both listings explicitly print values; mutation reports name only the key to
 avoid disclosing values incidentally. `vars get` supplies a bare persisted value
 when that is what a script needs.
@@ -449,6 +475,10 @@ The listing resolves the leaf repository's `[vars]`, `vars.toml`, and
 `BATFILES_VAR_*` using the [variable precedence](environment.md#variable-precedence).
 `vars list` does not accept `--var`. It does not list the `facts.*` or `env.*`
 namespaces; those are accessed through [conditions](repoformat.md#conditions).
+It also does not list what an
+[inclusion](repoformat.md#variables-for-one-inclusion) overrides: those values
+hold inside one inclusion's records rather than in the set this command lists,
+and an action command's `-vv` output is where they are reported.
 
 | Option           | Purpose                                                          |
 |------------------|--------------------------------------------------------------------|
