@@ -191,6 +191,10 @@ section is a map rather than an ordered list, as `[[actions]]` is: a remote is
 looked up rather than executed, and [materializing](#materialization) one
 happens before the ordered list and depends on nothing in it.
 
+**`[remotes]` means something only in the leaf repository.** The map an included
+manifest declares is [ignored](#an-included-manifests-own-remotes), because
+inclusion is one level deep and nothing in the run can reach one of its records.
+
 ### Materialization
 
 **Declaring a remote is what brings it onto the machine.** `sync` clones each
@@ -855,8 +859,11 @@ be included more than once, and every inclusion of it reads the one
 optional, because a remote whose content an action merely installs from has no
 use for one; an inclusion is what asks for one, so a materialization without one
 is refused by name rather than treated as a repository that includes nothing.
-Everything in it is an ordinary manifest, read and checked exactly as a leaf's
-is, with [one rule of its own](#what-an-included-action-may-not-write).
+Everything in it is an ordinary manifest, read and checked as a leaf's is, but
+for the three things [inclusion being one level
+deep](#what-an-included-action-may-not-write) settles: an included action may not
+source from a remote, an included `include-remote` is left out, and the
+`[remotes]` the manifest declares is ignored.
 
 **What it reads is spliced into the list where the inclusion is written.** The
 actions it contributes run in the order the included manifest declares them, in
@@ -1057,6 +1064,34 @@ in silence.
 
 ```text
 warning: not included: include-remote corp.shared; an included repository does not reach further repositories
+```
+
+The remote such a record names is not required to exist. What it would resolve
+against is the included manifest's own [`[remotes]`](#an-included-manifests-own-remotes),
+which is ignored, so the record is left out whichever name it wrote.
+
+#### An included manifest's own `[remotes]`
+
+The third thing the one-level rule settles, and the one about a section rather
+than a record. An included manifest's [`[remotes]`](#remotes) is **read as part
+of the document and then ignored**: nothing materializes it, and nothing in the
+run can name one of its records — an included action may not source from a
+remote, and an included `include-remote` is left out.
+
+Ignored includes unchecked. A record there is read far enough to be a `[remotes]`
+entry this batfiles understands, and no further: a [reserved
+type](#remotes) it has yet to build, an empty `url`, a `ref` written with nothing
+in it, and two keys differing only in case each fail the repository that declared
+them **where that repository is the leaf**, and none of them fails a run that
+merely includes it. A `type` no version of the schema reserves is still refused,
+because the document stops being one batfiles can read.
+
+The map is reported once per inclusion, naming every record passed over, for the
+same reason a dropped nested inclusion is reported: a declaration that is not
+honored is worth a line. A manifest declaring no remotes says nothing.
+
+```text
+warning: include-remote `corp`: ignoring the remotes `corporate` declares (`shared`, `vendor`); an included repository does not reach further repositories, so nothing materializes them and no included action can name one
 ```
 
 ## The clone list format

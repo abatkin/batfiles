@@ -924,6 +924,13 @@ whole — a manifest leaving something out as written has left nothing unanswere
 Neither is an inclusion the run never reached, one a condition, a disable, or a
 skip excluded.
 
+Nor are the warnings an inclusion draws from a manifest it did read: a
+[filter that matched nothing](repoformat.md#selecting-part-of-a-remote), a
+[nested inclusion left out](repoformat.md#what-an-included-action-may-not-write),
+and the [`[remotes]` that manifest declares](repoformat.md#an-included-manifests-own-remotes)
+all describe a list that was read in full. Nothing about the plan is missing, so
+none of them makes it partial.
+
 Completeness is about what the run could describe, not about whether it
 succeeded: a partial plan exits 0, and everything else the run was able to list
 runs or is reported exactly as it would be otherwise. Only a run that

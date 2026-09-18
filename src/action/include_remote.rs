@@ -93,6 +93,8 @@ pub(super) fn read(
     }
 
     let included = Manifest::load_included(&manifest)?;
+    let label = label(action);
+    report_ignored_remotes(&included, &label, remote, reporter);
     let filter = Filter::of(action);
     let mut records = Vec::with_capacity(included.actions.len());
     for (index, record) in included.actions.into_iter().enumerate() {
@@ -107,9 +109,9 @@ pub(super) fn read(
         // it declares is still good — and warned about rather than passed over
         // in silence, because a declaration that is not honored is worth saying.
         // Dropped ahead of the filters, so a nested inclusion's `id` is not one
-        // of the names a filter can be satisfied by.
-        // CARRY(7.6): the other half is the included `[remotes]` map, which is
-        // read and validated today and has no effect once nothing can name one.
+        // of the names a filter can be satisfied by. What it names is not
+        // required to resolve, since the manifest's own `[remotes]` is ignored
+        // by the same rule.
         if let Action::IncludeRemote(_) = record {
             reporter.warn(&format!(
                 "not included: {}; an included repository does not reach \
@@ -125,7 +127,7 @@ pub(super) fn read(
             selected,
         });
     }
-    filter.warn_unmatched(&records, &label(action), remote, reporter);
+    filter.warn_unmatched(&records, &label, remote, reporter);
     Ok(Some(InclusionContents {
         // The filters have nothing to say about these: a remote declares
         // variables for all of its records, and this inclusion takes them
@@ -133,6 +135,38 @@ pub(super) fn read(
         vars: included.vars,
         actions: records,
     }))
+}
+
+/// Warn that the `[remotes]` an included manifest declares does nothing here,
+/// once for the map rather than once for each record in it.
+///
+/// Inclusion is one level deep, so a remote another repository declares is
+/// neither materialized nor nameable: an included action sourcing from one is
+/// refused as the manifest is read, and an included `include-remote` is left out
+/// of the run. The map is read as part of the document and then ignored, which
+/// is why its records are not checked for anything beyond being readable — a
+/// remote type this batfiles has yet to build is that repository's business,
+/// answered where it is the leaf.
+///
+/// Said out loud rather than passed over in silence, for the same reason a
+/// dropped nested inclusion is: a declaration that is not honored is worth a
+/// line. Silent where the manifest declares no remotes, which is the common
+/// case.
+fn report_ignored_remotes(included: &Manifest, label: &str, remote: &ItemId, reporter: &Reporter) {
+    if included.remotes.is_empty() {
+        return;
+    }
+    let names = included
+        .remotes
+        .keys()
+        .map(|id| format!("`{id}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    reporter.warn(&format!(
+        "{label}: ignoring the remotes `{remote}` declares ({names}); an included \
+         repository does not reach further repositories, so nothing materializes \
+         them and no included action can name one"
+    ));
 }
 
 /// How a report names one inclusion.

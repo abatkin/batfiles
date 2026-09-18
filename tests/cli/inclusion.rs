@@ -399,12 +399,13 @@ fn an_included_inclusion_is_dropped_rather_than_followed() {
     // The other half of the one-level rule, and the half that is about what an
     // included manifest may hold rather than what one of its actions may write.
     // Dropped rather than refused: the manifest breaking it belongs to someone
-    // else, and the rest of what it declares is still good.
+    // else, and the rest of what it declares is still good. What it names does
+    // not have to resolve either, since the `[remotes]` it would resolve against
+    // is itself ignored -- the record is left out whichever remote it names.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
-        "[remotes.shared]\ntype = \"git\"\nurl = \"https://e.example/shared.git\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/corp\"\n\n\
+        "[[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/corp\"\n\n\
          [[actions]]\ntype = \"include-remote\"\nid = \"shared\"\nremote = \"shared\"\n",
         "include a second repository",
     );
@@ -443,8 +444,7 @@ fn dropping_a_nested_inclusion_does_not_renumber_what_follows_it() {
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
-        "[remotes.shared]\ntype = \"git\"\nurl = \"https://e.example/shared.git\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"shared\"\nremote = \"shared\"\n\n\
+        "[[actions]]\ntype = \"include-remote\"\nid = \"shared\"\nremote = \"shared\"\n\n\
          [[actions]]\ntype = \"create-dir\"\ndest = \"~/.cache/corp\"\n",
         "a nested inclusion ahead of an unnamed action",
     );
@@ -466,6 +466,86 @@ fn dropping_a_nested_inclusion_does_not_renumber_what_follows_it() {
         !stderr.contains("create-dir action 1"),
         "a contributed record was named by where it landed rather than where it was written:\n{stderr}"
     );
+}
+
+#[test]
+fn a_leafs_inclusion_names_a_remote_the_leaf_declares() {
+    // The half of that rule which still holds: a leaf's `include-remote` is
+    // carried out, so what it names has to resolve, and it is refused as the
+    // manifest is read rather than partway through the list. Only a nested one
+    // is excused, and only because it is dropped.
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+    );
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains("`corporate` is not declared by this manifest"),
+        "the undeclared remote was not named:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("[remotes.corporate]"),
+        "the remedy was not given:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_included_manifests_remotes_are_ignored_and_reported_once() {
+    // The last of the one-level rules, and the one about a section rather than a
+    // record: nothing in the run reaches a remote another repository declares,
+    // since an included action may not source from one and an included
+    // `include-remote` is left out. So the map is read as part of the document
+    // and then left alone -- unchecked as well as unused. `file` is a type a
+    // leaf is refused for declaring (`remotes.rs`), and here it is someone
+    // else's declaration, answered where that repository is the leaf.
+    let origin = BareRepo::from_fixture("corporate");
+    origin.publish(
+        "batfiles.toml",
+        "[remotes.shared]\ntype = \"git\"\nurl = \"https://e.example/shared.git\"\n\n\
+         [remotes.vendor]\ntype = \"file\"\nurl = \"https://e.example/v.vim\"\nsha256 = \"00\"\n\n\
+         [[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/corp\"\n",
+        "declare remotes of its own",
+    );
+    let tree = Tree::fixture("inclusion");
+    tree.point_at_origin(&origin);
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    // What the map does not stop: the actions beside it are contributed as
+    // usual, and the run succeeds.
+    assert!(
+        tree.home(".cache/corp").is_dir(),
+        "the included action beside the ignored remotes did not run:\n{stderr}"
+    );
+    // One line for the map, not one for each record in it, naming the inclusion
+    // that opened the manifest and every remote passed over.
+    assert_eq!(
+        stderr.matches("ignoring the remotes").count(),
+        1,
+        "the ignored remotes were not reported exactly once:\n{stderr}"
+    );
+    for named in ["include-remote `corp`", "`shared`", "`vendor`"] {
+        assert!(
+            stderr.contains(named),
+            "the warning did not name {named}:\n{stderr}"
+        );
+    }
+    assert!(
+        stderr.contains("does not reach further repositories"),
+        "the rule behind it was not stated:\n{stderr}"
+    );
+    // Ignored means ignored: neither remote is materialized, and neither is
+    // looked for.
+    for id in ["shared", "vendor"] {
+        assert!(
+            !tree.path("repo").join("remotes").join(id).exists(),
+            "an included manifest's remote `{id}` was materialized"
+        );
+    }
 }
 
 #[test]

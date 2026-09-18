@@ -95,12 +95,10 @@ No inclusion of remote actions yet.
   inclusion contributed.
 - **7.5** ✅ Layer an included remote's own `[vars]` beneath the leaf's, in the
   scopes 7.4 built, with an origin naming the inclusion that opened the manifest.
-- **7.6** Ignore an included remote's own `[remotes]`, which is what is left of
-  one-level inclusion: 7.1 refuses an included action whose source names a
-  remote, and 7.2 drops an included `include-remote` with a reported line.
-  Nothing can name an included `[remotes]` entry any more, yet the map is still
-  read and validated. Decide whether one holding a `file` or `archive` record
-  should still fail the inclusion, as it does today.
+- **7.6** ✅ Ignore an included remote's own `[remotes]`, unchecked as well as
+  unused, and report the map once per inclusion. An included `include-remote` is
+  no longer required to name a declared remote either, since it is dropped
+  whichever name it wrote.
 - **7.7** Give every inclusion a stable, unique display label. It names the
   inclusion in its skip lines, its filter warnings, and both variable origins
   7.5 derived, so two inclusions of one remote written without IDs must not

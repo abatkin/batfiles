@@ -25,15 +25,20 @@ use crate::var::VarName;
 /// holds it is not something a caller needs to track.
 pub(crate) use crate::manifest::check::Invalid;
 
-/// Which repository's manifest is being read, for the one rule that depends on
-/// the answer.
+/// Which repository's manifest is being read, for the rules that depend on the
+/// answer.
 ///
-/// An action an inclusion brings in may not source from a remote: remote
-/// references belong to the leaf repository, which is what keeps inclusion one
-/// level deep. Everything else a manifest has to satisfy it satisfies the same
-/// way in both, so this is a mode rather than a second reader.
+/// All three follow from inclusion being one level deep: remote references
+/// belong to the leaf repository. An action an inclusion brings in may not
+/// source from a remote; an `include-remote` it brings in is not required to
+/// name a declared remote, since it is dropped rather than followed; and the
+/// `[remotes]` such a manifest declares is
+/// [ignored](crate::action::include_remote) rather than checked, because nothing
+/// in the run can reach one. Everything else a manifest has to satisfy it
+/// satisfies the same way in both, so this is a mode rather than a second
+/// reader.
 #[derive(Debug, Clone, Copy)]
-enum ReadAs {
+pub(crate) enum ReadAs {
     /// The repository batfiles was pointed at.
     Leaf,
     /// The manifest inside a remote's materialization, read because a leaf
@@ -105,20 +110,25 @@ impl Manifest {
     /// apply, over the [checks](check) they share.
     fn validate(&self, read_as: ReadAs) -> Result<(), Invalid> {
         // Ahead of the actions, since an action reaching a remote's content is
-        // reaching one of these.
+        // reaching one of these. Nothing in an included manifest reaches one, so
+        // there is nothing there for these rules to hold together and they are
+        // not applied: what such a map declares is the other repository's
+        // business, answered where that repository is the leaf.
         //
         // A remote's ID is also the directory it materializes in, so the keys
         // have to be distinct as directory names and not only as map keys. An
         // ID is ASCII by its own rule, so folding it is exactly what a
         // case-insensitive filesystem does to it.
-        let mut directories: BTreeMap<String, &ItemId> = BTreeMap::new();
-        for (id, remote) in &self.remotes {
-            remote.validate(id)?;
-            if let Some(one) = directories.insert(id.as_str().to_ascii_lowercase(), id) {
-                return Err(Invalid::RemotesShareOneDirectory {
-                    one: one.clone(),
-                    other: id.clone(),
-                });
+        if let ReadAs::Leaf = read_as {
+            let mut directories: BTreeMap<String, &ItemId> = BTreeMap::new();
+            for (id, remote) in &self.remotes {
+                remote.validate(id)?;
+                if let Some(one) = directories.insert(id.as_str().to_ascii_lowercase(), id) {
+                    return Err(Invalid::RemotesShareOneDirectory {
+                        one: one.clone(),
+                        other: id.clone(),
+                    });
+                }
             }
         }
 
@@ -156,8 +166,10 @@ impl Manifest {
             // Which of a record's fields are paths, and which rule each one
             // follows, is the record's own answer. The remotes go with it for
             // the one source rule that reaches past the record: the remote a
-            // path names has to be one of the records above.
-            action.validate(&record, &self.remotes)?;
+            // path names has to be one of the records above. How this manifest
+            // is read goes with them for the rule that does not hold of an
+            // inclusion's own records.
+            action.validate(&record, &self.remotes, read_as)?;
         }
         self.default_disabled.validate()
     }

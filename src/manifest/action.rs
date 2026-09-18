@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use super::ReadAs;
 use super::check::{
     Invalid, RecordName, check_archive_root, check_dest, check_digest, check_git_ref,
     check_git_source, check_inclusion_filters, check_inclusion_remote, check_source, check_url,
@@ -59,13 +60,17 @@ impl Action {
     /// `record` is how a diagnostic names the record, which for an action is
     /// its one-based position.
     ///
-    /// `remotes` is what the manifest declares, for the one rule a record
-    /// cannot settle alone: a source may name a remote, and the remote it names
-    /// has to be one of these.
+    /// `remotes` is what the manifest declares, for the rules a record cannot
+    /// settle alone: a source may name a remote, and an `include-remote` names
+    /// one outright, and either way the remote named has to be one of these.
+    /// `read_as` says whose manifest this is, for the second of those: an
+    /// inclusion an included manifest declares is dropped rather than followed,
+    /// so what it names is not required to resolve.
     pub fn validate(
         &self,
         record: &RecordName,
         remotes: &BTreeMap<ItemId, Remote>,
+        read_as: ReadAs,
     ) -> Result<(), Invalid> {
         match self {
             Self::Symlink(action) => {
@@ -112,9 +117,14 @@ impl Action {
             }
             // The one record with neither a source nor a destination: what it
             // installs is whatever the included manifest says, wherever that
-            // says to put it.
+            // says to put it. Only a leaf's is required to name a remote that
+            // resolves: one in an included manifest is left out of the run with
+            // a warning, so refusing the document over the name it wrote would
+            // fail the leaf's run over a record nothing was going to honor.
             Self::IncludeRemote(action) => {
-                check_inclusion_remote(&action.remote, record, remotes)?;
+                if let ReadAs::Leaf = read_as {
+                    check_inclusion_remote(&action.remote, record, remotes)?;
+                }
                 check_inclusion_filters(action, record)
             }
         }
