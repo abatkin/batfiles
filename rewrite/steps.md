@@ -99,13 +99,12 @@ No inclusion of remote actions yet.
   unused, and report the map once per inclusion. An included `include-remote` is
   no longer required to name a declared remote either, since it is dropped
   whichever name it wrote.
-- **7.7** Give every inclusion a stable, unique display label. It names the
-  inclusion in its skip lines, its filter warnings, and both variable origins
-  7.5 derived, so two inclusions of one remote written without IDs must not
-  share one.
-- **7.8** Add a synthetic two-remote fixture with overlapping paths and
+- **7.7** ✅ Give every inclusion a stable, unique display label: its `id`, or
+  the position it was written at and the remote it includes.
+- **7.8** ✅ Add a synthetic two-remote fixture with overlapping paths and
   overrides, beside the realistic `corporate` repository 6.7 added.
-- **7.9** Acceptance: assemble the personal and corporate repositories under `sync`.
+- **7.9** ✅ Acceptance: assemble the personal and corporate repositories under
+  `sync`.
 
 ## Slice 8 — Bootstrap
 

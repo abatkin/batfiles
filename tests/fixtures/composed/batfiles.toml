@@ -1,0 +1,35 @@
+# A leaf that composes two remotes at once, over the `alpha` and `beta`
+# fixtures: the synthetic counterpart to `inclusion`, which composes the one
+# realistic `corporate` repository.
+#
+# The two remotes declare the same source paths, the same action IDs, and one
+# shared destination, so everything this leaf installs depends on which
+# inclusion contributed the record doing it. `{alpha}` and `{beta}` are replaced
+# with the paths of the bare repositories the test created, because a fixture
+# cannot know which temporary directory one lands in.
+
+[remotes.alpha]
+type = "git"
+url = "{alpha}"
+
+[remotes.beta]
+type = "git"
+url = "{beta}"
+
+# Written first, so this is the inclusion whose seed lands at the destination
+# both remotes name. Its `vars` override the `profile` the remote declared for
+# itself, which is what admits `first.cache`.
+[[actions]]
+type = "include-remote"
+id = "first"
+remote = "alpha"
+vars = { profile = "work" }
+
+# Written second, and overriding nothing: `beta`'s own `[vars]` stands, so the
+# same condition is decided the other way and `second.cache` is skipped. The
+# leaf declares no `[vars]` of its own, so each scope is the remote's own value
+# and whatever this record said about it, and nothing else.
+[[actions]]
+type = "include-remote"
+id = "second"
+remote = "beta"

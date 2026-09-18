@@ -88,14 +88,12 @@ Conditions are built and specified in
 [`docs/repoformat.md`](../repoformat.md#conditions), along with the two fields
 that spell one, the namespaces they read, the truthiness table, the rule that a
 record writes one of the two or neither, and what [a condition that cannot be
-evaluated](../repoformat.md#when-a-condition-cannot-be-evaluated) does. One
-thing about them is not built.
-
-**The record that does not have one yet.** An `include-remote` takes a condition
-too, and that record does not exist; it is specified with its own schema below.
-A [remote](../repoformat.md#a-remotes-condition) decides its own already; a
-`[default-disabled]` entry accepts one that nothing evaluates, because nothing
-adopts a candidate.
+evaluated](../repoformat.md#when-a-condition-cannot-be-evaluated) does. Every
+record that takes a condition decides it: an action, a
+[remote](../repoformat.md#a-remotes-condition), and an
+[`include-remote`](../repoformat.md#include-remote), which decides the inclusion
+rather than the remote. A `[default-disabled]` entry accepts one that nothing
+evaluates, because nothing adopts a candidate.
 
 For concision, schema tables below list only `when`. Every record that accepts
 `when` also accepts `unless` as its negated alias, on the terms the built

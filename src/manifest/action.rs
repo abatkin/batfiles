@@ -166,18 +166,18 @@ impl Action {
     }
 
     /// How the action introduces itself in a report: what kind it is, what it is
-    /// called, and the group it is in.
+    /// called, the group it is in, and where it came from where that is not this
+    /// repository.
     ///
-    /// `qualifier` is the `id` of the inclusion that contributed the record, so
-    /// that what a line calls it is the address a reader would type. A record an
-    /// inclusion written without an `id` contributed is named as the manifest
-    /// that declared it names it, since no address reaches it.
-    // CARRY(7.7): every inclusion gains a display label, which is what tells two
-    // inclusions of one remote apart in a line like that.
-    pub fn describe(&self, number: usize, qualifier: Option<&ItemId>) -> String {
+    /// `number` is the record's one-based position in the manifest that declared
+    /// it, which is what names a record written without an `id`. `by` says which
+    /// manifest that was, and so how the two names are qualified: see
+    /// [`Contributor`].
+    pub fn describe(&self, number: usize, by: Contributor<'_>) -> String {
         let ActionMetadata {
             kind, id, group, ..
         } = self.metadata();
+        let qualifier = by.qualifier();
         // A record with no `id` is named by its position, which is a position in
         // the manifest that declared it rather than an address, so it is not
         // qualified.
@@ -185,12 +185,53 @@ impl Action {
             Some(id) => ItemAddress::qualified(qualifier, id).to_string(),
             None => format!("action {number}"),
         };
-        match group {
-            Some(group) => format!(
-                "{kind} {name} (group {})",
-                ItemAddress::qualified(qualifier, group)
-            ),
-            None => format!("{kind} {name}"),
+        // One parenthetical holding both, rather than two: a record of an
+        // unnamed inclusion that is also in a group would otherwise trail two
+        // bracketed clauses for one reader to take in.
+        let about = [
+            group.map(|group| format!("group {}", ItemAddress::qualified(qualifier, group))),
+            by.provenance(),
+        ];
+        let about: Vec<String> = about.into_iter().flatten().collect();
+        match about.is_empty() {
+            true => format!("{kind} {name}"),
+            false => format!("{kind} {name} ({})", about.join(", ")),
+        }
+    }
+}
+
+/// Which manifest a record being reported on came from, for the two things a
+/// line says about that: how its `id` and `group` are qualified, and whether the
+/// line has to name the inclusion outright.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Contributor<'a> {
+    /// The leaf repository's own record. Its names are addresses already.
+    Leaf,
+    /// Contributed by an `include-remote` written with an `id`, which qualifies
+    /// both names, so a line calls the record what a reader would type.
+    Inclusion(&'a ItemId),
+    /// Contributed by an `include-remote` written without one. It qualifies
+    /// nothing, since no address reaches such a record, so the
+    /// [label](crate::action::inclusion_label) names the inclusion in the line
+    /// instead — which is what tells two inclusions of one remote apart.
+    UnnamedInclusion(&'a str),
+}
+
+impl<'a> Contributor<'a> {
+    /// The `id` that qualifies this record's names, where one does.
+    fn qualifier(self) -> Option<&'a ItemId> {
+        match self {
+            Self::Inclusion(id) => Some(id),
+            Self::Leaf | Self::UnnamedInclusion(_) => None,
+        }
+    }
+
+    /// The clause naming where the record came from, for the one case the names
+    /// themselves cannot say it.
+    fn provenance(self) -> Option<String> {
+        match self {
+            Self::UnnamedInclusion(label) => Some(format!("from {label}")),
+            Self::Leaf | Self::Inclusion(_) => None,
         }
     }
 }
@@ -480,7 +521,7 @@ mod tests {
 
     fn described(record: &str, number: usize) -> String {
         let action: Action = toml::from_str(record).expect("the record should parse");
-        action.describe(number, None)
+        action.describe(number, Contributor::Leaf)
     }
 
     /// The same record as an inclusion contributed it, named under that
@@ -488,7 +529,14 @@ mod tests {
     fn described_under(record: &str, number: usize, inclusion: &str) -> String {
         let action: Action = toml::from_str(record).expect("the record should parse");
         let inclusion = ItemId::try_from(inclusion.to_owned()).expect("valid ID");
-        action.describe(number, Some(&inclusion))
+        action.describe(number, Contributor::Inclusion(&inclusion))
+    }
+
+    /// The same, for an inclusion written without an `id`: nothing to qualify
+    /// the names with, so the line names the inclusion by its label instead.
+    fn described_from(record: &str, number: usize, label: &str) -> String {
+        let action: Action = toml::from_str(record).expect("the record should parse");
+        action.describe(number, Contributor::UnnamedInclusion(label))
     }
 
     /// One complete record per variant, so a swapped or misspelled label fails
@@ -662,6 +710,36 @@ mod tests {
         assert_eq!(
             described_under("type = \"create-dir\"\ndest = \"~/b\"\n", 2, "corp"),
             "create-dir action 2"
+        );
+    }
+
+    #[test]
+    fn a_record_of_an_unnamed_inclusion_says_which_one_contributed_it() {
+        // No address reaches such a record, so its names stay exactly what the
+        // manifest that declared them wrote and the line says where they came
+        // from in words. Without it, two inclusions of one remote contribute
+        // lines nothing can tell apart.
+        let label = "include-remote action 2 of remote `corporate`";
+        assert_eq!(
+            described_from(
+                "type = \"symlink\"\nid = \"zshrc\"\nsource = \"a\"\ndest = \"~/b\"\n",
+                1,
+                label
+            ),
+            "symlink zshrc (from include-remote action 2 of remote `corporate`)"
+        );
+        // One parenthetical rather than two, for a record that is also grouped.
+        assert_eq!(
+            described_from(
+                "type = \"symlink\"\nid = \"zshrc\"\ngroup = \"shell\"\nsource = \"a\"\ndest = \"~/b\"\n",
+                1,
+                label
+            ),
+            "symlink zshrc (group shell, from include-remote action 2 of remote `corporate`)"
+        );
+        assert_eq!(
+            described_from("type = \"create-dir\"\ndest = \"~/b\"\n", 3, label),
+            "create-dir action 3 (from include-remote action 2 of remote `corporate`)"
         );
     }
 

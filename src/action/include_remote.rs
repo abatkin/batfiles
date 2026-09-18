@@ -12,7 +12,7 @@ use crate::action::RunContext;
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdList};
 use crate::manifest::Manifest;
-use crate::manifest::action::{Action, IncludeRemoteAction};
+use crate::manifest::action::{Action, Contributor, IncludeRemoteAction};
 use crate::output::Reporter;
 use crate::paths;
 use crate::var::VarName;
@@ -62,8 +62,13 @@ pub(crate) struct IncludedAction {
 ///
 /// A remote its own condition closed is the caller's to decide, and is settled
 /// before asking.
+///
+/// `label` is how a report [names](label) this inclusion, taken from the caller
+/// rather than derived here: it is built from the record's position in the leaf
+/// manifest, which this function cannot see.
 pub(super) fn read(
     action: &IncludeRemoteAction,
+    label: &str,
     context: &RunContext<'_>,
 ) -> Result<Option<InclusionContents>, Error> {
     let remote = &action.remote;
@@ -93,8 +98,11 @@ pub(super) fn read(
     }
 
     let included = Manifest::load_included(&manifest)?;
-    let label = label(action);
-    report_ignored_remotes(&included, &label, remote, reporter);
+    report_ignored_remotes(&included, label, remote, reporter);
+    // How a line about one of these records names the inclusion that is reading
+    // them, which is the inclusion's `id` where it has one and its label where
+    // it has none.
+    let by = contributor(action.id.as_ref(), label);
     let filter = Filter::of(action);
     let mut records = Vec::with_capacity(included.actions.len());
     for (index, record) in included.actions.into_iter().enumerate() {
@@ -116,7 +124,7 @@ pub(super) fn read(
             reporter.warn(&format!(
                 "not included: {}; an included repository does not reach \
                  further repositories",
-                record.describe(number, action.id.as_ref())
+                record.describe(number, by)
             ));
             continue;
         }
@@ -127,7 +135,7 @@ pub(super) fn read(
             selected,
         });
     }
-    filter.warn_unmatched(&records, &label, remote, reporter);
+    filter.warn_unmatched(&records, label, remote, reporter);
     Ok(Some(InclusionContents {
         // The filters have nothing to say about these: a remote declares
         // variables for all of its records, and this inclusion takes them
@@ -169,18 +177,37 @@ fn report_ignored_remotes(included: &Manifest, label: &str, remote: &ItemId, rep
     ));
 }
 
-/// How a report names one inclusion.
+/// How a report names one inclusion: stable for a given manifest, and shared by
+/// no two inclusions of it.
 ///
-/// Its `id` where it has one, since that is the address a reader would type,
-/// and the remote it names where it has none: a record with no `id` has nothing
-/// else to be called, and what it includes is the next most useful thing to say
-/// about it.
-// CARRY(7.7): every inclusion gains a stable display label, which is what tells
-// two inclusions of one remote apart in a line like this.
-pub(super) fn label(action: &IncludeRemoteAction) -> String {
+/// Its `id` where it has one, since that is the address a reader would type. One
+/// written without an `id` is named by `number`, its one-based position in the
+/// leaf manifest, and by the remote it includes: the position is what tells two
+/// inclusions of one remote apart, and is also the manifest's own answer for a
+/// record nothing else can name, since that is how a report names any record
+/// written without an `id`. The remote comes with it because what an inclusion
+/// includes is the next most useful thing to say about it.
+///
+/// Unique because a manifest declaring one `id` twice is
+/// [refused](crate::manifest::check::Invalid::DuplicateActionId) as it is read,
+/// so an inclusion is told from every other by its `id` or by its position.
+pub(super) fn label(action: &IncludeRemoteAction, number: usize) -> String {
     match &action.id {
         Some(id) => format!("include-remote `{id}`"),
-        None => format!("the include-remote of remote `{}`", action.remote),
+        None => format!(
+            "include-remote action {number} of remote `{}`",
+            action.remote
+        ),
+    }
+}
+
+/// How the records one inclusion contributes are named in a line about them:
+/// under its `id` where it has one, and by its `label` where it has none, since
+/// then no address reaches them.
+pub(super) fn contributor<'a>(id: Option<&'a ItemId>, label: &'a str) -> Contributor<'a> {
+    match id {
+        Some(id) => Contributor::Inclusion(id),
+        None => Contributor::UnnamedInclusion(label),
     }
 }
 
@@ -334,6 +361,24 @@ mod tests {
             taken.push("<unnamed>");
         }
         taken
+    }
+
+    #[test]
+    fn an_inclusion_is_labelled_by_its_id_or_by_where_it_was_written() {
+        assert_eq!(label(&inclusion(""), 3), "include-remote `corp`");
+        // Two inclusions of one remote, neither written with an `id`: the
+        // position is the whole of what tells the labels apart, and it is the
+        // manifest's own answer for a record nothing else can name.
+        let unnamed: IncludeRemoteAction =
+            toml::from_str("remote = \"corporate\"\n").expect("the record should parse");
+        assert_eq!(
+            label(&unnamed, 2),
+            "include-remote action 2 of remote `corporate`"
+        );
+        assert_eq!(
+            label(&unnamed, 5),
+            "include-remote action 5 of remote `corporate`"
+        );
     }
 
     #[test]

@@ -1,20 +1,20 @@
 # Rewrite
 
-Slices 0–6 provide local installation, selection, dry-run, fetching, Git clone
-actions, variables and conditions, and Git remote materialization. Slice 7 is
-under way: an `include-remote` contributes a remote's actions to the run's list,
-they are addressed under it, its four selection filters say which of them it
-takes, the conditions of what it contributed are decided against a scope holding
-the remote's own `[vars]`, the leaf's, and the inclusion's overrides, and the
-included manifest's own `[remotes]` is ignored, which completes one-level
-inclusion. What remains is stable inclusion labels, and the fixtures and
-acceptance. [steps.md](steps.md) tracks remaining implementation work.
+Slices 0–7 provide local installation, selection, dry-run, fetching, Git clone
+actions, variables and conditions, Git remote materialization, and one-level
+remote inclusion: an `include-remote` contributes a remote's actions to the run's
+list, they are addressed under it, its four selection filters say which of them
+it takes, the conditions of what it contributed are decided against a scope
+holding the remote's own `[vars]`, the leaf's, and the inclusion's overrides, and
+the included manifest's own `[remotes]` is ignored. Slice 8 is next: bootstrap.
+[steps.md](steps.md) tracks remaining implementation work.
 
 ## Acceptance repositories
 
 - **Personal:** symlinks, seeded copies, an HTTP download, and Git plugin lists.
-- **Work:** compose the personal repository with a corporate repository reachable
-  only from the work network. Remote inclusion must assemble both under `sync`.
+- **Work:** the personal repository composed with a corporate repository
+  reachable only from the work network. Remote inclusion assembles both under
+  `sync`, which slice 7 accepted against the `leaf` and `corporate` fixtures.
 
 ## The documents
 

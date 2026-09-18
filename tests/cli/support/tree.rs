@@ -79,6 +79,13 @@ impl Tree {
         self.fill_in("origin", &display(&origin.origin()));
     }
 
+    /// The same, for a fixture naming more than one repository: a leaf composing
+    /// two remotes writes a placeholder per remote, since one `{origin}` cannot
+    /// say which is which.
+    pub(crate) fn point_remote_at(&self, placeholder: &str, origin: &BareRepo) {
+        self.fill_in(placeholder, &display(&origin.origin()));
+    }
+
     /// The same, for a placeholder in a repository file that is not the
     /// manifest: a clone list names its repositories itself, so that is where
     /// its `{origin}`s are written.

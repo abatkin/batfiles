@@ -442,9 +442,13 @@ fn an_inclusion_written_without_an_id_runs_and_answers_to_nothing() {
         "an inclusion with no `id` did not contribute its actions"
     );
     // Named as the manifest that declared it names it, since no address reaches
-    // it. Step 7.7 gives the inclusion a label to tell it apart by.
+    // it, with the inclusion it came from said in words: that is the whole of
+    // what tells it from the leaf's own `zshrc` and from a second inclusion of
+    // the same remote.
     assert!(
-        stderr.contains("symlink zshrc (group shell)"),
+        stderr.contains(
+            "symlink zshrc (group shell, from include-remote action 1 of remote `corporate`)"
+        ),
         "the contributed record was not named as its own manifest names it:\n{stderr}"
     );
     assert!(

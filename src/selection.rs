@@ -348,6 +348,7 @@ mod tests {
 
     use super::*;
     use crate::condition::HostNamespaces;
+    use crate::manifest::action::Contributor;
     use crate::output::Verbosity;
     use crate::var::VarName;
     use crate::var_set::VarSet;
@@ -376,10 +377,15 @@ mod tests {
     /// rather than conditions; the record the [`decided`] cases carry a
     /// condition on is the leaf's own.
     fn included(id: &str, group: &str, inclusion: Option<&str>) -> RunRecord {
+        let inclusion = inclusion.map(item);
+        let by = match &inclusion {
+            Some(id) => Contributor::Inclusion(id),
+            None => Contributor::UnnamedInclusion("include-remote action 1 of remote `corporate`"),
+        };
         RunRecord::contributed(
             create_dir(id, group),
             1,
-            inclusion.map(item).as_ref(),
+            by,
             item("corporate"),
             &Rc::new(VarSet::stack(
                 BTreeMap::new(),

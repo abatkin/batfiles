@@ -16,27 +16,36 @@ pub(crate) use include_remote::{IncludedAction, InclusionContents};
 
 use crate::error::Error;
 use crate::item::ItemId;
-use crate::manifest::action::{Action, IncludeRemoteAction};
+use crate::manifest::action::{Action, Contributor, IncludeRemoteAction};
 
 /// Read the manifest one `include-remote` includes: its `[vars]`, and its
 /// records with what that inclusion's filters made of each. `None` where there
-/// was no materialization to read.
+/// was no materialization to read. `label` is how a report
+/// [names](inclusion_label) the inclusion.
 ///
 /// Called while the list is assembled rather than while it is executed: what an
 /// inclusion brings in has to be in the list before selection is captured or a
 /// clone list is prepared.
 pub(crate) fn read_inclusion(
     action: &IncludeRemoteAction,
+    label: &str,
     context: &RunContext<'_>,
 ) -> Result<Option<InclusionContents>, Error> {
-    include_remote::read(action, context)
+    include_remote::read(action, label, context)
 }
 
 /// How a report names one `include-remote`, for the lines about a record it
 /// contributed that are said where the record is rather than where the
-/// inclusion is.
-pub(crate) fn inclusion_label(action: &IncludeRemoteAction) -> String {
-    include_remote::label(action)
+/// inclusion is. `number` is the record's one-based position in the leaf
+/// manifest, which is what names an inclusion written without an `id`.
+pub(crate) fn inclusion_label(action: &IncludeRemoteAction, number: usize) -> String {
+    include_remote::label(action, number)
+}
+
+/// How the records one inclusion contributed are named in a line about them.
+/// `id` is the inclusion's own, and `label` how a report names it.
+pub(crate) fn inclusion_contributor<'a>(id: Option<&'a ItemId>, label: &'a str) -> Contributor<'a> {
+    include_remote::contributor(id, label)
 }
 
 /// Carry out one action, whichever kind it is.

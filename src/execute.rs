@@ -12,7 +12,7 @@ use crate::error::Error;
 use crate::item::{ItemAddress, ItemId};
 use crate::location::Roots;
 use crate::manifest::Manifest;
-use crate::manifest::action::Action;
+use crate::manifest::action::{Action, Contributor};
 use crate::mode::RunMode;
 use crate::output::Reporter;
 use crate::remotes;
@@ -166,18 +166,17 @@ pub(crate) struct RunRecord {
 impl RunRecord {
     /// A record the leaf manifest declared, at its one-based position in it.
     pub fn leaf(action: Action, number: usize) -> Self {
-        Self::new(action, number, None, None)
+        Self::new(action, number, Contributor::Leaf, None)
     }
 
     /// A record an inclusion contributed, at its one-based position in the
-    /// manifest that declared it. `inclusion` is the `id` of the record that
-    /// brought it in, absent where that record was written without one; `remote`
-    /// is the tree its paths are read from and `vars` the scope its conditions
-    /// are decided in.
+    /// manifest that declared it. `by` is how a line about it names the
+    /// inclusion that brought it in; `remote` is the tree its paths are read
+    /// from and `vars` the scope its conditions are decided in.
     pub fn contributed(
         action: Action,
         number: usize,
-        inclusion: Option<&ItemId>,
+        by: Contributor<'_>,
         remote: ItemId,
         vars: &Rc<VarSet>,
     ) -> Self {
@@ -185,20 +184,24 @@ impl RunRecord {
             remote,
             vars: Rc::clone(vars),
         };
-        Self::new(action, number, inclusion, Some(contributed))
+        Self::new(action, number, by, Some(contributed))
     }
 
     fn new(
         action: Action,
         number: usize,
-        inclusion: Option<&ItemId>,
+        by: Contributor<'_>,
         contributed: Option<Contributed>,
     ) -> Self {
         // A record an inclusion written without an `id` contributed answers to
         // no address at all: the qualified spelling has no first segment to
         // match, and the unqualified one means the leaf's own record of that ID.
-        // That is a contributed record, which is what tells it from a leaf
-        // record whose own `id` is missing.
+        // The heading names such a record's inclusion in words instead, which is
+        // the label's work rather than an address's.
+        let inclusion = match by {
+            Contributor::Inclusion(id) => Some(id),
+            Contributor::Leaf | Contributor::UnnamedInclusion(_) => None,
+        };
         let addressed = inclusion.is_some() || contributed.is_none();
         let address = |id: Option<&ItemId>| {
             id.filter(|_| addressed)
@@ -206,7 +209,7 @@ impl RunRecord {
         };
         let (name, group) = (address(action.id()), address(action.group()));
         Self {
-            heading: action.describe(number, inclusion),
+            heading: action.describe(number, by),
             action,
             contributed,
             name,
@@ -446,8 +449,11 @@ fn assemble(
         let (remote, qualifier) = (inclusion.remote.clone(), inclusion.id.clone());
         // How a report names this inclusion, and what the run says about a
         // record its filters left out. Both taken while the record that wrote
-        // them is still to hand and before the list is borrowed to push on.
-        let label = action::inclusion_label(inclusion);
+        // them is still to hand and before the list is borrowed to push on. The
+        // label is built from the inclusion's position in this manifest, which
+        // is what tells two inclusions of one remote apart where neither wrote
+        // an `id`.
+        let label = action::inclusion_label(inclusion, index + 1);
         let not_selected = format!("not selected by {label}");
         // Either the run was not asked to look inside this one, or an exclusion
         // closed it, or the remote's own condition did. All three leave its
@@ -459,7 +465,7 @@ fn assemble(
                 None
             }
             _ if !opened || !matches!(record.disposition, Disposition::Run) => None,
-            _ => action::read_inclusion(inclusion, context)?,
+            _ => action::read_inclusion(inclusion, &label, context)?,
         };
         let Some(InclusionContents {
             vars: remote_vars,
@@ -481,6 +487,10 @@ fn assemble(
             context.reporter(),
         );
         let scoped = Bindings::new(&scope, host);
+        // How a line about one of these records names the inclusion: under its
+        // `id`, or by its label where it has none. Built from the two values
+        // taken off the record above, so that it outlives the record itself.
+        let by = action::inclusion_contributor(qualifier.as_ref(), &label);
         run_list.records.push(record);
 
         for IncludedAction {
@@ -490,7 +500,7 @@ fn assemble(
         } in included_actions
         {
             let mut contributed =
-                RunRecord::contributed(action, number, qualifier.as_ref(), remote.clone(), &scope);
+                RunRecord::contributed(action, number, by, remote.clone(), &scope);
             // Asking for the inclusion asks for everything it brought in; the
             // record's own qualified name is the finer way to reach one.
             let named = selection.wants(&contributed);

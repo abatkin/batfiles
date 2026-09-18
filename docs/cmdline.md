@@ -473,7 +473,10 @@ profile = "personal" (batfiles.toml; over batfiles.toml of include-remote `corp`
 ```
 
 An inclusion this run did not open reports no block, and neither does one whose
-record overrode nothing and whose remote declared nothing.
+record overrode nothing and whose remote declared nothing. An inclusion written
+without an `id` heads its block with [the name it does
+have](repoformat.md#include-remote), so two inclusions of one remote report two
+blocks rather than one ambiguous pair.
 
 Both listings explicitly print values; mutation reports name only the key to
 avoid disclosing values incidentally. `vars get` supplies a bare persisted value
@@ -653,6 +656,8 @@ a leaf `zshrc` and a contributed `corp.zshrc` are two records with one ID and tw
 addresses. In a qualified address, `<inclusion>` is the `id` of the leaf's
 `include-remote` record, which need not match the remote it names; content from
 an inclusion written without an `id` runs and answers to no address at all.
+Reports still [name that inclusion](repoformat.md#include-remote), by where it
+was written rather than by an address.
 
 An address qualified by an inclusion is also what makes a command read that
 inclusion's manifest, which is how `apply-action --id corp.zshrc` reaches past a

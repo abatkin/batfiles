@@ -1139,6 +1139,107 @@ fn syncing_a_real_repository_installs_every_action_and_nothing_else() {
     );
 }
 
+/// The personal repository as a machine that also has work settings declares
+/// it: the `leaf` fixture, with the `corporate` remote and one inclusion of it.
+///
+/// Composed here rather than in the fixture, because the composition is what
+/// this one test is about: every other case driving `tests/fixtures/leaf` reads
+/// a repository that fetches nothing, and a remote in the manifest would put a
+/// clone in front of all of them.
+fn personal_composed_with(origin: &BareRepo) -> Tree {
+    let tree = Tree::fixture("leaf");
+    let personal = fs::read_to_string(tree.manifest()).expect("the fixture manifest");
+    tree.write_manifest(&format!(
+        "[remotes.corporate]\ntype = \"git\"\nurl = \"{}\"\n\n\
+         {personal}\n\
+         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+        display(&origin.origin())
+    ));
+    tree
+}
+
+#[test]
+fn syncing_a_composed_repository_assembles_the_personal_and_corporate_halves() {
+    // The acceptance for remote inclusion: the whole personal repository and a
+    // whole second one it composes, assembled by one `sync` into one home. The
+    // inclusion is written last, so what it contributes lands after everything
+    // the leaf declares for itself -- one list, read from two files.
+    let origin = BareRepo::from_fixture("corporate");
+    let tree = personal_composed_with(&origin);
+
+    tree.batfiles().arg("sync").assert().success();
+
+    // The personal half, exactly as it installs on its own: composing a remote
+    // changes nothing about what the leaf declares for itself.
+    assert_leaf_portable_actions(&tree);
+    for (source, dest) in LEAF_LINKS {
+        assert_eq!(
+            link_target(&tree.home(dest)),
+            tree.path("repo").join(source),
+            "`{dest}` does not point at `{source}`"
+        );
+    }
+
+    // The corporate half, read from the materialization this run brought down
+    // rather than from the leaf repository.
+    let materialized = tree.path("repo").join("remotes/corporate");
+    for (source, dest) in [
+        ("files/zshrc", ".zshrc.corporate"),
+        ("files/p10k.zsh", ".p10k.zsh"),
+    ] {
+        assert_eq!(
+            link_target(&tree.home(dest)),
+            materialized.join(source),
+            "`{dest}` was not linked into the remote's tree"
+        );
+    }
+    // Its seeds are the user's copies, as the personal repository's are.
+    for name in ["gitconfig", "npmrc"] {
+        let seeded = tree.home(".config/corporate").join(name);
+        assert!(
+            !seeded.is_symlink(),
+            "`{name}` was linked rather than seeded"
+        );
+        assert_eq!(
+            fs::read_to_string(&seeded).unwrap_or_else(|error| panic!("`{name}`: {error}")),
+            fs::read_to_string(materialized.join("seed").join(name)).expect("the remote's file"),
+            "`{name}` does not hold what the remote published"
+        );
+    }
+
+    // The union and nothing else: the personal repository's own home, plus the
+    // two destinations the remote installs at the top level. What it seeds goes
+    // under `.config`, which the leaf already has.
+    assert_eq!(
+        entries(&tree.path("home")),
+        [
+            ".ackrc",
+            ".cache",
+            ".config",
+            ".curlrc",
+            ".gitconfig",
+            ".inputrc",
+            ".local",
+            ".p10k.zsh",
+            ".zshenv",
+            ".zshrc",
+            ".zshrc.corporate"
+        ]
+    );
+}
+
+#[test]
+fn a_composed_repository_converges_on_a_second_sync() {
+    // What a dotfiles manager is for, asked of the assembled list: running it
+    // again changes nothing and says nothing, so an inclusion that is up to date
+    // is as quiet as a leaf action that is.
+    let origin = BareRepo::from_fixture("corporate");
+    let tree = personal_composed_with(&origin);
+
+    tree.batfiles().arg("sync").assert().success();
+    tree.batfiles().arg("sync").assert().success().stderr("");
+}
+
 #[test]
 fn an_occupied_destination_stops_the_run_where_it_stands() {
     // Rule 13 at repository scale. What one action's worth of it cannot

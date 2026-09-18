@@ -1,0 +1,39 @@
+# One of two remotes a leaf composes, and the synthetic half of the inclusion
+# fixtures: `corporate` is a repository someone would keep, and this pair is
+# shaped for the collisions composing two of them can produce. `beta` declares
+# the same paths and the same IDs as this file, with different content behind
+# them, so a run that reached into the wrong materialization installs the wrong
+# bytes rather than failing.
+#
+# What this repository says its own conditions should read. The leaf overrides
+# it for one of the two inclusions and leaves it standing for the other, which
+# is what makes the two scopes visible from outside.
+[vars]
+profile = "home"
+
+# `beta` declares `files/rc` too. Which tree this one is read from is the
+# inclusion that contributed it, not the leaf, so the destinations differ while
+# the sources do not.
+[[actions]]
+type = "symlink"
+id = "rc"
+group = "shell"
+source = "files/rc"
+dest = "~/.alpharc"
+
+# The one destination both remotes name. A seed does not replace, so the
+# inclusion written first is the one whose content lands -- declaration order
+# holding across two manifests, as it holds within one.
+[[actions]]
+type = "copy"
+id = "tool"
+source = "files/tool.conf"
+dest = "~/.config/tool.conf"
+
+# Decided by `profile`, which the leaf answers differently for each inclusion.
+[[actions]]
+type = "create-dir"
+id = "cache"
+group = "shell"
+dest = "~/.cache/alpha"
+when = "profile == 'work'"

@@ -238,7 +238,6 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 7     | Splicing a remote's own actions into your manifest                  |
 | 8     | `init` and `clone` for new machines, with default-disabled adoption |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |

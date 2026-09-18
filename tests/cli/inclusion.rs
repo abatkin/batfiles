@@ -574,6 +574,65 @@ fn an_inclusion_cannot_be_applied_on_its_own() {
 }
 
 #[test]
+fn two_inclusions_of_one_remote_written_without_ids_are_told_apart() {
+    // The label's whole purpose. Neither record has an `id`, so neither has an
+    // address and neither qualifies anything it contributed: what separates them
+    // in a report is where each was written. Every line that names an inclusion
+    // is here, because a label that came apart in one of them would leave a
+    // reader unable to tell which record to go and edit.
+    let origin = BareRepo::from_fixture("corporate");
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
+         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n\
+         install-groups = [\"shell\"]\nexclude-actions = [\"nowhere\"]\n\
+         vars = { profile = \"first\" }\n\n\
+         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n\
+         install-groups = [\"prompt\"]\nexclude-actions = [\"absent\"]\n\
+         vars = { profile = \"second\" }\n",
+    );
+    tree.point_at_origin(&origin);
+
+    let assertion = tree.batfiles().args(["sync", "-vv"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    let first = "include-remote action 1 of remote `corporate`";
+    let second = "include-remote action 2 of remote `corporate`";
+    for expected in [
+        // The heading of a record each one contributed, which is where a line
+        // about a record says which manifest it was read from.
+        format!("symlink zshrc (group shell, from {first})"),
+        format!("symlink p10k (group prompt, from {second})"),
+        // A skip line, said about the one record neither group filter can name:
+        // once per inclusion, each naming the inclusion that passed it over.
+        format!("copy-dir seeds (from {first}) - skipped: not selected by {first}"),
+        format!("copy-dir seeds (from {second}) - skipped: not selected by {second}"),
+        // A filter warning, said about a name the remote does not declare.
+        format!("{first}: exclude-actions `nowhere` matched no action"),
+        format!("{second}: exclude-actions `absent` matched no action"),
+        // And the heading of each inclusion's own variable block.
+        format!("{first} variables:"),
+        format!("{second} variables:"),
+    ] {
+        assert!(
+            stderr.contains(&expected),
+            "`{expected}` was not reported:\n{stderr}"
+        );
+    }
+    // Both ran, each taking the group it asked for and nothing else.
+    for dest in [".zshrc.corporate", ".p10k.zsh"] {
+        assert!(
+            tree.home(dest).is_symlink(),
+            "`{dest}` was not installed by the inclusion that selected it"
+        );
+    }
+    assert!(
+        !tree.home(".config/corporate").exists(),
+        "a record neither inclusion selected was installed anyway"
+    );
+}
+
+#[test]
 fn an_inclusion_naming_an_undeclared_remote_is_refused_as_the_manifest_is_read() {
     let stderr = rejected("[[actions]]\ntype = \"include-remote\"\nremote = \"core\"\n");
 

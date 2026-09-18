@@ -342,9 +342,9 @@ fn an_override_the_machine_beat_is_reported_with_the_layer_that_won() {
 }
 
 #[test]
-fn an_inclusion_with_no_id_names_the_remote_in_its_block() {
-    // The only other thing such a record can be called, and the same label its
-    // skipped records are named by.
+fn an_inclusion_with_no_id_is_headed_by_where_it_was_written() {
+    // What such a record is called instead, and the same label its skipped
+    // records are named by.
     let origin = remote();
     let tree = Tree::new();
     tree.write_manifest(
@@ -361,7 +361,7 @@ fn an_inclusion_with_no_id_names_the_remote_in_its_block() {
     assert!(
         headed_by(
             &stderr,
-            "the include-remote of remote `corporate` variables:"
+            "include-remote action 1 of remote `corporate` variables:"
         ),
         "the block did not name the inclusion the only way it can be named:\n{stderr}"
     );

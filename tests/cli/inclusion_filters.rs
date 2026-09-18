@@ -122,9 +122,10 @@ fn a_record_the_filters_left_out_says_so_rather_than_going_unmentioned() {
 }
 
 #[test]
-fn an_inclusion_with_no_id_names_the_remote_it_left_the_record_out_of() {
-    // The only other thing such a record can be called. What it contributed
-    // answers to no address, so the reason is all a reader gets.
+fn an_inclusion_with_no_id_is_named_by_where_it_was_written() {
+    // What such an inclusion is called instead: the position it was written at,
+    // and the remote it includes. What it contributed answers to no address, so
+    // the label is all a reader gets to go on.
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(
@@ -138,8 +139,8 @@ fn an_inclusion_with_no_id_names_the_remote_it_left_the_record_out_of() {
     let stderr = stderr_of(&assertion);
 
     assert!(
-        stderr.contains("skipped: not selected by the include-remote of remote `corporate`"),
-        "the reason did not name the remote the record came from:\n{stderr}"
+        stderr.contains("skipped: not selected by include-remote action 1 of remote `corporate`"),
+        "the reason did not name the inclusion the record came from:\n{stderr}"
     );
     assert_eq!(installed(&tree), ["zshrc", "seeds"]);
 }

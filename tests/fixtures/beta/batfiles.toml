@@ -1,0 +1,30 @@
+# The other half of the pair `alpha` opens: the same three IDs, in the same
+# groups, over the same two source paths, with different content behind them and
+# different destinations for the two that install somewhere of their own.
+#
+# Kept as a separate fixture rather than the same one committed twice, because
+# what these tests ask is which materialization a record was read from, and two
+# trees holding identical bytes cannot answer that.
+[vars]
+profile = "home"
+
+[[actions]]
+type = "symlink"
+id = "rc"
+group = "shell"
+source = "files/rc"
+dest = "~/.betarc"
+
+# The destination `alpha` also names, and this repository is included second.
+[[actions]]
+type = "copy"
+id = "tool"
+source = "files/tool.conf"
+dest = "~/.config/tool.conf"
+
+[[actions]]
+type = "create-dir"
+id = "cache"
+group = "shell"
+dest = "~/.cache/beta"
+when = "profile == 'work'"

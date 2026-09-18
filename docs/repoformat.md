@@ -902,6 +902,26 @@ name them: running and being addressable are separate questions. The inclusion
 itself is not applyable: `apply-action` naming one is refused, because the
 address reaches a position in the list rather than something to carry out.
 
+**Every inclusion is named in reports, whether or not it has an `id`.** One with
+an `id` is called ``include-remote `corp` ``, since that is what a reader would
+type. One without is called by the position it was written at and the remote it
+includes:
+
+```text
+include-remote action 2 of remote `corporate`
+```
+
+That name is stable for a manifest and shared by no two of its inclusions, so
+two inclusions of one remote written without IDs are still told apart — in the
+lines about records they contributed, in their filter warnings, and in their
+[variable blocks](#variables-for-one-inclusion). A record such an inclusion
+contributed keeps the names the manifest that declared it wrote, since no address
+reaches it, and the line says which inclusion it came from:
+
+```text
+symlink zshrc (group shell, from include-remote action 2 of remote `corporate`)
+```
+
 **Naming the inclusion names everything it contributed.** It is a record in the
 list rather than a phase beside it, so a [group](#groups) holding one reaches
 what it brought in, and a disable, a skip, or a closed condition on it leaves the
