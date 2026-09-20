@@ -23,12 +23,12 @@ a repository `sync` can read: a freshly initialized one installs nothing, becaus
 every sample in the starter manifest is commented out.
 
 [`clone`](#clone) is the other end of that: it brings an existing repository
-down onto a machine that has none and synchronizes it in the same command. The
-bootstrap policy a leaf declares is not adopted yet, so that first
-synchronization installs [default-disabled
-candidates](repoformat.md#default-disabled-bootstrap-entries) like any other
-action, and the four bootstrap options that would decide otherwise are
-[refused for now](#unimplemented-options).
+down onto a machine that has none, adopts the [bootstrap
+policy](repoformat.md#default-disabled-bootstrap-entries) that repository
+declares, and synchronizes it — all in one command. What the machine starts with
+switched off is settled from the leaf's candidates, the four `BATFILES_*`
+bootstrap lists, and `clone`'s own enable and disable options, and is written to
+[`disabled.toml`](state.md) before the first action.
 
 `sync` materializes the [remotes](repoformat.md#materialization) the manifest
 declares and executes every action type, `--dry-run` reports what it would do
@@ -44,7 +44,8 @@ semantics and the same `--dry-run`.
 
 The enable and disable commands write machine-local state rather than anything in
 the home directory, and `sync` acts on it: an action or group recorded in
-[`disabled.toml`](state.md) is passed over.
+[`disabled.toml`](state.md) is passed over. They are one of the document's two
+writers; `clone`'s bootstrap, above, is the other.
 
 `vars set`, `vars get`, and `vars unset` maintain the other machine-local
 document, [`vars.toml`](state.md#varstoml-machine-local-variables). Every
@@ -116,8 +117,8 @@ suppresses the lines saying what `sync` did, and nothing else.
 Three of the four resolved roots are live. `sync` and the two apply commands
 read the leaf repository, [`disabled.toml`](state.md), and
 [`vars.toml`](state.md#varstoml-machine-local-variables), and write into the
-selected home; `clone` writes the leaf repository before doing all of that;
-`vars list` reads the first and the last of those and writes
+selected home; `clone` writes the leaf repository and `disabled.toml` before
+doing all of that; `vars list` reads the first and the last of those and writes
 nothing. The enable and disable commands read and rewrite `disabled.toml`
 under the config directory, and the machine-local variable commands do the
 same for `vars.toml` beside it. Neither kind resolves the repository or the
@@ -244,13 +245,15 @@ directories.
 
 ```text
 batfiles clone <url> [--skip-action <id>]... [--skip-group <group>]...
+    [--enable-action <id>]... [--disable-action <id>]...
+    [--enable-group <group>]... [--disable-group <group>]...
 ```
 
-Clone a leaf repository into the selected batfiles directory and
-[synchronize](#sync) it: how a machine with no repository gets one. The two
-halves are one command and one failure — nothing is installed unless the clone
-arrived, and what happens to what arrived is exactly what `sync` would do with
-it.
+Clone a leaf repository into the selected batfiles directory, settle what this
+machine starts with switched off, and [synchronize](#sync) it: how a machine
+with no repository gets one. The three are one command and one failure — nothing
+is installed unless the clone arrived, and what happens to what arrived is
+exactly what `sync` would do with it.
 
 Where the clone lands is the one thing `clone` decides differently from every
 other command that has a leaf repository at all: working-directory discovery
@@ -266,10 +269,14 @@ Batfiles creates the repository directory, and a directory it did not create is
 not one it writes a repository into. Missing directories above the destination
 are created with it.
 
-| Option                 | Purpose                                                  |
-|------------------------|------------------------------------------------------------|
-| `--skip-action <id>`   | Leave one action out of the synchronization. Repeatable. |
-| `--skip-group <group>` | Leave one group out of the synchronization. Repeatable.  |
+| Option                    | Purpose                                                        |
+|---------------------------|----------------------------------------------------------------|
+| `--skip-action <id>`      | Leave one action out of the synchronization. Repeatable.       |
+| `--skip-group <group>`    | Leave one group out of the synchronization. Repeatable.        |
+| `--disable-action <id>`   | Start this machine with one action switched off. Repeatable.   |
+| `--enable-action <id>`    | Start it with one action switched on. Repeatable.              |
+| `--disable-group <group>` | Start this machine with one group switched off. Repeatable.    |
+| `--enable-group <group>`  | Start it with one group switched on. Repeatable.               |
 
 `--var` reaches the synchronization the same way, as do the rest of the [shared
 action-execution options](#shared-action-execution-options) once they are
@@ -278,21 +285,59 @@ rather than refusing them for now: a machine with no repository has no plan to
 describe, and a fresh clone materializes its remotes during the synchronization
 that follows. Use `sync --dry-run` afterwards to inspect later plans.
 
+The two halves of the table are different in kind. A skip leaves something out
+of *this run*; an enable or disable decides what this *machine* starts with and
+is written to [`disabled.toml`](state.md), where it stands until an enable or
+disable command changes it.
+
+#### What the bootstrap decides
+
+Before the first action, `clone` settles the machine-local lists from the leaf's
+[default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries),
+the four `BATFILES_*` bootstrap variables, and the four options above, in the
+[adoption precedence](environment.md#bootstrap-adoption-precedence) the
+environment reference owns. Only the leaf's candidates are read: bootstrap
+policy belongs to the repository this machine was pointed at, so an included
+remote's own section is passed over like its `[remotes]`.
+
+A candidate's `when` or `unless` is decided here, against the same [effective
+variable set](environment.md#variable-precedence) the run uses. A condition this
+machine cannot decide closes the gate, as everywhere else, so the candidate is
+not offered and what it names is left enabled — with a warning saying so.
+
+Each decision says what it did and what asked for it, and the synchronization
+that follows passes over what was just switched off:
+
+```text
+cloned /home/you/dotfiles from git@github.com:me/dotfiles.git
+default-disabled: disabled action `p10k`
+BATFILES_DISABLE_GROUPS: disabled group `gui`
+--enable-group: enabled group `gui` (was disabled)
+symlink zshrc (group shell)
+linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
+```
+
+Each line leads with what asked for the decision, and says what the decision did
+in the words the [enable and disable
+commands](#enable-and-disable-actions-or-groups) use for the same document.
+
+A candidate a condition simply closed is reported at `-v`, like every other
+expected exclusion.
+
 Once a clone succeeds nothing is unwound. The repository is kept whether or not
 the rest of the command gets anywhere with it:
 
-- A repository holding no `batfiles.toml` fails before the synchronization
-  starts, saying that what was cloned is a Git repository but not a batfiles
-  one. The mistake is the URL rather than a missing file.
+- A repository holding no `batfiles.toml` fails before the bootstrap starts,
+  saying that what was cloned is a Git repository but not a batfiles one. The
+  mistake is the URL rather than a missing file.
 - A synchronization that fails, fails the way `sync` fails — see [execution
-  failures](#execution-failures). The clone stays where it landed, so the fix is
-  an edit and a `sync` rather than a second download.
+  failures](#execution-failures). The clone stays where it landed and so does
+  the state the bootstrap wrote, so the fix is an edit and a `sync` rather than
+  a second download.
 
-The four bootstrap enable and disable options are
-[refused for now](#unimplemented-options), and so is the policy they would
-decide: until adoption is built, the first synchronization installs a leaf's
-[default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries)
-like any other action.
+A malformed address given to one of the four options fails the command before
+anything is cloned. A malformed one in a `BATFILES_*` list warns and is dropped,
+and the rest of that list still applies.
 
 ### `sync`
 
@@ -1090,7 +1135,7 @@ to start.
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
 | `sync`                        | `--refresh-remotes`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive` |
-| `clone`                       | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all |
+| `clone`                       | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all |
 | `apply-action`, `apply-group` | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
 | `vars list`                   | `--no-refresh`                                                                                                                             |
 | everything else               | none                                                                                                                                       |

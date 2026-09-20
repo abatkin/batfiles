@@ -100,6 +100,8 @@ fn dispatch(
             clone::run(
                 &invocation(&roots, false, &args.action.vars, env, reporter),
                 &args.url,
+                &args.bootstrap,
+                env,
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
             )?;

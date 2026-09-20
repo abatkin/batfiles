@@ -250,11 +250,10 @@ fn each_command_withholds_the_options_it_does_not_honor_yet() {
             &[
                 "clone",
                 "https://example.invalid/d.git",
-                "--enable-action",
-                "shell",
+                "--refresh-content",
             ][..],
-            "--enable-action",
-            "8.3",
+            "--refresh-content",
+            "9.4",
         ),
         (
             &["apply-action", "--id", "vim", "--no-overwrite"],

@@ -60,12 +60,9 @@ is reachable, fetched, or resolved, so disabling an `include-remote` does not
 stop that remote being materialized or its variables resolved. See
 [reachability](#reachability).
 
-**Bootstrap adoption**, the other writer of this file. It is decided during
-`clone` planning and persisted as part of the command, following the environment
-specification's [bootstrap adoption
-precedence](environment.md#bootstrap-enable-and-disable-lists). Run-only
-`BATFILES_SKIP_ACTIONS`, `BATFILES_SKIP_GROUPS`, `--skip-action`, and
-`--skip-group` values never persist here.
+**Bootstrap adoption** is built, and is specified in
+[`docs/state.md`](../state.md#bootstrap-adoption) along with what a `clone`
+decides and what it leaves alone.
 
 ## `dynamic-vars.toml`: dynamic-variable cache
 

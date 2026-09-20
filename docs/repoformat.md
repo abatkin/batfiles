@@ -1416,16 +1416,26 @@ nothing more: the moment a machine has an opinion of its own, recorded in
 opinion is the one that counts. Nothing in the section can switch an action off
 again on a machine that has already enabled it.
 
-**Nothing reads the section yet, so declaring it changes no run.** Batfiles
-accepts it and checks it as the manifest is read — including the
-[conditions](#conditions) its entries carry, which are parsed and evaluated
-nowhere. Adopting the candidates belongs to the bootstrap that sets a machine up
-for the first time, and is specified in
-[`future/repoformat.md`](future/repoformat.md) along with the enable and disable
-options that take precedence over them. Until that arrives, a `sync` over a
-manifest declaring candidates — including the one
-[`clone`](cmdline.md#clone) runs on a fresh machine — installs exactly what it
-would have installed without them, and creates no `disabled.toml`.
+**One command reads the section: [`clone`](cmdline.md#clone).** It is the
+bootstrap that sets a machine up for the first time, and adopting the candidates
+is something it does once, before its first action, writing the outcome to
+[`disabled.toml`](state.md). The candidates are the lowest layer of the
+[adoption precedence](environment.md#bootstrap-adoption-precedence): the
+`BATFILES_*` bootstrap lists and `clone`'s own enable and disable options are
+applied over them, so whatever a repository proposes, the invocation setting the
+machine up can overturn it.
+
+A candidate is offered only to a machine with no `disabled.toml` at all, which
+is the rule above read from the other side: the document existing is the machine
+having said something of its own. An entry's [condition](#conditions) is decided
+there too, against the same effective variable set the run uses, and one this
+machine cannot decide closes the gate — so the candidate is not offered and what
+it names is left enabled.
+
+**Every other command passes the section over.** A `sync` over a manifest
+declaring candidates installs exactly what it would have installed without them,
+and creates no `disabled.toml`: the section says where a machine starts rather
+than what every run re-applies.
 
 What is checked is the record's own syntax. Each entry names an
 [address](cmdline.md#addresses), the records are closed like every other, and an

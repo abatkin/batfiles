@@ -267,26 +267,13 @@ guaranteed to fail, so `command-timeout` must be greater than zero.
 
 ## Default-Disabled Bootstrap Entries
 
-The part of this section that runs — the two arrays of closed records, their
-required `id` and `group` fields, and what is checked as the manifest is read —
-is specified in [`docs/repoformat.md`](../repoformat.md#default-disabled-bootstrap-entries),
-along with the `when` and `unless` an entry accepts. Two things about it are not
-built.
-
-**Adoption**, which is the whole point of the section. Nothing reads the
-candidates today. A bootstrap command resolves them against its own enable and
-disable options and writes the outcome to `disabled.toml`, following the
-environment specification's [bootstrap adoption
-precedence](environment.md#bootstrap-enable-and-disable-lists); until that
-command exists, a manifest declaring candidates is accepted and has no effect.
-
-**Evaluating an entry's condition**, which is part of the same command: a
-candidate is adopted only on the machines its condition suits. The conditions are
-parsed and checked today and decided nowhere, because there is no adoption for
-them to qualify.
-
-`[default-disabled]` in an included remote is structurally valid but ignored;
-bootstrap policy belongs to the leaf repository.
+This section is built, adoption and entry conditions included, and is specified
+in [`docs/repoformat.md`](../repoformat.md#default-disabled-bootstrap-entries).
+Nothing about it is outstanding: `clone` resolves the candidates against the
+[adoption precedence](../environment.md#bootstrap-adoption-precedence) and writes
+the outcome to [`disabled.toml`](../state.md#bootstrap-adoption), and an
+included remote's own `[default-disabled]` is structurally valid and ignored,
+because bootstrap policy belongs to the leaf repository.
 
 ## Actions
 

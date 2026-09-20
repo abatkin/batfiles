@@ -136,31 +136,10 @@ inclusion set, is allowed to run commands, and is materialized.
 
 ### `clone`
 
-[`clone`](../cmdline.md#clone) is built: it clones a leaf repository into the
-selected batfiles directory and synchronizes it. What is not built is the policy
-it would adopt on the way, which is the half that needs a machine to remember
-anything:
-
-```text
-batfiles clone <url>
-    [--enable-action <id>]... [--disable-action <id>]...
-    [--enable-group <group>]... [--disable-group <group>]...
-```
-
-| Option                    | Purpose                                                                              |
-|---------------------------|--------------------------------------------------------------------------------------|
-| `--enable-action <id>`    | Remove an action address from persisted disabled state during bootstrap. Repeatable. |
-| `--disable-action <id>`   | Add an action address to persisted disabled state during bootstrap. Repeatable.      |
-| `--enable-group <group>`  | Remove a group address from persisted disabled state during bootstrap. Repeatable.   |
-| `--disable-group <group>` | Add a group address to persisted disabled state during bootstrap. Repeatable.        |
-
-All four parse and are [refused for
-now](../cmdline.md#unimplemented-options). They resolve against the leaf's own
-[default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries)
-by the authoritative [bootstrap adoption
-precedence](environment.md#bootstrap-enable-and-disable-lists), and until that
-exists a cloned repository's first synchronization installs its candidates like
-any other action.
+[`clone`](../cmdline.md#clone) is built, bootstrap adoption and its four enable
+and disable options included, and is specified in
+[`docs/cmdline.md`](../cmdline.md#clone). What it still refuses are the shared
+action-execution options above, which are nothing to do with the bootstrap.
 
 ### The `init` skeleton
 

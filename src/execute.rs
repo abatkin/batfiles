@@ -6,6 +6,7 @@ use std::rc::Rc;
 use crate::action::{
     self, Contribution, Executable, IncludedAction, Inclusion, InclusionContents, RunContext,
 };
+use crate::bootstrap::Bootstrap;
 use crate::clone_list::PreparedList;
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::disabled::Disabled;
@@ -38,46 +39,84 @@ pub(crate) fn sync(
     skip_actions: &[String],
     skip_groups: &[String],
 ) -> Result<(), Error> {
-    let (manifest, disabled) = load(invocation.roots)?;
-    let selection = Selection::new(
-        Target::Everything,
-        skip_actions,
-        skip_groups,
-        invocation.env,
-        disabled,
-        invocation.reporter,
-    );
     // An empty manifest, and one whose every action is disabled, are both
     // ordinary successful runs that did nothing, so the count is not consulted.
-    run(manifest, &selection, RemotePolicy::Materialize, invocation)?;
+    run(
+        Target::Everything,
+        Skips {
+            actions: skip_actions,
+            groups: skip_groups,
+        },
+        Kind::Sync,
+        invocation,
+    )?;
     Ok(())
 }
 
-/// Whether execution materializes declared remotes or uses existing trees.
-enum RemotePolicy {
-    /// `sync`: clone what is missing and update what is there, before the first
-    /// action.
-    Materialize,
+/// `clone`'s synchronization: the same run, with the machine's starting point
+/// decided from the manifest it just brought down.
+pub(crate) fn bootstrap(
+    invocation: &Invocation<'_>,
+    bootstrap: &Bootstrap,
+    skip_actions: &[String],
+    skip_groups: &[String],
+) -> Result<(), Error> {
+    run(
+        Target::Everything,
+        Skips {
+            actions: skip_actions,
+            groups: skip_groups,
+        },
+        Kind::Bootstrap(bootstrap),
+        invocation,
+    )?;
+    Ok(())
+}
+
+/// The run-only skip lists a command hands over, or the empty ones a command
+/// that waives them does.
+struct Skips<'a> {
+    actions: &'a [String],
+    groups: &'a [String],
+}
+
+/// Which command the run serves, and the two things that follow from it:
+/// whether the declared remotes are materialized before the first action, and
+/// whether a bootstrap decides the machine-local lists before they are read.
+enum Kind<'a> {
+    /// `sync`: materialize, and adopt nothing.
+    Sync,
+    /// `clone`: materialize, having first settled what this machine starts with
+    /// switched off.
+    Bootstrap(&'a Bootstrap),
     /// The apply commands: whatever is materialized already, and nothing
     /// fetched.
-    UseExisting,
+    Apply,
+}
+
+impl Kind<'_> {
+    /// Whether this run brings the declared remotes up to date first. An apply
+    /// command is aimed at one record, and fetching the whole declared set is
+    /// the whole-repository job `sync` is for.
+    fn materializes(&self) -> bool {
+        !matches!(self, Self::Apply)
+    }
 }
 
 /// `apply-action`: carry out the one record named by `id`, whatever the
 /// machine-local lists say about it.
 pub(crate) fn apply_action(invocation: &Invocation<'_>, id: &str) -> Result<(), Error> {
     let id = ItemAddress::try_from(id.to_owned())?;
-    let (manifest, disabled) = load(invocation.roots)?;
     // Naming an action waives its exclusions, but not remote conditions.
-    let selection = Selection::new(
+    let processed_action_count = run(
         Target::Action(&id),
-        &[],
-        &[],
-        invocation.env,
-        disabled,
-        invocation.reporter,
-    );
-    let processed_action_count = run(manifest, &selection, RemotePolicy::UseExisting, invocation)?;
+        Skips {
+            actions: &[],
+            groups: &[],
+        },
+        Kind::Apply,
+        invocation,
+    )?;
 
     if processed_action_count == 0 {
         // A target that matched nothing is the error `run` already raised, so
@@ -99,18 +138,17 @@ pub(crate) fn apply_group(
     skip_actions: &[String],
 ) -> Result<(), Error> {
     let group = ItemAddress::try_from(group.to_owned())?;
-    let (manifest, disabled) = load(invocation.roots)?;
     // `--skip-group` is not accepted, so there is no group-shaped run-only list
     // to hand over; naming the group waives the one there would have been.
-    let selection = Selection::new(
+    let processed_action_count = run(
         Target::Group(&group),
-        skip_actions,
-        &[],
-        invocation.env,
-        disabled,
-        invocation.reporter,
-    );
-    let processed_action_count = run(manifest, &selection, RemotePolicy::UseExisting, invocation)?;
+        Skips {
+            actions: skip_actions,
+            groups: &[],
+        },
+        Kind::Apply,
+        invocation,
+    )?;
 
     if processed_action_count == 0 {
         invocation.reporter.info(
@@ -119,13 +157,6 @@ pub(crate) fn apply_group(
         );
     }
     Ok(())
-}
-
-/// Read the two documents every one of these commands works from.
-fn load(roots: &Roots) -> Result<(Manifest, Disabled), Error> {
-    let manifest = Manifest::load(&roots.manifest())?;
-    let disabled = Disabled::load(&roots.state.disabled())?;
-    Ok((manifest, disabled))
 }
 
 /// One entry in the run's list: a manifest action, the addresses it answers to,
@@ -283,10 +314,16 @@ fn prepare<'a>(
         .collect()
 }
 
-/// Apply the remote policy, expand the run's list, prepare clone lists, and
-/// execute in declaration order. Dry runs use the same list and preparation.
-/// Unknown targets, materialization failures, unreadable inclusions, and action
-/// failures are errors.
+/// Read the documents, settle what the run carries out, apply the remote
+/// policy, prepare clone lists, and execute in declaration order. Dry runs use
+/// the same list and preparation. Unknown targets, materialization failures,
+/// unreadable inclusions, and action failures are errors.
+///
+/// The sequence at the top is the one thing here that is not free to move. The
+/// variables are resolved before a bootstrap adopts, because a candidate's
+/// condition is decided against them; a bootstrap writes `disabled.toml` before
+/// it is read, because the selection built from it is what passes over what the
+/// bootstrap just switched off.
 ///
 /// Returns how many records this run dispatched: every record it carried out
 /// but an inclusion, which counts through what it brought in rather than for
@@ -294,12 +331,13 @@ fn prepare<'a>(
 /// destination already correct is one, and so is every action of a dry run. A
 /// zero says the run reached no record to dispatch at all.
 fn run(
-    manifest: Manifest,
-    selection: &Selection<'_>,
-    remotes: RemotePolicy,
+    target: Target<'_>,
+    skips: Skips<'_>,
+    kind: Kind<'_>,
     invocation: &Invocation<'_>,
 ) -> Result<usize, Error> {
     let reporter = invocation.reporter;
+    let manifest = Manifest::load(&invocation.roots.manifest())?;
     // Resolve variables even when no action declares a condition.
     let variables = Rc::new(VarSet::resolve(
         &manifest.vars,
@@ -313,6 +351,28 @@ fn run(
     // decided against these bindings.
     let host = HostNamespaces::capture(invocation.env);
     let bindings = Bindings::new(&variables, &host);
+
+    // Only the leaf's candidates are offered: bootstrap policy belongs to the
+    // repository this machine was pointed at, and an included remote's own
+    // section is ignored like its `[remotes]`.
+    if let Kind::Bootstrap(bootstrap) = kind {
+        bootstrap.adopt(
+            &manifest.default_disabled,
+            &bindings,
+            &invocation.roots.state,
+            reporter,
+        )?;
+    }
+
+    let selection = Selection::new(
+        target,
+        skips.actions,
+        skips.groups,
+        invocation.env,
+        Disabled::load(&invocation.roots.state.disabled())?,
+        reporter,
+    );
+
     // Settled before the context, which carries it: an action resolving a path
     // into a remote asks what this run made of that remote's condition.
     let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
@@ -327,11 +387,11 @@ fn run(
     // the first action runs: an inclusion reads a manifest out of a
     // materialization, and an action's source -- including a clone list -- may
     // be inside one.
-    if let RemotePolicy::Materialize = remotes {
+    if kind.materializes() {
         remotes::materialize(&manifest.remotes, &context)?;
     }
 
-    let run_list = assemble(manifest.actions, selection, &context, &variables, &host)?;
+    let run_list = assemble(manifest.actions, &selection, &context, &variables, &host)?;
     // Waits for the list to be assembled: until then there is no telling a name
     // that matched nothing from one an inclusion answers.
     selection.warn_unmatched(&run_list, reporter);

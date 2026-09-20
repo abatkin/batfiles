@@ -113,9 +113,9 @@ No inclusion of remote actions yet.
 - **8.2** ✅ Add `clone`: clone a repository into a destination that must not
   exist, then synchronize it. It is the one repository command that does no
   working-directory discovery.
-- **8.3** Add bootstrap precedence and default-disabled adoption. Remove the
-  dead-code expectations for adopted entry fields. Update the CLI assertions
-  that candidates currently disable nothing and create no `disabled.toml`.
+- **8.3** ✅ Add bootstrap precedence and default-disabled adoption. Only a
+  machine with no `disabled.toml` is offered the candidates; the explicit
+  decisions apply either way.
 - **8.4** Add a pristine-machine Docker test through `task test:docker`, included
   in `task ci` but excluded from `task test`. Complete the documentation and
   roadmap migration in [docs.md](docs.md#retirement-at-slice-8).

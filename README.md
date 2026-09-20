@@ -25,9 +25,8 @@ nothing in the repository you cannot read with `cat`.
 > can install from one, and `include-remote` splices a remote's own actions into
 > your manifest at the position that includes it. `init` starts a new repository
 > in the current directory, and `clone` brings an existing one down onto a fresh
-> machine and installs it in the same command — though the bootstrap policy a
-> repository declares is not adopted yet, so that first run installs everything
-> in it. `vars refresh` is the one command still unimplemented. See the
+> machine, adopts the bootstrap policy it declares, and installs it — all in one
+> command. `vars refresh` is the one command still unimplemented. See the
 > [command reference](docs/cmdline.md#what-runs-today) for supported commands
 > and the [rewrite roadmap](rewrite/steps.md) for completed and remaining work.
 
@@ -82,15 +81,16 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   Actions, clone-list entries, and remotes accept [`when` or `unless`](docs/repoformat.md#conditions).
 - **Validate declarations.** Invalid manifests fail when read, under the
   [manifest validation rules](docs/repoformat.md#reading-the-manifest).
-  `[default-disabled]` is parsed and validated, but its
-  [bootstrap adoption](docs/repoformat.md#default-disabled-bootstrap-entries)
-  is not implemented yet.
 - **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`, and
   `files/` into the current directory and runs `git init`, refusing rather than
   overwriting anything already there. See [`init`](docs/cmdline.md#init).
 - **Set up a new machine.** `clone <url>` clones a repository into the selected
   batfiles directory — which must not already exist — and synchronizes it in the
-  same command. See [`clone`](docs/cmdline.md#clone).
+  same command. A repository's
+  [`[default-disabled]`](docs/repoformat.md#default-disabled-bootstrap-entries)
+  says what a fresh machine starts with switched off; `clone`'s enable and
+  disable options and the `BATFILES_*` bootstrap lists overrule it. See
+  [`clone`](docs/cmdline.md#clone).
 - **Report the installed version.** `version` prints the version.
 - **Platform support.** Symlink actions are supported only on Unix. On Windows,
   executing either symlink action fails the run with an error naming the action
@@ -250,7 +250,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 8     | Default-disabled adoption, the rest of what `clone` will do         |
+| 8     | A pristine-machine test for the bootstrap that slice 8 just built    |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 

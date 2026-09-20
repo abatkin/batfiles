@@ -139,9 +139,10 @@ has_op = { command = ["sh", "-c", "command -v op"] }
     }
 }
 
-// `[default-disabled]`: candidates a later bootstrap adopts. The section is
-// accepted and checked as the manifest is read, and nothing reads it yet, so
-// every test below is about what the document will and will not take.
+// `[default-disabled]`: the candidates a bootstrap adopts. The section is
+// accepted and checked as the manifest is read, and only `clone` acts on it, so
+// every test below is about what the document takes and what `sync` makes of it
+// — which is nothing. Adoption itself is in [`super::bootstrap`].
 
 /// The two lists, written the way the format spells them.
 const CANDIDATES: &str = r#"[[default-disabled.actions]]
@@ -153,10 +154,10 @@ group = "gui"
 
 #[test]
 fn a_default_disabled_section_is_accepted_and_changes_nothing() {
-    // The closed document accepts the section. Nothing adopts the
-    // candidates until 8.3, so the run installs what it would have installed
-    // and leaves the machine-local lists alone — including by not creating the
-    // `disabled.toml` that adoption would have to write.
+    // The closed document accepts the section. `sync` is not a bootstrap, so
+    // the run installs what it would have installed and leaves the
+    // machine-local lists alone — including by not creating the
+    // `disabled.toml` adoption writes.
     let tree = Tree::new();
     tree.write_manifest(&format!("{CANDIDATES}\n{}", one_create_dir("~/.config")));
 
@@ -168,15 +169,15 @@ fn a_default_disabled_section_is_accepted_and_changes_nothing() {
     );
     assert!(
         !tree.disabled().exists(),
-        "the candidates were adopted, which is 8.3's job"
+        "the candidates were adopted, which is `clone`'s to do"
     );
 }
 
 #[test]
-fn a_default_disabled_candidate_does_not_disable_anything_yet() {
-    // The candidate names the action, and the action still runs. A section that
-    // quietly took effect would be the worse of the two failures, and this is
-    // the assertion 8.3 has to change on purpose.
+fn a_default_disabled_candidate_does_not_disable_anything_under_sync() {
+    // The candidate names the action, and the action still runs: the section
+    // says where a machine starts, which is the bootstrap's question and not a
+    // standing setting every later run re-applies.
     let tree = Tree::new();
     tree.write_manifest(
         r#"[[default-disabled.actions]]
@@ -198,11 +199,10 @@ dest = "~/.config"
 }
 
 #[test]
-fn a_candidate_takes_a_condition_and_still_changes_nothing() {
-    // A candidate's condition is parsed and checked as the manifest is read and
-    // evaluated nowhere: which candidates a fresh machine adopts is the
-    // bootstrap's question, and it cannot ask one yet. So a condition here
-    // decides nothing about the run, including the action the entry names.
+fn a_candidate_takes_a_condition_and_still_changes_nothing_under_sync() {
+    // A candidate's condition is checked as the manifest is read and decided by
+    // the bootstrap alone, so a condition here says nothing about this run —
+    // including about the action the entry names.
     let tree = Tree::new();
     tree.write_manifest(
         r#"[[default-disabled.actions]]
@@ -230,9 +230,10 @@ dest = "~/.config"
 
 #[test]
 fn a_candidate_writing_both_conditions_is_rejected() {
-    // The rule every record carrying a condition follows, checked here even
-    // though nothing evaluates these two: a candidate that could never mean one
-    // thing is caught on the machine that writes it.
+    // The rule every record carrying a condition follows, checked as the
+    // manifest is read rather than where the entry is decided: a candidate that
+    // could never mean one thing is caught on the machine that writes it, not
+    // on the one that finally bootstraps.
     for entry in [
         r#"[[default-disabled.actions]]
 id = "p10k"

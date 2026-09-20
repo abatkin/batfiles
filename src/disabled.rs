@@ -104,7 +104,7 @@ fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemAddress>, 
 }
 
 /// Move one name, reporting whether the set actually changed.
-fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) -> bool {
+pub(crate) fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) -> bool {
     match change {
         Change::Disable => set.insert(name.clone()),
         Change::Enable => set.remove(name),
@@ -112,7 +112,15 @@ fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) ->
 }
 
 /// The line describing what one name's mutation did.
-fn outcome(list: DisabledList, change: Change, name: &ItemAddress, changed: bool) -> String {
+///
+/// One vocabulary for the two writers of this document: a bootstrap adds what
+/// asked for the change, and says the rest of it the same way these commands do.
+pub(crate) fn outcome(
+    list: DisabledList,
+    change: Change,
+    name: &ItemAddress,
+    changed: bool,
+) -> String {
     let noun = list.noun();
     match (change, changed) {
         (Change::Disable, true) => format!("disabled {noun} `{name}`"),
@@ -124,7 +132,7 @@ fn outcome(list: DisabledList, change: Change, name: &ItemAddress, changed: bool
 
 impl DisabledList {
     /// The set this command edits.
-    fn set_in(self, disabled: &mut Disabled) -> &mut BTreeSet<ItemAddress> {
+    pub fn set_in(self, disabled: &mut Disabled) -> &mut BTreeSet<ItemAddress> {
         match self {
             Self::Actions => &mut disabled.actions,
             Self::Groups => &mut disabled.groups,
@@ -132,7 +140,7 @@ impl DisabledList {
     }
 
     /// What one entry is called in the command's output.
-    fn noun(self) -> &'static str {
+    pub fn noun(self) -> &'static str {
         match self {
             Self::Actions => "action",
             Self::Groups => "group",

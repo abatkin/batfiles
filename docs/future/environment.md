@@ -1,9 +1,10 @@
 # Environment variables
 
-This document proposes bootstrap adoption and what dynamic declarations do to
-variable precedence. Current environment capture, location selection, run-only
-skips, one-shot variables and every layer of their precedence, the `facts` and
-`env` namespaces a condition reads, color, and Git inheritance are specified in
+This document proposes what dynamic declarations do to variable precedence.
+Everything else batfiles reads from the environment — capture, location
+selection, run-only skips, the bootstrap lists and their adoption precedence,
+one-shot variables and every layer of their precedence, the `facts` and `env`
+namespaces a condition reads, color, and Git inheritance — is specified in
 [the environment reference](../environment.md).
 
 ## General precedence
@@ -12,24 +13,7 @@ For proposed inputs, precedence is command-line arguments, then environment
 variables, configuration files, and built-in defaults. Variable declarations
 follow the more detailed [runtime precedence](#runtime-variable-precedence).
 
-## Batfiles configuration variables
-
-The built one-shot variables are specified in
-[the environment reference](../environment.md#one-shot-variables-batfiles_var_name).
-
-| Variable | Equivalent option | Effect |
-| --- | --- | --- |
-| `BATFILES_ENABLE_ACTIONS` | `clone --enable-action` | Removes action addresses from bootstrap-disabled state. |
-| `BATFILES_DISABLE_ACTIONS` | `clone --disable-action` | Adds action addresses to bootstrap-disabled state. |
-| `BATFILES_ENABLE_GROUPS` | `clone --enable-group` | Removes group addresses from bootstrap-disabled state. |
-| `BATFILES_DISABLE_GROUPS` | `clone --disable-group` | Adds group addresses to bootstrap-disabled state. |
-
-### Location selection
-
-`batfiles clone` uses the selected leaf-repository path as its initial destination.
-Existing [location rules](../environment.md#location-selection) apply.
-
-### Runtime variable precedence
+## Runtime variable precedence
 
 Every layer a run stacks is built and specified in [the environment
 reference](../environment.md#variable-precedence), including the two an
@@ -60,32 +44,12 @@ resolve qualified addresses in included remotes. See the proposed
 
 ### Bootstrap enable and disable lists
 
-The following variables are comma-separated lists parsed with the same
-trim-items-and-drop-empties rule as the run-only skips:
-
-- `BATFILES_DISABLE_ACTIONS`
-- `BATFILES_ENABLE_ACTIONS`
-- `BATFILES_DISABLE_GROUPS`
-- `BATFILES_ENABLE_GROUPS`
-
-They are honored only by bootstrap commands that accept the corresponding
-options, such as `clone`. They are intended for generated installers and
-fresh-machine automation, not as ambient controls for later `sync` runs.
-
-Bootstrap adoption applies decisions in this order:
-
-```text
-leaf repo default-disabled candidates
-< environment disables
-< environment enables
-< command-line disables
-< command-line enables
-```
-
-Consequently, command-line decisions override environment decisions. Within
-either source, enable is applied after disable, so enable wins when the same
-action or group appears in both lists. Unlike run-only skips, bootstrap enable
-and disable decisions update `disabled.toml`.
+The four `BATFILES_*` bootstrap lists and the
+[adoption precedence](../environment.md#bootstrap-adoption-precedence) they take
+part in are built, and are specified in
+[`docs/environment.md`](../environment.md#bootstrap-enable-and-disable-lists).
+Nothing about them is outstanding; what they resolve against is, at
+[default-disabled entries](repoformat.md#default-disabled-bootstrap-entries).
 
 ### Color
 
@@ -165,5 +129,7 @@ The specs intentionally define no environment-variable equivalent for:
 - verbosity (`--verbose`/`--quiet`).
 
 General persisted enable/disable commands also have no ambient environment
-equivalent. The `BATFILES_ENABLE_*` and `BATFILES_DISABLE_*` variables are the
-narrow exception: they are consumed only during bootstrap adoption.
+equivalent. The [`BATFILES_ENABLE_*` and
+`BATFILES_DISABLE_*`](../environment.md#bootstrap-enable-and-disable-lists)
+variables are the narrow exception, and a deliberately narrow one: they are read
+only by a bootstrap command.

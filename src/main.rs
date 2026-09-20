@@ -3,6 +3,7 @@
 mod action;
 mod app;
 mod archive;
+mod bootstrap;
 mod cli;
 mod clone;
 mod clone_list;

@@ -1,11 +1,11 @@
 # Environment variables
 
 The environment inputs batfiles reads today: the four location variables that
-select where it works, the two run-only skip lists, the one-shot user variables,
-and the color selection. There is also one family it deliberately does *not*
-pass on, covered at the end. The rest — bootstrap adoption and the host facts
-conditions use — are in [`future/environment.md`](future/environment.md), along
-with the table naming every variable in the intended set.
+select where it works, the two run-only skip lists, the four bootstrap lists,
+the one-shot user variables, and the color selection. There is also one family
+it deliberately does *not* pass on, covered at the end. What is left —
+what dynamic declarations do to variable precedence — is in
+[`future/environment.md`](future/environment.md).
 
 The process environment is captured once when batfiles starts, so every lookup
 during a run sees the same values.
@@ -54,6 +54,58 @@ precedence of reported exclusions, and unmatched-address diagnostics.
 ```console
 $ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
 ```
+
+## Bootstrap enable and disable lists
+
+| Variable                   | Equivalent option  | Effect                                                       |
+|----------------------------|--------------------|--------------------------------------------------------------|
+| `BATFILES_DISABLE_ACTIONS` | `--disable-action` | Adds action addresses to the state a bootstrap writes.       |
+| `BATFILES_ENABLE_ACTIONS`  | `--enable-action`  | Removes action addresses from the state a bootstrap writes.  |
+| `BATFILES_DISABLE_GROUPS`  | `--disable-group`  | Adds group addresses to the state a bootstrap writes.        |
+| `BATFILES_ENABLE_GROUPS`   | `--enable-group`   | Removes group addresses from the state a bootstrap writes.   |
+
+All four are comma-separated lists read the same way the run-only skips are:
+items trimmed, empty items discarded. They are honored **only by a bootstrap
+command that accepts the matching options**, which today means
+[`clone`](cmdline.md#clone) alone. They are meant for generated installers and
+fresh-machine automation rather than as ambient controls, so a later `sync` in a
+shell that still exports them is unaffected.
+
+Unlike the run-only skips, what these decide is written down: a bootstrap
+persists the outcome in [`disabled.toml`](state.md), where it stands until an
+enable or disable command changes it.
+
+### Bootstrap adoption precedence
+
+A bootstrap settles what this machine starts with switched off by applying four
+sources in order, each over the one before it:
+
+```text
+leaf repository default-disabled candidates
+< environment disables
+< environment enables
+< command-line disables
+< command-line enables
+```
+
+So the command line outranks the environment, and within either source enable is
+applied after disable, which is what makes enable win where the same address
+appears in both lists. The
+[candidates](repoformat.md#default-disabled-bootstrap-entries) are the layer
+beneath all four: whatever the repository proposed, this invocation can overturn.
+
+An address is recorded rather than resolved, exactly as the enable and disable
+commands record one, so naming something no action answers to is not an error —
+see [addresses](cmdline.md#addresses). A malformed address is: one written as an
+option fails the command, and one written in a variable warns and is dropped,
+for the same reason the run-only skips treat the two differently.
+
+Only a machine with **no `disabled.toml` at all** is offered the candidates. The
+document existing means this machine has an opinion of its own, and the section
+is a starting point rather than a standing setting; the explicit decisions above
+apply either way, because they were written for this invocation. A bootstrap
+that decides nothing writes no document, so nothing is latched on a machine that
+was never set up.
 
 ## One-shot variables: `BATFILES_VAR_<NAME>`
 

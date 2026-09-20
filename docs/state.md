@@ -19,8 +19,9 @@ authoritative rules are in [location selection](environment.md#location-selectio
 ## `disabled.toml`: disabled actions and groups
 
 `disabled.toml` records deliberate, non-regenerable machine-local decisions. It
-is maintained by the four enable and disable commands, and it may also be edited
-by hand.
+is maintained by the four enable and disable commands, written once more by the
+[bootstrap](#bootstrap-adoption) that sets a machine up, and it may also be
+edited by hand.
 
 `sync` reads it along with the manifest and passes over every action either list
 names, alongside the run-only skips that select the same way for one invocation.
@@ -71,6 +72,26 @@ run-only skips can still exclude actions.
 define argument validation and output.
 [Selection](cmdline.md#selecting-what-a-run-does) defines when each command
 honors these lists and how they combine with run-only skips.
+
+### Bootstrap adoption
+
+The document's other writer. [`clone`](cmdline.md#clone) settles this machine's
+starting point before its first action, from the leaf's [default-disabled
+candidates](repoformat.md#default-disabled-bootstrap-entries), the four
+`BATFILES_*` bootstrap lists, and its own enable and disable options, in the
+[adoption precedence](environment.md#bootstrap-adoption-precedence) the
+environment reference owns. What comes out is persisted here, by the rules
+above: the same sets, the same canonical order, and the same idempotence, so a
+bootstrap that decides nothing creates no file.
+
+The candidates are offered only where no `disabled.toml` exists at all. Once one
+does, this machine has said something of its own, and a later `clone` — of
+another repository, or of the same one again — adds only what its variables and
+options ask for.
+
+Run-only `BATFILES_SKIP_ACTIONS`, `BATFILES_SKIP_GROUPS`, `--skip-action`, and
+`--skip-group` never persist here. They leave something out of one run; these
+lists say what the machine starts with.
 
 ## `vars.toml`: machine-local variables
 

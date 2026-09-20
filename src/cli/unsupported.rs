@@ -8,7 +8,7 @@
 //! `tests/hygiene.rs` insists — so the list shrinking to empty is how you know a
 //! command is finished.
 
-use super::options::{ActionOptions, BootstrapOptions};
+use super::options::ActionOptions;
 use super::{Command, VarsCommand};
 
 /// An option that parsed but does nothing yet, and the step that makes it live.
@@ -32,7 +32,7 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
         | Command::EnableAction(_)
         | Command::DisableGroup(_)
         | Command::EnableGroup(_) => None,
-        Command::Clone(args) => action(&args.action).or_else(|| bootstrap(&args.bootstrap)),
+        Command::Clone(args) => action(&args.action),
         Command::Sync(args) => first_given([
             // Not 6.2: a git remote is fetched on every ordinary sync, so this
             // option has nothing to refresh until file and archive remotes land.
@@ -61,20 +61,6 @@ fn action(options: &ActionOptions) -> Option<Unsupported> {
         (options.refresh_content, "--refresh-content", "9.4"),
         (options.no_overwrite, "--no-overwrite", "9.4"),
         (options.interactive, "--interactive", "9.4"),
-    ])
-}
-
-/// The bootstrap adoption options `clone` accepts.
-fn bootstrap(options: &BootstrapOptions) -> Option<Unsupported> {
-    first_given([
-        (!options.enable_actions.is_empty(), "--enable-action", "8.3"),
-        (
-            !options.disable_actions.is_empty(),
-            "--disable-action",
-            "8.3",
-        ),
-        (!options.enable_groups.is_empty(), "--enable-group", "8.3"),
-        (!options.disable_groups.is_empty(), "--disable-group", "8.3"),
     ])
 }
 
