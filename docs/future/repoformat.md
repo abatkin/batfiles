@@ -123,11 +123,12 @@ exclude = ["private/*", "*.bak"]
 
 ### Names and IDs
 
-The ID rule, action-ID uniqueness, remote IDs, and the variable-name rule are
-specified in [`docs/repoformat.md`](../repoformat.md#names-and-ids). Clone-list
-entry IDs follow the current
-[entry format](../repoformat.md#the-clone-list-format). What is not built is the
-`include-remote` ID and the manifest-entry IDs an inclusion makes addressable.
+The ID rule, action-ID uniqueness, remote IDs, the `include-remote` ID, and the
+variable-name rule are specified in
+[`docs/repoformat.md`](../repoformat.md#names-and-ids). Clone-list entry IDs
+follow the current [entry format](../repoformat.md#the-clone-list-format), where
+one names its entry in diagnostics alone. What is not built is the address that
+reaches a single entry, in a leaf's list or in one an inclusion contributed.
 
 ```text
 ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*

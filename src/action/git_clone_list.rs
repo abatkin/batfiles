@@ -1,39 +1,29 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
 use super::RunContext;
+use crate::clone_list::PreparedList;
 use crate::error::Error;
 use crate::git::{self, Failure};
-use crate::manifest::action::GitCloneListAction;
 
 /// Create the destination directory and process entries in list order.
-/// Requires entries populated by execution preparation, including an empty list.
-pub(super) fn git_clone_list(
-    action: &GitCloneListAction,
-    context: &RunContext,
-) -> Result<(), Error> {
-    let dest_dir = context.destination(&action.dest_dir);
+///
+/// Takes the list execution preparation read, which is the only kind there is:
+/// an empty one is a list declaring no repositories, and a list nothing opened
+/// never becomes one of these.
+pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> Result<(), Error> {
+    let dest_dir = context.destination(list.dest_dir());
     context.ensure_directory(&dest_dir)?;
 
-    // How the list is named in every line below: the path as the manifest
-    // wrote it, which for a list held by a remote is the reference including
-    // the remote, rather than wherever on this machine it was materialized.
-    let list = action.source.to_string();
+    // How the list is named in every line below.
+    let name = list.name();
 
-    // Preparation walks the same captured selection this run executes, ahead of
-    // every action, and passes over only the lists an exclusion has already
-    // closed — which are not executed either. A list arriving here unread is
-    // that invariant broken rather than anything a manifest can ask for.
-    let entries = action
-        .entries
-        .as_ref()
-        .expect("an executable clone list is prepared before any action runs");
-
-    if entries.is_empty() {
+    if list.is_empty() {
         context
             .reporter()
-            .detail(1, &format!("no repositories to clone in {list}"));
+            .detail(1, &format!("no repositories to clone in {name}"));
     }
-    for entry in entries {
+    for entry in list.entries() {
+        let declared = &entry.declared;
         // Reported here rather than where preparation settled it, so the line
         // sits under the heading naming the action that holds the list. The
         // wording is the failure warning's below, since both say that one entry
@@ -41,19 +31,19 @@ pub(super) fn git_clone_list(
         if let Some(exclusion) = &entry.exclusion {
             let line = format!(
                 "not cloning {} ({}): {}",
-                entry.repository,
-                entry.written_at(&list),
+                declared.repository,
+                declared.written_at(&name),
                 exclusion.reason()
             );
             exclusion.report(context.reporter(), &line);
             continue;
         }
 
-        let dest = dest_dir.join(&entry.dest_name);
+        let dest = dest_dir.join(&declared.dest_name);
         match git::clone_or_update(
-            &entry.repository,
+            &declared.repository,
             &dest,
-            entry.git_ref.as_deref(),
+            declared.git_ref.as_deref(),
             context.repository(),
             context.mode(),
             context.reporter(),
@@ -62,8 +52,8 @@ pub(super) fn git_clone_list(
             Err(failure) if is_recoverable_entry_error(&failure) => {
                 context.reporter().warn(&format!(
                     "not cloning {} ({}): {failure}",
-                    entry.repository,
-                    entry.written_at(&list)
+                    declared.repository,
+                    declared.written_at(&name)
                 ))
             }
             Err(failure) => return Err(failure),

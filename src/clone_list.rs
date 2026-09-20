@@ -1,4 +1,5 @@
-//! The line-oriented manifest a `git-clone-list` action reads.
+//! The line-oriented manifest a `git-clone-list` action reads, and the form a
+//! run reads it into.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -6,9 +7,10 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::condition::{Condition, ConditionError, Exclusion, Gate};
+use crate::condition::{Bindings, Condition, ConditionError, Exclusion, Gate};
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdError};
+use crate::manifest::action::GitCloneListAction;
 
 /// One repository the list names.
 #[derive(Debug)]
@@ -28,11 +30,6 @@ pub(crate) struct Entry {
     pub when: Option<Condition>,
     /// The condition excluding it. An entry writes at most one of the two.
     pub unless: Option<Condition>,
-    /// Why this run is not cloning the entry, if it is not: the verdict of its
-    /// own condition, settled during execution preparation. A closed entry
-    /// stays on the list rather than being dropped from it, so that the action
-    /// can report it under its own heading instead of having it vanish.
-    pub exclusion: Option<Exclusion>,
     /// Which line of the list declared it, for a diagnostic that has to point
     /// at one. A fault found while reading carries its own line and does not
     /// come from here; this is for the entry that reads correctly and then
@@ -56,8 +53,84 @@ impl Entry {
     }
 }
 
+/// One list a run read, and what that run made of each entry's own condition.
+///
+/// [`prepare`](Self::prepare) is the only thing that makes one and it makes one
+/// only by reading the list, so holding a value of this type is what says the
+/// list was read. An empty one is a list that declares no repositories, which
+/// is a different answer from a list nothing opened — and that second one has
+/// no value here at all, which is why nothing downstream has to ask.
+pub(crate) struct PreparedList<'a> {
+    /// The record that named the list: where the clones are made, and the name
+    /// every line the action reports calls the list by.
+    action: &'a GitCloneListAction,
+    entries: Vec<PreparedEntry>,
+}
+
+/// One entry of a prepared list: the line as it was read, and what this run
+/// made of the condition on it.
+pub(crate) struct PreparedEntry {
+    /// What the line declares, which reading it settles once and for all.
+    pub declared: Entry,
+    /// Why this run is not cloning the entry, if it is not: the verdict of its
+    /// own condition. A closed entry stays on the list rather than being
+    /// dropped from it, so that the action can report it under its own heading
+    /// instead of having it vanish.
+    pub exclusion: Option<Exclusion>,
+}
+
+impl<'a> PreparedList<'a> {
+    /// Read the list `action` names, found at `path`, and decide each entry's
+    /// own condition against `bindings`.
+    ///
+    /// A missing or malformed list is an error here, which is what keeps it
+    /// ahead of the first action rather than partway through a run.
+    pub fn prepare(
+        action: &'a GitCloneListAction,
+        path: &Path,
+        bindings: &Bindings<'_>,
+    ) -> Result<Self, Error> {
+        let entries = read(path)?
+            .into_iter()
+            .map(|declared| PreparedEntry {
+                exclusion: exclusion(&declared, bindings),
+                declared,
+            })
+            .collect();
+        Ok(Self { action, entries })
+    }
+
+    /// The directory the clones are made in, as the record wrote it.
+    pub fn dest_dir(&self) -> &str {
+        &self.action.dest_dir
+    }
+
+    /// How a line about the list names it: the path as the manifest wrote it,
+    /// which for a list held by a remote is the reference including the remote
+    /// rather than wherever on this machine it was materialized.
+    pub fn name(&self) -> String {
+        self.action.source.to_string()
+    }
+
+    /// Whether the list declares no repositories at all.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Every entry, in list order.
+    pub fn entries(&self) -> &[PreparedEntry] {
+        &self.entries
+    }
+}
+
+/// Evaluate an entry's condition, returning `None` when it may be cloned.
+/// The caller supplies the `not cloning` prefix when reporting an exclusion.
+fn exclusion(entry: &Entry, bindings: &Bindings<'_>) -> Option<Exclusion> {
+    entry.gate()?.exclusion(bindings, None)
+}
+
 /// Read and check one list.
-pub(crate) fn read(path: &Path) -> Result<Vec<Entry>, Error> {
+fn read(path: &Path) -> Result<Vec<Entry>, Error> {
     let text = fs::read_to_string(path).map_err(|source| Error::Read {
         path: path.to_path_buf(),
         source,
@@ -190,8 +263,6 @@ fn entry(text: &str, line: usize) -> Result<Option<Entry>, Invalid> {
         git_ref: metadata.get("ref").cloned(),
         when: condition(&metadata, "when")?,
         unless: condition(&metadata, "unless")?,
-        // What a line says; what this run makes of it is settled later.
-        exclusion: None,
         line,
     }))
 }
@@ -536,8 +607,6 @@ mod tests {
         let parsed = entries("https://e.example/a.git unless=\"facts.os == 'windows'\"\n");
         assert!(parsed[0].when.is_none());
         assert!(parsed[0].unless.is_some());
-        // Nothing has looked at it yet, so every entry reads as one to clone.
-        assert!(parsed[0].exclusion.is_none());
     }
 
     #[test]

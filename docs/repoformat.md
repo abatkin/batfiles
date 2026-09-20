@@ -898,9 +898,9 @@ The `id` is what makes the included actions and groups addressable, by standing
 as the first segment of a qualified [address](cmdline.md#addresses) such as
 `corp.zshrc`. It is the inclusion's own name and need not match `remote`. An
 inclusion written without an `id` still contributes its actions, and nothing can
-name them: running and being addressable are separate questions. The inclusion
-itself is not applyable: `apply-action` naming one is refused, because the
-address reaches a position in the list rather than something to carry out.
+name them: running and being addressable are separate questions. The command
+reference owns what those addresses resolve to, including why
+[`apply-action` naming an inclusion is refused](cmdline.md#apply-action).
 
 **Every inclusion is named in reports, whether or not it has an `id`.** One with
 an `id` is called ``include-remote `corp` ``, since that is what a reader would
@@ -923,10 +923,10 @@ symlink zshrc (group shell, from include-remote action 2 of remote `corporate`)
 ```
 
 **Naming the inclusion names everything it contributed.** It is a record in the
-list rather than a phase beside it, so a [group](#groups) holding one reaches
-what it brought in, and a disable, a skip, or a closed condition on it leaves the
-included manifest unread. An unqualified name reaches the leaf repository alone;
-the qualified spelling is the finer way to reach one contributed record.
+list rather than a phase beside it, so a [group](#groups) holding one reaches what
+it brought in, and a closed condition on it leaves the included manifest unread.
+A run [excludes an inclusion as a unit](cmdline.md#selecting-what-a-run-does) for
+the same reason.
 
 #### Selecting part of a remote
 
@@ -957,19 +957,16 @@ and a deny-list keeps it, nothing having excluded it.
 
 **A record the filters leave out is skipped, not forgotten.** It keeps the
 [address](cmdline.md#addresses) that reaches it, so a skip or a disable naming it
-is answered rather than reported as matching nothing, and the run says why it was
-passed over.
-
-```text
-symlink corp.p10k (group corp.prompt) - skipped: not selected by include-remote `corp`
-```
+is answered rather than reported as matching nothing.
 
 **Selection is not a waiver, and it is not waivable.** An action the filters take
-is still subject to its own condition, to `disabled.toml`, and to the run's
-skips. An action they leave out stays left out under every command, including
-`apply-action` naming it: the filters are the leaf repository describing what it
-composed, which is the same reason [a remote's own
-condition](#a-remotes-condition) holds under every command.
+is still subject to everything else that leaves a record out, and an action they
+leave out stays left out under every command: the filters are the leaf repository
+describing what it composed, which is the same reason [a remote's own
+condition](#a-remotes-condition) holds under every command. The command reference
+owns where each source sits — [what a run passes over](cmdline.md#selecting-what-a-run-does),
+the [per-command table](cmdline.md#selection-by-command), and the
+[reported line](cmdline.md#exclusion-reporting).
 
 **A filter name the remote does not declare warns.** The manifest has been read,
 so batfiles can tell, and a name matching nothing selects and excludes nothing.
@@ -1011,13 +1008,12 @@ scope its own record was.
 
 **They sit above the leaf's `[vars]` and below everything this machine says.**
 Overriding the leaf's own value, and [the remote's
-own](#variables-an-included-remote-declares), is the point of the field;
-`vars.toml`, `BATFILES_VAR_*`, and `--var` still override the field, because a
-leaf composing a remote does not get to overrule the machine it is being
-installed on. The whole order is [variable
-precedence](environment.md#variable-precedence), and an inclusion's overrides are
-reported at `-vv` under a heading naming the inclusion, in the [listing
-format](cmdline.md#vars-list) the run's own variables use.
+own](#variables-an-included-remote-declares), is the point of the field, and this
+machine overrides the field in turn, because a leaf composing a remote does not
+get to overrule the machine it is being installed on. The whole order is
+[variable precedence](environment.md#variable-precedence), and an inclusion's
+overrides are reported at `-vv` under a heading naming the inclusion, in the
+[listing format](cmdline.md#vars-list) the run's own variables use.
 
 **The inclusion's own condition is not decided by them.** A `when` or `unless`
 on the record, and [the remote's own condition](#a-remotes-condition), are read
@@ -1029,8 +1025,8 @@ run however many inclusions name it.
 
 The included manifest's own [`[vars]`](#variables) is the lowest layer of the
 scope its records are decided against, beneath the leaf's `[vars]` and beneath
-everything above that. A remote can therefore say what its own conditions read
-without the leaf declaring anything:
+everything [above that](environment.md#variable-precedence). A remote can
+therefore say what its own conditions read without the leaf declaring anything:
 
 ```toml
 # In the remote's own batfiles.toml.
@@ -1143,7 +1139,7 @@ comment may contain anything at all — including text that looks like metadata.
 
 | Key         | Type      | Description                                                |
 |-------------|-----------|-------------------------------------------------------------|
-| `id`        | `ID`      | Makes the entry addressable as `<action>.<entry>`.          |
+| `id`        | `ID`      | Names the entry in what the run says about it.              |
 | `ref`       | string    | The branch, tag, or commit to follow.                       |
 | `dest-name` | string    | What to call the clone, in place of the derived name.       |
 | `when`      | condition | Clone the entry only where the condition is true.           |
@@ -1168,6 +1164,12 @@ Entry conditions follow the same [fail-closed semantics](#when-a-condition-canno
 as action conditions. See [preparation](cmdline.md#clone-list-preparation) for
 evaluation timing and [exclusion reporting](cmdline.md#exclusion-reporting) for
 output examples.
+
+**An `id` names the entry in diagnostics**, and nothing more than that today: a
+line about an entry that carries one says `id=p10k, plugins.txt line 3` where one
+without is named by its file and line alone. Naming a single entry on the command
+line is an [enhancement](../rewrite/steps.md#enhancements); no address resolves
+to an entry, so writing an `id` makes nothing selectable.
 
 An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory
 name follows: `ack.vim` is a perfectly good directory and not a valid ID,

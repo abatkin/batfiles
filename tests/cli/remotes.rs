@@ -7,10 +7,8 @@
 //! bare one-file repository where only the clone matters, and from the
 //! `corporate` fixture where the content does.
 //!
-//! The dry-run tests at the end assert the stronger of the two available claims
-//! wherever they can: not only that the tree is unchanged, but that the
-//! materialization's own `FETCH_HEAD` is still absent, which is what says no git
-//! ran at all.
+//! The dry-run tests at the end read a materialization's `FETCH_HEAD` for the
+//! reason `cloning.rs` reads a clone's: its absence is what says no git ran.
 
 use std::fs;
 
@@ -20,7 +18,11 @@ use crate::support::*;
 /// needs after it.
 fn declaring(origin: &BareRepo, rest: &str) -> String {
     format!(
-        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\n\n{rest}",
+        r#"[remotes.core]
+type = "git"
+url = "{}"
+
+{rest}"#,
         display(&origin.origin())
     )
 }
@@ -88,7 +90,11 @@ fn a_declared_ref_is_what_the_materialization_follows() {
     origin.publish_on("topic", "TOPIC.md", "on the branch\n", "topic work");
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\nref = \"topic\"\n",
+        r#"[remotes.core]
+type = "git"
+url = "{}"
+ref = "topic"
+"#,
         display(&origin.origin())
     ));
 
@@ -130,7 +136,11 @@ fn a_remote_that_cannot_be_materialized_stops_the_run() {
     // records after it do not run.
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\n\n{}",
+        r#"[remotes.core]
+type = "git"
+url = "{}"
+
+{}"#,
         display(&tree.path("nowhere.git")),
         one_create_dir("~/.cache/zsh")
     ));
@@ -157,7 +167,11 @@ fn an_apply_command_materializes_nothing() {
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
-        "[[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/zsh\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "cache"
+dest = "~/.cache/zsh"
+"#,
     ));
 
     tree.batfiles()
@@ -177,7 +191,12 @@ fn an_apply_command_materializes_nothing() {
 fn a_url_is_whatever_git_accepts_but_never_nothing() {
     // The remote is named by the key it was declared under, which unlike an
     // action it always has.
-    let stderr = rejected("[remotes.core]\ntype = \"git\"\nurl = \"\"\n");
+    let stderr = rejected(
+        r#"[remotes.core]
+type = "git"
+url = ""
+"#,
+    );
     assert!(
         stderr.contains("remote `core`"),
         "the remote was not named:\n{stderr}"
@@ -187,8 +206,13 @@ fn a_url_is_whatever_git_accepts_but_never_nothing() {
 
 #[test]
 fn a_ref_written_with_nothing_in_it_is_refused() {
-    let stderr =
-        rejected("[remotes.core]\ntype = \"git\"\nurl = \"https://e.example/a.git\"\nref = \"\"\n");
+    let stderr = rejected(
+        r#"[remotes.core]
+type = "git"
+url = "https://e.example/a.git"
+ref = ""
+"#,
+    );
     assert!(stderr.contains("remote `core`"), "{stderr}");
     assert!(stderr.contains("ref is empty"), "{stderr}");
 }
@@ -198,11 +222,12 @@ fn a_remote_writes_one_condition_or_none() {
     // The rule every record carrying a condition follows, reported the way it
     // is for an action and a bootstrap candidate.
     let stderr = rejected(
-        "[remotes.core]\n\
-         type = \"git\"\n\
-         url = \"https://e.example/a.git\"\n\
-         when = \"work\"\n\
-         unless = \"gui\"\n",
+        r#"[remotes.core]
+type = "git"
+url = "https://e.example/a.git"
+when = "work"
+unless = "gui"
+"#,
     );
     assert!(stderr.contains("remote `core`"), "{stderr}");
     assert!(
@@ -217,7 +242,11 @@ fn a_remotes_condition_is_parsed_where_the_manifest_is_read() {
     // malformed one fails the manifest rather than the machine that evaluates
     // it.
     let stderr = rejected(
-        "[remotes.core]\ntype = \"git\"\nurl = \"https://e.example/a.git\"\nwhen = \"work &&\"\n",
+        r#"[remotes.core]
+type = "git"
+url = "https://e.example/a.git"
+when = "work &&"
+"#,
     );
     assert!(stderr.contains("not a valid condition"), "{stderr}");
 }
@@ -236,11 +265,12 @@ fn conditioned(
     rest: &str,
 ) -> String {
     format!(
-        "{vars}[remotes.core]\n\
-         type = \"git\"\n\
-         url = \"{}\"\n\
-         {spelling} = \"{condition}\"\n\n\
-         {rest}",
+        r#"{vars}[remotes.core]
+type = "git"
+url = "{}"
+{spelling} = "{condition}"
+
+{rest}"#,
         display(&origin.origin())
     )
 }
@@ -387,11 +417,17 @@ fn a_remote_type_that_is_reserved_and_unbuilt_names_its_step() {
     for (kind, document) in [
         (
             "file",
-            "[remotes.pathogen]\ntype = \"file\"\nurl = \"https://e.example/pathogen.vim\"\n",
+            r#"[remotes.pathogen]
+type = "file"
+url = "https://e.example/pathogen.vim"
+"#,
         ),
         (
             "archive",
-            "[remotes.pathogen]\ntype = \"archive\"\nurl = \"https://e.example/fzf.tar.gz\"\n",
+            r#"[remotes.pathogen]
+type = "archive"
+url = "https://e.example/fzf.tar.gz"
+"#,
         ),
     ] {
         let stderr = rejected(document);
@@ -416,7 +452,10 @@ fn a_git_remote_is_closed_over_the_fields_it_accepts() {
         ("archive-root = \"*\"\n", "archive-root"),
     ] {
         let stderr = rejected(&format!(
-            "[remotes.core]\ntype = \"git\"\nurl = \"https://e.example/a.git\"\n{document}"
+            r#"[remotes.core]
+type = "git"
+url = "https://e.example/a.git"
+{document}"#
         ));
         assert!(
             stderr.contains(&format!("unknown field `{unknown}`")),
@@ -432,12 +471,14 @@ fn two_remote_keys_may_not_differ_only_in_case() {
     // clone keeps the remote it was made with. Refused here rather than on
     // macOS, because the manifest is the same repository on every machine.
     let stderr = rejected(
-        "[remotes.core]\n\
-         type = \"git\"\n\
-         url = \"https://e.example/a.git\"\n\n\
-         [remotes.Core]\n\
-         type = \"git\"\n\
-         url = \"https://e.example/b.git\"\n",
+        r#"[remotes.core]
+type = "git"
+url = "https://e.example/a.git"
+
+[remotes.Core]
+type = "git"
+url = "https://e.example/b.git"
+"#,
     );
     assert!(
         stderr.contains("`core`") && stderr.contains("`Core`"),
@@ -453,7 +494,10 @@ fn a_remote_key_is_an_id() {
     // underscore is a variable name's spelling rather than an ID's.
     for key in ["\"core.extra\"", "_hidden", "\"two words\""] {
         let stderr = rejected(&format!(
-            "[remotes.{key}]\ntype = \"git\"\nurl = \"https://e.example/a.git\"\n"
+            r#"[remotes.{key}]
+type = "git"
+url = "https://e.example/a.git"
+"#
         ));
         assert!(
             stderr.contains("is not a valid ID"),
@@ -521,10 +565,11 @@ fn both_spellings_of_a_reference_reach_the_same_file() {
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         source = { remote = \"core\", path = \"files/zshrc\" }\n\
-         dest = \"~/.zshrc\"\n",
+        r#"[[actions]]
+type = "symlink"
+source = { remote = "core", path = "files/zshrc" }
+dest = "~/.zshrc"
+"#,
     ));
 
     tree.batfiles().arg("sync").assert().success();
@@ -592,10 +637,11 @@ fn a_clone_list_may_live_in_a_materialization() {
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"@core/plugins.txt\"\n\
-         dest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+source = "@core/plugins.txt"
+dest-dir = "~/.plugins"
+"#,
     ));
 
     tree.batfiles().arg("sync").assert().success();
@@ -620,10 +666,11 @@ fn a_list_held_by_a_remote_is_named_the_way_the_manifest_wrote_it() {
     );
     tree.write_manifest(&declaring(
         &origin,
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"@core/plugins.txt\"\n\
-         dest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+source = "@core/plugins.txt"
+dest-dir = "~/.plugins"
+"#,
     ));
 
     let assertion = tree.batfiles().arg("sync").assert().success();
@@ -657,11 +704,12 @@ fn a_source_in_a_remote_this_machine_has_not_cloned_says_to_sync() {
     let tree = Tree::new();
     tree.write_manifest(&declaring(
         &origin,
-        "[[actions]]\n\
-         type = \"copy\"\n\
-         id = \"gitconfig\"\n\
-         source = \"@core/seed/gitconfig\"\n\
-         dest = \"~/.gitconfig\"\n",
+        r#"[[actions]]
+type = "copy"
+id = "gitconfig"
+source = "@core/seed/gitconfig"
+dest = "~/.gitconfig"
+"#,
     ));
 
     let assertion = tree

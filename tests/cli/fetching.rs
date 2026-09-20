@@ -62,11 +62,11 @@ fn fetching(server: &Server) -> Tree {
 fn one_archive(server: &Server, extra: &str) -> Tree {
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"fetch-archive\"\n\
-         source = \"{}/tool.tar.gz\"\n\
-         dest = \"~/.local/tool\"\n\
-         {extra}",
+        r#"[[actions]]
+type = "fetch-archive"
+source = "{}/tool.tar.gz"
+dest = "~/.local/tool"
+{extra}"#,
         server.address()
     ));
     tree
@@ -197,7 +197,11 @@ fn a_transfer_that_stops_early_installs_nothing() {
     let address = server_that_hangs_up("half a file\n", 4096);
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[[actions]]\ntype = \"fetch-file\"\nsource = \"{address}/a\"\ndest = \"~/.vimrc\"\n"
+        r#"[[actions]]
+type = "fetch-file"
+source = "{address}/a"
+dest = "~/.vimrc"
+"#
     ));
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -251,7 +255,11 @@ fn an_answer_that_is_not_a_whole_file_installs_nothing() {
         let server = Server::new(&[("/pathogen.vim", reply)]);
         let tree = Tree::new();
         tree.write_manifest(&format!(
-            "[[actions]]\ntype = \"fetch-file\"\nsource = \"{}/pathogen.vim\"\ndest = \"~/.vimrc\"\n",
+            r#"[[actions]]
+type = "fetch-file"
+source = "{}/pathogen.vim"
+dest = "~/.vimrc"
+"#,
             server.address()
         ));
 
@@ -331,7 +339,11 @@ fn a_fetched_file_arrives_readable_rather_than_staying_private() {
 fn a_source_that_is_not_a_url_is_refused_before_anything_runs() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\ntype = \"fetch-file\"\nsource = \"files/ackrc\"\ndest = \"~/.ackrc\"\n",
+        r#"[[actions]]
+type = "fetch-file"
+source = "files/ackrc"
+dest = "~/.ackrc"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -347,7 +359,11 @@ fn a_source_that_is_not_a_url_is_refused_before_anything_runs() {
 fn a_file_url_names_the_step_that_makes_it_work() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\ntype = \"fetch-file\"\nsource = \"file:///etc/hosts\"\ndest = \"~/.hosts\"\n",
+        r#"[[actions]]
+type = "fetch-file"
+source = "file:///etc/hosts"
+dest = "~/.hosts"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -363,11 +379,12 @@ fn a_file_url_names_the_step_that_makes_it_work() {
 fn a_digest_that_is_not_one_is_refused_before_anything_is_fetched() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"fetch-file\"\n\
-         source = \"https://e.example/a\"\n\
-         sha256 = \"abc123\"\n\
-         dest = \"~/.a\"\n",
+        r#"[[actions]]
+type = "fetch-file"
+source = "https://e.example/a"
+sha256 = "abc123"
+dest = "~/.a"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -382,12 +399,10 @@ fn a_digest_that_is_not_one_is_refused_before_anything_is_fetched() {
 /// The archive fields belong to `fetch-archive`, so they are unknown on
 /// `fetch-file` for good rather than until a step.
 ///
-/// Nothing about `fetch-file` is provisional: it fetches a response body and
-/// installs it as a file, and a repository that wants an archive unpacked asks
-/// for it by `type`. Accepting `archive-root` and ignoring it would install the
-/// tarball itself at a destination every later run then finds occupied and
-/// calls done. `extract` does not exist in the format at all — a choice between
-/// two shapes is a `type`, never a boolean.
+/// Accepting `archive-root` and ignoring it would install the tarball itself at
+/// a destination every later run then finds occupied and calls done. `extract`
+/// does not exist in the format at all — a choice between two shapes is a
+/// `type`, never a boolean.
 #[test]
 fn the_archive_fields_are_not_fields_of_a_plain_download() {
     let tree = Tree::new();
@@ -397,11 +412,12 @@ fn the_archive_fields_are_not_fields_of_a_plain_download() {
         "extract = true",
     ] {
         tree.write_manifest(&format!(
-            "[[actions]]\n\
-             type = \"fetch-file\"\n\
-             source = \"https://e.example/a.tar.gz\"\n\
-             dest = \"~/.local/tool\"\n\
-             {field}\n",
+            r#"[[actions]]
+type = "fetch-file"
+source = "https://e.example/a.tar.gz"
+dest = "~/.local/tool"
+{field}
+"#,
         ));
 
         tree.batfiles().arg("sync").assert().failure();
@@ -416,11 +432,12 @@ fn the_entry_filters_are_not_built_yet() {
     let tree = Tree::new();
     for field in ["include = [\"bin/*\"]", "exclude = [\"*.md\"]"] {
         tree.write_manifest(&format!(
-            "[[actions]]\n\
-             type = \"fetch-archive\"\n\
-             source = \"https://e.example/a.tar.gz\"\n\
-             dest = \"~/.local/tool\"\n\
-             {field}\n",
+            r#"[[actions]]
+type = "fetch-archive"
+source = "https://e.example/a.tar.gz"
+dest = "~/.local/tool"
+{field}
+"#,
         ));
 
         tree.batfiles().arg("sync").assert().failure();
@@ -648,10 +665,11 @@ fn an_entry_reached_through_the_archives_own_symlink_installs_nothing() {
     ]);
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"fetch-archive\"\n\
-         source = \"{}/tool.tar.gz\"\n\
-         dest = \"~/.local/tool\"\n",
+        r#"[[actions]]
+type = "fetch-archive"
+source = "{}/tool.tar.gz"
+dest = "~/.local/tool"
+"#,
         server.address()
     ));
     // Where `escape` resolves to once the kernel has followed `a/b`: a sibling
@@ -854,11 +872,12 @@ fn an_archive_root_that_names_nothing_inside_is_refused_before_anything_is_fetch
     let tree = Tree::new();
     for root in ["/tool", "../tool", ""] {
         tree.write_manifest(&format!(
-            "[[actions]]\n\
-             type = \"fetch-archive\"\n\
-             source = \"https://e.example/a.tar.gz\"\n\
-             dest = \"~/.local/tool\"\n\
-             archive-root = \"{root}\"\n",
+            r#"[[actions]]
+type = "fetch-archive"
+source = "https://e.example/a.tar.gz"
+dest = "~/.local/tool"
+archive-root = "{root}"
+"#,
         ));
 
         let assertion = tree.batfiles().arg("sync").assert().failure();
@@ -982,11 +1001,12 @@ fn an_archive_root_is_matched_however_it_is_spelled() {
 fn an_archive_root_that_climbs_is_refused_before_anything_is_fetched() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"fetch-archive\"\n\
-         source = \"https://e.example/a.tar.gz\"\n\
-         dest = \"~/.local/tool\"\n\
-         archive-root = \"releases/../tool\"\n",
+        r#"[[actions]]
+type = "fetch-archive"
+source = "https://e.example/a.tar.gz"
+dest = "~/.local/tool"
+archive-root = "releases/../tool"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure();

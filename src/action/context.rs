@@ -153,9 +153,7 @@ impl<'a> RunContext<'a> {
     /// Ensure a destination directory exists and report creation or link removal.
     pub fn ensure_directory(&self, dir: &Path) -> Result<(), Error> {
         let outcome = directory::ensure_directory(dir, self.mode)?;
-        for link in outcome.removals() {
-            self.reporter.info(&link.removal_note(self.mode));
-        }
+        outcome.report_removals(self.mode, self.reporter);
         match outcome {
             DirectoryOutcome::Created { .. } => self.reporter.info(&format!(
                 "{} {}",

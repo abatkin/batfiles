@@ -19,28 +19,29 @@ use crate::support::*;
 /// it proves the group is what was resolved.
 fn four_actions(tree: &Tree) {
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zshrc\"\n\
-         group = \"shell\"\n\
-         dest = \"~/zshrc\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"gtkrc\"\n\
-         group = \"gui\"\n\
-         dest = \"~/gtkrc\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         group = \"shell\"\n\
-         dest = \"~/zshenv\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"aliases\"\n\
-         group = \"shell\"\n\
-         dest = \"~/aliases\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "zshrc"
+group = "shell"
+dest = "~/zshrc"
+
+[[actions]]
+type = "create-dir"
+id = "gtkrc"
+group = "gui"
+dest = "~/gtkrc"
+
+[[actions]]
+type = "create-dir"
+group = "shell"
+dest = "~/zshenv"
+
+[[actions]]
+type = "create-dir"
+id = "aliases"
+group = "shell"
+dest = "~/aliases"
+"#,
     );
 }
 
@@ -79,17 +80,18 @@ fn the_two_namespaces_stay_separate() {
     // A group named like an action is reached by neither the other's command.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"shell\"\n\
-         group = \"editor\"\n\
-         dest = \"~/by-id\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"editor\"\n\
-         group = \"shell\"\n\
-         dest = \"~/by-group\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "shell"
+group = "editor"
+dest = "~/by-id"
+
+[[actions]]
+type = "create-dir"
+id = "editor"
+group = "shell"
+dest = "~/by-group"
+"#,
     );
     assert_eq!(
         applied(&tree, &["apply-action", "--id", "shell"]),
@@ -328,17 +330,18 @@ fn the_group_skips_reach_neither_apply_command() {
 /// [`four_actions`]' unnamed record is what makes that impossible there.
 fn two_named_actions(tree: &Tree) {
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zshrc\"\n\
-         group = \"shell\"\n\
-         dest = \"~/zshrc\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"aliases\"\n\
-         group = \"shell\"\n\
-         dest = \"~/aliases\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "zshrc"
+group = "shell"
+dest = "~/zshrc"
+
+[[actions]]
+type = "create-dir"
+id = "aliases"
+group = "shell"
+dest = "~/aliases"
+"#,
     );
 }
 

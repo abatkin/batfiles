@@ -35,11 +35,12 @@ fn a_create_dir_action_makes_the_directory_and_says_so() {
 fn a_create_dir_action_parses_with_every_field_it_accepts() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"plugin-root\"\n\
-         group = \"shell\"\n\
-         dest = \"~/.config\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "plugin-root"
+group = "shell"
+dest = "~/.config"
+"#,
     );
 
     tree.batfiles().arg("sync").assert().success();
@@ -145,17 +146,50 @@ fn a_copy_action_seeds_a_file_and_says_so() {
     assert!(!tree.home(".config/git/config").is_symlink());
 }
 
+/// What making those parents can involve, said out loud. Gated only because the
+/// fixture needs a broken symlink to build; what a copy says about a link it
+/// removed is not platform-specific.
+#[cfg(unix)]
+#[test]
+fn a_broken_link_above_a_copy_is_cleared_and_the_removal_reported_first() {
+    let tree = Tree::new();
+    with_seed(&tree);
+    let nowhere = tree.path("nowhere");
+    std::os::unix::fs::symlink(&nowhere, tree.home(".config")).expect("a broken link");
+    tree.write_manifest(&one_copy("seed/gitconfig", "~/.config/git/config"));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+
+    // The removal first: it is the part the user may need to act on, and it is
+    // true of a path the manifest names only by copying underneath it.
+    assert_eq!(
+        stderr_of(&assertion),
+        format!(
+            "removed a broken symlink to {} to make {}\ncopied {} from {}\n",
+            display(&nowhere),
+            display(&tree.home(".config")),
+            display(&tree.home(".config/git/config")),
+            display(&tree.path("repo/seed/gitconfig"))
+        )
+    );
+}
+
 #[test]
 fn a_copy_action_parses_with_every_field_it_accepts() {
     let tree = Tree::new();
     with_seed(&tree);
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"copy\"\n\
-         id = \"gitconfig\"\n\
-         group = \"git\"\n\
-         source = \"seed/gitconfig\"\n\
-         dest = \"~/.gitconfig\"\n",
+        r#"[[actions]]
+type = "copy"
+id = "gitconfig"
+group = "git"
+source = "seed/gitconfig"
+dest = "~/.gitconfig"
+"#,
     );
 
     tree.batfiles().arg("sync").assert().success();
@@ -309,12 +343,9 @@ fn a_copy_dir_action_creates_its_destination_directory() {
 
 #[test]
 fn a_copy_dir_with_nothing_in_it_creates_its_destination_and_says_so() {
-    // The `symlink-dir` half of this is
-    // `linking::an_empty_source_directory_still_makes_its_destination_and_links_nothing`,
-    // and the
-    // two say the same thing in the same order for the same reason: an empty
-    // source is a repository mid-progress, and the destination is made anyway
-    // because it is what the action was told to fill.
+    // The `symlink-dir` half of this is `linking::an_empty_source_directory_
+    // still_makes_its_destination_and_links_nothing`, which carries the reason;
+    // the two say the same thing in the same order.
     let tree = Tree::new();
     fs::create_dir_all(tree.path("repo/seed")).expect("an empty source directory");
     tree.write_manifest(&one_copy_dir("seed", "~/installed", false));
@@ -822,9 +853,8 @@ fn a_source_the_manifest_named_through_a_link_is_followed() {
 /// seed does not replace, so the file ends up holding whichever of them the run
 /// reached first.
 ///
-/// Every other action in the fixture installs somewhere of its own, so a run
-/// that carried them out in any order at all would leave the same tree behind.
-/// This pair is what turns order into something a test can be wrong about.
+/// Every other action in the fixture installs somewhere of its own, so this
+/// pair is what turns order into something a test can be wrong about.
 /// `linking::an_occupied_destination_stops_the_run_where_it_stands` covers the
 /// other half of the guarantee, that the first failure stops the list.
 #[test]

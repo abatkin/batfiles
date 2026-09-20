@@ -1,11 +1,9 @@
 //! Which of a remote's actions an inclusion takes.
 //!
-//! The four filters are the leaf repository saying what it composes, which is a
-//! different question from what this machine leaves out. So a record they leave
-//! out is not dropped: it keeps the address that reaches it, the run says why it
-//! was passed over, and naming it directly does not bring it back — the waiver
-//! `apply-action` carries covers the lists this machine keeps, not the leaf's
-//! description of what it took.
+//! The four filters say what the leaf composed, which is a different question
+//! from what this machine leaves out — so a record they leave out keeps its
+//! address, is reported, and is not brought back by naming it. That boundary is
+//! what separates this file from `selection.rs`.
 //!
 //! The remote is the `corporate` fixture, whose three records are shaped for
 //! exactly this: `zshrc` in group `shell`, `p10k` in group `prompt`, and `seeds`
@@ -13,30 +11,24 @@
 
 use crate::support::*;
 
-/// The three destinations `corporate` installs at, in declaration order.
-const DESTS: [&str; 3] = [".zshrc.corporate", ".p10k.zsh", ".config/corporate"];
-
 /// A leaf whose one inclusion carries the filters named, pointed at a bare
 /// repository holding `corporate`.
 fn filtering(filters: &str) -> (BareRepo, Tree) {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{{origin}}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n{filters}"
+        r#"[remotes.corporate]
+type = "git"
+url = "{{origin}}"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+{filters}"#
     ));
     tree.point_at_origin(&origin);
     (origin, tree)
-}
-
-/// Which of the three the run installed, by the ID that contributed each.
-fn installed(tree: &Tree) -> Vec<&'static str> {
-    ["zshrc", "p10k", "seeds"]
-        .into_iter()
-        .zip(DESTS)
-        .filter(|(_, dest)| tree.home(dest).exists())
-        .map(|(id, _)| id)
-        .collect()
 }
 
 #[test]
@@ -46,7 +38,7 @@ fn an_inclusion_writing_no_filter_takes_the_whole_manifest() {
 
     tree.batfiles().arg("sync").assert().success();
 
-    assert_eq!(installed(&tree), ["zshrc", "p10k", "seeds"]);
+    assert_eq!(installed_corporate(&tree), ["zshrc", "p10k", "seeds"]);
 }
 
 #[test]
@@ -57,7 +49,7 @@ fn an_allow_list_takes_what_it_names_and_leaves_the_rest() {
     let stderr = stderr_of(&assertion);
 
     assert_eq!(
-        installed(&tree),
+        installed_corporate(&tree),
         ["zshrc"],
         "the inclusion took something its filter did not name:\n{stderr}"
     );
@@ -69,7 +61,7 @@ fn a_deny_list_leaves_out_what_it_names_and_takes_the_rest() {
 
     tree.batfiles().arg("sync").assert().success();
 
-    assert_eq!(installed(&tree), ["zshrc", "seeds"]);
+    assert_eq!(installed_corporate(&tree), ["zshrc", "seeds"]);
 }
 
 #[test]
@@ -81,7 +73,7 @@ fn excluded_actions_narrow_what_a_group_filter_selected() {
 
     tree.batfiles().arg("sync").assert().success();
 
-    assert_eq!(installed(&tree), ["zshrc"]);
+    assert_eq!(installed_corporate(&tree), ["zshrc"]);
 }
 
 #[test]
@@ -92,7 +84,7 @@ fn an_empty_allow_list_takes_nothing_and_is_not_an_absent_one() {
     let stderr = stderr_of(&assertion);
 
     assert!(
-        installed(&tree).is_empty(),
+        installed_corporate(&tree).is_empty(),
         "an empty allow-list took something:\n{stderr}"
     );
     // The inclusion itself still ran: it read the manifest and contributed
@@ -129,9 +121,15 @@ fn an_inclusion_with_no_id_is_named_by_where_it_was_written() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n\
-         exclude-actions = [\"p10k\"]\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+exclude-actions = ["p10k"]
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -142,7 +140,7 @@ fn an_inclusion_with_no_id_is_named_by_where_it_was_written() {
         stderr.contains("skipped: not selected by include-remote action 1 of remote `corporate`"),
         "the reason did not name the inclusion the record came from:\n{stderr}"
     );
-    assert_eq!(installed(&tree), ["zshrc", "seeds"]);
+    assert_eq!(installed_corporate(&tree), ["zshrc", "seeds"]);
 }
 
 #[test]
@@ -229,7 +227,7 @@ fn a_filter_name_the_remote_does_not_declare_warns_and_the_run_carries_on() {
         "the unmatched filter name was not reported:\n{stderr}"
     );
     assert_eq!(
-        installed(&tree),
+        installed_corporate(&tree),
         ["zshrc"],
         "the rest of the filter stopped working:\n{stderr}"
     );
@@ -248,7 +246,7 @@ fn a_group_filter_is_answered_by_a_group_and_not_by_an_action_of_that_name() {
         stderr.contains("exclude-groups `zshrc` matched no group in remote `corporate`"),
         "an action ID satisfied a group filter:\n{stderr}"
     );
-    assert_eq!(installed(&tree), ["zshrc", "p10k", "seeds"]);
+    assert_eq!(installed_corporate(&tree), ["zshrc", "p10k", "seeds"]);
 }
 
 #[test]

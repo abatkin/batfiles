@@ -275,15 +275,10 @@ impl std::error::Error for ConditionError {}
 /// [`docs/environment.md`](../docs/environment.md#host-facts-in-conditions)
 /// specifies.
 ///
-/// These are the same for every condition in one invocation, which is what
-/// separates them from the `vars` namespace [`Bindings`] builds: that one varies
-/// with the variable set, and an inclusion writing `vars` puts the records it
-/// contributes in a set of their own.
-///
-/// Captured once because [`facts`] is not as cheap as it looks — three of the
-/// four are compile-time constants, but the host name is a syscall — and
-/// because a namespace is an owned object, so rebuilding one per condition
-/// would rebuild what it reads too.
+/// These are the same for every condition in one invocation, unlike the `vars`
+/// namespace [`Bindings`] builds, which varies with the variable set. Captured
+/// once because reading the host name is a syscall and a namespace is an owned
+/// object, so rebuilding one per condition would rebuild what it reads too.
 pub(crate) struct HostNamespaces {
     facts: Value,
     env: Value,
@@ -291,11 +286,8 @@ pub(crate) struct HostNamespaces {
 
 impl HostNamespaces {
     /// Build both namespaces, reading the host once: `std::env::consts`, the
-    /// host name, and the already captured environment.
-    ///
-    /// The [`Environment`] arrives as a parameter rather than being captured
-    /// here because batfiles reads the process environment exactly once, at
-    /// startup. The facts have no such snapshot to reuse, so they are read here.
+    /// host name, and the already captured [`Environment`], which batfiles
+    /// reads at startup and passes in rather than reading again here.
     pub fn capture(environment: &Environment) -> Self {
         let facts = Rc::new(facts());
         let entries = environment.entries();
@@ -313,17 +305,12 @@ impl HostNamespaces {
 /// false, and an enumerated set is what a spelling can be checked against.
 /// Adding a key later stays a non-breaking change.
 ///
-/// The host name is whatever the platform reports, and batfiles never truncates
-/// it at the first dot. What the platform reports differs: on Unix it is
-/// `uname`'s nodename, fully qualified where the host is configured that way,
-/// while on Windows it is `GetComputerNameExW(ComputerNamePhysicalDnsHostname)`,
-/// which is the host component without the DNS suffix. A domain-joined Windows
-/// machine therefore reports `silver` where the same machine's Unix counterpart
-/// would report `silver.example.net`. The qualified Windows name needs a second
-/// API and is
-/// [an enhancement](../rewrite/steps.md#enhancements) rather than a flag on this
-/// call; [the environment reference](../docs/environment.md#host-facts-in-conditions)
-/// documents the difference for users.
+/// The host name is whatever the platform reports, never truncated at the first
+/// dot — so a domain-joined Windows machine reports a shorter name than the same
+/// machine would under Unix. [The environment
+/// reference](../docs/environment.md#host-facts-in-conditions) specifies the
+/// difference; the qualified Windows name is
+/// [an enhancement](../rewrite/steps.md#enhancements).
 fn facts() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("os".to_owned(), std::env::consts::OS.to_owned()),
@@ -492,10 +479,9 @@ impl Coercions for BatfilesCoercions {
 /// **The offending value is not named, and the example is a fixed one.** A
 /// condition is the one place a value reaches a diagnostic without having been
 /// asked for: `when = "env.GITHUB_TOKEN"` puts a credential outside the table,
-/// and a manifest batfiles evaluates is not always the user's own. This is the
-/// rule [`env_vars`](crate::env_vars) already states for the environment --
-/// report the name a user acts on, not the value -- applied where a value would
-/// otherwise be echoed twice. The condition's own text still names what failed.
+/// and a manifest batfiles evaluates is not always the user's own. Report the
+/// name a user acts on and not the value, as [`env_vars`](crate::env_vars)
+/// does; the condition's own text still names what failed.
 const NOT_BOOLEAN: &str = "a value in it is not a boolean. Write a comparison, \
      such as `profile == 'personal'`, or use one of true, false, 1, 0, yes, no, on, or off";
 
@@ -742,7 +728,7 @@ mod tests {
             EvalError::Undeclared { .. }
         ));
 
-        // And it composes, which is what makes it usable rather than a curiosity.
+        // And it composes.
         assert!(truth("vars.valued || vars.undeclared", &bindings));
         assert!(!truth("vars.undeclared || vars.nothere", &bindings));
     }

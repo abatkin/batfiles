@@ -18,12 +18,13 @@ fn a_symlink_action_parses_with_every_field_it_accepts() {
     let tree = Tree::new();
     tree.repo_file("files/zshrc", "# zsh\n");
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         id = \"zshrc\"\n\
-         group = \"shell\"\n\
-         source = \"files/zshrc\"\n\
-         dest = \"~/.zshrc\"\n",
+        r#"[[actions]]
+type = "symlink"
+id = "zshrc"
+group = "shell"
+source = "files/zshrc"
+dest = "~/.zshrc"
+"#,
     );
 
     tree.batfiles().arg("sync").assert().success();
@@ -690,11 +691,9 @@ fn a_symlink_dir_run_twice_changes_nothing() {
 #[test]
 fn an_empty_source_directory_still_makes_its_destination_and_links_nothing() {
     // Not an error: a directory that is empty today is a repository in
-    // progress, not a manifest that cannot be honored. The destination is
-    // made anyway — it is what the action was told to fill, and `create-dir`
-    // makes exactly that directory when a manifest asks for it outright —
-    // and saying so is what keeps a run that changed the home from being
-    // silent about it.
+    // progress, not a manifest that cannot be honored. The destination is made
+    // anyway, since it is what the action was told to fill, and saying so keeps
+    // a run that changed the home from being silent about it.
     let tree = Tree::new();
     fs::create_dir_all(tree.path("repo/files")).expect("an empty source directory");
     tree.write_manifest(&one_symlink_dir("files", "~/installed", false));
@@ -1150,9 +1149,16 @@ fn personal_composed_with(origin: &BareRepo) -> Tree {
     let tree = Tree::fixture("leaf");
     let personal = fs::read_to_string(tree.manifest()).expect("the fixture manifest");
     tree.write_manifest(&format!(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         {personal}\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{}"
+
+{personal}
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+"#,
         display(&origin.origin())
     ));
     tree

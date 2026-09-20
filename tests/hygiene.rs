@@ -1,11 +1,15 @@
-//! Textual checks for dead-code annotations, scheduled markers, filesystem-owner
-//! imports, and action inventories. These scans do not parse Rust or prove
-//! read-only access, mode gating, call reachability, or behavioral coverage.
-//! Review those properties in code and exercise them through CLI tests.
+//! Checks over this repository's own sources, documents, and fixtures:
+//! dead-code annotations, scheduled markers, filesystem-owner imports, and
+//! action inventories. The Rust and Markdown ones are textual scans, and the
+//! fixture inventory parses TOML. None of them parses Rust or proves read-only
+//! access, mode gating, call reachability, or behavioral coverage. Review those
+//! properties in code and exercise them through CLI tests.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use thiserror::Error;
 
 /// The step list a `CARRY` marker or a withheld option is cleared by.
 const STEPS: &str = "rewrite/steps.md";
@@ -541,27 +545,54 @@ fn documented_action_types(document: &str) -> Option<Vec<String>> {
 
 /// The action types a manifest declares, sorted and without repeats.
 ///
-/// A `type` field belongs to whichever table it was written under, and
-/// `[remotes]` has one too, so the scan tracks the last header it passed rather
-/// than reading every `type = ` in the file. It is still a scanner and not a
-/// TOML parser: what it needs to know is which section a line sits in.
-fn declared_action_types(manifest: &str) -> Vec<String> {
-    let mut in_actions = false;
+/// Only the top-level `actions` array contributes. A `type` written anywhere
+/// else belongs to whatever declared it — `[remotes]` has one, and so may a
+/// table an action owns — and the document is parsed rather than scanned so
+/// that which table a key sits in is TOML's answer and not this check's.
+///
+/// A manifest declaring no actions contributes nothing and is not a fault. Every
+/// other shape is one: this check reads the fixtures to say what the CLI tests
+/// cover, so a document it cannot read must fail rather than quietly shrink the
+/// inventory. The caller names the manifest the error came from.
+fn declared_action_types(manifest: &str) -> Result<Vec<String>, NotAnInventory> {
+    let document: toml::Value = toml::from_str(manifest)?;
+    let Some(actions) = document.get("actions") else {
+        return Ok(Vec::new());
+    };
+    let actions = actions.as_array().ok_or(NotAnInventory::NotAList)?;
+
     let mut types: Vec<String> = Vec::new();
-    for line in manifest.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_actions = line.starts_with("[[actions]]");
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("type = \"").filter(|_| in_actions)
-            && let Some(kind) = rest.split('"').next()
-        {
-            types.push(kind.to_owned());
-        }
+    for (index, action) in actions.iter().enumerate() {
+        let position = index + 1;
+        let kind = action
+            .get("type")
+            .and_then(toml::Value::as_str)
+            .ok_or(NotAnInventory::Untyped { position })?;
+        types.push(kind.to_owned());
     }
     types.sort();
     types.dedup();
-    types
+    Ok(types)
+}
+
+/// What a manifest can be that stops it naming the action types it declares.
+#[derive(Debug, Error)]
+enum NotAnInventory {
+    /// Not a TOML document at all. What follows is the parser's own message,
+    /// which names the line and what it expected there.
+    #[error("is not TOML: {0}")]
+    Toml(#[from] toml::de::Error),
+
+    /// An `actions` that is present and is not an array, which is the one shape
+    /// a manifest's action list takes.
+    #[error("writes an `actions` that is not an array of actions")]
+    NotAList,
+
+    /// An entry of that array with no string `type`: a table omitting it, one
+    /// writing something other than a string for it, and an entry that is no
+    /// table at all are the same fault to a reader counting action types.
+    #[error("writes an action at position {position} with no string `type`")]
+    Untyped { position: usize },
 }
 
 /// [`STEPS`] as the step-to-done map both checks are cleared by.
@@ -887,7 +918,13 @@ fn the_fixture_repositories_declare_every_action_type_that_exists() {
         let document = fs::read_to_string(&manifest).unwrap_or_else(|error| {
             panic!("{} is a fixture manifest: {error}", display(&manifest))
         });
-        declared.extend(declared_action_types(&document));
+        let types = declared_action_types(&document).unwrap_or_else(|error| {
+            panic!(
+                "{} is a fixture manifest this check reads: it {error}",
+                display(&manifest)
+            )
+        });
+        declared.extend(types);
     }
     declared.sort();
     declared.dedup();
@@ -915,18 +952,110 @@ fn fixture_manifests() -> Vec<PathBuf> {
     found
 }
 
+/// The inventory of a manifest this check expects to be able to read.
+fn inventory(manifest: &str) -> Vec<String> {
+    declared_action_types(manifest).expect("a manifest whose action types are readable")
+}
+
+/// Why a manifest has no inventory, for a case asserting that it has none.
+fn not_an_inventory(manifest: &str) -> String {
+    match declared_action_types(manifest) {
+        Ok(types) => panic!("this manifest was read as declaring {types:?}"),
+        Err(error) => error.to_string(),
+    }
+}
+
 #[test]
 fn a_manifests_action_types_are_read_once_each() {
-    let manifest = "[[actions]]\n\
-                    type = \"symlink\"\n\
-                    source = \"shell/zshrc\"\n\
-                    \n\
-                    [[actions]]\n\
-                    type = \"copy\"\n\
-                    \n\
-                    [[actions]]\n\
-                    type = \"symlink\"\n";
-    assert_eq!(declared_action_types(manifest), ["copy", "symlink"]);
+    let manifest = r#"[[actions]]
+type = "symlink"
+source = "shell/zshrc"
+
+[[actions]]
+type = "copy"
+
+[[actions]]
+type = "symlink"
+"#;
+    assert_eq!(inventory(manifest), ["copy", "symlink"]);
+}
+
+#[test]
+fn one_action_list_reads_the_same_however_its_toml_is_written() {
+    // The quote a value carries, the spacing around `=`, a comment beside a
+    // line, and whether the array is written as tables or inline are all the
+    // same document to TOML, and so must be the same inventory here.
+    for spelling in [
+        "[[actions]]\ntype = \"symlink\"\n\n[[actions]]\ntype = \"copy\"\n",
+        "[[actions]]\ntype = 'symlink'\n\n[[actions]]\ntype = 'copy'\n",
+        "[[actions]]\ntype='symlink'\n\n[[actions]]\ntype    =   \"copy\"\n",
+        "# what this repository installs\n\
+         [[actions]]\n\
+         type = \"symlink\" # the shell\n\n\
+         [[actions]]\n\
+         type = \"copy\"\n",
+        "actions = [{ type = \"symlink\" }, { type = \"copy\" }]\n",
+    ] {
+        assert_eq!(
+            inventory(spelling),
+            ["copy", "symlink"],
+            "this spelling was read as a different list:\n{spelling}"
+        );
+    }
+}
+
+#[test]
+fn a_type_outside_the_action_list_is_not_an_action_type() {
+    // `[remotes]` declares a type of its own, and a table an action owns may
+    // too. Both belong to whatever declared them.
+    let manifest = r#"[remotes.corporate]
+type = "git"
+url = "https://example.invalid/corp.git"
+
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+vars = { type = "not-an-action" }
+
+[[actions]]
+type = "symlink"
+
+[actions.source]
+type = "still-not-an-action"
+"#;
+    assert_eq!(inventory(manifest), ["include-remote", "symlink"]);
+}
+
+#[test]
+fn a_manifest_declaring_no_actions_declares_no_action_types() {
+    // Not every manifest a fixture repository keeps has to declare an action,
+    // and one that declares none is contributing nothing rather than failing.
+    assert!(inventory("[vars]\nwork = \"false\"\n").is_empty());
+    assert!(inventory("").is_empty());
+    assert!(inventory("actions = []\n").is_empty());
+}
+
+#[test]
+fn a_manifest_this_check_cannot_read_fails_rather_than_reading_nothing() {
+    // The fault this guards against: a document the reader cannot make sense of
+    // quietly contributing an empty inventory, which looks exactly like a
+    // fixture that stopped declaring an action type.
+    for (manifest, expected) in [
+        ("[[actions]\ntype = \"symlink\"\n", "is not TOML"),
+        ("actions = \"symlink\"\n", "not an array"),
+        ("[[actions]]\nid = \"zshrc\"\n", "position 1"),
+        (
+            "[[actions]]\ntype = \"symlink\"\n\n[[actions]]\ntype = 7\n",
+            "position 2",
+        ),
+        ("actions = [\"symlink\"]\n", "position 1"),
+    ] {
+        let reason = not_an_inventory(manifest);
+        assert!(
+            reason.contains(expected),
+            "`{expected}` is not why this manifest has no inventory: {reason}"
+        );
+    }
 }
 
 /// Stands in for [`ACTIONS`]: an enum shaped like the real one, with the

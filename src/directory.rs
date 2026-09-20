@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Error;
 use crate::mode::RunMode;
-use crate::output::Verb;
+use crate::output::{Reporter, Verb};
 use crate::paths::{ExistingNode, reaches_nothing};
 
 /// What [`ensure_directory`] found, for a caller that reports what it did.
@@ -20,8 +20,20 @@ pub(crate) enum DirectoryOutcome {
 }
 
 impl DirectoryOutcome {
-    /// The links this cleared, which a caller has to say something about.
-    pub fn removals(&self) -> &[BrokenLink] {
+    /// Say what this cleared, in the order it was cleared, as ordinary progress.
+    ///
+    /// Reports an outcome and nothing more: reaches no filesystem and decides
+    /// nothing, and a dry run's lines read as intentions only because `mode`
+    /// words them that way.
+    pub fn report_removals(&self, mode: RunMode, reporter: &Reporter) {
+        for link in self.removals() {
+            reporter.info(&link.removal_note(mode));
+        }
+    }
+
+    /// The links this cleared, for the deeper level of a path to carry up to the
+    /// one outcome its caller is handed.
+    fn removals(&self) -> &[BrokenLink] {
         match self {
             Self::AlreadyThere => &[],
             Self::Created { replaced } => replaced,

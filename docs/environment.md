@@ -123,8 +123,8 @@ wins.
 
 **The first and third layers belong to one inclusion, and reach only what that
 inclusion contributed.** The set a leaf repository's own records are decided
-against has four layers: the middle four of the list above, starting at the
-leaf's `[vars]`. A record an [`include-remote`](repoformat.md#include-remote)
+against has the other four layers: the leaf's `[vars]`, `vars.toml`,
+`BATFILES_VAR_*`, and `--var`. A record an [`include-remote`](repoformat.md#include-remote)
 contributed is decided against that set with two more in it — the included
 remote's own [`[vars]`](repoformat.md#variables-an-included-remote-declares)
 beneath every other layer, and that inclusion's
@@ -137,8 +137,7 @@ same manifest, while nothing in either scope reaches the leaf's own records, the
 inclusion's own condition, or the remote's.
 
 Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables),
-a malformed or unreadable one now fails these commands as a malformed manifest
-does.
+a malformed or unreadable one fails these commands as a malformed manifest does.
 
 The merged set supplies [condition](repoformat.md#conditions) values. Use
 `vars list` or an action command's `-vv` output to inspect values and origins;

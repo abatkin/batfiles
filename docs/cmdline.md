@@ -715,6 +715,19 @@ happening.
 warning: symlink gitconfig-work (group git): when "work" cannot be evaluated, so it is not installed: `work` is not declared. Add `work = "false"` to [vars] in batfiles.toml, run `batfiles vars set work <value>`, or write `vars.work` if the variable is meant to be optional
 ```
 
+**A record an inclusion's [selection
+filters](repoformat.md#selecting-part-of-a-remote) left out says so**, in the
+same `-v` heading and ahead of every reason below, the leaf repository never
+having taken it in:
+
+```text
+symlink corp.p10k (group corp.prompt) - skipped: not selected by include-remote `corp`
+```
+
+The reason names the inclusion the way [every report
+does](repoformat.md#include-remote), so one written without an `id` is named by
+where it was written rather than going unattributed.
+
 When more than one reason applies, one is reported, in this order: a disable
 ahead of a run-only skip, because it is the one still in force tomorrow when the
 skip is gone; the action's own name ahead of its group's, because it is the more

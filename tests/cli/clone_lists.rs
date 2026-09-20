@@ -15,11 +15,12 @@ use crate::support::*;
 fn one_list(list: &str) -> Tree {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         id = \"plugins\"\n\
-         source = \"plugins.txt\"\n\
-         dest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+id = "plugins"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+"#,
     );
     tree.repo_file("plugins.txt", list);
     tree
@@ -127,7 +128,10 @@ fn an_entry_carries_a_condition_of_its_own() {
         origin = display(&origin.origin())
     ));
     tree.write_manifest(&format!(
-        "[vars]\nwork = \"false\"\n\n{}",
+        r#"[vars]
+work = "false"
+
+{}"#,
         fs::read_to_string(tree.manifest()).expect("the manifest")
     ));
 
@@ -144,6 +148,58 @@ fn an_entry_carries_a_condition_of_its_own() {
             display(&origin.origin())
         )),
         "the closed entry should say why it was passed over:\n{stderr}"
+    );
+}
+
+#[test]
+fn naming_a_list_waives_its_own_condition_and_decides_its_entries_all_the_same() {
+    // Two gates with one name between them. `apply-action` names the record,
+    // so the record's own `when` is waived -- and an entry's is not, because an
+    // entry is not what was named and nothing finer than a record can be. The
+    // list is read for this run either way: the entries are decided where every
+    // list's are, ahead of the action.
+    let origin = BareRepo::new();
+    let tree = Tree::new();
+    tree.write_manifest(
+        r#"[vars]
+work = "false"
+
+[[actions]]
+type = "git-clone-list"
+id = "plugins"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+when = "work"
+"#,
+    );
+    tree.repo_file(
+        "plugins.txt",
+        &format!(
+            "{origin} dest-name=everywhere\n\
+             {origin} dest-name=only-at-work when=\"work\"\n",
+            origin = display(&origin.origin())
+        ),
+    );
+
+    // The record's own condition, honored: a run that did not name it clones
+    // nothing and never opens the list.
+    tree.batfiles().arg("sync").assert().success();
+    assert!(!tree.home(".plugins").exists());
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-action", "--id", "plugins", "-v"])
+        .assert()
+        .success();
+
+    assert_eq!(entries(&tree.home(".plugins")), ["everywhere"]);
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "not cloning {} (plugins.txt line 2): when \"work\" is false",
+            display(&origin.origin())
+        )),
+        "the entry's own gate should still close it:\n{stderr}"
     );
 }
 
@@ -376,11 +432,12 @@ fn an_action_after_one_is_carried_out() {
     let tree = Tree::new();
     tree.repo_file("shell/zshrc", "# zshrc\n");
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"plugins.txt\"\n\
-         dest-dir = \"~/.plugins\"\n\
-         \n{}",
+        r#"[[actions]]
+type = "git-clone-list"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+
+{}"#,
         one_copy("shell/zshrc", "~/.zshrc")
     ));
     tree.repo_file("plugins.txt", &format!("{}\n", display(&origin.origin())));
@@ -420,11 +477,12 @@ fn a_malformed_list_stops_the_run_before_the_first_action() {
     let tree = Tree::new();
     tree.repo_file("shell/zshrc", "# zshrc\n");
     tree.write_manifest(&format!(
-        "{}\n\
-         [[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"plugins.txt\"\n\
-         dest-dir = \"~/.plugins\"\n",
+        r#"{}
+[[actions]]
+type = "git-clone-list"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+"#,
         one_symlink("shell/zshrc", "~/.zshrc")
     ));
     tree.repo_file(
@@ -449,10 +507,11 @@ fn a_malformed_list_stops_the_run_before_the_first_action() {
 fn a_list_the_repository_does_not_have_is_a_missing_source() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"plugins.txt\"\n\
-         dest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
@@ -696,10 +755,11 @@ fn the_list_is_a_repository_path_and_the_clone_directory_is_a_dest_dir() {
     // this one installs into a directory.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"plugins.txt\"\n\
-         dest = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+source = "plugins.txt"
+dest = "~/.plugins"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
@@ -712,10 +772,11 @@ fn the_list_is_a_repository_path_and_the_clone_directory_is_a_dest_dir() {
 
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"git-clone-list\"\n\
-         source = \"../outside.txt\"\n\
-         dest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+source = "../outside.txt"
+dest-dir = "~/.plugins"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);

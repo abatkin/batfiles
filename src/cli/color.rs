@@ -54,7 +54,6 @@ pub(crate) fn resolve(
         // An absent or empty value is treated as unset, as it is for the
         // location variables, rather than as an invalid mode.
         None | Some("") => None,
-        // Anything else that is not one of the three modes is invalid.
         Some(raw) => parse_choice(raw).or_else(|| {
             warning = Some(format!(
                 "ignoring invalid BATFILES_COLOR value `{raw}`; expected auto, always, or never"

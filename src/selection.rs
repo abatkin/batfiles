@@ -40,8 +40,8 @@ impl Target<'_> {
     fn wants(&self, record: &RunRecord) -> bool {
         match self {
             Self::Everything => true,
-            Self::Action(id) => record.name.as_ref() == Some(*id),
-            Self::Group(group) => record.group.as_ref() == Some(*group),
+            Self::Action(id) => record.address.as_ref() == Some(*id),
+            Self::Group(group) => record.group_address.as_ref() == Some(*group),
         }
     }
 
@@ -77,15 +77,16 @@ impl Target<'_> {
     }
 
     /// Whether an exclusion naming an action's own ID still applies. Nothing is
-    /// finer-grained than the one action `apply-action` asked for.
-    fn honors_actions(&self) -> bool {
+    /// finer-grained than the one action `apply-action` asked for, so this is
+    /// also what waives that record's own condition: one policy, not two.
+    fn honors_action_exclusions(&self) -> bool {
         !matches!(self, Self::Action(_))
     }
 
     /// Whether an exclusion naming an action's group still applies. Only a run
     /// that asked for the whole manifest asked for something coarser than a
     /// group.
-    fn honors_groups(&self) -> bool {
+    fn honors_group_exclusions(&self) -> bool {
         matches!(self, Self::Everything)
     }
 }
@@ -142,17 +143,20 @@ impl SkipList {
         self.names.get(candidate).copied()
     }
 
-    /// Warn once per name that nothing in the run's list answers to, passing
-    /// over the ones qualified by an inclusion the run never opened.
+    /// Warn once per name that nothing in the run's list answers to.
+    ///
+    /// `unread_inclusions` names inclusions and not actions. A skip qualified by
+    /// one of them is neither matched nor unmatched, since the manifest that
+    /// would have answered it was never read, so it is passed over in silence.
     fn warn_unmatched(
         &self,
         present: &[&ItemAddress],
-        unread: &[ItemId],
+        unread_inclusions: &[ItemId],
         noun: &str,
         reporter: &Reporter,
     ) {
         for (name, origin) in &self.names {
-            if present.contains(&name) || unread.iter().any(|id| name.qualified_by(id)) {
+            if present.contains(&name) || unread_inclusions.iter().any(|id| name.qualified_by(id)) {
                 continue;
             }
             reporter.warn(&format!("{origin} `{name}` matched no {noun}"));
@@ -201,7 +205,7 @@ impl<'a> Selection<'a> {
     ) -> Self {
         Self {
             actions: run_only(
-                target.honors_actions(),
+                target.honors_action_exclusions(),
                 skip_actions,
                 "--skip-action",
                 SKIP_ACTIONS,
@@ -209,7 +213,7 @@ impl<'a> Selection<'a> {
                 reporter,
             ),
             groups: run_only(
-                target.honors_groups(),
+                target.honors_group_exclusions(),
                 skip_groups,
                 "--skip-group",
                 SKIP_GROUPS,
@@ -242,10 +246,9 @@ impl<'a> Selection<'a> {
     /// The failure for a target that matched a record it cannot carry out, or
     /// `None` where it may.
     ///
-    /// One record is like this: `apply-action` naming an `include-remote`. The
-    /// inclusion's `id` is a prefix for the addresses of what it brings in, so
-    /// an address reaching the record itself has named the wrong thing rather
-    /// than nothing, and saying so beats reporting an unknown action.
+    /// One record is like this: `apply-action` naming an `include-remote`. Its
+    /// `id` is a prefix for the addresses of what it brings in, so an address
+    /// reaching the record itself named the wrong thing rather than nothing.
     pub fn refusal(&self, action: &Action) -> Option<Error> {
         match (&self.target, action) {
             (Target::Action(id), Action::IncludeRemote(_)) => {
@@ -269,36 +272,40 @@ impl<'a> Selection<'a> {
                 .filter_map(|it| of(it).as_ref())
                 .collect()
         };
-        let unread = &run_list.unread;
-        self.actions
-            .warn_unmatched(&names(|it| &it.name), unread, "action", reporter);
-        self.groups
-            .warn_unmatched(&names(|it| &it.group), unread, "group", reporter);
+        let unread_inclusions = &run_list.unread_inclusions;
+        self.actions.warn_unmatched(
+            &names(|it| &it.address),
+            unread_inclusions,
+            "action",
+            reporter,
+        );
+        self.groups.warn_unmatched(
+            &names(|it| &it.group_address),
+            unread_inclusions,
+            "group",
+            reporter,
+        );
     }
 
     /// Why this run is passing the record over, or `None` where it carries it
     /// out.
     ///
     /// A condition batfiles cannot decide closes the gate like any other
-    /// exclusion, and says so at every verbosity: the record is the one thing a
-    /// reader can act on, and it is named where the run reports it rather than
-    /// here.
+    /// exclusion, and says so at every verbosity; the run names the record when
+    /// it reports it.
     ///
     /// The record's own condition is consulted last, so a record some list
-    /// already excludes is never evaluated: a condition that cannot be
-    /// evaluated then costs only the runs that would otherwise have carried the
-    /// record out.
+    /// already excludes is never evaluated: one that cannot be evaluated costs
+    /// only the runs that would otherwise have carried the record out.
     pub fn exclusion(&self, record: &RunRecord, bindings: &Bindings<'_>) -> Option<Exclusion> {
         if let Some(reason) = self.listed_reason(record) {
             return Some(Exclusion::Expected(reason.to_string()));
         }
-        // Waived exactly where the action's own name is. `apply-action` names
-        // one record and nothing is finer-grained than that, so naming it
-        // reaches it whatever this machine makes of its condition.
+        // Waived exactly where an exclusion naming the action is.
         let gate = record
             .action
             .gate()
-            .filter(|_| self.target.honors_actions())?;
+            .filter(|_| self.target.honors_action_exclusions())?;
         gate.exclusion(bindings, Some(NOT_INSTALLED))
     }
 
@@ -307,36 +314,36 @@ impl<'a> Selection<'a> {
     /// group exclusions within each source. The target determines which
     /// exclusions are honored.
     fn listed_reason<'b>(&self, record: &'b RunRecord) -> Option<SkipReason<'b>> {
-        let id = record
-            .name
+        let address = record
+            .address
             .as_ref()
-            .filter(|_| self.target.honors_actions());
-        let group = record
-            .group
+            .filter(|_| self.target.honors_action_exclusions());
+        let group_address = record
+            .group_address
             .as_ref()
-            .filter(|_| self.target.honors_groups());
+            .filter(|_| self.target.honors_group_exclusions());
 
         let listed = |list: &BTreeSet<ItemAddress>, item: &ItemAddress| list.contains(item);
 
-        if let Some(name) = id.filter(|id| listed(&self.disabled.actions, id)) {
+        if let Some(name) = address.filter(|it| listed(&self.disabled.actions, it)) {
             return Some(SkipReason::Disabled {
                 noun: "action",
                 name,
             });
         }
-        if let Some(name) = group.filter(|group| listed(&self.disabled.groups, group)) {
+        if let Some(name) = group_address.filter(|it| listed(&self.disabled.groups, it)) {
             return Some(SkipReason::Disabled {
                 noun: "group",
                 name,
             });
         }
-        if let Some((name, origin)) = id.and_then(|id| Some((id, self.actions.origin(id)?))) {
+        if let Some((name, origin)) = address.and_then(|it| Some((it, self.actions.origin(it)?))) {
             return Some(SkipReason::Run { name, origin });
         }
-        group.and_then(|group| {
+        group_address.and_then(|it| {
             Some(SkipReason::Run {
-                name: group,
-                origin: self.groups.origin(group)?,
+                name: it,
+                origin: self.groups.origin(it)?,
             })
         })
     }
@@ -347,8 +354,8 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::action::Inclusion;
     use crate::condition::HostNamespaces;
-    use crate::manifest::action::Contributor;
     use crate::output::Verbosity;
     use crate::var::VarName;
     use crate::var_set::VarSet;
@@ -373,27 +380,23 @@ mod tests {
     /// `None` is an inclusion written without an `id`, whose contents answer to
     /// no address at all.
     ///
-    /// The scope is empty, since these cases decide addressing and exclusion
-    /// rather than conditions; the record the [`decided`] cases carry a
-    /// condition on is the leaf's own.
+    /// Built from a real `include-remote` record, so a case here cannot set up a
+    /// record no run could produce. The scope is empty: these cases decide
+    /// addressing and exclusion rather than conditions.
     fn included(id: &str, group: &str, inclusion: Option<&str>) -> RunRecord {
-        let inclusion = inclusion.map(item);
-        let by = match &inclusion {
-            Some(id) => Contributor::Inclusion(id),
-            None => Contributor::UnnamedInclusion("include-remote action 1 of remote `corporate`"),
+        let named = match inclusion {
+            Some(id) => format!("id = \"{id}\"\n"),
+            None => String::new(),
         };
-        RunRecord::contributed(
-            create_dir(id, group),
-            1,
-            by,
-            item("corporate"),
-            &Rc::new(VarSet::stack(
-                BTreeMap::new(),
-                BTreeMap::new(),
-                BTreeMap::new(),
-                &[],
-            )),
-        )
+        let declaration = toml::from_str(&format!("{named}remote = \"corporate\"\n"))
+            .expect("the record should parse");
+        let from = Inclusion::at(&declaration, 1).with_scope(Rc::new(VarSet::stack(
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        )));
+        RunRecord::contributed(create_dir(id, group), 1, &Rc::new(from))
     }
 
     fn create_dir(id: &str, group: &str) -> Action {
@@ -624,8 +627,7 @@ mod tests {
 
     #[test]
     fn asking_for_an_action_waives_every_exclusion() {
-        // `apply-action`. Nothing is finer-grained than the one action asked
-        // for, so all four lists are waived.
+        // `apply-action`: all four lists at once.
         let zshrc = address("zshrc");
         let selection = filter(
             Target::Action(&zshrc),
@@ -710,10 +712,8 @@ mod tests {
 
     #[test]
     fn asking_for_one_action_waives_its_condition_too() {
-        // The waiver is the action tier's, and a condition sits in it: naming
-        // one record is the finest thing a command can ask for, so it reaches
-        // the record whatever this machine makes of its condition. A run that
-        // cannot decide the condition is not stopped by it either.
+        // A condition sits in the action tier, so the action waiver takes it --
+        // including one this machine cannot decide, which stops nothing either.
         let zshrc = address("zshrc");
         let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
         assert_eq!(
@@ -806,10 +806,8 @@ mod tests {
 
     #[test]
     fn a_record_from_an_unnamed_inclusion_answers_to_nothing() {
-        // An inclusion written without an `id` gives its contents no address, so
-        // they run and no list can name them: not the qualified spelling, which
-        // has no first segment to match, and not the unqualified one, which
-        // means the leaf.
+        // Neither spelling reaches such a record: the qualified one has no first
+        // segment to match, and the unqualified one means the leaf's own.
         let contributed = included("zshrc", "shell", None);
         let selection = selection(
             &["zshrc", "core.zshrc"],

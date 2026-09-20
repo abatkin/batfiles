@@ -14,19 +14,19 @@ use crate::support::*;
 /// written in the given spelling.
 fn gated(tree: &Tree, spelling: &str, condition: &str, vars: &str) {
     tree.write_manifest(&format!(
-        "{vars}\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"gated\"\n\
-         group = \"shell\"\n\
-         dest = \"~/gated\"\n\
-         {spelling} = \"{condition}\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"plain\"\n\
-         group = \"shell\"\n\
-         dest = \"~/plain\"\n"
+        r#"{vars}[[actions]]
+type = "create-dir"
+id = "gated"
+group = "shell"
+dest = "~/gated"
+{spelling} = "{condition}"
+
+[[actions]]
+type = "create-dir"
+id = "plain"
+group = "shell"
+dest = "~/plain"
+"#
     ));
 }
 
@@ -245,15 +245,16 @@ fn apply_group_honors_the_conditions_of_the_records_in_it() {
 fn a_group_every_condition_closes_says_there_was_nothing_to_apply() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[vars]\n\
-         work = \"false\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"gated\"\n\
-         group = \"shell\"\n\
-         dest = \"~/gated\"\n\
-         when = \"work\"\n",
+        r#"[vars]
+work = "false"
+
+[[actions]]
+type = "create-dir"
+id = "gated"
+group = "shell"
+dest = "~/gated"
+when = "work"
+"#,
     );
 
     let assertion = tree
@@ -275,11 +276,12 @@ fn a_group_every_condition_closes_says_there_was_nothing_to_apply() {
 fn a_record_writes_one_condition_or_none() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         dest = \"~/x\"\n\
-         when = \"work\"\n\
-         unless = \"work\"\n",
+        r#"[[actions]]
+type = "create-dir"
+dest = "~/x"
+when = "work"
+unless = "work"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
@@ -294,15 +296,16 @@ fn a_record_writes_one_condition_or_none() {
 fn a_malformed_condition_is_a_load_error_rather_than_a_surprise_partway_through() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"first\"\n\
-         dest = \"~/first\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         dest = \"~/second\"\n\
-         when = \"work &&\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "first"
+dest = "~/first"
+
+[[actions]]
+type = "create-dir"
+dest = "~/second"
+when = "work &&"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);

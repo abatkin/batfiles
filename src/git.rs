@@ -119,9 +119,7 @@ fn clone(
     mode: RunMode,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    for link in directory::create_parents(dest, mode)?.removals() {
-        reporter.info(&link.removal_note(mode));
-    }
+    directory::create_parents(dest, mode)?.report_removals(mode, reporter);
     if mode.writes() {
         run(
             None,

@@ -367,18 +367,19 @@ fn the_repository_and_the_disabled_lists_are_left_alone_by_the_commands() {
 fn with_two_documents() -> Tree {
     let tree = Tree::new();
     tree.write_manifest(
-        "[vars]\n\
-         editor = \"vi\"\n\
-         profile = \"personal\"\n\
-         rank = \"3\"\n\
-         \n\
-         # One action, so the commands that apply part of a manifest have\n\
-         # something to apply while they resolve the same set.\n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zsh-cache\"\n\
-         group = \"shell\"\n\
-         dest = \"~/.cache/zsh\"\n",
+        r#"[vars]
+editor = "vi"
+profile = "personal"
+rank = "3"
+
+# One action, so the commands that apply part of a manifest have
+# something to apply while they resolve the same set.
+[[actions]]
+type = "create-dir"
+id = "zsh-cache"
+group = "shell"
+dest = "~/.cache/zsh"
+"#,
     );
     tree.write_machine_vars("editor = 'nvim'\nprofile = 'work'\n");
     tree
@@ -606,9 +607,10 @@ fn a_listing_shows_every_layer_with_the_value_in_force_first() {
 
     assert_eq!(
         stdout_of(&assertion),
-        "editor  = \"nvim\" (vars.toml; over batfiles.toml)\n\
-         profile = \"work\" (vars.toml; over batfiles.toml)\n\
-         rank    = \"9\" (BATFILES_VAR_*; over batfiles.toml)\n"
+        r#"editor  = "nvim" (vars.toml; over batfiles.toml)
+profile = "work" (vars.toml; over batfiles.toml)
+rank    = "9" (BATFILES_VAR_*; over batfiles.toml)
+"#
     );
 }
 

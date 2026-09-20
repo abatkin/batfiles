@@ -77,9 +77,8 @@ pub(crate) struct SkipGroupOptions {
 /// string, which is a value like any other.
 ///
 /// The shape is checked before the name, so `--var profile` reports the missing
-/// `=` rather than complaining that the whole argument breaks the name rule. An
-/// empty key is the same mistake read from the other side — nothing was written
-/// where the key goes — so `--var =work` reports the shape too.
+/// `=` rather than complaining that the whole argument breaks the name rule.
+/// `--var =work` is the same mistake read from the other side.
 fn parse_var(raw: &str) -> Result<(VarName, String), String> {
     match raw.split_once('=') {
         Some((key, value)) if !key.is_empty() => match VarName::try_from(key.to_owned()) {

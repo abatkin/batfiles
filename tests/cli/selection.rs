@@ -15,23 +15,24 @@ use crate::support::*;
 /// installed is exactly the set of names under the home.
 fn three_actions(tree: &Tree) {
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zshrc\"\n\
-         group = \"shell\"\n\
-         dest = \"~/zshrc\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zshenv\"\n\
-         group = \"shell\"\n\
-         dest = \"~/zshenv\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"gtkrc\"\n\
-         group = \"gui\"\n\
-         dest = \"~/gtkrc\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "zshrc"
+group = "shell"
+dest = "~/zshrc"
+
+[[actions]]
+type = "create-dir"
+id = "zshenv"
+group = "shell"
+dest = "~/zshenv"
+
+[[actions]]
+type = "create-dir"
+id = "gtkrc"
+group = "gui"
+dest = "~/gtkrc"
+"#,
     );
 }
 
@@ -384,11 +385,12 @@ fn an_unmatched_skip_is_reported_before_the_run_rather_than_after_it() {
     // must not swallow it.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"copy\"\n\
-         id = \"absent\"\n\
-         source = \"nowhere\"\n\
-         dest = \"~/absent\"\n",
+        r#"[[actions]]
+type = "copy"
+id = "absent"
+source = "nowhere"
+dest = "~/absent"
+"#,
     );
     let assertion = tree
         .batfiles()

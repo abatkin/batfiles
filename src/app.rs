@@ -216,10 +216,9 @@ fn edit_disabled_list(
 
 /// Resolve the state roots a command works in, and report them at `-v`.
 ///
-/// Named for what it locates, beside [`locate_repository`], which resolves every
-/// root: a command routed here installs nothing and reads no repository, so it
-/// never discovers a working repository and is never handed one that nothing
-/// selected.
+/// A command routed here installs nothing and reads no repository, so no
+/// working-directory discovery runs and it is never handed a repository nothing
+/// selected. [`locate_repository`] resolves every root instead.
 fn locate_state(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<StateRoots, Error> {
     let state = resolve_state_roots(&locations(&cli.global), env, detect_os_home)?;
     report_state_roots(reporter, &state);

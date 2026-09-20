@@ -1,11 +1,8 @@
 //! Naming what an inclusion contributed.
 //!
-//! Two rules, read from both sides. An included record answers to its qualified
-//! address — `corp.zshrc`, under the `id` of the inclusion that brought it in —
-//! and to no unqualified one, because an unqualified name means the leaf
-//! repository's own. And the inclusion is a record in the list rather than a
-//! phase beside it: asking for it asks for everything it brought in, and
-//! excluding it drops all of that unread.
+//! Two rules, read from both sides: an included record answers to its qualified
+//! address and to no unqualified one, and the inclusion is itself a record in
+//! the list rather than a phase beside it.
 //!
 //! The leaf is the `inclusion` fixture, whose `corp` inclusion sits in the leaf
 //! group `work` and contributes `zshrc` (in the included group `shell`), `p10k`
@@ -14,21 +11,28 @@
 
 use crate::support::*;
 
-/// The leaf that includes `corporate`, with the remote already materialized so
-/// that every case below is about naming rather than about fetching.
-fn synchronized() -> (BareRepo, Tree) {
+/// The leaf with nothing brought down yet, for the cases about a group whose
+/// only member is an inclusion the run cannot read.
+fn including_unmaterialized() -> (BareRepo, Tree) {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::fixture("inclusion");
     tree.point_at_origin(&origin);
+    (origin, tree)
+}
+
+/// The same leaf with the remote already materialized, so that every case below
+/// is about naming rather than about fetching.
+fn synchronized() -> (BareRepo, Tree) {
+    let (origin, tree) = including_unmaterialized();
     tree.batfiles().arg("sync").assert().success();
     (origin, tree)
 }
 
-/// A leaf whose remote is materialized and whose contributed actions have not
-/// been installed, for the cases about what a later run does or does not do.
+/// The same again with the contributed actions uninstalled, for the cases about
+/// what a later run does or does not do.
 fn ready() -> (BareRepo, Tree) {
     let (origin, tree) = synchronized();
-    for dest in [".zshrc.corporate", ".p10k.zsh", ".config/corporate"] {
+    for CorporateAction { dest, .. } in CORPORATE_ACTIONS {
         let path = tree.home(dest);
         if path.is_dir() {
             std::fs::remove_dir_all(&path).expect("the installed directory");
@@ -39,20 +43,12 @@ fn ready() -> (BareRepo, Tree) {
     (origin, tree)
 }
 
-/// The same leaf with nothing brought down yet, for the cases about a group
-/// whose only member is an inclusion the run cannot read.
-fn including_unmaterialized() -> (BareRepo, Tree) {
-    let origin = BareRepo::from_fixture("corporate");
-    let tree = Tree::fixture("inclusion");
-    tree.point_at_origin(&origin);
-    (origin, tree)
-}
-
+/// Whether `zshrc` and `seeds` are installed: the two records every address
+/// below either reaches or does not, `zshrc` being the one in a group and
+/// `seeds` the one in none.
 fn installed(tree: &Tree) -> (bool, bool) {
-    (
-        tree.home(".zshrc.corporate").exists(),
-        tree.home(".config/corporate").exists(),
-    )
+    let installed = installed_corporate(tree);
+    (installed.contains(&"zshrc"), installed.contains(&"seeds"))
 }
 
 #[test]
@@ -378,9 +374,20 @@ fn two_inclusions_of_one_remote_are_two_sets_of_records() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"first\"\nremote = \"corporate\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"second\"\nremote = \"corporate\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{}"
+
+[[actions]]
+type = "include-remote"
+id = "first"
+remote = "corporate"
+
+[[actions]]
+type = "include-remote"
+id = "second"
+remote = "corporate"
+"#,
         display(&origin.origin())
     ));
 
@@ -424,8 +431,14 @@ fn an_inclusion_written_without_an_id_runs_and_answers_to_nothing() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{}"
+
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+"#,
         display(&origin.origin())
     ));
 

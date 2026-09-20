@@ -16,10 +16,18 @@ fn remote_declaring(vars: &str) -> BareRepo {
     origin.publish(
         "batfiles.toml",
         &format!(
-            "{vars}[[actions]]\ntype = \"create-dir\"\nid = \"work-tools\"\n\
-             dest = \"~/.cache/work-tools\"\nwhen = \"profile == 'work'\"\n\n\
-             [[actions]]\ntype = \"create-dir\"\nid = \"personal-tools\"\n\
-             dest = \"~/.cache/personal-tools\"\nunless = \"profile == 'work'\"\n"
+            r#"{vars}[[actions]]
+type = "create-dir"
+id = "work-tools"
+dest = "~/.cache/work-tools"
+when = "profile == 'work'"
+
+[[actions]]
+type = "create-dir"
+id = "personal-tools"
+dest = "~/.cache/personal-tools"
+unless = "profile == 'work'"
+"#
         ),
         "two records one variable decides",
     );
@@ -38,9 +46,15 @@ fn composed(remote_vars: &str, leaf_vars: &str, record: &str) -> (BareRepo, Tree
     let origin = remote_declaring(remote_vars);
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{{origin}}\"\n\n\
-         {leaf_vars}\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n{record}"
+        r#"[remotes.corporate]
+type = "git"
+url = "{{origin}}"
+
+{leaf_vars}[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+{record}"#
     ));
     tree.point_at_origin(&origin);
     (origin, tree)
@@ -107,12 +121,25 @@ fn an_override_does_not_reach_the_leafs_own_records() {
     let origin = remote();
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [vars]\nprofile = \"personal\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"leaf-work\"\n\
-         dest = \"~/.cache/leaf-work\"\nwhen = \"profile == 'work'\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\
-         vars = { profile = \"work\" }\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[vars]
+profile = "personal"
+
+[[actions]]
+type = "create-dir"
+id = "leaf-work"
+dest = "~/.cache/leaf-work"
+when = "profile == 'work'"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+vars = { profile = "work" }
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -134,11 +161,24 @@ fn an_override_reaches_only_the_inclusion_that_wrote_it() {
     let origin = remote();
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [vars]\nprofile = \"personal\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\
-         vars = { profile = \"work\" }\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"lab\"\nremote = \"corporate\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[vars]
+profile = "personal"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+vars = { profile = "work" }
+
+[[actions]]
+type = "include-remote"
+id = "lab"
+remote = "corporate"
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -244,11 +284,20 @@ fn a_remotes_own_condition_is_decided_without_an_inclusions_overrides() {
     let origin = remote();
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\
-         when = \"profile == 'work'\"\n\n\
-         [vars]\nprofile = \"personal\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\
-         vars = { profile = \"work\" }\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+when = "profile == 'work'"
+
+[vars]
+profile = "personal"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+vars = { profile = "work" }
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -279,18 +328,30 @@ fn an_included_clone_lists_entries_are_decided_in_the_inclusions_scope() {
     );
     origin.publish(
         "batfiles.toml",
-        "[[actions]]\ntype = \"git-clone-list\"\nid = \"plugins\"\n\
-         source = \"plugins.txt\"\ndest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+id = "plugins"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+"#,
         "clone what the list names",
     );
 
     for (record, cloned) in [("vars = { profile = \"work\" }\n", true), ("", false)] {
         let tree = Tree::new();
         tree.write_manifest(&format!(
-            "[remotes.corporate]\ntype = \"git\"\nurl = \"{{origin}}\"\n\n\
-             [vars]\nprofile = \"personal\"\n\n\
-             [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\n\
-             remote = \"corporate\"\n{record}"
+            r#"[remotes.corporate]
+type = "git"
+url = "{{origin}}"
+
+[vars]
+profile = "personal"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+{record}"#
         ));
         tree.point_at_origin(&origin);
 
@@ -348,10 +409,18 @@ fn an_inclusion_with_no_id_is_headed_by_where_it_was_written() {
     let origin = remote();
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [vars]\nprofile = \"personal\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n\
-         vars = { profile = \"work\" }\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[vars]
+profile = "personal"
+
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+vars = { profile = "work" }
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -391,11 +460,24 @@ fn an_unopened_inclusion_reports_nothing_about_its_overrides() {
     let origin = remote();
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [vars]\nprofile = \"personal\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/leaf\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\
-         vars = { profile = \"work\" }\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[vars]
+profile = "personal"
+
+[[actions]]
+type = "create-dir"
+id = "cache"
+dest = "~/.cache/leaf"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+vars = { profile = "work" }
+"#,
     );
     tree.point_at_origin(&origin);
     tree.batfiles().arg("sync").assert().success();
@@ -501,10 +583,21 @@ fn a_remotes_own_vars_do_not_reach_the_leafs_own_records() {
     let origin = remote_declaring(REMOTE_VARS);
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"leaf-work\"\n\
-         dest = \"~/.cache/leaf-work\"\nwhen = \"vars.profile == 'work'\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[[actions]]
+type = "create-dir"
+id = "leaf-work"
+dest = "~/.cache/leaf-work"
+when = "vars.profile == 'work'"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -527,10 +620,24 @@ fn a_remotes_own_vars_do_not_reach_another_inclusions_records() {
     let lab = remote_declaring("[vars]\nprofile = \"personal\"\n\n");
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         [remotes.laboratory]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"lab\"\nremote = \"laboratory\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{}"
+
+[remotes.laboratory]
+type = "git"
+url = "{}"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+
+[[actions]]
+type = "include-remote"
+id = "lab"
+remote = "laboratory"
+"#,
         display(&work.origin()),
         display(&lab.origin())
     ));
@@ -594,16 +701,29 @@ fn an_included_clone_lists_entries_read_the_remotes_own_vars() {
     );
     origin.publish(
         "batfiles.toml",
-        "[vars]\nprofile = \"work\"\n\n\
-         [[actions]]\ntype = \"git-clone-list\"\nid = \"plugins\"\n\
-         source = \"plugins.txt\"\ndest-dir = \"~/.plugins\"\n",
+        r#"[vars]
+profile = "work"
+
+[[actions]]
+type = "git-clone-list"
+id = "plugins"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+"#,
         "clone what the list names",
     );
 
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+"#,
     );
     tree.point_at_origin(&origin);
 

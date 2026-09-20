@@ -10,7 +10,6 @@ use super::check::{
     check_git_source, check_inclusion_filters, check_inclusion_remote, check_source, check_url,
 };
 use super::remote::Remote;
-use crate::clone_list::Entry;
 use crate::condition::{Condition, Gate};
 use crate::item::{ItemAddress, ItemId, ItemIdList};
 use crate::repo_path::RepoPath;
@@ -212,14 +211,17 @@ pub(crate) enum Contributor<'a> {
     Inclusion(&'a ItemId),
     /// Contributed by an `include-remote` written without one. It qualifies
     /// nothing, since no address reaches such a record, so the
-    /// [label](crate::action::inclusion_label) names the inclusion in the line
+    /// [label](crate::action::Inclusion::at) names the inclusion in the line
     /// instead — which is what tells two inclusions of one remote apart.
     UnnamedInclusion(&'a str),
 }
 
 impl<'a> Contributor<'a> {
     /// The `id` that qualifies this record's names, where one does.
-    fn qualifier(self) -> Option<&'a ItemId> {
+    ///
+    /// Read by the run's list as well as by a heading, so the address a record
+    /// answers to and the name a line calls it by are the same name.
+    pub fn qualifier(self) -> Option<&'a ItemId> {
         match self {
             Self::Inclusion(id) => Some(id),
             Self::Leaf | Self::UnnamedInclusion(_) => None,
@@ -454,18 +456,6 @@ pub(crate) struct GitCloneListAction {
     /// install into a directory rather than at a name, because that is what it
     /// is: each entry contributes one child of it.
     pub dest_dir: String,
-
-    /// The list's entries, read during execution preparation and settled
-    /// against this run's variables: run state kept on the declaration record,
-    /// which is why serde neither reads nor writes it.
-    ///
-    /// `None` is a list nothing has opened — a record no run has prepared, or
-    /// one this run excluded before reading it. `Some([])` is a list that was
-    /// read and declares nothing. The two are different answers and must not
-    /// collapse into an empty default: one is unknown, the other is known to be
-    /// empty, and only the second is a list this run can execute.
-    #[serde(skip)]
-    pub entries: Option<Vec<Entry>>,
 }
 
 /// `include-remote`: the actions another repository declares, taken into this
@@ -494,7 +484,8 @@ pub(crate) struct IncludeRemoteAction {
     /// empty: with none of the four written every action in the remote is
     /// selected, while an empty allow-list selects none. Which combinations
     /// mean something is [`check_inclusion_filters`]'s rule; what each one
-    /// selects is [`Filter`](crate::action::include_remote::Filter)'s.
+    /// selects is
+    /// [`docs/repoformat.md`](../../docs/repoformat.md#selecting-part-of-a-remote)'s.
     pub install_actions: Option<ItemIdList>,
     pub install_groups: Option<ItemIdList>,
     pub exclude_actions: Option<ItemIdList>,

@@ -86,16 +86,6 @@ pub(crate) struct VarSet {
     layers: Vec<Layer>,
 }
 
-/// Where an included remote's own `[vars]` goes: beneath every layer the run
-/// stacked.
-const REMOTE_LAYER: usize = 0;
-
-/// Where an inclusion's overrides go: directly above the leaf's `[vars]`, which
-/// once the remote's layer is beneath both is the third position. Both are the
-/// places [`docs/environment.md`](../docs/environment.md#variable-precedence)
-/// gives them.
-const INCLUSION_LAYER: usize = 2;
-
 impl VarSet {
     /// Read the layers a run does not already hold, and stack all four.
     ///
@@ -151,9 +141,11 @@ impl VarSet {
 
     /// The same layers with one inclusion's two of its own added: the included
     /// remote's `[vars]` beneath them all, and the inclusion's `vars` overrides
-    /// above the leaf's `[vars]`. This is the scope every record that inclusion
-    /// contributed is decided against, in place of the run's own. `label` is how
-    /// a report names the inclusion, and names both layers.
+    /// directly above the leaf's `[vars]`. Both are the places
+    /// [`docs/environment.md`](../docs/environment.md#variable-precedence) gives
+    /// them. This is the scope every record that inclusion contributed is
+    /// decided against, in place of the run's own. `label` is how a report names
+    /// the inclusion, and names both layers.
     ///
     /// Must be called on the run's own set rather than on another derived one:
     /// a set holds at most one layer of each kind. One derived set per opened
@@ -164,24 +156,37 @@ impl VarSet {
         overrides: &BTreeMap<VarName, String>,
         label: &str,
     ) -> Self {
-        let mut layers = self.layers.clone();
-        // Lowest first, so the second insertion's index is read against a stack
-        // that already holds the first.
-        layers.insert(
-            REMOTE_LAYER,
-            Layer {
-                origin: Origin::IncludedManifest(label.to_owned()),
-                values: remote.clone(),
-            },
-        );
-        layers.insert(
-            INCLUSION_LAYER,
-            Layer {
-                origin: Origin::Inclusion(label.to_owned()),
-                values: overrides.clone(),
-            },
-        );
+        let mut layers = vec![Layer {
+            origin: Origin::IncludedManifest(label.to_owned()),
+            values: remote.clone(),
+        }];
+        for layer in self.base_layers() {
+            let leaf = matches!(layer.origin, Origin::Manifest);
+            layers.push(layer.clone());
+            // `stack` always writes a leaf layer, empty `[vars]` or not, so
+            // this is reached once and the overrides are never dropped.
+            if leaf {
+                layers.push(Layer {
+                    origin: Origin::Inclusion(label.to_owned()),
+                    values: overrides.clone(),
+                });
+            }
+        }
         Self { layers }
+    }
+
+    /// The run's own layers, which is what an inclusion scope is derived from.
+    ///
+    /// Requires a base scope. Panics in debug builds if it contains inclusion
+    /// layers; release builds omit those layers.
+    fn base_layers(&self) -> impl Iterator<Item = &Layer> {
+        debug_assert!(
+            self.derived_layers().next().is_none(),
+            "an inclusion scope is derived from the run's own set, not from another scope"
+        );
+        self.layers
+            .iter()
+            .filter(|layer| layer.origin.inclusion().is_none())
     }
 
     /// The highest-precedence value, or `None` if no layer declares the name.
@@ -601,11 +606,47 @@ mod tests {
         set.inclusion_block().map(|(heading, _)| heading)
     }
 
+    /// Every layer's origin, lowest precedence first.
+    fn origins(set: &VarSet) -> Vec<Origin> {
+        set.layers
+            .iter()
+            .map(|layer| layer.origin.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_derived_scope_places_each_of_its_layers_by_origin() {
+        let set = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
+        assert_eq!(
+            origins(&set),
+            [
+                Origin::IncludedManifest(CORP.to_owned()),
+                Origin::Manifest,
+                Origin::Inclusion(CORP.to_owned()),
+                Origin::Machine,
+                Origin::Environment,
+                Origin::CommandLine,
+            ]
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "derived from the run's own set")]
+    fn a_scope_is_not_derived_from_another_scope() {
+        // Caught rather than answered: a set holds at most one layer of each
+        // kind, and deriving from a scope would give this inclusion two of
+        // each, decide its records partly against the other inclusion's values,
+        // and head one `-vv` block with both names.
+        let corp = derived(&stacked([], [], [], []), [("profile", "work")]);
+        let _ = derived(&corp, [("profile", "lab")]);
+    }
+
     #[test]
     fn an_override_beats_the_leaf_and_loses_to_the_machine() {
-        // The position the layer is inserted at, read from both sides: the leaf
-        // `[vars]` an inclusion may override, and the three layers no inclusion
-        // reaches past.
+        // Where the overrides sit, read from both sides: the leaf `[vars]` an
+        // inclusion may override, and the three layers no inclusion reaches
+        // past.
         let base = stacked(
             [("a", "leaf"), ("b", "leaf"), ("c", "leaf"), ("d", "leaf")],
             [("b", "machine")],

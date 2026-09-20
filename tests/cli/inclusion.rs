@@ -1,11 +1,10 @@
 //! `include-remote`: the actions another repository declares, taken into this
 //! one at the position the inclusion is written.
 //!
-//! Three questions separate the cases. Which tree the manifest came from is what
-//! makes a description knowingly stale; whether there was one at all is what
-//! makes a plan partial; and what a contributed record is *called* is what makes
-//! it reachable, since an included action answers to its qualified name and to
-//! no unqualified one.
+//! Three questions separate the cases: which tree the manifest came from, which
+//! makes a description knowingly stale; whether there was one at all, which
+//! makes a plan partial; and what a contributed record is called, which is what
+//! makes it reachable.
 //!
 //! The leaf is the `inclusion` fixture and the remote is the `corporate` one,
 //! committed into a local bare repository as the remotes tests commit it
@@ -36,11 +35,8 @@ const INCLUDED_ACTIONS: [&str; 3] = [
     "copy-dir corp.seeds",
 ];
 
-/// The destinations those three install at.
-const INCLUDED_DESTS: [&str; 3] = [".zshrc.corporate", ".p10k.zsh", ".config/corporate"];
-
 fn assert_included_ran(tree: &Tree) {
-    for dest in INCLUDED_DESTS {
+    for CorporateAction { dest, .. } in CORPORATE_ACTIONS {
         assert!(
             tree.home(dest).exists(),
             "`{dest}` was not installed by the action the inclusion contributed"
@@ -49,7 +45,7 @@ fn assert_included_ran(tree: &Tree) {
 }
 
 fn assert_nothing_included_ran(tree: &Tree) {
-    for dest in INCLUDED_DESTS {
+    for CorporateAction { dest, .. } in CORPORATE_ACTIONS {
         assert!(
             !tree.home(dest).exists(),
             "`{dest}` was installed by an inclusion this run should not have carried out"
@@ -128,9 +124,19 @@ fn a_dry_run_describes_the_materialization_it_finds_however_stale() {
 
     origin.publish(
         "batfiles.toml",
-        "[[actions]]\ntype = \"create-dir\"\nid = \"a\"\ndest = \"~/.a\"\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"b\"\ndest = \"~/.b\"\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"c\"\ndest = \"~/.c\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "a"
+dest = "~/.a"
+[[actions]]
+type = "create-dir"
+id = "b"
+dest = "~/.b"
+[[actions]]
+type = "create-dir"
+id = "c"
+dest = "~/.c"
+"#,
         "three actions",
     );
 
@@ -284,8 +290,14 @@ fn a_materialization_with_no_manifest_is_refused_by_name() {
     let origin = BareRepo::new();
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nremote = \"core\"\n",
+        r#"[remotes.core]
+type = "git"
+url = "{}"
+
+[[actions]]
+type = "include-remote"
+remote = "core"
+"#,
         display(&origin.origin())
     ));
 
@@ -312,9 +324,20 @@ fn an_unreadable_inclusion_fails_before_the_first_action_runs() {
     let origin = BareRepo::new();
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[remotes.core]\ntype = \"git\"\nurl = \"{}\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"first\"\ndest = \"~/.first\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"core\"\nremote = \"core\"\n",
+        r#"[remotes.core]
+type = "git"
+url = "{}"
+
+[[actions]]
+type = "create-dir"
+id = "first"
+dest = "~/.first"
+
+[[actions]]
+type = "include-remote"
+id = "core"
+remote = "core"
+"#,
         display(&origin.origin())
     ));
 
@@ -339,8 +362,12 @@ fn an_included_clone_list_is_read_from_the_materialization() {
     );
     origin.publish(
         "batfiles.toml",
-        "[[actions]]\ntype = \"git-clone-list\"\nid = \"plugins\"\n\
-         source = \"plugins.txt\"\ndest-dir = \"~/.plugins\"\n",
+        r#"[[actions]]
+type = "git-clone-list"
+id = "plugins"
+source = "plugins.txt"
+dest-dir = "~/.plugins"
+"#,
         "clone what the list names",
     );
     let tree = Tree::fixture("inclusion");
@@ -368,8 +395,15 @@ fn an_included_action_may_not_source_from_a_remote() {
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
-        "[remotes.shared]\ntype = \"git\"\nurl = \"https://e.example/shared.git\"\n\n\
-         [[actions]]\ntype = \"symlink\"\nsource = \"@shared/vimrc\"\ndest = \"~/.vimrc\"\n",
+        r#"[remotes.shared]
+type = "git"
+url = "https://e.example/shared.git"
+
+[[actions]]
+type = "symlink"
+source = "@shared/vimrc"
+dest = "~/.vimrc"
+"#,
         "reach a second repository",
     );
     let tree = Tree::fixture("inclusion");
@@ -396,17 +430,23 @@ fn an_included_action_may_not_source_from_a_remote() {
 
 #[test]
 fn an_included_inclusion_is_dropped_rather_than_followed() {
-    // The other half of the one-level rule, and the half that is about what an
-    // included manifest may hold rather than what one of its actions may write.
-    // Dropped rather than refused: the manifest breaking it belongs to someone
-    // else, and the rest of what it declares is still good. What it names does
-    // not have to resolve either, since the `[remotes]` it would resolve against
-    // is itself ignored -- the record is left out whichever remote it names.
+    // The half of the one-level rule about what an included manifest may hold
+    // rather than what one of its actions may write. The nested record names a
+    // remote that does not resolve, since it is left out whichever one it names
+    // -- the `[remotes]` it would resolve against is itself ignored.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
-        "[[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/corp\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nid = \"shared\"\nremote = \"shared\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "cache"
+dest = "~/.cache/corp"
+
+[[actions]]
+type = "include-remote"
+id = "shared"
+remote = "shared"
+"#,
         "include a second repository",
     );
     let tree = Tree::fixture("inclusion");
@@ -444,8 +484,15 @@ fn dropping_a_nested_inclusion_does_not_renumber_what_follows_it() {
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
-        "[[actions]]\ntype = \"include-remote\"\nid = \"shared\"\nremote = \"shared\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\ndest = \"~/.cache/corp\"\n",
+        r#"[[actions]]
+type = "include-remote"
+id = "shared"
+remote = "shared"
+
+[[actions]]
+type = "create-dir"
+dest = "~/.cache/corp"
+"#,
         "a nested inclusion ahead of an unnamed action",
     );
     let tree = Tree::fixture("inclusion");
@@ -476,7 +523,11 @@ fn a_leafs_inclusion_names_a_remote_the_leaf_declares() {
     // is excused, and only because it is dropped.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n",
+        r#"[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
@@ -495,18 +546,26 @@ fn a_leafs_inclusion_names_a_remote_the_leaf_declares() {
 #[test]
 fn an_included_manifests_remotes_are_ignored_and_reported_once() {
     // The last of the one-level rules, and the one about a section rather than a
-    // record: nothing in the run reaches a remote another repository declares,
-    // since an included action may not source from one and an included
-    // `include-remote` is left out. So the map is read as part of the document
-    // and then left alone -- unchecked as well as unused. `file` is a type a
-    // leaf is refused for declaring (`remotes.rs`), and here it is someone
-    // else's declaration, answered where that repository is the leaf.
+    // record. Ignored means unchecked as well as unused, which is what `vendor`
+    // is here for: `file` is a type a leaf is refused for declaring
+    // (`remotes.rs`), and this is someone else's declaration.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
-        "[remotes.shared]\ntype = \"git\"\nurl = \"https://e.example/shared.git\"\n\n\
-         [remotes.vendor]\ntype = \"file\"\nurl = \"https://e.example/v.vim\"\nsha256 = \"00\"\n\n\
-         [[actions]]\ntype = \"create-dir\"\nid = \"cache\"\ndest = \"~/.cache/corp\"\n",
+        r#"[remotes.shared]
+type = "git"
+url = "https://e.example/shared.git"
+
+[remotes.vendor]
+type = "file"
+url = "https://e.example/v.vim"
+sha256 = "00"
+
+[[actions]]
+type = "create-dir"
+id = "cache"
+dest = "~/.cache/corp"
+"#,
         "declare remotes of its own",
     );
     let tree = Tree::fixture("inclusion");
@@ -583,13 +642,24 @@ fn two_inclusions_of_one_remote_written_without_ids_are_told_apart() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(
-        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\n\n\
-         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n\
-         install-groups = [\"shell\"]\nexclude-actions = [\"nowhere\"]\n\
-         vars = { profile = \"first\" }\n\n\
-         [[actions]]\ntype = \"include-remote\"\nremote = \"corporate\"\n\
-         install-groups = [\"prompt\"]\nexclude-actions = [\"absent\"]\n\
-         vars = { profile = \"second\" }\n",
+        r#"[remotes.corporate]
+type = "git"
+url = "{origin}"
+
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+install-groups = ["shell"]
+exclude-actions = ["nowhere"]
+vars = { profile = "first" }
+
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+install-groups = ["prompt"]
+exclude-actions = ["absent"]
+vars = { profile = "second" }
+"#,
     );
     tree.point_at_origin(&origin);
 
@@ -634,7 +704,12 @@ fn two_inclusions_of_one_remote_written_without_ids_are_told_apart() {
 
 #[test]
 fn an_inclusion_naming_an_undeclared_remote_is_refused_as_the_manifest_is_read() {
-    let stderr = rejected("[[actions]]\ntype = \"include-remote\"\nremote = \"core\"\n");
+    let stderr = rejected(
+        r#"[[actions]]
+type = "include-remote"
+remote = "core"
+"#,
+    );
 
     assert!(stderr.contains("action 1"), "{stderr}");
     assert!(stderr.contains("`core` is not declared"), "{stderr}");

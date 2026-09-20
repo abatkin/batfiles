@@ -24,10 +24,11 @@ fn cloning(origin: &BareRepo) -> Tree {
 fn one_clone(origin: &BareRepo, dest: &str) -> Tree {
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"{}\"\n\
-         dest = \"{dest}\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = "{}"
+dest = "{dest}"
+"#,
         display(&origin.origin())
     ));
     tree
@@ -76,6 +77,40 @@ fn a_clone_is_made_under_directories_that_are_not_there_yet() {
 
     tree.batfiles().arg("sync").assert().success();
 
+    assert!(tree.home(".local/share/plugins/omz/README.md").is_file());
+}
+
+/// The clearing the test above makes room for, said out loud. Gated only
+/// because the fixture needs a broken symlink to build; what a clone says about
+/// a link it removed is not platform-specific.
+#[cfg(unix)]
+#[test]
+fn a_broken_link_above_a_clone_is_cleared_and_the_removal_reported_first() {
+    let origin = BareRepo::new();
+    let tree = one_clone(&origin, "~/.local/share/plugins/omz");
+    let nowhere = tree.path("nowhere");
+    let plugins = tree.home(".local/share/plugins");
+    fs::create_dir_all(tree.home(".local/share")).expect("the directories above the link");
+    std::os::unix::fs::symlink(&nowhere, &plugins).expect("a broken link");
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+
+    // The removal first: it is the part the user may need to act on, and it is
+    // true of a path the manifest names only by cloning underneath it.
+    assert_eq!(
+        stderr_of(&assertion),
+        format!(
+            "removed a broken symlink to {} to make {}\ncloned {} from {}\n",
+            display(&nowhere),
+            display(&plugins),
+            display(&plugins.join("omz")),
+            display(&origin.origin())
+        )
+    );
     assert!(tree.home(".local/share/plugins/omz/README.md").is_file());
 }
 
@@ -592,7 +627,11 @@ fn a_git_clone_source_is_not_read_as_a_repository_path_or_a_url() {
     // clones from. Only an empty one is refused as written.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\ntype = \"git-clone\"\nsource = \"\"\ndest = \"~/.oh-my-zsh\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = ""
+dest = "~/.oh-my-zsh"
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
@@ -608,11 +647,12 @@ fn a_git_clone_source_is_not_read_as_a_repository_path_or_a_url() {
 fn one_clone_at(origin: &BareRepo, dest: &str, git_ref: &str) -> Tree {
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"{}\"\n\
-         dest = \"{dest}\"\n\
-         ref = \"{git_ref}\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = "{}"
+dest = "{dest}"
+ref = "{git_ref}"
+"#,
         display(&origin.origin())
     ));
     tree
@@ -723,11 +763,12 @@ fn a_clone_switches_when_the_record_names_a_different_ref() {
     // The same repository and the same home, with the record's `ref` edited:
     // the case a user creates by changing their manifest.
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"{}\"\n\
-         dest = \"~/.oh-my-zsh\"\n\
-         ref = \"next\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = "{}"
+dest = "~/.oh-my-zsh"
+ref = "next"
+"#,
         display(&origin.origin())
     ));
     let assertion = tree.batfiles().arg("sync").assert().success();
@@ -757,11 +798,12 @@ fn a_ref_switch_does_not_overwrite_a_file_the_clone_ignores() {
     fs::write(clone.join("notes.local"), "my own notes\n").expect("an ignored file of their own");
 
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"{}\"\n\
-         dest = \"~/.oh-my-zsh\"\n\
-         ref = \"next\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = "{}"
+dest = "~/.oh-my-zsh"
+ref = "next"
+"#,
         display(&origin.origin())
     ));
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
@@ -859,11 +901,12 @@ fn a_ref_is_followed_on_whichever_remote_publishes_it() {
     );
 
     tree.write_manifest(&format!(
-        "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"{}\"\n\
-         dest = \"~/.oh-my-zsh\"\n\
-         ref = \"next\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = "{}"
+dest = "~/.oh-my-zsh"
+ref = "next"
+"#,
         display(&origin.origin())
     ));
     tree.batfiles().arg("sync").assert().success();
@@ -918,11 +961,12 @@ fn an_empty_ref_is_refused_as_the_manifest_is_read() {
     // clone is on", which is not what a record asking for a ref meant.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"git-clone\"\n\
-         source = \"https://e.example/a.git\"\n\
-         dest = \"~/.oh-my-zsh\"\n\
-         ref = \"\"\n",
+        r#"[[actions]]
+type = "git-clone"
+source = "https://e.example/a.git"
+dest = "~/.oh-my-zsh"
+ref = ""
+"#,
     );
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);

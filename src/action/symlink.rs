@@ -94,9 +94,7 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
         Occupancy::Vacant => {
             paths::refuse_destination_inside_source(target, dest)?;
             // After that, so a doomed action makes no directories on its way.
-            for link in directory::create_parents(dest, mode)?.removals() {
-                reporter.info(&link.removal_note(mode));
-            }
+            directory::create_parents(dest, mode)?.report_removals(mode, reporter);
             if mode.writes() {
                 create(target, dest)?;
             }

@@ -102,9 +102,7 @@ fn seed<T>(
         if let Some(source) = what.source_directory {
             paths::refuse_destination_inside_source(source, dest)?;
         }
-        for link in directory::create_parents(dest, mode)?.removals() {
-            reporter.info(&link.removal_note(mode));
-        }
+        directory::create_parents(dest, mode)?.report_removals(mode, reporter);
         if mode.writes() {
             build_and_publish(kind, dest, reporter, make, fill)?
         } else {

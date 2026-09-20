@@ -7,8 +7,10 @@
 //! [partial](../../docs/cmdline.md#plan-completeness).
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use crate::action::RunContext;
+use crate::condition::Exclusion;
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdList};
 use crate::manifest::Manifest;
@@ -16,6 +18,135 @@ use crate::manifest::action::{Action, Contributor, IncludeRemoteAction};
 use crate::output::Reporter;
 use crate::paths;
 use crate::var::VarName;
+use crate::var_set::VarSet;
+
+/// One `include-remote` the run reached, as the leaf manifest declared it.
+///
+/// Owns its identity and selection filters before the remote manifest is read.
+pub(crate) struct Inclusion {
+    /// The `id` it was written with, which qualifies the addresses of what it
+    /// contributes. `None` is one written without an `id`: no address reaches
+    /// what it brought in, and [`label`](Self::label) names it instead.
+    id: Option<ItemId>,
+    /// The remote it includes, whose materialization the records it contributes
+    /// read their repository paths from.
+    remote: ItemId,
+    label: String,
+    filter: Filter,
+}
+
+impl Inclusion {
+    /// Identify the inclusion the record at one-based position `number` writes.
+    ///
+    /// Reports name it by `id`, or by its position and remote if unnamed.
+    /// `number` must be its position in the validated leaf manifest.
+    pub(crate) fn at(action: &IncludeRemoteAction, number: usize) -> Self {
+        let label = match &action.id {
+            Some(id) => format!("include-remote `{id}`"),
+            None => format!(
+                "include-remote action {number} of remote `{}`",
+                action.remote
+            ),
+        };
+        Self {
+            id: action.id.clone(),
+            remote: action.remote.clone(),
+            label,
+            filter: Filter::of(action),
+        }
+    }
+
+    /// The `id` this inclusion answers to, where it was written with one.
+    pub(crate) fn id(&self) -> Option<&ItemId> {
+        self.id.as_ref()
+    }
+
+    /// The remote it includes.
+    pub(crate) fn remote(&self) -> &ItemId {
+        &self.remote
+    }
+
+    /// How a report names it.
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// How the records it contributes are named in a line about them: under its
+    /// `id` where it has one, and by its label where it has none, since then no
+    /// address reaches them.
+    fn contributor(&self) -> Contributor<'_> {
+        match &self.id {
+            Some(id) => Contributor::Inclusion(id),
+            None => Contributor::UnnamedInclusion(&self.label),
+        }
+    }
+
+    /// A remote's exclusion, said about the inclusion that depended on it.
+    ///
+    /// The severity is the remote's: a condition batfiles could not decide is a
+    /// warning wherever it is reported.
+    pub(crate) fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
+        let reason = format!(
+            "remote `{}` is excluded here: {}",
+            self.remote,
+            exclusion.reason()
+        );
+        match exclusion {
+            Exclusion::Expected(_) => Exclusion::Expected(reason),
+            Exclusion::EvaluationFailed(_) => Exclusion::EvaluationFailed(reason),
+        }
+    }
+
+    /// What this inclusion hands the records it contributed, once its manifest
+    /// has been read and `vars` derived from it.
+    pub(crate) fn with_scope(self, vars: Rc<VarSet>) -> Contribution {
+        Contribution {
+            inclusion: self,
+            vars,
+        }
+    }
+}
+
+/// One opened inclusion, and everything the records it contributed answer to.
+///
+/// Shared by all of them rather than copied onto each: they were read from one
+/// manifest, their paths resolve in one materialization, and their conditions
+/// are decided in one scope, so nothing a record is treated as can disagree with
+/// the inclusion that brought it in.
+pub(crate) struct Contribution {
+    inclusion: Inclusion,
+    /// The scope these records' own conditions -- and their clone lists' entry
+    /// conditions -- are decided against: what the inclusion
+    /// [derived](crate::var_set::VarSet::with_inclusion), which is the run's own
+    /// set where neither it nor its remote declared anything.
+    vars: Rc<VarSet>,
+}
+
+impl Contribution {
+    /// The remote whose materialization these records' repository paths are read
+    /// from.
+    pub(crate) fn remote(&self) -> &ItemId {
+        self.inclusion.remote()
+    }
+
+    /// The scope they are decided in.
+    pub(crate) fn scope(&self) -> &Rc<VarSet> {
+        &self.vars
+    }
+
+    /// How a line about one of them names the inclusion.
+    pub(crate) fn contributor(&self) -> Contributor<'_> {
+        self.inclusion.contributor()
+    }
+
+    /// Why a record this inclusion's filters left out was passed over.
+    ///
+    /// Not an exclusion this machine applied: it is the leaf saying what it
+    /// composed, which is why the line names the inclusion rather than a list.
+    pub(crate) fn not_selected(&self) -> Exclusion {
+        Exclusion::Expected(format!("not selected by {}", self.inclusion.label))
+    }
+}
 
 /// What one `include-remote` read out of the manifest it opened.
 pub(crate) struct InclusionContents {
@@ -29,137 +160,115 @@ pub(crate) struct InclusionContents {
 /// One record of an included manifest, and what the inclusion's filters made
 /// of it.
 ///
-/// Included is what the manifest it was read from is, not a verdict on the
-/// record: one the filters leave out is here too, unselected, because the run
-/// still has things to say about it. It keeps the address that reaches it, so a
-/// skip naming it is answered rather than reported as matching nothing, and the
-/// run reports why it was passed over.
+/// A record the filters leave out is here too, unselected: it keeps the address
+/// that reaches it, so a skip naming it is answered rather than reported as
+/// matching nothing, and the run says why it was passed over.
 pub(crate) struct IncludedAction {
     /// The one-based position the record was declared at, in the manifest that
     /// declared it.
     pub number: usize,
     pub action: Action,
-    /// Whether the inclusion's [filters](Filter) take this record.
-    pub selected: bool,
+    /// Whether the inclusion's [filters](Filter) take this record. It says what
+    /// the leaf repository composed and nothing about what this machine leaves
+    /// out of a run, which is why no command waives it.
+    pub included_by_filter: bool,
 }
 
-/// Read the manifest of the remote this record includes, and return its `[vars]`
-/// with the records it declares and what this inclusion's filters made of each.
-///
-/// `None` is an inclusion whose list was never read, because there was no
-/// materialization to read it from; [`InclusionContents`] holding no records is
-/// a manifest that was read but contributed no actions. Only the second can
-/// answer whether a qualified name matches something, which is the distinction a
-/// clone list's [entries](crate::manifest::action::GitCloneListAction::entries)
-/// also draw. A record the filters leave out is returned unselected rather than
-/// left out of the list, so both remain distinct from it.
-///
-/// Fails where the materialization cannot be inspected, and where its manifest
-/// cannot be read, parsed, or validated. A materialized tree holding no manifest
-/// at all is one of these: a remote's manifest is optional, so an inclusion
-/// asking for one that is not there is asking for something absent rather than
-/// for a tree batfiles has yet to fetch.
-///
-/// A remote its own condition closed is the caller's to decide, and is settled
-/// before asking.
-///
-/// `label` is how a report [names](label) this inclusion, taken from the caller
-/// rather than derived here: it is built from the record's position in the leaf
-/// manifest, which this function cannot see.
-pub(super) fn read(
-    action: &IncludeRemoteAction,
-    label: &str,
-    context: &RunContext<'_>,
-) -> Result<Option<InclusionContents>, Error> {
-    let remote = &action.remote;
-    let reporter = context.reporter();
+impl Inclusion {
+    /// Read the manifest of the remote this inclusion names, and return its
+    /// `[vars]` with the records it declares and what the filters made of each.
+    ///
+    /// `None` is an inclusion whose manifest was never read, because there was
+    /// no materialization to read it from; [`InclusionContents`] holding no
+    /// records is a manifest that was read and contributed nothing. Only the
+    /// second can answer whether a qualified name matches something. A record
+    /// the filters leave out is returned unselected rather than left out, so it
+    /// stays distinct from both.
+    ///
+    /// Fails where the materialization cannot be inspected, and where its
+    /// manifest cannot be read, parsed, or validated. A materialized tree
+    /// holding no manifest at all is one of these: a remote's manifest is
+    /// optional, so an inclusion asking for one that is not there is asking for
+    /// something absent rather than for a tree batfiles has yet to fetch.
+    ///
+    /// The caller must check the remote's condition before reading.
+    pub(crate) fn read(
+        &self,
+        context: &RunContext<'_>,
+    ) -> Result<Option<InclusionContents>, Error> {
+        let label = self.label();
+        let remote = self.remote();
+        let reporter = context.reporter();
 
-    let tree = context.materialization(remote);
-    if !paths::occupied(&tree)? {
-        // The one thing a missing tree does that a missing source does not: a
-        // leaf action reaching an absent materialization is refused, because one
-        // action's content is something the rest of the plan can do without. A
-        // list of actions is not, so this warns and the run carries on, having
-        // said which part of the plan it could not draw.
-        reporter.warn(&format!(
-            "remote `{remote}` is not materialized at {}, so what it includes \
-             cannot be listed; run `batfiles sync` to bring it down",
-            tree.display()
-        ));
-        return Ok(None);
-    }
-
-    let manifest = tree.join(Manifest::FILE_NAME);
-    if !paths::occupied(&manifest)? {
-        return Err(Error::IncludedManifestMissing {
-            remote: remote.clone(),
-            path: manifest,
-        });
-    }
-
-    let included = Manifest::load_included(&manifest)?;
-    report_ignored_remotes(&included, label, remote, reporter);
-    // How a line about one of these records names the inclusion that is reading
-    // them, which is the inclusion's `id` where it has one and its label where
-    // it has none.
-    let by = contributor(action.id.as_ref(), label);
-    let filter = Filter::of(action);
-    let mut records = Vec::with_capacity(included.actions.len());
-    for (index, record) in included.actions.into_iter().enumerate() {
-        // The position the record was declared at, carried rather than
-        // recomputed after the filtering below: a record with no `id` is named
-        // by where it was written, so the gap a dropped one leaves stays a gap.
-        let number = index + 1;
-        // Inclusion is one level deep: an included repository does not reach
-        // further repositories, which is the same rule that refuses an included
-        // action sourcing from a remote. Dropped rather than refused, because
-        // the manifest breaking it belongs to someone else and the rest of what
-        // it declares is still good — and warned about rather than passed over
-        // in silence, because a declaration that is not honored is worth saying.
-        // Dropped ahead of the filters, so a nested inclusion's `id` is not one
-        // of the names a filter can be satisfied by. What it names is not
-        // required to resolve, since the manifest's own `[remotes]` is ignored
-        // by the same rule.
-        if let Action::IncludeRemote(_) = record {
+        let tree = context.materialization(remote);
+        if !paths::occupied(&tree)? {
+            // The one thing a missing tree does that a missing source does not:
+            // a leaf action reaching an absent materialization is refused,
+            // because one action's content is something the rest of the plan can
+            // do without. A list of actions is not, so this warns and the run
+            // carries on, having said which part of the plan it could not draw.
             reporter.warn(&format!(
-                "not included: {}; an included repository does not reach \
-                 further repositories",
-                record.describe(number, by)
+                "remote `{remote}` is not materialized at {}, so what it includes \
+                 cannot be listed; run `batfiles sync` to bring it down",
+                tree.display()
             ));
-            continue;
+            return Ok(None);
         }
-        let selected = filter.selects(&record);
-        records.push(IncludedAction {
-            number,
-            action: record,
-            selected,
-        });
+
+        let manifest = tree.join(Manifest::FILE_NAME);
+        if !paths::occupied(&manifest)? {
+            return Err(Error::IncludedManifestMissing {
+                remote: remote.clone(),
+                path: manifest,
+            });
+        }
+
+        let included = Manifest::load_included(&manifest)?;
+        report_ignored_remotes(&included, label, remote, reporter);
+        let by = self.contributor();
+        let filter = &self.filter;
+        let mut records = Vec::with_capacity(included.actions.len());
+        for (index, record) in included.actions.into_iter().enumerate() {
+            // The position the record was declared at, carried rather than
+            // recomputed after the filtering below: a record with no `id` is
+            // named by where it was written, so the gap a dropped one leaves
+            // stays a gap.
+            let number = index + 1;
+            // Inclusion is one level deep, so a nested one is left out rather
+            // than refused, and said out loud. Left out ahead of the filters, so
+            // its `id` is not one of the names a filter can be satisfied by.
+            if let Action::IncludeRemote(_) = record {
+                reporter.warn(&format!(
+                    "not included: {}; an included repository does not reach \
+                     further repositories",
+                    record.describe(number, by)
+                ));
+                continue;
+            }
+            let included_by_filter = filter.selects(&record);
+            records.push(IncludedAction {
+                number,
+                action: record,
+                included_by_filter,
+            });
+        }
+        filter.warn_unmatched(&records, label, remote, reporter);
+        Ok(Some(InclusionContents {
+            // The filters have nothing to say about these: a remote declares
+            // variables for all of its records, and this inclusion takes them
+            // whichever records it took.
+            vars: included.vars,
+            actions: records,
+        }))
     }
-    filter.warn_unmatched(&records, label, remote, reporter);
-    Ok(Some(InclusionContents {
-        // The filters have nothing to say about these: a remote declares
-        // variables for all of its records, and this inclusion takes them
-        // whichever records it took.
-        vars: included.vars,
-        actions: records,
-    }))
 }
 
-/// Warn that the `[remotes]` an included manifest declares does nothing here,
-/// once for the map rather than once for each record in it.
+/// Warn that the `[remotes]` an included manifest declares does nothing here:
+/// one line per inclusion, naming every record in the map, and silent where the
+/// manifest declares none.
 ///
-/// Inclusion is one level deep, so a remote another repository declares is
-/// neither materialized nor nameable: an included action sourcing from one is
-/// refused as the manifest is read, and an included `include-remote` is left out
-/// of the run. The map is read as part of the document and then ignored, which
-/// is why its records are not checked for anything beyond being readable — a
-/// remote type this batfiles has yet to build is that repository's business,
-/// answered where it is the leaf.
-///
-/// Said out loud rather than passed over in silence, for the same reason a
-/// dropped nested inclusion is: a declaration that is not honored is worth a
-/// line. Silent where the manifest declares no remotes, which is the common
-/// case.
+/// The rule the warning states, and how far such a record is checked, are
+/// [`docs/repoformat.md`](../../docs/repoformat.md#an-included-manifests-own-remotes)'s.
 fn report_ignored_remotes(included: &Manifest, label: &str, remote: &ItemId, reporter: &Reporter) {
     if included.remotes.is_empty() {
         return;
@@ -177,73 +286,37 @@ fn report_ignored_remotes(included: &Manifest, label: &str, remote: &ItemId, rep
     ));
 }
 
-/// How a report names one inclusion: stable for a given manifest, and shared by
-/// no two inclusions of it.
-///
-/// Its `id` where it has one, since that is the address a reader would type. One
-/// written without an `id` is named by `number`, its one-based position in the
-/// leaf manifest, and by the remote it includes: the position is what tells two
-/// inclusions of one remote apart, and is also the manifest's own answer for a
-/// record nothing else can name, since that is how a report names any record
-/// written without an `id`. The remote comes with it because what an inclusion
-/// includes is the next most useful thing to say about it.
-///
-/// Unique because a manifest declaring one `id` twice is
-/// [refused](crate::manifest::check::Invalid::DuplicateActionId) as it is read,
-/// so an inclusion is told from every other by its `id` or by its position.
-pub(super) fn label(action: &IncludeRemoteAction, number: usize) -> String {
-    match &action.id {
-        Some(id) => format!("include-remote `{id}`"),
-        None => format!(
-            "include-remote action {number} of remote `{}`",
-            action.remote
-        ),
-    }
-}
-
-/// How the records one inclusion contributes are named in a line about them:
-/// under its `id` where it has one, and by its `label` where it has none, since
-/// then no address reaches them.
-pub(super) fn contributor<'a>(id: Option<&'a ItemId>, label: &'a str) -> Contributor<'a> {
-    match id {
-        Some(id) => Contributor::Inclusion(id),
-        None => Contributor::UnnamedInclusion(label),
-    }
-}
-
 /// Which of a remote's actions one inclusion takes.
 ///
-/// Four fields, of which the record writes a combination
-/// [`check_inclusion_filters`](crate::manifest::check) accepts: an allow-list
-/// that says what to take, a deny-list that says what to leave, or both, or
-/// neither. With none of them written the inclusion takes everything, which is
-/// why each field is an `Option` rather than a list that happens to be empty:
-/// an empty allow-list takes nothing at all.
+/// Each field is an `Option` rather than a list that happens to be empty: with
+/// none of them written the inclusion takes everything, while an empty
+/// allow-list takes nothing. Which combinations a record may write is
+/// [`check_inclusion_filters`](crate::manifest::check)'s rule; what each selects
+/// is [`docs/repoformat.md`](../../docs/repoformat.md#selecting-part-of-a-remote)'s.
 ///
-/// A filter names records as the manifest that declared them names them, so an
-/// action written without an `id` is one no `install-actions` can reach and no
-/// `exclude-actions` can name, and the same holds of `group` and the two group
-/// filters. Under an allow-list such a record is left out, since nothing
-/// selected it; under a deny-list it is taken, since nothing excluded it.
-pub(super) struct Filter<'a> {
-    install_actions: Option<&'a ItemIdList>,
-    install_groups: Option<&'a ItemIdList>,
-    exclude_actions: Option<&'a ItemIdList>,
-    exclude_groups: Option<&'a ItemIdList>,
+/// A filter names records as the manifest that declared them names them, so a
+/// record written without an `id` is reached by neither action filter: an
+/// allow-list leaves it out, a deny-list takes it, and `group` reads the same
+/// way.
+struct Filter {
+    install_actions: Option<ItemIdList>,
+    install_groups: Option<ItemIdList>,
+    exclude_actions: Option<ItemIdList>,
+    exclude_groups: Option<ItemIdList>,
 }
 
-impl<'a> Filter<'a> {
-    pub fn of(action: &'a IncludeRemoteAction) -> Self {
+impl Filter {
+    fn of(action: &IncludeRemoteAction) -> Self {
         Self {
-            install_actions: action.install_actions.as_ref(),
-            install_groups: action.install_groups.as_ref(),
-            exclude_actions: action.exclude_actions.as_ref(),
-            exclude_groups: action.exclude_groups.as_ref(),
+            install_actions: action.install_actions.clone(),
+            install_groups: action.install_groups.clone(),
+            exclude_actions: action.exclude_actions.clone(),
+            exclude_groups: action.exclude_groups.clone(),
         }
     }
 
     /// Whether this inclusion takes the record.
-    pub fn selects(&self, action: &Action) -> bool {
+    fn selects(&self, action: &Action) -> bool {
         let (id, group) = (action.id(), action.group());
         let names = |list: Option<&ItemIdList>, item: Option<&ItemId>| {
             list.map(|list| item.is_some_and(|item| list.contains(item)))
@@ -252,22 +325,19 @@ impl<'a> Filter<'a> {
         // only order under which `exclude-actions` narrows what a group filter
         // selected. At most one of the two allow-lists is written, so the
         // second is consulted only where the first was not.
-        let allowed = names(self.install_actions, id)
-            .or_else(|| names(self.install_groups, group))
+        let allowed = names(self.install_actions.as_ref(), id)
+            .or_else(|| names(self.install_groups.as_ref(), group))
             .unwrap_or(true);
         allowed
-            && !names(self.exclude_groups, group).unwrap_or(false)
-            && !names(self.exclude_actions, id).unwrap_or(false)
+            && !names(self.exclude_groups.as_ref(), group).unwrap_or(false)
+            && !names(self.exclude_actions.as_ref(), id).unwrap_or(false)
     }
 
     /// Warn once per filter name that nothing in the included manifest answers
     /// to.
     ///
-    /// The manifest has been read, so batfiles can tell, and a name matching
-    /// nothing is the same kind of mistake as a `--skip-action` that matches
-    /// nothing: it selects or excludes nothing whatever the machine does.
-    /// A warning rather than a failure, since a remote at an older revision
-    /// than the leaf expects is a repository to update, not a run to stop.
+    /// A warning rather than a failure: a remote at an older revision than the
+    /// leaf expects is a repository to update, not a run to stop.
     fn warn_unmatched(
         &self,
         included: &[IncludedAction],
@@ -295,12 +365,12 @@ impl<'a> Filter<'a> {
         let (actions, groups) = (declared(Action::id), declared(Action::group));
         let mut unmatched = Vec::new();
         for (field, list, present, noun) in [
-            ("install-actions", self.install_actions, &actions, "action"),
-            ("exclude-actions", self.exclude_actions, &actions, "action"),
-            ("install-groups", self.install_groups, &groups, "group"),
-            ("exclude-groups", self.exclude_groups, &groups, "group"),
+            ("install-actions", &self.install_actions, &actions, "action"),
+            ("exclude-actions", &self.exclude_actions, &actions, "action"),
+            ("install-groups", &self.install_groups, &groups, "group"),
+            ("exclude-groups", &self.exclude_groups, &groups, "group"),
         ] {
-            for name in list.map(ItemIdList::as_slice).unwrap_or_default() {
+            for name in list.as_ref().map(ItemIdList::as_slice).unwrap_or_default() {
                 if !present.contains(&name) {
                     unmatched.push((field, name, noun));
                 }
@@ -365,18 +435,19 @@ mod tests {
 
     #[test]
     fn an_inclusion_is_labelled_by_its_id_or_by_where_it_was_written() {
-        assert_eq!(label(&inclusion(""), 3), "include-remote `corp`");
+        let labelled =
+            |action: &IncludeRemoteAction, number| Inclusion::at(action, number).label().to_owned();
+        assert_eq!(labelled(&inclusion(""), 3), "include-remote `corp`");
         // Two inclusions of one remote, neither written with an `id`: the
-        // position is the whole of what tells the labels apart, and it is the
-        // manifest's own answer for a record nothing else can name.
+        // position is the whole of what tells the labels apart.
         let unnamed: IncludeRemoteAction =
             toml::from_str("remote = \"corporate\"\n").expect("the record should parse");
         assert_eq!(
-            label(&unnamed, 2),
+            labelled(&unnamed, 2),
             "include-remote action 2 of remote `corporate`"
         );
         assert_eq!(
-            label(&unnamed, 5),
+            labelled(&unnamed, 5),
             "include-remote action 5 of remote `corporate`"
         );
     }
@@ -412,11 +483,8 @@ mod tests {
 
     #[test]
     fn a_record_a_filter_cannot_name_is_taken_only_by_a_deny_list() {
-        // A record written without an `id` is named by no `install-actions` and
-        // by no `exclude-actions`, so an allow-list leaves it out for want of
-        // anything selecting it and a deny-list keeps it for want of anything
-        // excluding it. `group` and the two group filters read the same way,
-        // which is `seeds` above.
+        // `seeds` is the same case one field over: a record written without a
+        // `group` is named by neither group filter.
         assert!(!selected("install-actions = [\"zshrc\"]").contains(&"<unnamed>"));
         assert!(!selected("install-groups = [\"shell\"]").contains(&"seeds"));
         assert!(selected("exclude-actions = [\"zshrc\"]").contains(&"<unnamed>"));
@@ -455,7 +523,7 @@ mod tests {
             .map(|(index, id)| IncludedAction {
                 number: index + 1,
                 action: action(Some(id), Some("shell")),
-                selected: true,
+                included_by_filter: true,
             })
             .collect::<Vec<_>>();
         let record = inclusion(filters);

@@ -14,8 +14,9 @@ pub(crate) use filesystem::{copy_tree, display, entries, fixture_tree, snapshot}
 pub(crate) use git::{BareRepo, git};
 pub(crate) use http::{Reply, Server, server_that_hangs_up};
 pub(crate) use manifests::{
-    LEAF_ORDERED_PAIR, assert_leaf_portable_actions, one_copy, one_copy_dir, one_create_dir,
-    one_symlink, one_symlink_dir, rejected, seeded_repository_in_the_home,
+    CORPORATE_ACTIONS, CorporateAction, LEAF_ORDERED_PAIR, assert_leaf_portable_actions,
+    installed_corporate, one_copy, one_copy_dir, one_create_dir, one_symlink, one_symlink_dir,
+    rejected, seeded_repository_in_the_home,
 };
 pub(crate) use tree::Tree;
 

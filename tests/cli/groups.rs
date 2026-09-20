@@ -14,27 +14,28 @@ use crate::support::*;
 fn four_shapes(tree: &Tree) {
     tree.repo_file("seed/profile", "# profile\n");
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"zsh-cache\"\n\
-         group = \"shell\"\n\
-         dest = \"~/.cache/zsh\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         group = \"shell\"\n\
-         dest = \"~/.cache/other\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"copy\"\n\
-         id = \"profile\"\n\
-         source = \"seed/profile\"\n\
-         dest = \"~/.profile\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"copy-dir\"\n\
-         source-dir = \"seed\"\n\
-         dest-dir = \"~/.config/zsh\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "zsh-cache"
+group = "shell"
+dest = "~/.cache/zsh"
+
+[[actions]]
+type = "create-dir"
+group = "shell"
+dest = "~/.cache/other"
+
+[[actions]]
+type = "copy"
+id = "profile"
+source = "seed/profile"
+dest = "~/.profile"
+
+[[actions]]
+type = "copy-dir"
+source-dir = "seed"
+dest-dir = "~/.config/zsh"
+"#,
     );
 }
 
@@ -95,23 +96,24 @@ fn the_record_headings_are_detail_and_not_ordinary_output() {
 fn a_group_is_made_by_the_actions_that_name_it_wherever_they_sit() {
     let tree = Tree::new();
     tree.write_manifest(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"one\"\n\
-         group = \"shared\"\n\
-         dest = \"~/one\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"two\"\n\
-         group = \"alone\"\n\
-         dest = \"~/two\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"three\"\n\
-         group = \"shared\"\n\
-         dest = \"~/three\"\n",
+        r#"[[actions]]
+type = "create-dir"
+id = "one"
+group = "shared"
+dest = "~/one"
+
+[[actions]]
+type = "create-dir"
+id = "two"
+group = "alone"
+dest = "~/two"
+
+[[actions]]
+type = "create-dir"
+id = "three"
+group = "shared"
+dest = "~/three"
+"#,
     );
 
     let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();

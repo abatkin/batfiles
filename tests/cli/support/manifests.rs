@@ -1,4 +1,4 @@
-//! Single-action manifests and assertions for the leaf fixture.
+//! Single-action manifests, and what the committed fixtures install.
 
 use super::{Tree, display, stderr_of};
 use std::fs;
@@ -29,38 +29,57 @@ pub(crate) fn rejected(manifest: &str) -> String {
 
 /// A manifest declaring one symlink and nothing else.
 pub(crate) fn one_symlink(source: &str, dest: &str) -> String {
-    format!("[[actions]]\ntype = \"symlink\"\nsource = \"{source}\"\ndest = \"{dest}\"\n")
+    format!(
+        r#"[[actions]]
+type = "symlink"
+source = "{source}"
+dest = "{dest}"
+"#
+    )
 }
 
 /// A manifest declaring one `symlink-dir` and nothing else.
 pub(crate) fn one_symlink_dir(source_dir: &str, dest_dir: &str, dot_prefix: bool) -> String {
     format!(
-        "[[actions]]\n\
-         type = \"symlink-dir\"\n\
-         source-dir = \"{source_dir}\"\n\
-         dest-dir = \"{dest_dir}\"\n\
-         dot-prefix = {dot_prefix}\n"
+        r#"[[actions]]
+type = "symlink-dir"
+source-dir = "{source_dir}"
+dest-dir = "{dest_dir}"
+dot-prefix = {dot_prefix}
+"#
     )
 }
 
 /// A manifest declaring one `create-dir` and nothing else.
 pub(crate) fn one_create_dir(dest: &str) -> String {
-    format!("[[actions]]\ntype = \"create-dir\"\ndest = \"{dest}\"\n")
+    format!(
+        r#"[[actions]]
+type = "create-dir"
+dest = "{dest}"
+"#
+    )
 }
 
 /// A manifest declaring one `copy` and nothing else.
 pub(crate) fn one_copy(source: &str, dest: &str) -> String {
-    format!("[[actions]]\ntype = \"copy\"\nsource = \"{source}\"\ndest = \"{dest}\"\n")
+    format!(
+        r#"[[actions]]
+type = "copy"
+source = "{source}"
+dest = "{dest}"
+"#
+    )
 }
 
 /// A manifest declaring one `copy-dir` and nothing else.
 pub(crate) fn one_copy_dir(source_dir: &str, dest_dir: &str, dot_prefix: bool) -> String {
     format!(
-        "[[actions]]\n\
-         type = \"copy-dir\"\n\
-         source-dir = \"{source_dir}\"\n\
-         dest-dir = \"{dest_dir}\"\n\
-         dot-prefix = {dot_prefix}\n"
+        r#"[[actions]]
+type = "copy-dir"
+source-dir = "{source_dir}"
+dest-dir = "{dest_dir}"
+dot-prefix = {dot_prefix}
+"#
     )
 }
 
@@ -132,4 +151,46 @@ pub(crate) fn assert_leaf_portable_actions(tree: &Tree) {
             "`{dest}` does not hold what `{source}` holds"
         );
     }
+}
+
+// The `corporate` fixture: the remote an inclusion takes its records from. What
+// it declares is read by three files asking different questions of the same
+// three records, so the mapping between them lives here rather than in each.
+
+/// One record `tests/fixtures/corporate/batfiles.toml` declares.
+pub(crate) struct CorporateAction {
+    /// The `id` it is declared under, which is what an address and a report name
+    /// it by once the inclusion's own `id` qualifies it.
+    pub id: &'static str,
+    /// Where it installs, relative to the selected home.
+    pub dest: &'static str,
+}
+
+/// All three of them, in declaration order — which is the order an inclusion
+/// contributes them in, and the order a run reports them in.
+pub(crate) const CORPORATE_ACTIONS: [CorporateAction; 3] = [
+    CorporateAction {
+        id: "zshrc",
+        dest: ".zshrc.corporate",
+    },
+    CorporateAction {
+        id: "p10k",
+        dest: ".p10k.zsh",
+    },
+    CorporateAction {
+        id: "seeds",
+        dest: ".config/corporate",
+    },
+];
+
+/// Which of them this home holds, by `id`, in declaration order.
+///
+/// Presence and nothing more: what each one installed is asserted where that is
+/// the question, and a filter case only asks which records were taken.
+pub(crate) fn installed_corporate(tree: &Tree) -> Vec<&'static str> {
+    CORPORATE_ACTIONS
+        .iter()
+        .filter(|action| tree.home(action.dest).exists())
+        .map(|action| action.id)
+        .collect()
 }

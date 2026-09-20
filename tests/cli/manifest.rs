@@ -54,7 +54,13 @@ fn a_vars_section_alone_changes_nothing() {
     // condition installs exactly what it would have installed without them.
     let tree = Tree::new();
     tree.write_manifest(&format!(
-        "[vars]\nwork = \"false\"\nprofile = \"personal\"\n_rank = \"3\"\nempty = \"\"\n\n{}",
+        r#"[vars]
+work = "false"
+profile = "personal"
+_rank = "3"
+empty = ""
+
+{}"#,
         one_create_dir("~/.config")
     ));
 
@@ -117,8 +123,13 @@ fn a_dynamic_variable_declaration_is_rejected_in_both_spellings() {
     // 9.1. Until then it is refused as the non-string value it is, rather than
     // parsed into a record nothing would ever run.
     for document in [
-        "[vars.has_op]\ncommand = [\"sh\", \"-c\", \"command -v op\"]\ncache = \"1h\"\n",
-        "[vars]\nhas_op = { command = [\"sh\", \"-c\", \"command -v op\"] }\n",
+        r#"[vars.has_op]
+command = ["sh", "-c", "command -v op"]
+cache = "1h"
+"#,
+        r#"[vars]
+has_op = { command = ["sh", "-c", "command -v op"] }
+"#,
     ] {
         let stderr = rejected(document);
         assert!(
@@ -133,11 +144,12 @@ fn a_dynamic_variable_declaration_is_rejected_in_both_spellings() {
 // every test below is about what the document will and will not take.
 
 /// The two lists, written the way the format spells them.
-const CANDIDATES: &str = "[[default-disabled.actions]]\n\
-                          id = \"p10k\"\n\
-                          \n\
-                          [[default-disabled.groups]]\n\
-                          group = \"gui\"\n";
+const CANDIDATES: &str = r#"[[default-disabled.actions]]
+id = "p10k"
+
+[[default-disabled.groups]]
+group = "gui"
+"#;
 
 #[test]
 fn a_default_disabled_section_is_accepted_and_changes_nothing() {
@@ -167,13 +179,14 @@ fn a_default_disabled_candidate_does_not_disable_anything_yet() {
     // the assertion 8.3 has to change on purpose.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[default-disabled.actions]]\n\
-         id = \"config\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"config\"\n\
-         dest = \"~/.config\"\n",
+        r#"[[default-disabled.actions]]
+id = "config"
+
+[[actions]]
+type = "create-dir"
+id = "config"
+dest = "~/.config"
+"#,
     );
 
     tree.batfiles().arg("sync").assert().success();
@@ -192,18 +205,19 @@ fn a_candidate_takes_a_condition_and_still_changes_nothing() {
     // decides nothing about the run, including the action the entry names.
     let tree = Tree::new();
     tree.write_manifest(
-        "[[default-disabled.actions]]\n\
-         id = \"config\"\n\
-         when = \"work\"\n\
-         \n\
-         [[default-disabled.groups]]\n\
-         group = \"gui\"\n\
-         unless = \"facts.os == 'macos'\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"create-dir\"\n\
-         id = \"config\"\n\
-         dest = \"~/.config\"\n",
+        r#"[[default-disabled.actions]]
+id = "config"
+when = "work"
+
+[[default-disabled.groups]]
+group = "gui"
+unless = "facts.os == 'macos'"
+
+[[actions]]
+type = "create-dir"
+id = "config"
+dest = "~/.config"
+"#,
     );
 
     tree.batfiles().arg("sync").assert().success();
@@ -220,8 +234,16 @@ fn a_candidate_writing_both_conditions_is_rejected() {
     // though nothing evaluates these two: a candidate that could never mean one
     // thing is caught on the machine that writes it.
     for entry in [
-        "[[default-disabled.actions]]\nid = \"p10k\"\nwhen = \"work\"\nunless = \"work\"\n",
-        "[[default-disabled.groups]]\ngroup = \"gui\"\nwhen = \"work\"\nunless = \"work\"\n",
+        r#"[[default-disabled.actions]]
+id = "p10k"
+when = "work"
+unless = "work"
+"#,
+        r#"[[default-disabled.groups]]
+group = "gui"
+when = "work"
+unless = "work"
+"#,
     ] {
         let stderr = rejected(entry);
         assert!(
@@ -233,7 +255,12 @@ fn a_candidate_writing_both_conditions_is_rejected() {
 
 #[test]
 fn a_candidates_condition_is_parsed_where_it_is_written() {
-    let stderr = rejected("[[default-disabled.actions]]\nid = \"p10k\"\nwhen = \"work &&\"\n");
+    let stderr = rejected(
+        r#"[[default-disabled.actions]]
+id = "p10k"
+when = "work &&"
+"#,
+    );
     assert!(
         stderr.contains("is not a valid condition"),
         "the condition was accepted:\n{stderr}"
@@ -249,8 +276,12 @@ fn a_candidate_may_name_a_qualified_address() {
     let tree = Tree::new();
     fs::write(
         tree.manifest(),
-        "[[default-disabled.actions]]\nid = \"core.p10k\"\n\n\
-         [[default-disabled.groups]]\ngroup = \"core.gui\"\n",
+        r#"[[default-disabled.actions]]
+id = "core.p10k"
+
+[[default-disabled.groups]]
+group = "core.gui"
+"#,
     )
     .expect("a manifest");
 
@@ -305,10 +336,11 @@ fn the_two_symlink_types_do_not_share_a_field_set() {
     // error rather than something quietly ignored — which is what borrowing
     // one field from the wrong type would otherwise be.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         source-dir = \"files\"\n\
-         dest = \"~\"\n",
+        r#"[[actions]]
+type = "symlink"
+source-dir = "files"
+dest = "~"
+"#,
     );
     assert!(
         stderr.contains("source-dir"),
@@ -316,10 +348,11 @@ fn the_two_symlink_types_do_not_share_a_field_set() {
     );
 
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink-dir\"\n\
-         source = \"files/zshrc\"\n\
-         dest-dir = \"~\"\n",
+        r#"[[actions]]
+type = "symlink-dir"
+source = "files/zshrc"
+dest-dir = "~"
+"#,
     );
     assert!(
         stderr.contains("source"),
@@ -333,11 +366,12 @@ fn a_filter_symlink_dir_does_not_have_yet_is_rejected() {
     // not built. Ignoring one would link every child while looking as though
     // it had linked a chosen few, which is the worse of the two failures.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink-dir\"\n\
-         source-dir = \"files\"\n\
-         dest-dir = \"~\"\n\
-         exclude = \"README.md\"\n",
+        r#"[[actions]]
+type = "symlink-dir"
+source-dir = "files"
+dest-dir = "~"
+exclude = "README.md"
+"#,
     );
     assert!(
         stderr.contains("exclude"),
@@ -348,9 +382,10 @@ fn a_filter_symlink_dir_does_not_have_yet_is_rejected() {
 #[test]
 fn a_symlink_dir_missing_a_required_field_is_rejected() {
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink-dir\"\n\
-         source-dir = \"files\"\n",
+        r#"[[actions]]
+type = "symlink-dir"
+source-dir = "files"
+"#,
     );
     assert!(
         stderr.contains("dest-dir"),
@@ -387,10 +422,11 @@ fn a_create_dir_has_nothing_to_install_and_so_takes_no_source() {
     // reaches for by habit. There is no source because nothing is installed —
     // linking a directory's contents is what the two symlink types are for.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"create-dir\"\n\
-         source = \"files\"\n\
-         dest = \"~/.config\"\n",
+        r#"[[actions]]
+type = "create-dir"
+source = "files"
+dest = "~/.config"
+"#,
     );
     assert!(
         stderr.contains("source"),
@@ -431,11 +467,12 @@ fn dot_prefix_is_not_a_field_a_copy_has() {
     // rather than a run-time complaint about a source that turned out to be a
     // file. The same holds for `symlink`, and always has.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"copy\"\n\
-         source = \"seed\"\n\
-         dest = \"~/.config\"\n\
-         dot-prefix = true\n",
+        r#"[[actions]]
+type = "copy"
+source = "seed"
+dest = "~/.config"
+dot-prefix = true
+"#,
     );
     assert!(
         stderr.contains("dot-prefix"),
@@ -448,10 +485,11 @@ fn the_two_copy_types_do_not_share_a_field_set() {
     // As with the symlink pair: each record is closed, so a field belonging to
     // the other one is an error rather than something quietly ignored.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"copy\"\n\
-         source-dir = \"seed\"\n\
-         dest = \"~\"\n",
+        r#"[[actions]]
+type = "copy"
+source-dir = "seed"
+dest = "~"
+"#,
     );
     assert!(
         stderr.contains("source-dir"),
@@ -459,10 +497,11 @@ fn the_two_copy_types_do_not_share_a_field_set() {
     );
 
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"copy-dir\"\n\
-         source = \"seed/gitconfig\"\n\
-         dest-dir = \"~\"\n",
+        r#"[[actions]]
+type = "copy-dir"
+source = "seed/gitconfig"
+dest-dir = "~"
+"#,
     );
     assert!(
         stderr.contains("source"),
@@ -476,16 +515,18 @@ fn a_filter_the_copy_types_do_not_have_yet_is_rejected() {
     // not built, on both of these as on `symlink-dir`. Ignoring one would copy
     // everything while looking as though it had copied a chosen few.
     for manifest in [
-        "[[actions]]\n\
-         type = \"copy\"\n\
-         source = \"seed\"\n\
-         dest = \"~/.config\"\n\
-         include = \"*.toml\"\n",
-        "[[actions]]\n\
-         type = \"copy-dir\"\n\
-         source-dir = \"seed\"\n\
-         dest-dir = \"~\"\n\
-         exclude = [\"private/*\"]\n",
+        r#"[[actions]]
+type = "copy"
+source = "seed"
+dest = "~/.config"
+include = "*.toml"
+"#,
+        r#"[[actions]]
+type = "copy-dir"
+source-dir = "seed"
+dest-dir = "~"
+exclude = ["private/*"]
+"#,
     ] {
         let stderr = rejected(manifest);
         for expected in ["include", "exclude"] {
@@ -529,9 +570,10 @@ fn a_type_the_format_does_not_specify_is_not_an_action_at_all() {
     // type left is one nothing ever specified. It fails as the document is
     // read, because there is no record behind the tag to check.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"rsync\"\n\
-         source = \"a\"\n",
+        r#"[[actions]]
+type = "rsync"
+source = "a"
+"#,
     );
     assert!(
         stderr.contains("rsync"),
@@ -542,9 +584,10 @@ fn a_type_the_format_does_not_specify_is_not_an_action_at_all() {
 #[test]
 fn an_action_missing_a_required_field_is_rejected() {
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         source = \"files/zshrc\"\n",
+        r#"[[actions]]
+type = "symlink"
+source = "files/zshrc"
+"#,
     );
     assert!(
         stderr.contains("dest"),
@@ -555,11 +598,12 @@ fn an_action_missing_a_required_field_is_rejected() {
 #[test]
 fn an_id_that_breaks_the_id_rule_is_rejected() {
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         id = \"core.zshrc\"\n\
-         source = \"files/zshrc\"\n\
-         dest = \"~/.zshrc\"\n",
+        r#"[[actions]]
+type = "symlink"
+id = "core.zshrc"
+source = "files/zshrc"
+dest = "~/.zshrc"
+"#,
     );
     for expected in ["core.zshrc", "not a valid ID"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
@@ -606,7 +650,11 @@ fn a_path_within_a_remote_may_not_start_the_reference_over() {
     // `files/@work/zshrc` is an ordinary path, which is a rule about spelling
     // and is tested where the spelling is.
     let stderr = rejected(&format!(
-        "[remotes.core]\ntype = \"git\"\nurl = \"https://git.example/core.git\"\n\n{}",
+        r#"[remotes.core]
+type = "git"
+url = "https://git.example/core.git"
+
+{}"#,
         one_symlink("@core/@work/zshrc", "~/.zshrc")
     ));
     for expected in ["@core/@work/zshrc", "starts with `@`"] {
@@ -654,17 +702,18 @@ fn a_repeated_action_id_is_rejected_and_both_uses_located() {
     // for; the diagnostic points at both actions because either one could be
     // the mistake.
     let stderr = rejected(
-        "[[actions]]\n\
-         type = \"symlink\"\n\
-         id = \"zshrc\"\n\
-         source = \"files/zshrc\"\n\
-         dest = \"~/.zshrc\"\n\
-         \n\
-         [[actions]]\n\
-         type = \"symlink\"\n\
-         id = \"zshrc\"\n\
-         source = \"files/zshrc.local\"\n\
-         dest = \"~/.zshrc.local\"\n",
+        r#"[[actions]]
+type = "symlink"
+id = "zshrc"
+source = "files/zshrc"
+dest = "~/.zshrc"
+
+[[actions]]
+type = "symlink"
+id = "zshrc"
+source = "files/zshrc.local"
+dest = "~/.zshrc.local"
+"#,
     );
     for expected in ["zshrc", "action 2", "action 1"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
