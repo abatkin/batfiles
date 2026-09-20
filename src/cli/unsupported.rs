@@ -2,9 +2,11 @@
 //! rule 12).
 //!
 //! An option belongs here only while it goes live *later* than the command that
-//! takes it; one arriving with its command is covered by that command's own
-//! not-implemented message. An entry leaves as its step lands — `tests/hygiene.rs`
-//! insists — so the list shrinking to empty is how you know a command is finished.
+//! takes it. One arriving with its command never does: until the command lands
+//! its own not-implemented message covers the whole invocation, and afterwards
+//! there is nothing left to withhold. An entry leaves as its step lands —
+//! `tests/hygiene.rs` insists — so the list shrinking to empty is how you know a
+//! command is finished.
 
 use super::options::{ActionOptions, BootstrapOptions};
 use super::{Command, VarsCommand};

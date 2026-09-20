@@ -18,6 +18,7 @@ mod inclusion_addresses;
 mod inclusion_composition;
 mod inclusion_filters;
 mod inclusion_vars;
+mod init;
 mod locations;
 mod manifest;
 mod remotes;

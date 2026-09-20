@@ -50,6 +50,10 @@ enum Kind {
     /// Batfiles' own bookkeeping, which runs in both modes: a state file is not
     /// part of the plan an action carries out.
     Bookkeeping,
+    /// A command that is not the action plan at all, and so has no `RunMode` to
+    /// consult. What it writes, it writes because it was asked to and for no
+    /// other reason.
+    Standalone,
 }
 
 impl Kind {
@@ -59,6 +63,7 @@ impl Kind {
             Self::ModeReader => "a mode reader",
             Self::Downstream => "downstream of a mode reader",
             Self::Bookkeeping => "bookkeeping, which runs in both modes",
+            Self::Standalone => "a command of its own, with no run mode",
         }
     }
 }
@@ -74,7 +79,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 10] = [
+const FILESYSTEM_OWNERS: [Owner; 11] = [
     Owner {
         path: "src/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -124,6 +129,11 @@ const FILESYSTEM_OWNERS: [Owner; 10] = [
         path: "src/tomlfile.rs",
         kind: Kind::Bookkeeping,
         reason: "reads and atomically rewrites the documents batfiles owns",
+    },
+    Owner {
+        path: "src/init.rs",
+        kind: Kind::Standalone,
+        reason: "lays the leaf-repository skeleton into the directory `init` was run in",
     },
 ];
 

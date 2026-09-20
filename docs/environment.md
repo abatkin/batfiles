@@ -238,6 +238,12 @@ the leaf repository resolves those two and also selects the destination home and
 the leaf repository: `sync`, `apply-action`, `apply-group`, and a normal `vars
 list`. `version` and `init` resolve no roots at all.
 
+[`init`](cmdline.md#init) consults the invoking user's OS home for one thing
+only: to refuse initializing a repository directly in it. That is not root
+selection, and `--home-dir` and `BATFILES_HOME` have no bearing on it — the
+point of the check is the home the user would land in from a fresh shell. A home
+that cannot be determined is not fatal there.
+
 The [unimplemented commands](cmdline.md#what-runs-today) `clone` and
 `vars refresh` currently resolve only config and cache roots, print them at
 `-v`, and then report that the command is unimplemented.

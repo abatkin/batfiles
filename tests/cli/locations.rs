@@ -244,14 +244,27 @@ fn version_resolves_no_roots() {
 
 #[test]
 fn init_resolves_no_roots() {
-    let assertion = batfiles().args(["init", "-v"]).assert().failure().code(2);
+    // `init` works on the directory it was run in, so even at `-v` — where
+    // every other command prints what it selected — there is nothing to print.
+    let tree = Tree::roots();
+    let working = tree.path("working");
+    std::fs::create_dir(&working).expect("a working directory");
+
+    let assertion = tree
+        .batfiles()
+        .current_dir(&working)
+        .args(["init", "--no-git-init", "-v"])
+        .assert()
+        .success();
+
     let stderr = stderr_of(&assertion);
-    assert!(
-        !stderr.contains("repository:"),
-        "`init` resolved roots:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("`init` is not implemented yet"),
-        "unexpected stderr:\n{stderr}"
-    );
+    for label in ["repository:", "home:", "config:", "cache:"] {
+        assert!(
+            !stderr.contains(label),
+            "`init` resolved the {label} root:\n{stderr}"
+        );
+    }
+    // The roots it ignored include the one it would have been pointed at: the
+    // skeleton landed in the working directory, not in `BATFILES_DIR`.
+    assert!(working.join("batfiles.toml").is_file());
 }

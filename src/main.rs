@@ -14,6 +14,7 @@ mod error;
 mod execute;
 mod fetch;
 mod git;
+mod init;
 mod install;
 mod item;
 mod location;

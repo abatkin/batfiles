@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::archive;
 use crate::clone_list;
 use crate::git;
+use crate::init;
 use crate::item::{ItemAddress, ItemAddressError, ItemId};
 use crate::manifest;
 use crate::paths::ExistingNode;
@@ -218,6 +219,12 @@ pub(crate) enum Error {
         url: String,
         source: archive::Invalid,
     },
+
+    // Laying out a new repository.
+    /// An `init` that refused the directory it was run in, or could not put a
+    /// Git repository around it.
+    #[error(transparent)]
+    Init(#[from] init::Failure),
 }
 
 impl Error {

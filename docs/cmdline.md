@@ -12,13 +12,15 @@ Unimplemented commands, options, and additional address forms are described in
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Only `version`, `sync`, `apply-action`, `apply-group`, the four enable/disable
-commands, and `vars set`, `vars get`, `vars list`, and `vars unset` do any
-work.** `clone` and `vars refresh` resolve the [state-only
+**Only `clone` and `vars refresh` are left.** They resolve the [state-only
 roots](environment.md#location-selection) — the roots they can resolve without
 work to do — and then report that they are not implemented yet, exiting 2 having
-written nothing. `init` operates on the current directory, so it resolves no
-roots before saying the same.
+written nothing. Every other command does its work.
+
+[`init`](#init) lays the conventional layout into the current directory and puts
+a Git repository around it. It resolves no roots at all, and what it creates is
+a repository `sync` can read: a freshly initialized one installs nothing, because
+every sample in the starter manifest is commented out.
 
 `sync` materializes the [remotes](repoformat.md#materialization) the manifest
 declares and executes every action type, `--dry-run` reports what it would do
@@ -166,6 +168,56 @@ is doing rather than reporting a problem. Nothing on standard output is ever
 labeled or colored.
 
 ## Commands
+
+### `init`
+
+```text
+batfiles init [--no-git-init]
+```
+
+Lay the conventional leaf-repository layout into the current directory, without
+overwriting anything already there. `init` works on that directory alone and
+resolves none of the four roots, so `--batfiles-dir` and the rest have no effect
+on where the skeleton lands.
+
+| Option          | Purpose                                                                                                   |
+|-----------------|-----------------------------------------------------------------------------------------------------------|
+| `--no-git-init` | Do not run `git init`. Batfiles also skips `git init` automatically when already inside a Git repository. |
+
+The layout is `batfiles.toml`, `.gitignore`, `bin/`, and `files/`, created in
+that order. The generated [`remotes/`](repoformat.md#materialization) tree is
+not created; the written `.gitignore` excludes it instead. An existing path of
+the expected kind is left exactly as it is, including its contents and
+permissions, and is not named in the line reporting what was created.
+
+The starter `batfiles.toml` is valid and installs nothing: every sample in it is
+commented out, so a `sync` in a freshly initialized repository does no work
+until its owner edits the file.
+
+`init` refuses to run, before creating anything, when:
+
+- The current directory already contains anything named `batfiles.toml`,
+  whatever kind of filesystem node it is. The directory is already a batfiles
+  repository, and `init` is not a repair path for one.
+- The current directory is the invoking user's OS home directory — the home the
+  operating system reports, never one selected with `--home-dir`. Only that
+  directory is refused; a directory below it, such as the default `~/dotfiles`,
+  is the normal case. A home that cannot be determined is not fatal here,
+  because `init` needs one only for this check.
+- A path of the conventional layout exists as the wrong kind of filesystem
+  node, such as a regular file named `files`. Symlinks are judged by what they
+  point at, and a symlink pointing at nothing is a wrong kind too.
+
+`init` also fails when Git initialization was requested and `git` could not be
+run or `git init` failed. Whatever was already created stays; `init` does not
+unwind a partial layout. Use `--no-git-init` to initialize without Git.
+
+A `.gitignore` that was already there and does not appear to cover the
+`remotes/` tree is reported as a warning. The file belongs to the repository's
+owner, so `init` does not edit one it did not write.
+
+Everything `init` prints is a diagnostic on standard error. It produces no
+requested data, so `--quiet` leaves only warnings and errors.
 
 ### `version`
 
@@ -976,9 +1028,10 @@ the command exists.
 | `vars list`                   | `--no-refresh`                                                                                                                             |
 | everything else               | none                                                                                                                                       |
 
-An option that arrives together with the command that takes it is not listed —
-`init`'s `--no-git-init` — because the command's own not-implemented message
-already covers it. Neither is an option
+An option that arrives together with the command that takes it is never listed.
+Until the command lands, its own not-implemented message covers the whole
+invocation; afterwards there is nothing to withhold. `init`'s `--no-git-init`
+was such an option and is now simply live. Neither is an option
 that is live elsewhere and is waiting only on the command: `clone
 --skip-group gui` reports `clone`, because `--skip-group` is not the part of
 that invocation batfiles cannot do yet.
@@ -1035,7 +1088,9 @@ never had.
 Status 1 covers a command that needs a home directory and cannot determine one,
 a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
 `disabled.toml` is malformed, a `vars get` naming a variable this machine has no
-value for, an argument that is not a well-formed address or variable name, and an
+value for, an argument that is not a well-formed address or variable name, an
+[`init`](#init) that refused the directory it was run in or could not put a Git
+repository around it, and an
 action that could not be carried out — a source the repository does not contain,
 a destination holding something batfiles will not replace, or a write the
 operating system refused. In each case the invocation was well-formed and

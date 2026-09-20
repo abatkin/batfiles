@@ -12,6 +12,7 @@ use crate::disabled::{self, Change, DisabledList};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::execute::{self, Invocation};
+use crate::init;
 use crate::location::{
     LocationInputs, Roots, StateRoots, detect_os_home, discover_working_repository, resolve_roots,
     resolve_state_roots,
@@ -85,7 +86,10 @@ fn dispatch(
             Ok(ExitCode::SUCCESS)
         }
         // `init` works on the current directory, so it resolves no roots either.
-        Command::Init(_) => Ok(unimplemented(reporter, name)),
+        Command::Init(args) => {
+            init::run(args, reporter)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Sync(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::sync(

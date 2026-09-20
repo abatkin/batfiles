@@ -6,8 +6,10 @@ remote inclusion: an `include-remote` contributes a remote's actions to the run'
 list, they are addressed under it, its four selection filters say which of them
 it takes, the conditions of what it contributed are decided against a scope
 holding the remote's own `[vars]`, the leaf's, and the inclusion's overrides, and
-the included manifest's own `[remotes]` is ignored. Slice 8 is next: bootstrap.
-[steps.md](steps.md) tracks remaining implementation work.
+the included manifest's own `[remotes]` is ignored. Slice 8 is under way:
+`init` lays out a new leaf repository, and `clone`, bootstrap precedence, and
+the pristine-machine test remain. [steps.md](steps.md) tracks remaining
+implementation work.
 
 ## Acceptance repositories
 

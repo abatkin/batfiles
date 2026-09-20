@@ -20,11 +20,12 @@ nothing in the repository you cannot read with `cat`.
 > A record can also carry a `when` or an `unless`, so an action, or one
 > repository in a plugin list, belongs to some machines and not others.
 >
-> Composition is half built: a `[remotes]` section names other Git
-> repositories, `sync` clones each one into your repository's own `remotes/`
-> tree, and an action can install from one — but nothing splices a remote's
-> actions into your manifest yet. `init` and `clone` are
-> not built either, so a fresh machine still clones its repository by hand.
+> Composition is built: a `[remotes]` section names other Git repositories,
+> `sync` clones each one into your repository's own `remotes/` tree, an action
+> can install from one, and `include-remote` splices a remote's own actions into
+> your manifest at the position that includes it. `init` starts a new repository
+> in the current directory. `clone`, which brings an existing one down onto a
+> fresh machine, is not built yet, so that step is still done by hand, and
 > `vars refresh` is also unimplemented. See the
 > [command reference](docs/cmdline.md#what-runs-today) for supported commands
 > and the [rewrite roadmap](rewrite/steps.md) for completed and remaining work.
@@ -83,14 +84,16 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   `[default-disabled]` is parsed and validated, but its
   [bootstrap adoption](docs/repoformat.md#default-disabled-bootstrap-entries)
   is not implemented yet.
+- **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`, and
+  `files/` into the current directory and runs `git init`, refusing rather than
+  overwriting anything already there. See [`init`](docs/cmdline.md#init).
 - **Report the installed version.** `version` prints the version.
 - **Platform support.** Symlink actions are supported only on Unix. On Windows,
   executing either symlink action fails the run with an error naming the action
   type. Directory, copy, fetching, and Git actions have Windows implementations.
   CI checks Windows compilation, but does not run Windows tests.
 
-Everything else — `init`, `clone`, and `vars refresh` — parses its arguments and
-exits 2.
+Everything else — `clone` and `vars refresh` — parses its arguments and exits 2.
 
 ## Example
 
@@ -238,7 +241,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 8     | `init` and `clone` for new machines, with default-disabled adoption |
+| 8     | `clone` for new machines, with default-disabled adoption            |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 

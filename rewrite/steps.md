@@ -108,7 +108,8 @@ No inclusion of remote actions yet.
 
 ## Slice 8 — Bootstrap
 
-- **8.1** Add `init`, adapting the reference implementation to current helpers.
+- **8.1** ✅ Add `init`. The skeleton omits `install.sh`, which arrives with the
+  installer template at 10.2, and omits `local-files/`.
 - **8.2** Add `clone`: clone a repository and synchronize it.
 - **8.3** Add bootstrap precedence and default-disabled adoption. Remove the
   dead-code expectations for adopted entry fields. Update the CLI assertions
@@ -150,8 +151,10 @@ when moving the remaining work to the roadmap at slice 8.
 Begin after slice 8 is in real use.
 
 - **10.1** Release binaries at stable URLs with checksums and platform detection.
-- **10.2** Add the `init` installer template, locating batfiles on PATH or
-  downloading it into `~/.local/bin`.
+- **10.2** Add the `install.sh` installer template, locating batfiles on PATH or
+  downloading it into `~/.local/bin`. Add it to the skeleton
+  [`init`](../docs/cmdline.md#init) lays down, which omits the script until
+  there is one worth writing.
 - **10.3** Test installation end to end in Docker against a local release server.
 
 ## Enhancements

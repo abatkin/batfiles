@@ -163,43 +163,14 @@ precedence](environment.md#bootstrap-enable-and-disable-lists).
 fresh clone materializes its remotes during the follow-up sync; use
 `sync --dry-run` after cloning to inspect later plans.
 
-### `init`
+### The `init` skeleton
 
-```text
-batfiles init [--no-git-init]
-```
-
-Initialize the current directory with the conventional leaf-repository layout
-without overwriting existing files.
-
-| Option          | Purpose                                                                                                   |
-|-----------------|-----------------------------------------------------------------------------------------------------------|
-| `--no-git-init` | Do not run `git init`. Batfiles also skips `git init` automatically when already inside a Git repository. |
-
-The conventional layout is `batfiles.toml`, `install.sh`, `.gitignore`, `bin/`,
-`files/`, and `local-files/`. The generated `remotes/` tree is not created; the
-written `.gitignore` excludes it instead. An existing path of the expected kind
-is left exactly as it is, including its contents and permissions.
-
-`init` refuses to run, before creating anything, when:
-
-- The current directory already contains anything named `batfiles.toml`,
-  whatever kind of filesystem node it is. The directory is already a batfiles
-  repository, and `init` is not a repair path for one.
-- The current directory is the invoking user's OS home directory. Only that
-  directory is refused; a directory below it, such as the default
-  `~/dotfiles`, is the normal case. A home that cannot be determined is not
-  fatal here, because `init` needs one only for this check.
-- A path of the conventional layout exists as the wrong kind of filesystem
-  node, such as a regular file named `files`. Symlinks are judged by what they
-  point at, and a symlink pointing at nothing is a wrong kind too.
-
-`init` also fails when Git initialization was requested and `git` could not be
-run or `git init` failed. Whatever was already created stays; `init` does not
-unwind a partial layout. Use `--no-git-init` to initialize without Git.
-
-Everything `init` prints is a diagnostic on standard error. It produces no
-requested data, so `--quiet` leaves only warnings and errors.
+[`init`](../cmdline.md#init) is built. What it does not lay down yet is
+`install.sh`, the bootstrap entry point a new machine runs before batfiles is on
+it. That script is written by the installer work: see the roadmap's slice 10,
+which owns both the template and the release URLs it downloads from. Until then
+a new repository is synchronized with `batfiles sync`, and `init` creates no
+script that only reports it cannot do that.
 
 ## Address Forms
 

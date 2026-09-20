@@ -651,6 +651,39 @@ fn remove(dest: &Path) -> Result<(), Error> {
     })
 }
 
+/// Create a repository in `dir` unless one already covers it, answering whether
+/// one was created.
+///
+/// This is `init`'s, not an action's: it takes no [`RunMode`] because the
+/// command it serves has no dry run to withhold anything from.
+pub(crate) fn init_repository(dir: &Path) -> Result<bool, Failure> {
+    if inside_work_tree(dir)? {
+        return Ok(false);
+    }
+
+    let output = launch(Some(dir), &["init"])?;
+    if output.status.success() {
+        Ok(true)
+    } else {
+        Err(Failure::Failed {
+            command: "init",
+            path: dir.to_path_buf(),
+            message: complaint(&output),
+        })
+    }
+}
+
+/// Whether `dir` already sits inside a work tree, a parent repository included.
+///
+/// A successful exit is not enough on its own: inside a bare repository's `.git`
+/// directory `rev-parse` succeeds and prints `false`. Neither stream is shown,
+/// because outside a repository the command prints `fatal: not a git
+/// repository`, which is this question's answer rather than something to report.
+fn inside_work_tree(dir: &Path) -> Result<bool, Failure> {
+    let output = launch(Some(dir), &["rev-parse", "--is-inside-work-tree"])?;
+    Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
 /// Git environment variables cleared before subprocess execution.
 /// The supported environment contract is in `docs/environment.md`.
 const REDIRECTS: [&str; 12] = [
@@ -674,6 +707,12 @@ const REDIRECTS: [&str; 12] = [
 
 /// Run `git`, capturing both of its streams.
 fn git<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Error> {
+    launch(dir, args).map_err(Into::into)
+}
+
+/// The same, as the subsystem failure rather than the crate error, for a caller
+/// that says something of its own about a Git that would not run.
+fn launch<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Failure> {
     let mut command = Command::new("git");
     command.args(args);
     for redirect in REDIRECTS {
@@ -684,7 +723,7 @@ fn git<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Error>
     }
     command
         .output()
-        .map_err(|source| Failure::Unavailable { source }.into())
+        .map_err(|source| Failure::Unavailable { source })
 }
 
 /// What git said about a failure, or the status it exited with when it said
