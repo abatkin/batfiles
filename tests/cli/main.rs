@@ -7,6 +7,7 @@ mod support;
 
 mod actions;
 mod apply;
+mod clone;
 mod clone_lists;
 mod cloning;
 mod conditions;

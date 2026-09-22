@@ -235,8 +235,8 @@ command that installs nothing and reads no repository resolves the **config and
 cache directories alone**: the four enable and disable commands, `vars set`,
 `vars get`, `vars unset`, and `vars list --machine-only`. A command that reads
 the leaf repository resolves those two and also selects the destination home and
-the leaf repository: `sync`, `apply-action`, `apply-group`, and a normal `vars
-list`. `version` and `init` resolve no roots at all.
+the leaf repository: `sync`, `apply-action`, `apply-group`, `clone`, and a
+normal `vars list`. `version` and `init` resolve no roots at all.
 
 [`init`](cmdline.md#init) consults the invoking user's OS home for one thing
 only: to refuse initializing a repository directly in it. That is not root
@@ -244,9 +244,9 @@ selection, and `--home-dir` and `BATFILES_HOME` have no bearing on it — the
 point of the check is the home the user would land in from a fresh shell. A home
 that cannot be determined is not fatal there.
 
-The [unimplemented commands](cmdline.md#what-runs-today) `clone` and
-`vars refresh` currently resolve only config and cache roots, print them at
-`-v`, and then report that the command is unimplemented.
+The [unimplemented command](cmdline.md#what-runs-today) `vars refresh` currently
+resolves only config and cache roots, prints them at `-v`, and then reports that
+the command is unimplemented.
 
 The destination home is selected in this order:
 
@@ -282,7 +282,11 @@ malformed, or invalid manifest instead of falling through to
 the selected repository when neither explicit repository input is set.
 
 Only commands that read the leaf repository perform this discovery. An enable
-or disable command, for example, does not inspect the working directory. When a
+or disable command, for example, does not inspect the working directory.
+Neither does [`clone`](cmdline.md#clone), which is the one command that selects
+a leaf repository without reading one: discovery names a directory precisely
+because a manifest is already in it, and `clone` creates the repository it
+clones into, so it selects from the remaining three entries alone. When a
 command does need the repository and has no explicit repository selection,
 failure to determine the working directory or inspect `./batfiles.toml` is
 fatal: batfiles cannot tell whether the working-directory precedence entry

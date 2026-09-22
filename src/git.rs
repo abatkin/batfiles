@@ -111,7 +111,8 @@ pub(crate) fn clone_or_update(
     }
 }
 
-/// Clone into a destination nothing is at.
+/// Carry out an action's clone into a destination nothing is at: the parents it
+/// needs, the clone itself, the declared ref, and the line reporting all of it.
 fn clone(
     url: &str,
     dest: &Path,
@@ -121,17 +122,7 @@ fn clone(
 ) -> Result<(), Error> {
     directory::create_parents(dest, mode)?.report_removals(mode, reporter);
     if mode.writes() {
-        run(
-            None,
-            "clone",
-            &[
-                OsStr::new("clone"),
-                OsStr::new("--"),
-                OsStr::new(url),
-                dest.as_os_str(),
-            ],
-            dest,
-        )?;
+        clone_repository(url, dest)?;
         if let Some(git_ref) = git_ref {
             // The outcome is not reported: whatever it took to get there, the
             // line below is where this run put the repository.
@@ -144,6 +135,30 @@ fn clone(
         dest.display(),
         at(git_ref)
     ));
+    Ok(())
+}
+
+/// Clone into a destination nothing is at, and say nothing about it.
+///
+/// Git creates the leading directories itself, so a destination several levels
+/// below anything that exists is cloned into as it stands. The `--` is what
+/// stops a URL beginning with a dash from being read as an option.
+///
+/// Callers differ in what they know: an action has inspected the destination and
+/// reports the clone in its own words and tense, while `clone` is putting the
+/// leaf repository itself on the machine and has no [`RunMode`] to consult.
+pub(crate) fn clone_repository(url: &str, dest: &Path) -> Result<(), Error> {
+    run(
+        None,
+        "clone",
+        &[
+            OsStr::new("clone"),
+            OsStr::new("--"),
+            OsStr::new(url),
+            dest.as_os_str(),
+        ],
+        dest,
+    )?;
     Ok(())
 }
 

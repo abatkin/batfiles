@@ -24,9 +24,10 @@ nothing in the repository you cannot read with `cat`.
 > `sync` clones each one into your repository's own `remotes/` tree, an action
 > can install from one, and `include-remote` splices a remote's own actions into
 > your manifest at the position that includes it. `init` starts a new repository
-> in the current directory. `clone`, which brings an existing one down onto a
-> fresh machine, is not built yet, so that step is still done by hand, and
-> `vars refresh` is also unimplemented. See the
+> in the current directory, and `clone` brings an existing one down onto a fresh
+> machine and installs it in the same command — though the bootstrap policy a
+> repository declares is not adopted yet, so that first run installs everything
+> in it. `vars refresh` is the one command still unimplemented. See the
 > [command reference](docs/cmdline.md#what-runs-today) for supported commands
 > and the [rewrite roadmap](rewrite/steps.md) for completed and remaining work.
 
@@ -87,13 +88,16 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
 - **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`, and
   `files/` into the current directory and runs `git init`, refusing rather than
   overwriting anything already there. See [`init`](docs/cmdline.md#init).
+- **Set up a new machine.** `clone <url>` clones a repository into the selected
+  batfiles directory — which must not already exist — and synchronizes it in the
+  same command. See [`clone`](docs/cmdline.md#clone).
 - **Report the installed version.** `version` prints the version.
 - **Platform support.** Symlink actions are supported only on Unix. On Windows,
   executing either symlink action fails the run with an error naming the action
   type. Directory, copy, fetching, and Git actions have Windows implementations.
   CI checks Windows compilation, but does not run Windows tests.
 
-Everything else — `clone` and `vars refresh` — parses its arguments and exits 2.
+Everything else — `vars refresh` alone — parses its arguments and exits 2.
 
 ## Example
 
@@ -177,6 +181,11 @@ You can also run `batfiles sync` from the root of any repository containing a
 precedence. The full order is documented under
 [location selection](docs/environment.md#location-selection).
 
+On a machine that has no repository yet, `batfiles clone <url>` does both halves
+at once: it clones into `~/dotfiles` — or wherever `--batfiles-dir` names — and
+then runs exactly the synchronization above. Nothing may be at that path
+already, because `clone` is what creates it.
+
 Missing parent directories are created. Run it again and it says nothing at
 all, because nothing changed; `-v` reports what it looked at, and heads each
 action's lines with the record that produced them and the `group` it names.
@@ -241,7 +250,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 8     | `clone` for new machines, with default-disabled adoption            |
+| 8     | Default-disabled adoption, the rest of what `clone` will do         |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 

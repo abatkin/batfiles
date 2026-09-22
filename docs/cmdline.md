@@ -12,15 +12,23 @@ Unimplemented commands, options, and additional address forms are described in
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Only `clone` and `vars refresh` are left.** They resolve the [state-only
-roots](environment.md#location-selection) — the roots they can resolve without
-work to do — and then report that they are not implemented yet, exiting 2 having
+**Only `vars refresh` is left.** It resolves the [state-only
+roots](environment.md#location-selection) — the roots it can resolve without
+work to do — and then reports that it is not implemented yet, exiting 2 having
 written nothing. Every other command does its work.
 
 [`init`](#init) lays the conventional layout into the current directory and puts
 a Git repository around it. It resolves no roots at all, and what it creates is
 a repository `sync` can read: a freshly initialized one installs nothing, because
 every sample in the starter manifest is commented out.
+
+[`clone`](#clone) is the other end of that: it brings an existing repository
+down onto a machine that has none and synchronizes it in the same command. The
+bootstrap policy a leaf declares is not adopted yet, so that first
+synchronization installs [default-disabled
+candidates](repoformat.md#default-disabled-bootstrap-entries) like any other
+action, and the four bootstrap options that would decide otherwise are
+[refused for now](#unimplemented-options).
 
 `sync` materializes the [remotes](repoformat.md#materialization) the manifest
 declares and executes every action type, `--dry-run` reports what it would do
@@ -108,7 +116,8 @@ suppresses the lines saying what `sync` did, and nothing else.
 Three of the four resolved roots are live. `sync` and the two apply commands
 read the leaf repository, [`disabled.toml`](state.md), and
 [`vars.toml`](state.md#varstoml-machine-local-variables), and write into the
-selected home; `vars list` reads the first and the last of those and writes
+selected home; `clone` writes the leaf repository before doing all of that;
+`vars list` reads the first and the last of those and writes
 nothing. The enable and disable commands read and rewrite `disabled.toml`
 under the config directory, and the machine-local variable commands do the
 same for `vars.toml` beside it. Neither kind resolves the repository or the
@@ -230,6 +239,60 @@ command does not resolve the selected repository, home, config, or cache
 directories.
 
 `batfiles version` and `batfiles --version` print the same line.
+
+### `clone`
+
+```text
+batfiles clone <url> [--skip-action <id>]... [--skip-group <group>]...
+```
+
+Clone a leaf repository into the selected batfiles directory and
+[synchronize](#sync) it: how a machine with no repository gets one. The two
+halves are one command and one failure — nothing is installed unless the clone
+arrived, and what happens to what arrived is exactly what `sync` would do with
+it.
+
+Where the clone lands is the one thing `clone` decides differently from every
+other command that has a leaf repository at all: working-directory discovery
+does not apply. A `batfiles.toml` in the current directory is what selects a
+repository to *read*, and this command is creating one, so only `--batfiles-dir`,
+`BATFILES_DIR`, and the `<selected-home>/dotfiles` default have any bearing on
+it. See [location selection](environment.md#location-selection).
+
+**The destination must not exist at all.** Anything there — a file, a link to
+nothing, even the empty directory `git clone` itself would accept — refuses the
+command before Git is launched, with nothing downloaded and nothing installed.
+Batfiles creates the repository directory, and a directory it did not create is
+not one it writes a repository into. Missing directories above the destination
+are created with it.
+
+| Option                 | Purpose                                                  |
+|------------------------|------------------------------------------------------------|
+| `--skip-action <id>`   | Leave one action out of the synchronization. Repeatable. |
+| `--skip-group <group>` | Leave one group out of the synchronization. Repeatable.  |
+
+`--var` reaches the synchronization the same way, as do the rest of the [shared
+action-execution options](#shared-action-execution-options) once they are
+honored. `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all,
+rather than refusing them for now: a machine with no repository has no plan to
+describe, and a fresh clone materializes its remotes during the synchronization
+that follows. Use `sync --dry-run` afterwards to inspect later plans.
+
+Once a clone succeeds nothing is unwound. The repository is kept whether or not
+the rest of the command gets anywhere with it:
+
+- A repository holding no `batfiles.toml` fails before the synchronization
+  starts, saying that what was cloned is a Git repository but not a batfiles
+  one. The mistake is the URL rather than a missing file.
+- A synchronization that fails, fails the way `sync` fails — see [execution
+  failures](#execution-failures). The clone stays where it landed, so the fix is
+  an edit and a `sync` rather than a second download.
+
+The four bootstrap enable and disable options are
+[refused for now](#unimplemented-options), and so is the policy they would
+decide: until adoption is built, the first synchronization installs a leaf's
+[default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries)
+like any other action.
 
 ### `sync`
 
@@ -641,6 +704,9 @@ so the same non-match that warns above is expected there.
 Conditions on entries inside a selected clone list still apply. These overrides
 affect only the invocation; they do not edit persistent disabled state.
 
+[`clone`](#clone) is not a fourth column: the run it performs is a `sync`, so it
+reads the first one.
+
 A record an [inclusion](repoformat.md#include-remote) contributed answers to
 every row above under its qualified address, and the inclusion that contributed
 it answers under its own. Asking for the inclusion — `apply-group` naming the
@@ -1015,15 +1081,16 @@ An option that parses but is not honored yet is **refused, never ignored**:
 the run exits 2 naming the option and the step that makes it live, before any
 root is resolved or any file is opened.
 
-The refusal comes ahead of a command's own not-implemented message, so
-`batfiles clone <url> --interactive` reports `--interactive` rather than
-`clone`. The option is the part of the invocation that would still be wrong once
-the command exists.
+The refusal comes ahead of everything the command would otherwise do, its own
+not-implemented message included, so `batfiles clone <url> --interactive`
+reports `--interactive` and clones nothing. The option is the part of the
+invocation that is wrong, and a run batfiles cannot finish as asked is not one
+to start.
 
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
 | `sync`                        | `--refresh-remotes`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive` |
-| `clone`                       | `sync`'s list plus `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`. `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all |
+| `clone`                       | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`, `--enable-action`, `--disable-action`, `--enable-group`, `--disable-group`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all |
 | `apply-action`, `apply-group` | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
 | `vars list`                   | `--no-refresh`                                                                                                                             |
 | everything else               | none                                                                                                                                       |
@@ -1031,10 +1098,10 @@ the command exists.
 An option that arrives together with the command that takes it is never listed.
 Until the command lands, its own not-implemented message covers the whole
 invocation; afterwards there is nothing to withhold. `init`'s `--no-git-init`
-was such an option and is now simply live. Neither is an option
-that is live elsewhere and is waiting only on the command: `clone
---skip-group gui` reports `clone`, because `--skip-group` is not the part of
-that invocation batfiles cannot do yet.
+was such an option and is now simply live. Neither is an option that is live
+elsewhere and is waiting only on the command: `clone --skip-group gui` was never
+listed, because `--skip-group` was not the part of that invocation batfiles
+could not do yet — and now it does the whole of it.
 
 ## Execution failures
 

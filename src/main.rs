@@ -4,6 +4,7 @@ mod action;
 mod app;
 mod archive;
 mod cli;
+mod clone;
 mod clone_list;
 mod condition;
 mod directory;

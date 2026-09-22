@@ -110,7 +110,9 @@ No inclusion of remote actions yet.
 
 - **8.1** ✅ Add `init`. The skeleton omits `install.sh`, which arrives with the
   installer template at 10.2, and omits `local-files/`.
-- **8.2** Add `clone`: clone a repository and synchronize it.
+- **8.2** ✅ Add `clone`: clone a repository into a destination that must not
+  exist, then synchronize it. It is the one repository command that does no
+  working-directory discovery.
 - **8.3** Add bootstrap precedence and default-disabled adoption. Remove the
   dead-code expectations for adopted entry fields. Update the CLI assertions
   that candidates currently disable nothing and create no `disabled.toml`.

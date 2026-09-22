@@ -136,18 +136,16 @@ inclusion set, is allowed to run commands, and is materialized.
 
 ### `clone`
 
+[`clone`](../cmdline.md#clone) is built: it clones a leaf repository into the
+selected batfiles directory and synchronizes it. What is not built is the policy
+it would adopt on the way, which is the half that needs a machine to remember
+anything:
+
 ```text
-batfiles clone <url> [action-options] [selection-options]
+batfiles clone <url>
     [--enable-action <id>]... [--disable-action <id>]...
     [--enable-group <group>]... [--disable-group <group>]...
 ```
-
-Clone a new leaf repository into the selected batfiles directory, adopt its
-bootstrap enable/disable policy, and then synchronize it. The destination must
-not already exist.
-
-The shared action-execution and sync/clone selection options are listed above.
-Bootstrap-only options are:
 
 | Option                    | Purpose                                                                              |
 |---------------------------|--------------------------------------------------------------------------------------|
@@ -156,12 +154,13 @@ Bootstrap-only options are:
 | `--enable-group <group>`  | Remove a group address from persisted disabled state during bootstrap. Repeatable.   |
 | `--disable-group <group>` | Add a group address to persisted disabled state during bootstrap. Repeatable.        |
 
-The environment specification defines the authoritative [bootstrap adoption
-precedence](environment.md#bootstrap-enable-and-disable-lists).
-
-`clone` intentionally does not accept `--dry-run` or `--refresh-remotes`. A
-fresh clone materializes its remotes during the follow-up sync; use
-`sync --dry-run` after cloning to inspect later plans.
+All four parse and are [refused for
+now](../cmdline.md#unimplemented-options). They resolve against the leaf's own
+[default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries)
+by the authoritative [bootstrap adoption
+precedence](environment.md#bootstrap-enable-and-disable-lists), and until that
+exists a cloned repository's first synchronization installs its candidates like
+any other action.
 
 ### The `init` skeleton
 

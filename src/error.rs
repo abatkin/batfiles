@@ -225,6 +225,29 @@ pub(crate) enum Error {
     /// Git repository around it.
     #[error(transparent)]
     Init(#[from] init::Failure),
+
+    // Bringing a repository onto a machine.
+    /// A `clone` whose destination is not vacant. Apart from
+    /// [`Self::DestinationExists`] because the subject is different: that one is
+    /// a destination in the home an action installs into, and this is the leaf
+    /// repository itself, which `clone` creates rather than installs into.
+    #[error(
+        "{} already exists; `clone` creates the repository it clones into. \
+         Move it aside, name another directory with --batfiles-dir, \
+         or run `batfiles sync` if it is already the repository you want",
+        .path.display()
+    )]
+    CloneDestinationExists { path: PathBuf },
+
+    /// A clone that arrived without a manifest. The URL named a Git repository,
+    /// just not a batfiles one, and saying so is worth more than the missing
+    /// file the follow-up synchronization would otherwise report.
+    #[error(
+        "{} has no {}; what was cloned is a Git repository, but not a batfiles one",
+        .path.display(),
+        manifest::Manifest::FILE_NAME
+    )]
+    ClonedWithoutManifest { path: PathBuf },
 }
 
 impl Error {

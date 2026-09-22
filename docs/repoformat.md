@@ -1423,8 +1423,9 @@ nowhere. Adopting the candidates belongs to the bootstrap that sets a machine up
 for the first time, and is specified in
 [`future/repoformat.md`](future/repoformat.md) along with the enable and disable
 options that take precedence over them. Until that arrives, a `sync` over a
-manifest declaring candidates installs exactly what it would have installed
-without them, and creates no `disabled.toml`.
+manifest declaring candidates — including the one
+[`clone`](cmdline.md#clone) runs on a fresh machine — installs exactly what it
+would have installed without them, and creates no `disabled.toml`.
 
 What is checked is the record's own syntax. Each entry names an
 [address](cmdline.md#addresses), the records are closed like every other, and an

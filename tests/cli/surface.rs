@@ -45,31 +45,18 @@ fn help_lists_every_documented_command() {
     }
 }
 
-/// A stub command that resolves roots before reporting unsupported behavior.
+/// The one command that still parses and does not run. It resolves its roots
+/// before reporting that, which is what a stub does instead of the work.
 fn a_stub() -> [&'static str; 2] {
-    ["clone", "https://example.invalid/dotfiles.git"]
+    ["vars", "refresh"]
 }
 
 #[test]
-fn unimplemented_commands_fail_with_a_clear_message() {
+fn the_unimplemented_command_fails_with_a_clear_message_naming_it_in_full() {
+    // The last stub is a subcommand, so the message has to name the whole path
+    // rather than the `vars` family it belongs to.
     let tree = Tree::new();
     let assertion = tree.batfiles().args(a_stub()).assert().failure().code(2);
-    let stderr = stderr_of(&assertion);
-    assert!(
-        stderr.contains("`clone` is not implemented yet"),
-        "unexpected stderr:\n{stderr}"
-    );
-}
-
-#[test]
-fn an_unimplemented_subcommand_is_named_in_full() {
-    let tree = Tree::new();
-    let assertion = tree
-        .batfiles()
-        .args(["vars", "refresh"])
-        .assert()
-        .failure()
-        .code(2);
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains("`vars refresh` is not implemented yet"),
@@ -230,8 +217,11 @@ fn an_unsupported_option_is_reported_before_the_roots_are_resolved() {
 }
 
 #[test]
-fn a_stub_command_names_the_option_before_it_names_itself() {
-    let tree = Tree::new();
+fn an_option_that_is_not_honored_yet_stops_the_command_before_it_does_anything() {
+    // `clone` reaches the network and writes a repository, so the refusal has
+    // to come first: an option batfiles cannot honor makes the whole invocation
+    // wrong, not a run to start and abandon.
+    let tree = Tree::roots();
     let assertion = tree
         .batfiles()
         .args([
@@ -247,8 +237,8 @@ fn a_stub_command_names_the_option_before_it_names_itself() {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
     assert!(
-        !stderr.contains("`clone` is not implemented yet"),
-        "the command's own message preempted the option's:\n{stderr}"
+        !tree.path("repo").exists(),
+        "the command cloned something anyway:\n{stderr}"
     );
 }
 
@@ -338,7 +328,7 @@ fn an_error_is_labeled() {
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
-    assert_eq!(stderr, "error: `clone` is not implemented yet\n");
+    assert_eq!(stderr, "error: `vars refresh` is not implemented yet\n");
 }
 
 #[test]
@@ -353,7 +343,7 @@ fn color_always_colors_the_label_of_an_error_batfiles_raised() {
         .code(2);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("\x1b[1;31merror:\x1b[0m `clone` is not implemented yet"),
+        stderr.contains("\x1b[1;31merror:\x1b[0m `vars refresh` is not implemented yet"),
         "expected a colored label:\n{stderr:?}"
     );
 }

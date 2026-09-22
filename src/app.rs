@@ -2,12 +2,14 @@
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::unsupported::{self, Unsupported};
 use crate::cli::{Cli, Command, GlobalOptions, VarsCommand, color};
+use crate::clone;
 use crate::disabled::{self, Change, DisabledList};
 use crate::env::Environment;
 use crate::error::Error;
@@ -88,6 +90,19 @@ fn dispatch(
         // `init` works on the current directory, so it resolves no roots either.
         Command::Init(args) => {
             init::run(args, reporter)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        // The one command that creates the leaf repository rather than reading
+        // one, which is why it resolves its roots differently. It accepts no
+        // `--dry-run` either, so the run it hands on always writes.
+        Command::Clone(args) => {
+            let roots = locate_destination(cli, env, reporter)?;
+            clone::run(
+                &invocation(&roots, false, &args.action.vars, env, reporter),
+                &args.url,
+                &args.selection.actions.skip_actions,
+                &args.selection.groups.skip_groups,
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Sync(args) => {
@@ -179,7 +194,7 @@ fn dispatch(
             }
             Ok(ExitCode::SUCCESS)
         }
-        Command::Clone(_) | Command::Vars(VarsCommand::Refresh { .. }) => {
+        Command::Vars(VarsCommand::Refresh { .. }) => {
             locate_state(cli, env, reporter)?;
             Ok(unimplemented(reporter, name))
         }
@@ -231,10 +246,32 @@ fn locate_state(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Sta
 
 /// Resolve every root, for a command that reads the leaf repository.
 fn locate_repository(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
+    locate(cli, env, reporter, discover_working_repository)
+}
+
+/// The same, for the one command that creates the leaf repository instead of
+/// reading one.
+///
+/// Working-directory discovery is deliberately left out. It selects a directory
+/// because a manifest is already in it, which is exactly the destination `clone`
+/// refuses, so letting it run could only turn a valid invocation into a refusal
+/// naming a directory the user never meant.
+fn locate_destination(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
+    locate(cli, env, reporter, || Ok(None))
+}
+
+/// Resolve every root and report them at `-v`, given how the repository is
+/// selected when nothing named one.
+fn locate(
+    cli: &Cli,
+    env: &Environment,
+    reporter: &Reporter,
+    working_repository: impl FnOnce() -> Result<Option<PathBuf>, Error>,
+) -> Result<Roots, Error> {
     let roots = resolve_roots(
         &locations(&cli.global),
         env,
-        discover_working_repository,
+        working_repository,
         detect_os_home,
     )?;
     reporter.detail(
