@@ -20,12 +20,20 @@ tasks:
     desc: Run the project test suite
     cmd: cargo test
 
+  test:docker:
+    desc: Run the pristine-machine acceptance in a container
+    # The binary is built here and copied into the image. `build` runs once per
+    # invocation, so joining `ci:checks` beside it costs nothing.
+    deps: [build]
+    cmd: tests/docker/run.sh
+
   deny:
     desc: Check dependencies (advisories, licenses, bans)
     cmd: cargo deny check
 
   build:
     desc: Build the project (debug)
+    run: once
     cmd: cargo build
 
   build:release:
@@ -45,4 +53,4 @@ tasks:
 
   ci:checks:
     internal: true
-    deps: [fmt, lint, test, deny, build, build:release]
+    deps: [fmt, lint, test, test:docker, deny, build, build:release]

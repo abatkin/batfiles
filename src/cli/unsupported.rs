@@ -1,4 +1,4 @@
-//! The options each command accepts and does not honor yet (`guidance.md`,
+//! The options each command accepts and does not honor yet (`architecture.md`,
 //! rule 12).
 //!
 //! An option belongs here only while it goes live *later* than the command that

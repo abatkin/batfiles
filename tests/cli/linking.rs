@@ -932,7 +932,7 @@ fn a_child_link_batfiles_owns_is_repaired() {
 // the operating system from the directory it is *physically* in. Composing
 // that answer from the written path instead classifies the link against a
 // directory it is not in, and every case below is a way for that to go
-// wrong (`guidance.md`, rule 14).
+// wrong (`architecture.md`, rule 14).
 
 /// A home whose `~/bin` is a symlink to `~/.local/bin`, with the repository
 /// at `~/dotfiles` holding `bin/tool`, and one existing link already at the

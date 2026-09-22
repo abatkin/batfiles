@@ -15,7 +15,7 @@ The cache directory independently contains `dynamic-vars.toml`, apart from the
 config directory holding the non-regenerable files. Both default under the
 invoking user's OS home (`<os-home>`) and are independent of `--home-dir`. The
 environment specification defines the authoritative [location selection
-rules](environment.md#location-selection).
+rules](../environment.md#location-selection).
 
 ## `vars.toml`: the parts that are not built
 

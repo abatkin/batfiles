@@ -3,7 +3,7 @@
 //!
 //! The rules about what a record may say are settled as the manifest is read,
 //! so those cases execute nothing. The rest clone from a local bare repository
-//! (`guidance.md`, "Test environments"), as the `git-clone` tests do -- from the
+//! (`architecture.md`, "Test environments"), as the `git-clone` tests do -- from the
 //! bare one-file repository where only the clone matters, and from the
 //! `corporate` fixture where the content does.
 //!

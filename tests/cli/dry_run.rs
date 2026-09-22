@@ -91,7 +91,7 @@ fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {
 /// **Not a loosening of the parity assertion.** Parity is a promise about
 /// actions with distinct destinations, and that pair is deliberately not one:
 /// the second seed finds what the first one left, which a dry run has not left,
-/// so the two runs differ in substance rather than tense (`rewrite/guidance.md`,
+/// so the two runs differ in substance rather than tense (`architecture.md`,
 /// "What a dry run says"). A comparison written to tolerate that difference
 /// would restate the gap instead of checking the mode. The difference itself is
 /// asserted in `the_runs_diverge_where_one_action_feeds_another`.

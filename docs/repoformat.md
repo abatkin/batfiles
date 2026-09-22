@@ -1168,7 +1168,7 @@ output examples.
 **An `id` names the entry in diagnostics**, and nothing more than that today: a
 line about an entry that carries one says `id=p10k, plugins.txt line 3` where one
 without is named by its file and line alone. Naming a single entry on the command
-line is an [enhancement](../rewrite/steps.md#enhancements); no address resolves
+line is an [enhancement](future/roadmap.md#enhancements); no address resolves
 to an entry, so writing an `id` makes nothing selectable.
 
 An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory

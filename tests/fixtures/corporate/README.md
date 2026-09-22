@@ -1,8 +1,9 @@
 # The corporate repository
 
 A dotfiles repository a leaf manifest declares as a remote, standing in for the
-work half of the acceptance in `rewrite/README.md`: settings an employer
-publishes once, that a personal repository composes over.
+work half of the
+[acceptance](../../../docs/architecture.md#acceptance-repositories): settings an
+employer publishes once, that a personal repository composes over.
 
 Unlike the other fixtures here, this tree is not copied into a leaf repository.
 `BareRepo::from_fixture("corporate")` commits it into a local bare repository,

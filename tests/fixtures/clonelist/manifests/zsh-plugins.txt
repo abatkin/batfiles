@@ -3,7 +3,7 @@
 # pinned to a ref, and one only some machines want.
 #
 # The placeholders are local bare repositories the test creates, because no test
-# may reach the network (`guidance.md`, "Test environments"). A real list of
+# may reach the network (`architecture.md`, "Test environments"). A real list of
 # this kind names repositories on the internet, and reads exactly the same.
 {plugin}
 {prompt} dest-name=p10k id=p10k  # the prompt

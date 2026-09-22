@@ -3,7 +3,7 @@
 # Apart from `cloning` because a list needs several bare repositories where one
 # action needs one, and the tests that clone should not pay for what they do not
 # name. The list's own repositories are placeholders the test fills in, since no
-# test may reach the network (`guidance.md`, "Test environments").
+# test may reach the network (`architecture.md`, "Test environments").
 
 # What the list's one gated entry is decided against. False here, so a run over
 # this fixture clones every entry but that one.

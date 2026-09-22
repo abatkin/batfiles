@@ -315,7 +315,7 @@ fn unimplemented(reporter: &Reporter, name: &str) -> ExitCode {
     ExitCode::from(EXIT_UNIMPLEMENTED)
 }
 
-/// An option that parsed but does nothing yet (`guidance.md`, rule 12).
+/// An option that parsed but does nothing yet (`architecture.md`, rule 12).
 fn not_yet(reporter: &Reporter, found: &Unsupported) -> ExitCode {
     reporter.error(&format!(
         "`{}` is not implemented yet; it arrives at step {}",

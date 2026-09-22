@@ -8,7 +8,7 @@
 //!
 //! The leaf is the `inclusion` fixture and the remote is the `corporate` one,
 //! committed into a local bare repository as the remotes tests commit it
-//! (`guidance.md`, "Test environments").
+//! (`architecture.md`, "Test environments").
 
 use std::fs;
 

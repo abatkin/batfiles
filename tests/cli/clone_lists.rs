@@ -1,7 +1,7 @@
 //! `git-clone-list`: what the list may say, when it is read, and what a run
 //! does with the repositories it names.
 //!
-//! Every repository here is a local bare one (`guidance.md`, "Test
+//! Every repository here is a local bare one (`architecture.md`, "Test
 //! environments"). The parsing tests name `e.example` and never reach the
 //! action: a list with a fault in it stops the run as the repository is loaded,
 //! which is half of what these assert.

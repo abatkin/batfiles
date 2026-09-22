@@ -1,7 +1,7 @@
 //! `clone`: bringing a leaf repository onto a machine that has none, and
 //! synchronizing it in the same command.
 //!
-//! Every test clones from a local bare repository (`guidance.md`, "Test
+//! Every test clones from a local bare repository (`architecture.md`, "Test
 //! environments"). The repositories are published inline rather than copied
 //! from `tests/fixtures/`, because what a leaf here has to name -- the origin it
 //! was cloned from, the remote it composes -- is a temporary directory no

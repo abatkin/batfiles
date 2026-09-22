@@ -1,0 +1,38 @@
+# What the leaf repository in the container declares on top of the committed
+# `leaf` fixture, appended to its manifest when the origin is built.
+#
+# Both halves name something only this container can spell: a remote at a fixed
+# path under `/srv`, and a bootstrap policy for a machine that has no
+# `disabled.toml` yet. Keeping them here leaves the fixture authoritative for
+# everything the rest of the suite reads it for.
+
+# The work half of the acceptance: a corporate repository the personal one
+# composes, materialized into `remotes/corporate` by the same command that
+# clones the leaf.
+[remotes.corporate]
+type = "git"
+url = "/srv/corporate.git"
+
+[[actions]]
+type = "include-remote"
+id = "corporate"
+remote = "corporate"
+
+# Where this machine starts. `batgrep` and the `editor` group are the leaf's
+# own, so what they switch off is observable twice over: in the document the
+# bootstrap wrote, and in the two destinations the synchronization that followed
+# left alone. The `editor` group reaches no record the inclusion contributed --
+# those are addressed under `corporate` -- so the corporate prompt is installed
+# beside a disabled local editor.
+[[default-disabled.actions]]
+id = "batgrep"
+
+# A candidate this machine is never offered: `work` is false in the fixture's
+# own `[vars]`, so the gate closes, the candidate is passed over, and
+# `~/.gitconfig` is linked like any other action.
+[[default-disabled.actions]]
+id = "gitconfig"
+when = "work"
+
+[[default-disabled.groups]]
+group = "editor"

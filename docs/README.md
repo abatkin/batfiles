@@ -1,8 +1,8 @@
 # Batfiles Documentation
 
 Current behavior is specified here. [Future proposals](future/) are advisory
-and describe unbuilt features. [Documentation ownership](../rewrite/docs.md)
-defines promotion and placement during the rewrite.
+and describe unbuilt features. [Documentation
+ownership](../AGENTS.md#documentation) defines promotion and placement.
 
 - [Product goals](goals.md): product model and intended scope, distinguished
   from implemented features.
@@ -14,7 +14,8 @@ defines promotion and placement during the rewrite.
 - [Installation safety](safety.md): path resolution, destination handling,
   staging, permissions, archive validation, and Git updates.
 - [Local state](state.md): state schemas, lifecycle, and atomic replacement.
+- [Architecture](architecture.md): the rules the implementation is written to,
+  source organization, and test environments.
 
-[Rewrite guidance](../rewrite/guidance.md) owns implementation design and takes
-precedence during the rewrite. It moves to `docs/architecture.md` at slice 8;
-`AGENTS.md` retains workflow and links to the design guidance.
+Remaining work is in [the roadmap](future/roadmap.md); `AGENTS.md` owns the
+branch workflow and the canonical commands.

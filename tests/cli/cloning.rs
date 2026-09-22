@@ -1,7 +1,7 @@
 //! `git-clone`: what a first run clones, what a later run does to the clone it
 //! finds, what it refuses, and what a dry run says instead of any of it.
 //!
-//! Every test clones from a local bare repository (`guidance.md`, "Test
+//! Every test clones from a local bare repository (`architecture.md`, "Test
 //! environments"). The dry-run tests assert the stronger of the two available
 //! claims wherever they can: not only that the tree is unchanged, but that the
 //! clone's own `FETCH_HEAD` is still absent — which is what says no git ran at
@@ -602,7 +602,7 @@ fn a_dry_run_says_it_would_update_whatever_occupies_the_destination() {
     // A dry run runs no git, so it cannot tell a healthy clone from a directory
     // that merely occupies the path — it reports from occupancy alone, and the
     // real run above is where the refusal happens. That is "intent, not
-    // success" rather than a partial plan (`guidance.md`).
+    // success" rather than a partial plan (`architecture.md`).
     let origin = BareRepo::new();
     let tree = one_clone(&origin, "~/.oh-my-zsh");
     fs::create_dir(tree.home(".oh-my-zsh")).expect("a directory in the way");

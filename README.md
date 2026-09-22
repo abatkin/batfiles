@@ -28,7 +28,7 @@ nothing in the repository you cannot read with `cat`.
 > machine, adopts the bootstrap policy it declares, and installs it — all in one
 > command. `vars refresh` is the one command still unimplemented. See the
 > [command reference](docs/cmdline.md#what-runs-today) for supported commands
-> and the [rewrite roadmap](rewrite/steps.md) for completed and remaining work.
+> and the [roadmap](docs/future/roadmap.md) for remaining work.
 
 > [!NOTE]
 > There is a sample repository to read and install:
@@ -246,11 +246,10 @@ cargo build --release   # target/release/batfiles
 ## Not built yet
 
 Roughly in the order it is planned, from
-[`rewrite/steps.md`](rewrite/steps.md):
+[the roadmap](docs/future/roadmap.md):
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 8     | A pristine-machine test for the bootstrap that slice 8 just built    |
 | 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 
@@ -264,6 +263,8 @@ Roughly in the order it is planned, from
 - [Local state files](docs/state.md) — `vars.toml`, `disabled.toml`, and how batfiles
   rewrites the documents it owns.
 - [Environment variables](docs/environment.md) — the inputs batfiles reads.
+- [Architecture](docs/architecture.md) — the rules the implementation is
+  written to, and what its tests look like.
 
 [`docs/`](docs/README.md) describes behavior that runs, and nothing else.
 Anything specified but not built is in [`docs/future/`](docs/future/), which
@@ -275,12 +276,19 @@ binds nothing.
 entry point.
 
 ```sh
-task ci      # fmt + lint + test + deny + build + build:release (what CI runs)
-task test    # project tests
-task fmt     # formatting check
-task lint    # clippy with warnings denied, for the host and for Windows
-task build   # debug build
+task ci           # fmt + lint + test + test:docker + deny + builds (what CI runs)
+task test         # project tests
+task test:docker  # the acceptance, on a pristine machine in a container
+task fmt          # formatting check
+task lint         # clippy with warnings denied, for the host and for Windows
+task build        # debug build
 ```
+
+`task test:docker` clones a repository onto a container that has nothing on it,
+which is where the defaults under a real `$HOME` are exercised. It needs docker
+or podman, and says it did not run rather than failing where there is neither.
+On macOS and Windows, where `task build` produces a binary no Linux container
+can execute, the image builds batfiles itself.
 
 Two cargo subcommands are needed beyond the pinned toolchain: `cargo install
 cargo-deny cargo-xwin --locked`. The second is what lets an ubuntu machine run

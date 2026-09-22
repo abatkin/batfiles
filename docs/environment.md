@@ -253,7 +253,7 @@ is `silver.example.net` has `facts.hostname == 'silver'` there while the same
 name on Unix compares equal to the qualified form. A condition that must work on
 both writes the short form, or tests the domain separately. Reporting the
 qualified Windows name is possible — a different call to the same API — and is
-tracked as an enhancement in [`rewrite/steps.md`](../rewrite/steps.md#enhancements).
+tracked as an enhancement in [the roadmap](future/roadmap.md#enhancements).
 
 ## Host environment in conditions
 

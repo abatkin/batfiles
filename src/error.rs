@@ -170,7 +170,7 @@ pub(crate) enum Error {
     DotPrefixOnDotfile { child: String },
 
     /// A destination holding something batfiles did not create and cannot safely
-    /// replace (`guidance.md`, rule 13).
+    /// replace (`architecture.md`, rule 13).
     #[error(
         "{} already exists and is {found}; move it aside and run sync again",
         .path.display()

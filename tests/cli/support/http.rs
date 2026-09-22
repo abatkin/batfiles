@@ -26,7 +26,7 @@ pub(crate) enum Reply {
     RedirectTo(&'static str),
 }
 
-/// A local HTTP server, so no test reaches the network (`guidance.md`, "Test
+/// A local HTTP server, so no test reaches the network (`architecture.md`, "Test
 /// environments").
 pub(crate) struct Server {
     server: Arc<tiny_http::Server>,

@@ -1,7 +1,7 @@
 //! The two fetching actions: what a download installs, what an archive unpacks,
 //! what each refuses to install, and what a dry run does instead of either.
 //!
-//! Every test answers from a local server (`guidance.md`, "Test environments").
+//! Every test answers from a local server (`architecture.md`, "Test environments").
 //! Several of them assert on [`Server::requests`] as well as on the tree,
 //! because "nothing was fetched" and "nothing was written" are different
 //! claims and the first is the one `--dry-run` makes.

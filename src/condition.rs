@@ -310,7 +310,7 @@ impl HostNamespaces {
 /// machine would under Unix. [The environment
 /// reference](../docs/environment.md#host-facts-in-conditions) specifies the
 /// difference; the qualified Windows name is
-/// [an enhancement](../rewrite/steps.md#enhancements).
+/// [an enhancement](../docs/future/roadmap.md#enhancements).
 fn facts() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("os".to_owned(), std::env::consts::OS.to_owned()),

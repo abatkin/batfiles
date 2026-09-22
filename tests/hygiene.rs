@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// The step list a `CARRY` marker or a withheld option is cleared by.
-const STEPS: &str = "rewrite/steps.md";
+const STEPS: &str = "docs/future/roadmap.md";
 
 /// Rule 12's list, and the only file whose step literals are checked.
 const UNSUPPORTED: &str = "src/cli/unsupported.rs";
@@ -623,7 +623,7 @@ fn src_dead_code_annotations_follow_rule_one() {
     }
 
     // With no annotations there is no step to judge, which is also what lets
-    // this check outlive `rewrite/` — see that directory's README.
+    // this check outlive the step list it reads.
     if found.is_empty() {
         return;
     }
@@ -862,7 +862,7 @@ fn carry_markers_name_a_step_that_is_still_open() {
     }
 
     // With no markers there is nothing to clear, which is also what lets this
-    // check outlive `rewrite/` — see that directory's README.
+    // check outlive the step list it reads.
     if found.is_empty() {
         return;
     }
