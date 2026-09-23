@@ -1,12 +1,9 @@
-//! The rules a manifest has to satisfy that TOML cannot express, and what
-//! batfiles says when one is broken.
+//! Manifest rules TOML cannot express, and their diagnostics.
 //!
-//! Two kinds of rule, per
-//! [`docs/repoformat.md`](../../docs/repoformat.md#reading-the-manifest): one
-//! about the shape of a single value that its type does not capture, which is
-//! every `check_*` below, and one spanning more than one record, which is
-//! [`Manifest::validate`](super::Manifest::validate)'s. Both are decidable from
-//! the document alone, so both are settled while it is being read.
+//! Each `check_*` below validates one value's shape;
+//! [`Manifest::validate`](super::Manifest::validate) applies rules spanning
+//! records. Both are decided from the document alone, while it is read. See
+//! [`docs/repoformat.md`](../../docs/repoformat.md#reading-the-manifest).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -19,16 +16,12 @@ use super::remote::Remote;
 use crate::item::ItemId;
 use crate::repo_path::{REMOTE_PREFIX, RepoPath};
 
-/// How a load diagnostic names the record that broke the rule.
+/// How a load diagnostic names the record that broke the rule; every
+/// [`Invalid`] message opens with one.
 ///
-/// Every message [`Invalid`] renders opens with one, so this is what a reader
-/// looks at first: which of the things in the file is the one to go and fix.
-/// The three spellings are three different answers to that, because the three
-/// kinds of record are identified differently. An action need not have an `id`,
-/// so it is named by its position. A bootstrap candidate is named by its
-/// position within its own array, since what it *names* is deliberately never
-/// looked up and so cannot identify it. A remote is named outright, its map key
-/// being its ID.
+/// Actions and bootstrap candidates are named by position: an action need not
+/// have an `id`, and what a candidate names is never looked up. A remote is
+/// named by its map key.
 #[derive(Debug, Clone)]
 pub(crate) enum RecordName {
     /// An action, by its one-based position in `[[actions]]`.
@@ -49,10 +42,8 @@ impl fmt::Display for RecordName {
     }
 }
 
-// The path rules below are the same rules whichever tree a path is read from;
-// only the noun changes, and a path says for itself which one that is. Three
-// spellings of the one noun, because a sentence about a root and a sentence
-// about a whole tree each read better with their own phrasing.
+// Path rules are the same for every tree; only the noun naming the tree
+// changes, with a phrasing for each kind of sentence.
 
 /// How a message names the tree a path is read from.
 fn tree_of(written: &RepoPath) -> String {
@@ -78,9 +69,8 @@ fn whole_of(written: &RepoPath) -> String {
     }
 }
 
-/// The bare ID of the remote a path names, for the one message that has to
-/// spell a declaration rather than describe a tree. Empty for a path naming no
-/// remote, which that message is never about.
+/// The bare ID of the remote a path names, for the message that spells a
+/// declaration. Empty for a path naming no remote.
 fn named_remote_of(written: &RepoPath) -> String {
     written.remote().map(ItemId::to_string).unwrap_or_default()
 }
@@ -99,12 +89,8 @@ pub(crate) enum Invalid {
         second: usize,
     },
 
-    /// Two remote IDs that a case-folding filesystem cannot tell apart.
-    ///
-    /// Refused on every platform, not only the ones that would fold them: a
-    /// manifest describes one repository across all of a person's machines, and
-    /// a rule that held on Linux alone would move the failure to the machine
-    /// least able to explain it.
+    /// Two remote IDs that a case-folding filesystem cannot tell apart. Refused
+    /// on every platform, since one manifest serves all of a person's machines.
     #[error(
         "remotes `{one}` and `{other}` differ only in case; where the filesystem \
          ignores case they are one directory under `remotes/`, and only one of \
@@ -112,22 +98,14 @@ pub(crate) enum Invalid {
     )]
     RemotesShareOneDirectory { one: ItemId, other: ItemId },
 
-    /// A record writing both spellings of a condition. Refused rather than
-    /// resolved, because the two are not one rule and its negation and there is
-    /// no reading of the pair that is obviously the one that was meant.
-    ///
-    /// Every kind of record that takes a condition enforces it, which is why
-    /// this is one variant over a [`RecordName`] rather than one variant per kind.
+    /// A record writing both `when` and `unless`, which has no obvious meaning.
+    /// Shared by every kind of record that takes a condition.
     #[error("{record}: writes both `when` and `unless`; a record has one condition or none")]
     BothConditions { record: RecordName },
 
-    // A `source` names a path within one repository: the one that declared it,
-    // or the materialization of a remote it names with `@`. Every rule below is
-    // decided from the written value alone, and holds the same way for both.
-    //
-    // Each carries the path rather than a rendering of it, so that what a
-    // message quotes and what it says about the tree are one value and cannot
-    // come apart.
+    // A `source` is a path in the declaring repository or, with `@`, in a
+    // remote's materialization. Each variant carries the written path, from
+    // which the message renders both the quote and the tree.
     #[error("{record}: source is empty; a source names a path within the repository")]
     SourceEmpty { record: RecordName },
 
@@ -155,10 +133,8 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// A path under a remote reference, or the `path` of a structured one, that
-    /// begins with the character a remote reference begins with. Reserved on
-    /// both halves of the rule, so that `@` at the start of a repository path
-    /// means one thing wherever it is written.
+    /// A path within a remote reference that itself begins with `@`, which
+    /// always introduces a remote.
     #[error(
         "{record}: source `{written}` starts with `@`, which introduces a remote \
          reference and cannot start a path within one"
@@ -168,13 +144,8 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// A source naming a remote no `[remotes]` entry declares. The one source
-    /// rule that cannot be decided from the value alone, since what makes a
-    /// name a remote is another record saying so.
-    ///
-    /// The remedy is a declaration rather than a different path, so the message
-    /// says where one goes: someone who wrote `@core/...` meant a repository,
-    /// and telling them the path is wrong would send them to the wrong file.
+    /// A source naming a remote no `[remotes]` entry declares. The message
+    /// points at the missing declaration, not at the path.
     #[error(
         "{record}: source `{written}` names {}, which this manifest does not \
          declare; add a `[remotes.{}]` record",
@@ -186,11 +157,9 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// An action read from an included manifest whose source names a remote.
-    /// Refused wherever the included repository declares one or not: remote
-    /// references belong to the leaf repository, which is what keeps inclusion
-    /// one level deep and stops an included action from reinterpreting a name
-    /// the leaf declared.
+    /// An action read from an included manifest whose source names a remote,
+    /// declared or not. Remote references belong to the leaf, which keeps
+    /// inclusion one level deep.
     #[error(
         "{record}: source `{written}` names a remote, which an included action may not do; \
          remote references belong to the leaf repository, and an included action installs \
@@ -201,9 +170,7 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// An `include-remote` naming a remote no `[remotes]` entry declares. The
-    /// same rule a source naming a remote follows, over the field that names one
-    /// outright rather than as part of a path.
+    /// An `include-remote` naming a remote no `[remotes]` entry declares.
     #[error(
         "{record}: remote `{remote}` is not declared by this manifest; \
          add a `[remotes.{remote}]` record"
@@ -211,12 +178,7 @@ pub(crate) enum Invalid {
     InclusionRemoteUndeclared { record: RecordName, remote: ItemId },
 
     /// An `include-remote` writing two selection filters that do not compose.
-    ///
-    /// Refused rather than resolved, for the reason [`Self::BothConditions`] is:
-    /// an allow-list and a second list over the same items have no reading that
-    /// is obviously the one that was meant. The message names both fields and
-    /// the combinations that do compose, since the remedy is to drop one of the
-    /// two or to spell the intent the other way round.
+    /// The message names both fields and the combinations that do.
     #[error(
         "{record}: writes both `{one}` and `{other}`; an inclusion names at most one of \
          `install-actions`, `install-groups`, and `exclude-groups`, and `exclude-actions` \
@@ -238,14 +200,12 @@ pub(crate) enum Invalid {
     )]
     DestinationOtherHome { record: RecordName, value: String },
 
-    // A fetching action's source names somewhere off this machine, and its
-    // digest names what should arrive from there.
+    // Fetching actions: a URL source and an optional digest.
     #[error("{record}: source `{value}` is not an http:// or https:// URL")]
     SourceNotAUrl { record: RecordName, value: String },
 
     /// A `file://` source, which the format reserves but nothing fetches yet.
-    /// Named apart from any other unusable scheme because it is the one a
-    /// reader of `docs/future/repoformat.md` has reason to expect to work.
+    /// Distinguished because `docs/future/repoformat.md` describes it.
     // CARRY(9.3): file and archive remotes are where a `file://` source starts
     // being fetched; delete this variant and its check then.
     #[error(
@@ -257,9 +217,8 @@ pub(crate) enum Invalid {
     #[error("{record}: sha256 `{value}` is not 64 hexadecimal digits")]
     DigestNotSha256 { record: RecordName, value: String },
 
-    // A repository for git to clone, named in any of the several ways git
-    // spells one. Emptiness is the only thing decidable from the value alone.
-    // A `git-clone` action and a Git remote share both rules below.
+    // A repository for git to clone, in any form git accepts; shared by
+    // `git-clone` and Git remotes. Only emptiness is checked.
     #[error("{record}: {field} is empty; it names a repository for git to clone")]
     GitSourceEmpty {
         record: RecordName,
@@ -267,26 +226,21 @@ pub(crate) enum Invalid {
         field: &'static str,
     },
 
-    /// A `ref` written with nothing in it. Refused rather than read as an
-    /// absent one, which follows whatever branch the clone is on and is not
-    /// what a record asking for a ref meant.
+    /// An empty `ref`. Not read as absent, which would follow the current
+    /// branch.
     #[error("{record}: ref is empty; a ref names a branch, tag, or commit to follow")]
     GitRefEmpty { record: RecordName },
 
-    /// An `archive-root` no entry batfiles would unpack could ever match. An
-    /// escaping entry is refused as the archive is read, so a prefix that only
-    /// selects escaping entries selects nothing, and saying so here is better
-    /// than downloading the archive to find out.
+    /// An `archive-root` that could only match escaping entries, which unpacking
+    /// refuses. Caught before anything is downloaded.
     #[error(
         "{record}: archive-root `{value}` is not a path inside the archive; \
          write a prefix such as `tool-1.0`, or `*` for the archive's single top-level directory"
     )]
     ArchiveRootNotInside { record: RecordName, value: String },
 
-    /// A remote type the schema reserves and nothing materializes yet. Named
-    /// apart from a type that is not in the schema at all, for the reason
-    /// [`Self::SourceIsFileUrl`] is: this is one a reader of
-    /// `docs/future/repoformat.md` has reason to expect to work.
+    /// A remote type the schema reserves and nothing materializes yet.
+    /// Distinguished for the reason [`Self::SourceIsFileUrl`] is.
     // CARRY(9.3): file and archive remotes are what these two types become;
     // delete this variant and the arms that raise it then.
     #[error(
@@ -299,13 +253,9 @@ pub(crate) enum Invalid {
     },
 }
 
-/// The rules a `source` satisfies as written, wherever it is read from.
-///
-/// All but the last are decided from the value alone. The last spans two
-/// records — a source may name a remote, and `remotes` is what the manifest
-/// declares — and is settled here rather than separately, so that one function
-/// answers whether a source is usable at all. Whether anything is at the path
-/// is the run's question, not the document's.
+/// The rules a `source` satisfies as written, including that a named remote is
+/// declared in `remotes`. Whether anything exists at the path is decided when
+/// the action runs.
 pub(super) fn check_source(
     written: &RepoPath,
     record: &RecordName,
@@ -348,9 +298,8 @@ pub(super) fn check_source(
         }
         Some(_) => {}
     }
-    // Last, because it is the one rule that is not about the path: a well-formed
-    // reference into a remote nobody declared is still a source that resolves
-    // nowhere, and saying so about the path first would bury that.
+    // Checked after the path rules, which concern what the reader can see in
+    // the value.
     if let Some(id) = written.remote()
         && !remotes.contains_key(id)
     {
@@ -362,12 +311,7 @@ pub(super) fn check_source(
     Ok(())
 }
 
-/// The rule an `include-remote`'s `remote` satisfies: it names one of the
-/// records the same manifest declares.
-///
-/// The field names a remote outright rather than as the head of a path, so
-/// there is nothing else about the value to check — an [`ItemId`] is already
-/// spelled the way a declaration key is.
+/// An `include-remote`'s `remote` must be declared in the same manifest.
 // CARRY(9.3): once a manifest can declare a `file` or `archive` remote, an
 // inclusion naming one has to be refused here too; today both are refused as the
 // manifest is read, so every declared remote reaching this point is a Git one.
@@ -386,21 +330,16 @@ pub(super) fn check_inclusion_remote(
     }
 }
 
-/// The rules an `include-remote`'s selection filters satisfy as written.
+/// Which of an `include-remote`'s selection filters may appear together.
 ///
-/// Each field is well-formed on its own, so what is checked here is which of
-/// them appear together. Three of the four select outright — `install-actions`
-/// and `install-groups` say what to take, `exclude-groups` says what to leave —
-/// and a record writing two of those has described the selection twice.
-/// `exclude-actions` narrows a selection rather than making one, so it composes
-/// with either group filter; with `install-actions`, which already names every
-/// action to take, it would only contradict it.
+/// `install-actions`, `install-groups`, and `exclude-groups` each make a
+/// selection, so at most one may be written. `exclude-actions` narrows a group
+/// filter's selection; with `install-actions` it could only contradict it.
 pub(super) fn check_inclusion_filters(
     action: &IncludeRemoteAction,
     record: &RecordName,
 ) -> Result<(), Invalid> {
-    // In the order a diagnostic reads best: the pair it names is the pair the
-    // record wrote, first field first.
+    // A diagnostic names the conflicting pair in this order.
     let selectors = [
         ("install-actions", action.install_actions.is_some()),
         ("install-groups", action.install_groups.is_some()),
@@ -424,13 +363,9 @@ pub(super) fn check_inclusion_filters(
     }
 }
 
-/// The rule an action read from an included manifest satisfies, over and above
-/// the ones every action follows: its source stays within the repository that
-/// declared it.
-///
-/// Decided from the record alone, but only for a manifest read as an inclusion,
-/// which is why it is applied by [`Manifest::validate`](super::Manifest::validate)
-/// rather than from within [`check_source`].
+/// An action read from an included manifest must not name a remote in its
+/// source. Applied by [`Manifest::validate`](super::Manifest::validate) only
+/// when reading an included manifest.
 pub(super) fn check_included_source(
     written: &RepoPath,
     record: &RecordName,
@@ -511,9 +446,8 @@ pub(super) fn check_url(source: &str, record: &RecordName) -> Result<(), Invalid
     })
 }
 
-/// The rules a repository for git to clone satisfies as written, of which there
-/// is one. `field` is what the record spells it: a `git-clone` action writes
-/// `source`, a Git remote writes `url`.
+/// The rule a repository for git to clone satisfies as written. `field` is
+/// `source` on a `git-clone` action and `url` on a Git remote.
 pub(super) fn check_git_source(
     source: &str,
     field: &'static str,
@@ -528,8 +462,7 @@ pub(super) fn check_git_source(
     Ok(())
 }
 
-/// The rules a `ref` satisfies as written, of which there is one. Shared by a
-/// `git-clone` action and a Git remote, which follow a ref the same way.
+/// The rule a `ref` satisfies as written, for `git-clone` and Git remotes.
 pub(super) fn check_git_ref(git_ref: Option<&str>, record: &RecordName) -> Result<(), Invalid> {
     if git_ref.is_some_and(|value| value.trim().is_empty()) {
         return Err(Invalid::GitRefEmpty {
@@ -594,14 +527,12 @@ mod tests {
 
     use super::*;
 
-    /// The record the checks below are written against; which record a
-    /// diagnostic names is [`RecordName`]'s own test.
+    /// The record the checks below report against.
     fn record() -> RecordName {
         RecordName::Action(1)
     }
 
-    /// A manifest's `[remotes]`, from the IDs it declares. What each record says
-    /// is nothing to a source naming it: declared or not is the whole rule.
+    /// A manifest's `[remotes]` declaring `ids`; their contents do not matter.
     fn declaring(ids: &[&str]) -> BTreeMap<ItemId, Remote> {
         ids.iter()
             .map(|id| {
@@ -628,9 +559,6 @@ mod tests {
 
     #[test]
     fn every_kind_of_record_is_named_the_way_its_document_names_it() {
-        // The spellings a load diagnostic opens with. The first two are
-        // positions, because neither kind of record is required to have a name;
-        // a remote has one by construction, since its map key is its ID.
         assert_eq!(RecordName::Action(3).to_string(), "action 3");
         assert_eq!(
             RecordName::Candidate {
@@ -737,24 +665,19 @@ mod tests {
 
     #[test]
     fn a_source_may_only_name_a_remote_the_manifest_declares() {
-        // The one source rule that is not about the path: the same reference is
-        // fine or not depending on another record entirely.
         let written = remote_path("@core/shell/zshrc");
         assert!(check_source(&written, &record(), &declaring(&["core"])).is_ok());
         let refused = check_source(&written, &record(), &declaring(&["work"]))
             .expect_err("expected an undeclared remote to be refused");
         assert!(matches!(refused, Invalid::SourceRemoteUndeclared { .. }));
         let message = refused.to_string();
-        // The remedy is a declaration, so the message names one rather than
-        // sending the reader back to the path.
         assert!(message.contains("does not declare"), "{message}");
         assert!(message.contains("[remotes.core]"), "{message}");
     }
 
     #[test]
     fn a_path_that_breaks_a_rule_is_reported_as_that_rather_than_as_an_undeclared_remote() {
-        // Both faults at once. The path rules come first because they are the
-        // ones the reader can see in the value in front of them.
+        // Both faults at once: the path rules come first.
         assert!(matches!(
             check_source(&remote_path("@core/../secrets"), &record(), &declaring(&[]))
                 .expect_err("expected the source to be refused"),
@@ -764,9 +687,7 @@ mod tests {
 
     #[test]
     fn a_refused_remote_reference_names_the_remote_rather_than_the_repository() {
-        // The same three refusals, about the tree the path is actually read
-        // from: a message naming the repository would send someone to the wrong
-        // one of the two.
+        // The same three refusals, naming the remote's tree.
         for (refused, expected) in [
             ("@core/../secrets", "resolves outside remote `core`"),
             (
@@ -806,7 +727,6 @@ mod tests {
         let refused = check_inclusion_remote(&core, &record(), &declaring(&["work"]))
             .expect_err("expected an undeclared remote to be refused");
         let message = refused.to_string();
-        // The remedy is a declaration, as it is for a source naming one.
         assert!(message.contains("is not declared"), "{message}");
         assert!(message.contains("[remotes.core]"), "{message}");
     }
@@ -884,10 +804,8 @@ mod tests {
 
     #[test]
     fn an_included_action_installs_from_the_repository_that_declared_it() {
-        // The rule that keeps inclusion one level deep. It is about the
-        // spelling alone: whether the included manifest declares a remote of
-        // that name makes no difference, because the reference is not one an
-        // included action may write.
+        // Decided from the spelling alone, whatever the included manifest
+        // declares.
         assert!(check_included_source(&local("files/zshrc"), &record()).is_ok());
         let message = check_included_source(&remote_path("@shared/vimrc"), &record())
             .expect_err("expected a remote reference to be refused")

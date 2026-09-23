@@ -5,11 +5,8 @@ use crate::clone_list::PreparedList;
 use crate::error::Error;
 use crate::git::{self, Failure};
 
-/// Create the destination directory and process entries in list order.
-///
-/// Takes the list execution preparation read, which is the only kind there is:
-/// an empty one is a list declaring no repositories, and a list nothing opened
-/// never becomes one of these.
+/// Create the destination directory and process entries in list order. `list`
+/// was read during preparation; an empty one declares no repositories.
 pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> Result<(), Error> {
     let dest_dir = context.destination(list.dest_dir());
     context.ensure_directory(&dest_dir)?;
@@ -24,10 +21,8 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
     }
     for entry in list.entries() {
         let declared = &entry.declared;
-        // Reported here rather than where preparation settled it, so the line
-        // sits under the heading naming the action that holds the list. The
-        // wording is the failure warning's below, since both say that one entry
-        // of a list is not being cloned and why.
+        // Reported here, under the action's heading, worded like the failure
+        // warning below.
         if let Some(exclusion) = &entry.exclusion {
             let line = format!(
                 "not cloning {} ({}): {}",

@@ -18,9 +18,7 @@ use crate::var::VarName;
 
 /// The parsed `vars.toml`.
 ///
-/// The map is exposed directly: the document has no structure beyond it, and
-/// the precedence layer it will contribute belongs to variable resolution
-/// rather than to the document.
+/// The map is exposed directly: the document has no other structure.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct MachineVars {
@@ -28,8 +26,7 @@ pub(crate) struct MachineVars {
 }
 
 impl MachineVars {
-    /// The document's name. Which directory it sits in is
-    /// [`StateRoots`]' answer, not this type's.
+    /// The document's file name; [`StateRoots`] decides its directory.
     pub const FILE_NAME: &'static str = "vars.toml";
 
     /// Load the document, treating a missing file as no values.
@@ -226,9 +223,7 @@ mod tests {
 
     #[test]
     fn a_key_must_be_a_valid_variable_name() {
-        // The rule itself is `src/var.rs`'; what matters here is that this
-        // document is keyed by it, so a hand-edited file cannot introduce a name
-        // no manifest could have declared.
+        // A hand-edited file cannot introduce a name no manifest could declare.
         let error = parse_document("has-dash = 'x'\n").expect_err("dashes are not names");
         assert!(
             error.to_string().contains("a variable name must"),
@@ -265,9 +260,8 @@ mod tests {
 
     #[test]
     fn removing_the_last_key_leaves_an_empty_document_behind() {
-        // The file survives its last key rather than being deleted, and reads
-        // back as the empty document. That it is empty *bytes* is a CLI
-        // assertion: this module reaches the disk only through `tomlfile`.
+        // The file survives its last key and reads back as the empty document;
+        // a CLI test asserts that its bytes are empty.
         let dir = tempfile::tempdir().expect("temp dir");
         parse_document("editor = 'nvim'\n")
             .expect("parse")
@@ -378,9 +372,7 @@ mod tests {
 
     #[test]
     fn an_invalid_key_is_rejected_and_quoted() {
-        // `VarNameError` states the rule only — right for a serde key error,
-        // where TOML supplies the position, and not enough for a diagnostic
-        // about an argument.
+        // `VarNameError` states only the rule, so the diagnostic adds the key.
         let error = parse("1up").expect_err("a leading digit is invalid");
         let message = error.to_string();
         assert!(message.contains("`1up`"), "{message}");

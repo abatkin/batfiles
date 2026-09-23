@@ -17,13 +17,9 @@ pub(crate) struct DefaultDisabled {
 }
 
 impl DefaultDisabled {
-    /// Check what the records themselves say, which for now is that no entry
-    /// writes both conditions.
-    ///
-    /// Checking the pair as the document is read is what keeps a candidate that
-    /// could never mean anything on the machine that writes it rather than on
-    /// the one that finally bootstraps. Deciding the condition that survives the
-    /// check is [`crate::bootstrap`]'s, on the machine being set up.
+    /// Check that no entry writes both conditions. Checked as the document is
+    /// read, so the error surfaces on every machine, not only one being
+    /// bootstrapped; [`crate::bootstrap`] evaluates the conditions.
     pub fn validate(&self) -> Result<(), Invalid> {
         for (index, entry) in self.actions.iter().enumerate() {
             one_condition(&entry.when, &entry.unless, "action", index)?;

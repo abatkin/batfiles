@@ -84,9 +84,8 @@ pub(crate) enum Invalid {
     #[error("has an entry that is neither a file, a directory, nor a link: `{entry}`")]
     UnsupportedEntry { entry: String },
 
-    /// A symlink entry on a platform where batfiles does not make symlinks. Its
-    /// own variant rather than an unsupported entry, because the archive is
-    /// fine and the machine is what cannot take it.
+    /// A symlink entry on a platform where batfiles does not make symlinks. The
+    /// archive is valid; this machine cannot install it.
     #[error("holds the symlink `{entry}`, and symlinks are not supported on this platform")]
     SymlinkEntry { entry: String },
 
@@ -131,10 +130,8 @@ pub(crate) fn extract(
 /// The archive being unpacked: its open bytes, how they are wrapped, and what to
 /// call it when something is wrong with it.
 struct Tarball<'a> {
-    /// The downloaded file, held open. A descriptor rather than a path because
-    /// the path is a scratch name beside the destination, and reopening it would
-    /// read whatever is at that name now rather than what arrived and was
-    /// hashed.
+    /// The downloaded, hashed file, held open. Never reopened by path: the path
+    /// is a scratch name that may since hold something else.
     file: &'a fs::File,
     format: Format,
     /// Carried for the diagnostics alone.
@@ -163,9 +160,7 @@ impl<'a> Tarball<'a> {
         Ok(Self { file, format, url })
     }
 
-    /// Name this archive as the reason something failed. The one place below
-    /// [`Tarball::identify`] that copies the URL, which is what keeps it off
-    /// every signature between here and the failure.
+    /// Name this archive, by URL, as the reason something failed.
     fn fault(&self, invalid: Invalid) -> Error {
         Error::Archive {
             url: self.url.to_owned(),
@@ -239,9 +234,8 @@ enum Kind {
     /// hardlink names a path within the archive rather than one relative to the
     /// entry, so it is stripped the way an entry path is.
     Hardlink(PathBuf),
-    /// A pax or GNU extension header, which describes the entry after it rather
-    /// than being one. Carried as a kind so that both passes skip the same
-    /// entries by asking the same question.
+    /// A pax or GNU extension header, which describes the next entry. A kind of
+    /// its own so both passes skip the same entries.
     Metadata,
 }
 
@@ -258,8 +252,7 @@ fn is_tar_header(head: &[u8]) -> bool {
             .iter()
             .enumerate()
             .fold((0u32, 0i32), |(unsigned, signed), (offset, &byte)| {
-                // The field reads as spaces while it is being summed, since it
-                // cannot hold the answer and be part of the question.
+                // The checksum field is summed as spaces.
                 let byte = if CHECKSUM_FIELD.contains(&offset) {
                     b' '
                 } else {

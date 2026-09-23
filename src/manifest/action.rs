@@ -32,7 +32,7 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    /// What every record carries, whichever variant it is.
+    /// The `type` and the four fields every variant carries.
     pub fn metadata(&self) -> ActionMetadata<'_> {
         let (kind, id, group, when, unless) = match self {
             Self::Symlink(it) => ("symlink", &it.id, &it.group, &it.when, &it.unless),
@@ -56,15 +56,11 @@ impl Action {
     }
 
     /// Validate declared paths, URLs, digests, archive roots, and Git refs.
-    /// `record` is how a diagnostic names the record, which for an action is
-    /// its one-based position.
+    /// `record` is how a diagnostic names the record.
     ///
-    /// `remotes` is what the manifest declares, for the rules a record cannot
-    /// settle alone: a source may name a remote, and an `include-remote` names
-    /// one outright, and either way the remote named has to be one of these.
-    /// `read_as` says whose manifest this is, for the second of those: an
-    /// inclusion an included manifest declares is dropped rather than followed,
-    /// so what it names is not required to resolve.
+    /// A remote named by a source must be in `remotes`, the manifest's
+    /// declarations. So must an `include-remote`'s, but only when `read_as` is
+    /// the leaf: an included manifest's inclusions are dropped, not followed.
     pub fn validate(
         &self,
         record: &RecordName,
@@ -89,8 +85,7 @@ impl Action {
                 check_source(&action.source_dir, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
-            // The two action types whose `source` names something off this
-            // machine, so it answers to neither path rule.
+            // `source` is a URL, not a repository path.
             Self::FetchFile(action) => {
                 check_url(&action.source, record)?;
                 check_digest(action.sha256.as_deref(), record)?;
@@ -102,9 +97,8 @@ impl Action {
                 check_archive_root(action.archive_root.as_deref(), record)?;
                 check_dest(&action.dest, record)
             }
-            // A third kind of source: neither a repository path nor a URL, but
-            // whatever `git` accepts as a repository to clone. A Git remote
-            // spells the same thing `url` and shares both checks.
+            // `source` is whatever `git` accepts to clone, checked like a Git
+            // remote's `url`.
             Self::GitClone(action) => {
                 check_git_source(&action.source, "source", record)?;
                 check_git_ref(action.git_ref.as_deref(), record)?;
@@ -114,12 +108,8 @@ impl Action {
                 check_source(&action.source, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
-            // The one record with neither a source nor a destination: what it
-            // installs is whatever the included manifest says, wherever that
-            // says to put it. Only a leaf's is required to name a remote that
-            // resolves: one in an included manifest is left out of the run with
-            // a warning, so refusing the document over the name it wrote would
-            // fail the leaf's run over a record nothing was going to honor.
+            // No source or destination. Only a leaf inclusion's remote must
+            // resolve; a nested one is dropped with a warning.
             Self::IncludeRemote(action) => {
                 if let ReadAs::Leaf = read_as {
                     check_inclusion_remote(&action.remote, record, remotes)?;
@@ -129,11 +119,9 @@ impl Action {
         }
     }
 
-    /// The repository path this record installs from, where it has one.
-    ///
-    /// The two fetching actions and `git-clone` name something off this machine
-    /// instead, and an `include-remote` names no path at all. No record has
-    /// more than one, so this is a value rather than a list.
+    /// The repository path this record installs from, if any. Fetching
+    /// actions and `git-clone` name an external source instead; `create-dir`
+    /// and `include-remote` have none.
     pub fn source(&self) -> Option<&RepoPath> {
         match self {
             Self::Symlink(action) => Some(&action.source),
@@ -164,29 +152,22 @@ impl Action {
         self.metadata().gate()
     }
 
-    /// How the action introduces itself in a report: what kind it is, what it is
-    /// called, the group it is in, and where it came from where that is not this
-    /// repository.
+    /// The record's report heading: type, name, group, and, for an unnamed
+    /// inclusion's record, its provenance.
     ///
-    /// `number` is the record's one-based position in the manifest that declared
-    /// it, which is what names a record written without an `id`. `by` says which
-    /// manifest that was, and so how the two names are qualified: see
-    /// [`Contributor`].
+    /// `number` is the one-based position in the declaring manifest, naming a
+    /// record without an `id`. `by` qualifies the names; see [`Contributor`].
     pub fn describe(&self, number: usize, by: Contributor<'_>) -> String {
         let ActionMetadata {
             kind, id, group, ..
         } = self.metadata();
         let qualifier = by.qualifier();
-        // A record with no `id` is named by its position, which is a position in
-        // the manifest that declared it rather than an address, so it is not
-        // qualified.
+        // A position is not an address, so it is not qualified.
         let name = match id {
             Some(id) => ItemAddress::qualified(qualifier, id).to_string(),
             None => format!("action {number}"),
         };
-        // One parenthetical holding both, rather than two: a record of an
-        // unnamed inclusion that is also in a group would otherwise trail two
-        // bracketed clauses for one reader to take in.
+        // Group and provenance share one parenthetical.
         let about = [
             group.map(|group| format!("group {}", ItemAddress::qualified(qualifier, group))),
             by.provenance(),
@@ -199,28 +180,24 @@ impl Action {
     }
 }
 
-/// Which manifest a record being reported on came from, for the two things a
-/// line says about that: how its `id` and `group` are qualified, and whether the
-/// line has to name the inclusion outright.
+/// Which manifest a record came from. Decides how its `id` and `group` are
+/// qualified and whether a line names the inclusion.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Contributor<'a> {
-    /// The leaf repository's own record. Its names are addresses already.
+    /// A leaf record; its names are unqualified addresses.
     Leaf,
-    /// Contributed by an `include-remote` written with an `id`, which qualifies
-    /// both names, so a line calls the record what a reader would type.
+    /// Contributed by an `include-remote` with this `id`, which qualifies both
+    /// names.
     Inclusion(&'a ItemId),
-    /// Contributed by an `include-remote` written without one. It qualifies
-    /// nothing, since no address reaches such a record, so the
-    /// [label](crate::action::Inclusion::at) names the inclusion in the line
-    /// instead — which is what tells two inclusions of one remote apart.
+    /// Contributed by an `include-remote` without an `id`. Nothing is
+    /// qualified; the line names the inclusion by its
+    /// [label](crate::action::Inclusion::at).
     UnnamedInclusion(&'a str),
 }
 
 impl<'a> Contributor<'a> {
-    /// The `id` that qualifies this record's names, where one does.
-    ///
-    /// Read by the run's list as well as by a heading, so the address a record
-    /// answers to and the name a line calls it by are the same name.
+    /// The `id` that qualifies this record's names, if any. Used for both
+    /// addresses and headings.
     pub fn qualifier(self) -> Option<&'a ItemId> {
         match self {
             Self::Inclusion(id) => Some(id),
@@ -228,8 +205,7 @@ impl<'a> Contributor<'a> {
         }
     }
 
-    /// The clause naming where the record came from, for the one case the names
-    /// themselves cannot say it.
+    /// A `from <label>` clause, for an unnamed inclusion's record only.
     fn provenance(self) -> Option<String> {
         match self {
             Self::UnnamedInclusion(label) => Some(format!("from {label}")),
@@ -241,14 +217,13 @@ impl<'a> Contributor<'a> {
 /// The `type` tag and the four fields every `[[actions]]` record carries,
 /// borrowed from one.
 ///
-/// This is where those four are explained, for all ten record types: each
-/// declares them itself, because each is a flat TOML table that rejects the
-/// fields it does not accept, and a struct below comments a shared field only
-/// where that record means something particular by it.
+/// The shared fields are documented here once. Each record type declares them
+/// itself, as flat tables rejecting unknown fields, and comments one only
+/// where it means something particular.
 ///
 /// - `id` makes the action addressable: `apply-action` names one, and
 ///   `disabled.toml` remembers one. What an action installs is not separately
-///   addressable, whether it installs one thing or many.
+///   addressable.
 /// - `group` is the one group the action belongs to, which `apply-group` names
 ///   and `disabled.toml` also remembers.
 /// - `when` admits the action where the condition is true, `unless` where it is
@@ -259,9 +234,8 @@ pub(crate) struct ActionMetadata<'a> {
     pub kind: &'static str,
     pub id: Option<&'a ItemId>,
     pub group: Option<&'a ItemId>,
-    /// Kept apart from `unless` rather than resolved into a gate, because the
-    /// check that a record does not write both is the manifest's and needs to
-    /// see both.
+    /// Kept apart from `unless` so validation can reject a record writing
+    /// both.
     pub when: Option<&'a Condition>,
     pub unless: Option<&'a Condition>,
 }
@@ -299,8 +273,6 @@ pub(crate) struct SymlinkAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct SymlinkDirAction {
-    /// The children are never addressable: the action installs all of them or
-    /// none.
     pub id: Option<ItemId>,
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
@@ -351,7 +323,6 @@ pub(crate) struct CopyAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyDirAction {
-    /// The children are never addressable, individually.
     pub id: Option<ItemId>,
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
@@ -376,8 +347,7 @@ pub(crate) struct FetchFileAction {
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The URL to fetch, as written. Not a `RepoPath` and never resolved
-    /// against a root: what it names is not on this machine.
+    /// The URL to fetch, as written; not a repository path.
     pub source: String,
     /// Where the file goes, exactly. Resolved against the selected home when
     /// the action runs, with missing parents created on the way.
@@ -391,14 +361,11 @@ pub(crate) struct FetchFileAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchArchiveAction {
-    /// The archive's entries are never addressable: the action installs the
-    /// whole tree or none of it.
     pub id: Option<ItemId>,
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The URL to fetch, as written. Not a `RepoPath` and never resolved
-    /// against a root: what it names is not on this machine.
+    /// The URL to fetch, as written; not a repository path.
     pub source: String,
     /// Where the unpacked directory goes, exactly. Resolved against the
     /// selected home when the action runs, with missing parents created on the
@@ -416,15 +383,12 @@ pub(crate) struct FetchArchiveAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneAction {
-    /// The clone's contents are never addressable, individually.
     pub id: Option<ItemId>,
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The repository to clone, exactly as git is given it. Not a `RepoPath`
-    /// and not checked as a URL: git accepts an `scp`-style `git@host:path`, a
-    /// plain directory, and several schemes, and which of them a source is is
-    /// git's question rather than batfiles'.
+    /// The repository to clone, passed to git as written. Not checked as a URL:
+    /// git also accepts `git@host:path`, plain directories, and other schemes.
     pub source: String,
     /// Where the clone goes, exactly. Resolved against the selected home when
     /// the action runs, with missing parents created on the way.
@@ -440,21 +404,15 @@ pub(crate) struct GitCloneAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneListAction {
-    /// Once entries are individually selectable, this is also the first segment
-    /// of `<action>.<entry>`.
     pub id: Option<ItemId>,
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
     /// The list, within the repository that declared the action or within a
-    /// remote it names. An ordinary repository path, unlike the sources of the
-    /// two actions that reach the network: what is off this machine is named by
-    /// the list's lines, not by this field.
+    /// remote it names. The list's lines name the repositories to clone.
     pub source: RepoPath,
-    /// The directory the clones are made in, resolved against the selected home
-    /// when the action runs. Spelled `dest-dir` like the other actions that
-    /// install into a directory rather than at a name, because that is what it
-    /// is: each entry contributes one child of it.
+    /// The directory the clones are made in, one child per entry, resolved
+    /// against the selected home when the action runs.
     pub dest_dir: String,
 }
 
@@ -463,45 +421,34 @@ pub(crate) struct GitCloneListAction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct IncludeRemoteAction {
-    /// What makes the included actions, groups, and entries addressable, by
-    /// standing as the first segment of a qualified `<inclusion>.<action>`. It
-    /// is this inclusion's name and need not match `remote`, since one remote
-    /// may be included more than once.
+    /// The first segment of the addresses of what this inclusion contributes,
+    /// as in `<inclusion>.<action>`. Independent of `remote`, which may be
+    /// included more than once.
     pub id: Option<ItemId>,
     pub group: Option<ItemId>,
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
-    /// The declared remote whose manifest is read, named by the key it was
-    /// declared under. Required: an inclusion that names no remote includes
-    /// nothing.
+    /// The key of the declared remote whose manifest is read.
     pub remote: ItemId,
 
-    /// Which of the remote's actions this inclusion takes, named as the
-    /// manifest that declared them names them: unqualified, since the
-    /// qualifier is this record's own `id`.
+    /// Which of the remote's actions this inclusion takes, by their
+    /// unqualified IDs and groups.
     ///
-    /// Each is absent, one ID, or a list of IDs, and absent is not the same as
-    /// empty: with none of the four written every action in the remote is
-    /// selected, while an empty allow-list selects none. Which combinations
-    /// mean something is [`check_inclusion_filters`]'s rule; what each one
-    /// selects is
+    /// Each is absent, one ID, or a list; absent is not empty. With none
+    /// written every action is selected, while an empty allow-list selects
+    /// none. Valid combinations are [`check_inclusion_filters`]'s rule; what
+    /// each selects is
     /// [`docs/repoformat.md`](../../docs/repoformat.md#selecting-part-of-a-remote)'s.
     pub install_actions: Option<ItemIdList>,
     pub install_groups: Option<ItemIdList>,
     pub exclude_actions: Option<ItemIdList>,
     pub exclude_groups: Option<ItemIdList>,
 
-    /// Variable values for what this inclusion contributes, and for nothing
-    /// else: the leaf saying what the remote's conditions should decide against
-    /// on this machine.
-    ///
-    /// Read exactly as a manifest's own [`[vars]`](crate::manifest::Manifest::vars)
-    /// is, so a name that breaks [`VarName`]'s rule and a value that is not a
-    /// string each fail the document at the line they are written on. Where they
-    /// sit among the layers is
-    /// [`docs/environment.md`](../../docs/environment.md#variable-precedence)'s
-    /// rule and [`VarSet::with_inclusion`](crate::var_set::VarSet::with_inclusion)'s
-    /// job; an empty map is a record that overrides nothing.
+    /// Variable overrides applying only to the records this inclusion
+    /// contributes. Parsed like a manifest's
+    /// [`[vars]`](crate::manifest::Manifest::vars); placed among the layers by
+    /// [`VarSet::with_inclusion`](crate::var_set::VarSet::with_inclusion), per
+    /// [`docs/environment.md`](../../docs/environment.md#variable-precedence).
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
 }
@@ -515,25 +462,21 @@ mod tests {
         action.describe(number, Contributor::Leaf)
     }
 
-    /// The same record as an inclusion contributed it, named under that
-    /// inclusion's `id`.
+    /// The heading for a record contributed by the inclusion `inclusion`.
     fn described_under(record: &str, number: usize, inclusion: &str) -> String {
         let action: Action = toml::from_str(record).expect("the record should parse");
         let inclusion = ItemId::try_from(inclusion.to_owned()).expect("valid ID");
         action.describe(number, Contributor::Inclusion(&inclusion))
     }
 
-    /// The same, for an inclusion written without an `id`: nothing to qualify
-    /// the names with, so the line names the inclusion by its label instead.
+    /// The heading for a record contributed by an unnamed inclusion.
     fn described_from(record: &str, number: usize, label: &str) -> String {
         let action: Action = toml::from_str(record).expect("the record should parse");
         action.describe(number, Contributor::UnnamedInclusion(label))
     }
 
-    /// One complete record per variant, so a swapped or misspelled label fails
-    /// here. The names are written out rather than read back from the tag serde
-    /// matched on, which is the only way this test can disagree with the code it
-    /// covers.
+    /// One complete record per variant. The expected names are written out, not
+    /// read back from serde's tag, so a swapped or misspelled label fails.
     #[test]
     fn every_action_type_is_named_as_the_manifest_spells_it() {
         for (record, kind) in [
@@ -594,9 +537,6 @@ mod tests {
 
     #[test]
     fn an_inclusion_writing_no_overrides_overrides_nothing() {
-        // The default a record without the field gets, which is also what an
-        // empty table says: the inclusion contributes actions and leaves the
-        // run's variables as they are.
         for record in ["", "vars = {}\n"] {
             let Action::IncludeRemote(inclusion) = parse_inclusion(record) else {
                 panic!("the record should be an inclusion");
@@ -607,9 +547,7 @@ mod tests {
 
     #[test]
     fn an_override_follows_the_rules_a_manifests_own_vars_follow() {
-        // Both settled by serde as the document is read, which is why nothing
-        // re-checks either: a name the variable rule refuses, and a value that
-        // is not a string.
+        // Enforced by serde as the document is read.
         for (document, expected) in [
             (
                 "vars = { \"has space\" = \"1\" }\n",

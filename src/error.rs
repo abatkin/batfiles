@@ -62,10 +62,8 @@ pub(crate) enum Error {
     #[error(transparent)]
     InvalidAddress(#[from] ItemAddressError),
 
-    /// A command-line argument that is not a well-formed variable name. The key
-    /// is quoted here because [`VarNameError`] states the rule alone: that is
-    /// what a serde key error wants, where TOML supplies the position, and it
-    /// leaves a diagnostic about an argument with nothing to point at.
+    /// A command-line argument that is not a well-formed variable name. Quotes
+    /// the key, since [`VarNameError`] states only the rule.
     #[error("invalid variable name `{key}`: {source}")]
     InvalidVarName { key: String, source: VarNameError },
 
@@ -82,9 +80,8 @@ pub(crate) enum Error {
     #[error("no action in {} is in the group `{group}`", .path.display())]
     UnknownGroup { path: PathBuf, group: ItemAddress },
 
-    /// An `apply-action` naming an `include-remote`. The record carries an `id`
-    /// so that what it brings in can be addressed under it; the inclusion
-    /// itself is a position in the list rather than a thing to carry out.
+    /// An `apply-action` naming an `include-remote`, whose `id` qualifies what it
+    /// contributes; the inclusion itself is nothing to run.
     #[error(
         "`{id}` is an include-remote action, which cannot be applied on its own; \
          name one of the actions it includes, as `{id}.<action>`"
@@ -96,28 +93,21 @@ pub(crate) enum Error {
     #[error("no such file in the repository: {}", .path.display())]
     SourceMissing { path: PathBuf },
 
-    /// An action sourcing from a remote that is not on this machine. Named
-    /// apart from a missing source, because the path under `remotes/` is one
-    /// batfiles owns: what is absent is the materialization, not something the
-    /// user was supposed to have put there.
+    /// An action sourcing from a remote that is not materialized on this
+    /// machine. Distinct from a missing source: `remotes/` is batfiles-owned.
     #[error(
         "remote `{remote}` is not materialized at {}; run `batfiles sync` to bring it down",
         .path.display()
     )]
     RemoteNotMaterialized { remote: ItemId, path: PathBuf },
 
-    /// An action sourcing from a remote whose own condition closed on this
-    /// machine. Named apart from a missing materialization because nothing is
-    /// missing: the fix is the condition or the action naming it, not a `sync`.
-    /// The reason is the one the run reports for the remote itself.
+    /// An action sourcing from a remote whose condition excludes it on this
+    /// machine. `reason` is the remote's exclusion; a `sync` would not help.
     #[error("remote `{remote}` is excluded on this machine: {reason}")]
     RemoteExcluded { remote: ItemId, reason: String },
 
-    /// An `include-remote` whose remote is on the machine and declares nothing.
-    /// A remote's manifest is optional, since a remote an action only installs
-    /// *from* has no use for one; an inclusion is what asks for one, so its
-    /// absence is the manifest asking for something that is not there rather
-    /// than a tree batfiles has yet to fetch.
+    /// An `include-remote` whose materialized remote has no manifest. A
+    /// remote's manifest is optional, so this is absent rather than unfetched.
     #[error(
         "remote `{remote}` has no {} at {}; an include-remote reads one, \
          and a remote that only supplies content to install does not have one",
@@ -227,10 +217,8 @@ pub(crate) enum Error {
     Init(#[from] init::Failure),
 
     // Bringing a repository onto a machine.
-    /// A `clone` whose destination is not vacant. Apart from
-    /// [`Self::DestinationExists`] because the subject is different: that one is
-    /// a destination in the home an action installs into, and this is the leaf
-    /// repository itself, which `clone` creates rather than installs into.
+    /// A `clone` whose destination is not vacant. Distinct from
+    /// [`Self::DestinationExists`], which concerns an action's destination.
     #[error(
         "{} already exists; `clone` creates the repository it clones into. \
          Move it aside, name another directory with --batfiles-dir, \
@@ -239,9 +227,8 @@ pub(crate) enum Error {
     )]
     CloneDestinationExists { path: PathBuf },
 
-    /// A clone that arrived without a manifest. The URL named a Git repository,
-    /// just not a batfiles one, and saying so is worth more than the missing
-    /// file the follow-up synchronization would otherwise report.
+    /// A clone without a manifest: a Git repository, but not a batfiles one.
+    /// Reported instead of the synchronization's missing-file error.
     #[error(
         "{} has no {}; what was cloned is a Git repository, but not a batfiles one",
         .path.display(),

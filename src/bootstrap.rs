@@ -56,11 +56,8 @@ struct Decision {
 impl Bootstrap {
     /// Read the four variables and the four options into one ordered list.
     ///
-    /// A malformed option value fails the command, as it does for
-    /// `disable-action`; a malformed variable value warns and is dropped, as a
-    /// run-only skip does. The variables are written by generated installers,
-    /// where one unusable name is not worth refusing a machine's whole setup
-    /// over.
+    /// A malformed option value fails the command; a malformed variable value
+    /// warns and is dropped, since generated installers write the variables.
     pub fn read(
         options: &BootstrapOptions,
         env: &Environment,
@@ -70,11 +67,9 @@ impl Bootstrap {
         use DisabledList::{Actions, Groups};
 
         let mut decisions = Vec::new();
-        // The two tables below are the precedence: the environment first and
-        // the command line over it, and within each source disable before
-        // enable, so enable wins where both name the same thing. Actions and
-        // groups are separate sets, so their order within one level settles
-        // nothing and is only the order two lines are printed in.
+        // The precedence: environment, then command line; within each,
+        // disable before enable, so enable wins. Actions and groups are
+        // separate sets, so their relative order only affects output.
         for (list, change, variable) in [
             (Actions, Disable, "BATFILES_DISABLE_ACTIONS"),
             (Groups, Disable, "BATFILES_DISABLE_GROUPS"),
@@ -202,9 +197,7 @@ fn heading(list: DisabledList, name: &ItemAddress) -> String {
 
 /// One decision's line: what asked for the change, and what the change did.
 ///
-/// The origin leads, as it does wherever else an input is named for what it
-/// did, which also keeps it clear of the parenthetical an enable already
-/// carries.
+/// The origin leads, as elsewhere an input is named for what it did.
 fn line(
     list: DisabledList,
     change: Change,
@@ -224,9 +217,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::rc::Rc;
 
-    /// Warnings print at every verbosity, so what these tests read is the
-    /// outcome rather than the output. The wording reaches a user through a CLI
-    /// test.
+    /// A quiet reporter. Warnings still print, so these tests assert outcomes;
+    /// CLI tests cover the wording.
     fn quiet() -> Reporter {
         let mut reporter = Reporter::new(false);
         reporter.set_verbosity(Verbosity::Quiet);
@@ -370,8 +362,6 @@ mod tests {
 
     #[test]
     fn an_unusable_variable_name_is_dropped_and_the_rest_are_kept() {
-        // A generated installer's one bad name is not worth refusing the whole
-        // machine over, so this warns and carries on.
         let bootstrap = read([], [("BATFILES_DISABLE_ACTIONS", "p10k,my action,zshrc")]);
         assert_eq!(
             decisions(&bootstrap),
@@ -384,9 +374,6 @@ mod tests {
 
     #[test]
     fn an_unusable_option_value_fails_the_command() {
-        // The other half of the same rule: an option is what this invocation
-        // asked for, so a name it cannot use is a mistake to report rather than
-        // to work around.
         let error = Bootstrap::read(
             &options([("--disable-action", "core..p10k")]),
             &env([]),

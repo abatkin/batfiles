@@ -11,10 +11,8 @@ use std::thread::JoinHandle;
 pub(crate) enum Reply {
     /// The file itself.
     Body(&'static str),
-    /// A body that is not text, which is what an archive is. Owned rather than
-    /// borrowed because the archives these tests serve are built at run time:
-    /// several of them could not be committed to the repository at all, holding
-    /// entry paths that escape the tree they are unpacked into.
+    /// A binary body, such as an archive. Owned, since the archives served are
+    /// built at run time.
     Bytes(Vec<u8>),
     /// A path the server does not have, answered 404.
     Missing,

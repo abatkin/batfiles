@@ -84,9 +84,8 @@ pub(crate) fn seed_directory(
 /// Checks directory containment and creates missing parents before staging.
 /// Dry runs report intent without creating parents, staging files, or content.
 ///
-/// The whole of the policy both entry points follow. `make` creates the staging
-/// node and `fill` puts the content in it, which is all that differs between
-/// them.
+/// Shared by both entry points: `make` creates the staging node and `fill`
+/// fills it.
 fn seed<T>(
     what: Seed<'_>,
     kind: SeedKind,
@@ -127,10 +126,9 @@ fn seed<T>(
 /// Returns false if publication finds the destination occupied. Cleanup is
 /// best-effort and restricted to the staging node created by this call.
 ///
-/// Creating the node is a step of its own, before anything that cleans up,
-/// because that creation is what makes the staging path this run's to remove: a
-/// path already taken fails here, and whatever is at it is left exactly as it
-/// was found.
+/// The node is created before any cleanup can run: a path already taken fails
+/// creation and is left untouched, so cleanup removes only what this call
+/// created.
 fn build_and_publish<T>(
     kind: SeedKind,
     dest: &Path,

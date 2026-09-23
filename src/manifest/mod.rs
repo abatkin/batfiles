@@ -19,21 +19,18 @@ use crate::manifest::remote::Remote;
 use crate::tomlfile;
 use crate::var::VarName;
 
-/// Re-exported so that a manifest's load error is `manifest::Invalid` from
-/// outside, as [`clone_list`](crate::clone_list::Invalid)'s and
-/// [`archive`](crate::archive::Invalid)'s are: which module within `manifest`
-/// holds it is not something a caller needs to track.
+/// Re-exported as `manifest::Invalid`, matching
+/// [`clone_list::Invalid`](crate::clone_list::Invalid) and
+/// [`archive::Invalid`](crate::archive::Invalid).
 pub(crate) use crate::manifest::check::Invalid;
 
-/// Which repository's manifest is being read, for the rules that depend on the
-/// answer.
+/// Which repository's manifest is being read.
 ///
-/// Three rules differ, all of them because
-/// [inclusion is one level deep](../../docs/repoformat.md#what-an-included-action-may-not-write):
-/// an included action may not source from a remote, an included
-/// `include-remote` need not name one that resolves, and an included
-/// `[remotes]` is ignored rather than checked. Everything else holds the same
-/// way in both, so this is a mode rather than a second reader.
+/// Because [inclusion is one level
+/// deep](../../docs/repoformat.md#what-an-included-action-may-not-write), an
+/// included manifest's actions may not source from a remote, its
+/// `include-remote`s need not name a declared remote, and its `[remotes]` are
+/// ignored rather than checked. All other rules are the same.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ReadAs {
     /// The repository batfiles was pointed at.
@@ -57,13 +54,9 @@ pub(crate) struct Manifest {
     #[serde(default)]
     pub actions: Vec<Action>,
 
-    /// Static variable values, keyed by name. Every value is a string: serde
-    /// settles both rules as the document is read, so a name that breaks the
-    /// rule and a value that is not a string each fail the document at the line
-    /// they are written on, and nothing here re-checks either.
-    ///
-    /// This is the lowest layer of the [variable set](crate::var_set) a run
-    /// resolves.
+    /// Static variable values, keyed by name. Serde rejects invalid names and
+    /// non-string values as the document is read. The lowest layer of the run's
+    /// own [variable set](crate::var_set).
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
 
@@ -84,7 +77,7 @@ impl Manifest {
     }
 
     /// The same, for the manifest of a remote an `include-remote` selects,
-    /// which is checked against [one extra rule](ReadAs).
+    /// checked [as an included manifest](ReadAs::Included).
     pub fn load_included(path: &Path) -> Result<Self, CrateError> {
         Self::load_as(path, ReadAs::Included)
     }
@@ -100,20 +93,14 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// The rules serde cannot express, checked as the document is read.
-    ///
-    /// The ones spanning more than one record are here, since nothing smaller
-    /// than the document can see them; each record's own rules are its to
-    /// apply, over the [checks](check) they share.
+    /// The rules serde cannot express. Cross-record rules are checked here;
+    /// each record applies its own, using the shared [checks](check).
     fn validate(&self, read_as: ReadAs) -> Result<(), Invalid> {
-        // Ahead of the actions, since an action reaching a remote's content is
-        // reaching one of these, and skipped for an included manifest, whose
-        // `[remotes]` nothing in the run can reach.
+        // Skipped for an included manifest, whose `[remotes]` are ignored.
         //
-        // A remote's ID is also the directory it materializes in, so the keys
-        // have to be distinct as directory names and not only as map keys. An
-        // ID is ASCII by its own rule, so folding it is exactly what a
-        // case-insensitive filesystem does to it.
+        // A remote's ID is also its materialization directory, so IDs must
+        // differ case-insensitively. IDs are ASCII, so ASCII folding matches a
+        // case-insensitive filesystem.
         if let ReadAs::Leaf = read_as {
             let mut directories: BTreeMap<String, &ItemId> = BTreeMap::new();
             for (id, remote) in &self.remotes {
@@ -129,8 +116,6 @@ impl Manifest {
 
         let mut seen: BTreeMap<&ItemId, usize> = BTreeMap::new();
         for (index, action) in self.actions.iter().enumerate() {
-            // One-based, because the diagnostic is read against a file whose
-            // first action is action 1.
             let action_number = index + 1;
             let record = RecordName::Action(action_number);
 
@@ -148,20 +133,16 @@ impl Manifest {
                 return Err(Invalid::BothConditions { record });
             }
 
-            // Ahead of the shared rules, and the more specific answer where a
-            // record breaks both: an included action naming a remote is refused
-            // for naming one at all, rather than for naming one that the
-            // included manifest happens not to declare.
+            // Checked first: an included action naming any remote is refused
+            // for that, not for naming an undeclared one.
             if let ReadAs::Included = read_as
                 && let Some(source) = action.source()
             {
                 check_included_source(source, &record)?;
             }
 
-            // Which of a record's fields are paths, and which rule each one
-            // follows, is the record's own answer. The remotes go with it for
-            // the one source rule that reaches past the record: the remote a
-            // path names has to be one of the records above.
+            // Each record checks its own fields; `remotes` lets it check a
+            // source's remote against the declarations.
             action.validate(&record, &self.remotes, read_as)?;
         }
         self.default_disabled.validate()

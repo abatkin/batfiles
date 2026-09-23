@@ -15,9 +15,7 @@ use crate::manifest::action::GitCloneListAction;
 /// One repository the list names.
 #[derive(Debug)]
 pub(crate) struct Entry {
-    /// The repository, exactly as git is given it. Not necessarily a URL:
-    /// `git@host:path` and a plain directory are repositories too, and which
-    /// of them a line names is git's question rather than batfiles'.
+    /// The repository, passed to git as written; not necessarily a URL.
     pub repository: String,
     /// The one directory component the clone lands in.
     pub dest_name: String,
@@ -30,10 +28,7 @@ pub(crate) struct Entry {
     pub when: Option<Condition>,
     /// The condition excluding it. An entry writes at most one of the two.
     pub unless: Option<Condition>,
-    /// Which line of the list declared it, for a diagnostic that has to point
-    /// at one. A fault found while reading carries its own line and does not
-    /// come from here; this is for the entry that reads correctly and then
-    /// fails to clone.
+    /// The list line declaring it, for failures after the list was read.
     pub line: usize,
 }
 
@@ -53,13 +48,10 @@ impl Entry {
     }
 }
 
-/// One list a run read, and what that run made of each entry's own condition.
+/// A list this run read, with each entry's condition decided.
 ///
-/// [`prepare`](Self::prepare) is the only thing that makes one and it makes one
-/// only by reading the list, so holding a value of this type is what says the
-/// list was read. An empty one is a list that declares no repositories, which
-/// is a different answer from a list nothing opened — and that second one has
-/// no value here at all, which is why nothing downstream has to ask.
+/// Only [`prepare`](Self::prepare) builds one, so holding one means the list
+/// was read. An empty one declares no repositories.
 pub(crate) struct PreparedList<'a> {
     /// The record that named the list: where the clones are made, and the name
     /// every line the action reports calls the list by.
@@ -72,10 +64,8 @@ pub(crate) struct PreparedList<'a> {
 pub(crate) struct PreparedEntry {
     /// What the line declares, which reading it settles once and for all.
     pub declared: Entry,
-    /// Why this run is not cloning the entry, if it is not: the verdict of its
-    /// own condition. A closed entry stays on the list rather than being
-    /// dropped from it, so that the action can report it under its own heading
-    /// instead of having it vanish.
+    /// Why this run does not clone the entry, per its own condition. Excluded
+    /// entries stay listed so the action can report them.
     pub exclusion: Option<Exclusion>,
 }
 
@@ -83,8 +73,7 @@ impl<'a> PreparedList<'a> {
     /// Read the list `action` names, found at `path`, and decide each entry's
     /// own condition against `bindings`.
     ///
-    /// A missing or malformed list is an error here, which is what keeps it
-    /// ahead of the first action rather than partway through a run.
+    /// A missing or malformed list fails here, before any action runs.
     pub fn prepare(
         action: &'a GitCloneListAction,
         path: &Path,
@@ -105,9 +94,8 @@ impl<'a> PreparedList<'a> {
         &self.action.dest_dir
     }
 
-    /// How a line about the list names it: the path as the manifest wrote it,
-    /// which for a list held by a remote is the reference including the remote
-    /// rather than wherever on this machine it was materialized.
+    /// How lines name the list: its `source` as written, remote reference
+    /// included, not its materialized path.
     pub fn name(&self) -> String {
         self.action.source.to_string()
     }

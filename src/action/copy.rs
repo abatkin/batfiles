@@ -47,11 +47,8 @@ pub(super) fn copy_dir(
     )
 }
 
-/// Seed one node by reproducing it, whichever action asked for it.
-///
-/// The one caller of either entry point that does not know which it wants until
-/// it has looked at the source, so the kind it classified picks the entry point
-/// here rather than travelling on into the installation.
+/// Seed one node by reproducing it, choosing the seed entry point by the
+/// source's classified kind.
 fn seed(source: &Path, kind: SeedKind, dest: &Path, context: &RunContext) -> Result<(), Error> {
     let what = install::Seed {
         verb: Verb::Copy,

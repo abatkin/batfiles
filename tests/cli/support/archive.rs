@@ -2,10 +2,8 @@
 
 use std::io::Write as _;
 
-// Archives the fetching tests serve. Built here rather than committed, because
-// most of what `fetch-archive` has to refuse cannot be committed: an entry
-// spelled `../../.ssh/authorized_keys` is not a file a checkout can hold, and
-// one spelled `/etc/passwd` is not either.
+// Archives the fetching tests serve, built at run time: entries such as
+// `../../.ssh/authorized_keys` or `/etc/passwd` cannot be committed.
 
 /// One entry of an archive a test builds.
 pub(crate) enum Member {
@@ -110,10 +108,8 @@ fn tar_bytes(
                 None
             }
         };
-        // The name goes into the header's bytes directly, and the entry is
-        // appended rather than built: `Builder::append_data` refuses a path
-        // holding `..` or starting at a root, which is exactly what half of
-        // these archives are for.
+        // Written into the header directly: `Builder::append_data` refuses a
+        // path holding `..` or starting at a root, which these archives need.
         write_name(&mut header, member.path());
         header.set_cksum();
         builder

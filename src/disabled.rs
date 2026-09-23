@@ -26,8 +26,7 @@ pub(crate) struct Disabled {
 }
 
 impl Disabled {
-    /// The document's name. Which directory it sits in is
-    /// [`StateRoots`]' answer, not this type's.
+    /// The document's file name; [`StateRoots`] decides its directory.
     pub const FILE_NAME: &'static str = "disabled.toml";
 
     /// Load the document, treating a missing file as an empty disabled set.
@@ -221,9 +220,7 @@ mod tests {
         dir.path().join(Disabled::FILE_NAME)
     }
 
-    /// The document as it would be written. Serialization is this record's
-    /// business; getting those bytes onto disk is [`crate::tomlfile`]'s, and is
-    /// tested there.
+    /// The document as it would be serialized; [`crate::tomlfile`] writes it.
     fn written(disabled: &Disabled) -> String {
         toml::to_string(disabled).expect("serialize")
     }

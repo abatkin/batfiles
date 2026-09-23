@@ -32,11 +32,10 @@ pub(crate) enum Executable<'a> {
 
 /// Carry out one record, whichever kind it is.
 ///
-/// `remote` is the one whose materialization contributed the record, for an
-/// action an [`include-remote`](crate::manifest::action::IncludeRemoteAction)
-/// spliced into the run's list, and `None` for one the leaf declared. Only the
-/// four actions that install from a repository path consult it; what the others
-/// name is a URL, a repository for git, or nothing at all.
+/// `remote` is the materialization an
+/// [`include-remote`](crate::manifest::action::IncludeRemoteAction)'s record
+/// came from, or `None` for a leaf record. Only the symlink and copy actions
+/// consult it; a clone list's path was resolved during preparation.
 pub(crate) fn run(
     executable: &Executable<'_>,
     remote: Option<&ItemId>,

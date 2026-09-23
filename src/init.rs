@@ -55,11 +55,8 @@ pub(crate) fn run(args: &InitArgs, reporter: &Reporter) -> Result<(), Error> {
     Ok(())
 }
 
-/// One conventional path `init` lays down.
-///
-/// The skeleton is a table rather than a sequence of statements because three
-/// separate rules read it: what kind an existing path must be, what to create,
-/// and what to report having created.
+/// One conventional path `init` lays down, read for validation, creation, and
+/// reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Entry {
     File {
@@ -209,10 +206,8 @@ fn occupant(path: &Path, kind: Kind) -> Result<Occupant, Error> {
 /// on Unix while `$HOME` frequently is not, so the two only line up once both
 /// have been resolved.
 ///
-/// A home that cannot be determined — or cannot be canonicalized, which is what
-/// a `$HOME` pointing at nothing gives — is not an answer of "yes". `init` needs
-/// no home of its own; it needs one only to refuse this single directory, so
-/// without one the check simply does not apply.
+/// A home that cannot be determined or canonicalized answers `false`: the
+/// check only refuses this one directory.
 fn is_os_home(dir: &Path, os_home: impl FnOnce() -> Result<PathBuf, Error>) -> bool {
     let Ok(home) = os_home() else {
         return false;
@@ -249,9 +244,8 @@ fn created_line(missing: &[Entry]) -> String {
 /// Warn when a `.gitignore` batfiles did not write leaves the tool-owned
 /// `remotes/` tree tracked.
 ///
-/// The file is the user's, so this reports rather than edits. A matching rule
-/// can be spelled several ways, which makes a substring check a hint and not an
-/// authoritative answer — one more reason not to rewrite the file on its word.
+/// The file is the user's, so this reports rather than edits; the match is only
+/// a heuristic.
 fn warn_unignored_remotes(dir: &Path, missing: &[Entry], reporter: &Reporter) {
     if missing.iter().any(|entry| entry.name() == GITIGNORE) {
         // Freshly written by `init`, so it already excludes the tree.
@@ -285,9 +279,8 @@ fn ignores_remotes(document: &str) -> bool {
         .any(|line| line.contains(remotes::DIRECTORY))
 }
 
-/// Why an `init` failed, for the faults that are `init`'s own. Inspecting and
-/// creating a path fail as the crate's shared read and write errors, which say
-/// the same thing here as anywhere else.
+/// `init`'s own failures. Filesystem failures use the crate's shared read and
+/// write errors.
 #[derive(Debug, ThisError)]
 pub(crate) enum Failure {
     /// Something named `batfiles.toml` is already here.
@@ -312,9 +305,8 @@ pub(crate) enum Failure {
         expected: &'static str,
     },
 
-    /// Git would not run, or `git init` ran and failed. The hint rides along
-    /// here rather than in `git.rs`, because the rest of `init` needs no Git at
-    /// all and every other caller of that module does.
+    /// Git would not run, or `git init` failed. Adds the `--no-git-init` hint,
+    /// which applies only to `init`.
     #[error("{source} (use `--no-git-init` to skip Git initialization)")]
     Git {
         #[from]
@@ -365,10 +357,8 @@ const BATFILES_TOML: &str = r#"# Batfiles configuration.
 /// `remotes/` is materialization output, regenerated from the manifest, so it
 /// does not belong in history.
 ///
-/// [`remotes::DIRECTORY`] owns the name, but `SKELETON` is a `const` and
-/// `concat!` will not take a const path, so the tree is spelled out here. A unit
-/// test pins the two together, which is what keeps this from being the drift the
-/// single owner exists to prevent.
+/// Spells out [`remotes::DIRECTORY`], since `concat!` cannot take a const path;
+/// a unit test keeps the two equal.
 const GITIGNORE_CONTENT: &str = "/remotes/\n";
 
 #[cfg(test)]
@@ -534,21 +524,14 @@ mod tests {
 
     #[test]
     fn the_starter_exclusion_list_still_names_the_tree_it_excludes() {
-        // `SKELETON` is a `const`, so the starter `.gitignore` spells the tree
-        // out instead of deriving it from `remotes::DIRECTORY`. This is what
-        // makes that duplication safe: renaming the tree without editing the
-        // literal fails here rather than silently shipping a `.gitignore` that
-        // excludes a directory nothing writes to.
         assert_eq!(GITIGNORE_CONTENT, format!("/{}/\n", remotes::DIRECTORY));
         assert!(ignores_remotes(GITIGNORE_CONTENT));
     }
 
     #[test]
     fn the_starter_manifest_declares_nothing_at_all() {
-        // Every sample is commented out, so a fresh repository installs nothing
-        // until its owner uncomments one. That it *loads* — validation included
-        // — is settled by the CLI test that syncs a freshly initialized
-        // repository.
+        // Every sample is commented out. A CLI test covers loading and
+        // validation.
         let manifest: Manifest =
             toml::from_str(BATFILES_TOML).expect("the starter manifest should parse");
         assert!(manifest.actions.is_empty());

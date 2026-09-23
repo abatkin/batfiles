@@ -28,9 +28,8 @@ use crate::var_set;
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
 
-/// A command that did not run at all. This is clap's status for a usage error,
-/// and asking for a command batfiles cannot perform yet is the same kind of
-/// mistake: the invocation was wrong, and nothing happened.
+/// A command that did not run: clap's usage-error status, also used for a
+/// command or option batfiles does not implement yet.
 const EXIT_UNIMPLEMENTED: u8 = 2;
 
 pub(crate) fn run() -> ExitCode {
@@ -254,10 +253,8 @@ fn locate_repository(cli: &Cli, env: &Environment, reporter: &Reporter) -> Resul
 /// The same, for the one command that creates the leaf repository instead of
 /// reading one.
 ///
-/// Working-directory discovery is deliberately left out. It selects a directory
-/// because a manifest is already in it, which is exactly the destination `clone`
-/// refuses, so letting it run could only turn a valid invocation into a refusal
-/// naming a directory the user never meant.
+/// Skips working-directory discovery, which selects a directory already holding
+/// a manifest: exactly the destination `clone` refuses.
 fn locate_destination(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
     locate(cli, env, reporter, || Ok(None))
 }

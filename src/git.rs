@@ -124,8 +124,7 @@ fn clone(
     if mode.writes() {
         clone_repository(url, dest)?;
         if let Some(git_ref) = git_ref {
-            // The outcome is not reported: whatever it took to get there, the
-            // line below is where this run put the repository.
+            // The clone line below already reports where the repository is.
             follow(dest, git_ref, reporter)?;
         }
     }
@@ -138,15 +137,11 @@ fn clone(
     Ok(())
 }
 
-/// Clone into a destination nothing is at, and say nothing about it.
+/// Clone into a vacant destination without reporting it; the caller reports.
+/// Git creates missing parent directories. Takes no [`RunMode`]: the `clone`
+/// command calls this directly.
 ///
-/// Git creates the leading directories itself, so a destination several levels
-/// below anything that exists is cloned into as it stands. The `--` is what
-/// stops a URL beginning with a dash from being read as an option.
-///
-/// Callers differ in what they know: an action has inspected the destination and
-/// reports the clone in its own words and tense, while `clone` is putting the
-/// leaf repository itself on the machine and has no [`RunMode`] to consult.
+/// The `--` stops a URL beginning with a dash from being read as an option.
 pub(crate) fn clone_repository(url: &str, dest: &Path) -> Result<(), Error> {
     run(
         None,
@@ -308,8 +303,7 @@ fn branch(
     }
 
     let advanced = advance(dest, remote, reporter)?;
-    // A switch is the more surprising of the two facts and is what the line
-    // reports; the fast-forward that may have followed it is implied.
+    // A switch is reported; any following fast-forward is implied.
     Ok(if switching {
         UpdateOutcome::Switched
     } else {
@@ -669,8 +663,7 @@ fn remove(dest: &Path) -> Result<(), Error> {
 /// Create a repository in `dir` unless one already covers it, answering whether
 /// one was created.
 ///
-/// This is `init`'s, not an action's: it takes no [`RunMode`] because the
-/// command it serves has no dry run to withhold anything from.
+/// For `init`, which has no dry run, so it takes no [`RunMode`].
 pub(crate) fn init_repository(dir: &Path) -> Result<bool, Failure> {
     if inside_work_tree(dir)? {
         return Ok(false);
@@ -690,10 +683,9 @@ pub(crate) fn init_repository(dir: &Path) -> Result<bool, Failure> {
 
 /// Whether `dir` already sits inside a work tree, a parent repository included.
 ///
-/// A successful exit is not enough on its own: inside a bare repository's `.git`
-/// directory `rev-parse` succeeds and prints `false`. Neither stream is shown,
-/// because outside a repository the command prints `fatal: not a git
-/// repository`, which is this question's answer rather than something to report.
+/// Checks the output too: inside a bare repository's `.git`, `rev-parse`
+/// succeeds and prints `false`. Neither stream is shown; outside a repository
+/// its `fatal:` line is the answer, not an error.
 fn inside_work_tree(dir: &Path) -> Result<bool, Failure> {
     let output = launch(Some(dir), &["rev-parse", "--is-inside-work-tree"])?;
     Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true")
@@ -714,8 +706,8 @@ const REDIRECTS: [&str; 12] = [
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_NAMESPACE",
-    // Configuration that reaches one invocation. Neither redirects git; see the
-    // note above for what each is actually doing here.
+    // Command-local configuration overrides, which are not redirects but are
+    // cleared with them.
     "GIT_CONFIG",
     "GIT_CONFIG_COUNT",
 ];
@@ -725,8 +717,8 @@ fn git<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Error>
     launch(dir, args).map_err(Into::into)
 }
 
-/// The same, as the subsystem failure rather than the crate error, for a caller
-/// that says something of its own about a Git that would not run.
+/// [`git`], returning the subsystem failure for callers that report a launch
+/// failure themselves.
 fn launch<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Failure> {
     let mut command = Command::new("git");
     command.args(args);

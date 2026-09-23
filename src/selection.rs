@@ -19,9 +19,8 @@ const SKIP_ACTIONS: &str = "BATFILES_SKIP_ACTIONS";
 /// The environment variable unioned with `--skip-group`.
 const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
 
-/// What the warning for an undecidable condition says the run did about it.
-/// A gate is closed either way, but without the clause an `unless` reads as
-/// though the record went in: a false one is what installs it.
+/// The outcome clause of an undecidable condition's warning. Without it, a
+/// failed `unless` could read as installing the record.
 const NOT_INSTALLED: &str = "it is not installed";
 
 /// Which of the manifest's records a command asked for.
@@ -45,12 +44,9 @@ impl Target<'_> {
         }
     }
 
-    /// Whether this target could name something inside the inclusion written
-    /// with `id`, which is what decides whether that inclusion's manifest is
-    /// read at all.
-    ///
-    /// An inclusion written without an `id` is reached by nothing qualified, so
-    /// only a run that asked for the whole manifest opens one of those.
+    /// Whether this target could name something inside the inclusion with `id`,
+    /// so its manifest must be read. An inclusion without an `id` is opened only
+    /// for [`Everything`](Self::Everything).
     fn reaches_into(&self, id: Option<&ItemId>) -> bool {
         match self {
             Self::Everything => true,
@@ -60,8 +56,8 @@ impl Target<'_> {
         }
     }
 
-    /// What it means for this target to have matched no record at all, which
-    /// only the arm that asked can say.
+    /// The error for a target that matched no record; `None` for
+    /// [`Everything`](Self::Everything).
     fn unresolved(&self, manifest: PathBuf) -> Option<Error> {
         match self {
             Self::Everything => None,
@@ -76,16 +72,14 @@ impl Target<'_> {
         }
     }
 
-    /// Whether an exclusion naming an action's own ID still applies. Nothing is
-    /// finer-grained than the one action `apply-action` asked for, so this is
-    /// also what waives that record's own condition: one policy, not two.
+    /// Whether exclusions naming a record's own address apply. `apply-action`
+    /// waives them, and with them the record's own condition.
     fn honors_action_exclusions(&self) -> bool {
         !matches!(self, Self::Action(_))
     }
 
-    /// Whether an exclusion naming an action's group still applies. Only a run
-    /// that asked for the whole manifest asked for something coarser than a
-    /// group.
+    /// Whether exclusions naming a record's group apply; only
+    /// [`Everything`](Self::Everything) honors them.
     fn honors_group_exclusions(&self) -> bool {
         matches!(self, Self::Everything)
     }
@@ -94,13 +88,12 @@ impl Target<'_> {
 /// Why an action is not being run.
 #[derive(Debug)]
 pub(crate) enum SkipReason<'a> {
-    /// A `disabled.toml` entry. The noun says which of its two lists.
+    /// A `disabled.toml` entry; `noun` names its list.
     Disabled {
         noun: &'static str,
         name: &'a ItemAddress,
     },
-    /// A run-only skip, and the option or variable that supplied it — which
-    /// says by itself whether an action or a group was named.
+    /// A run-only skip, and the option or variable that supplied it.
     Run {
         name: &'a ItemAddress,
         origin: &'static str,
@@ -143,11 +136,9 @@ impl SkipList {
         self.names.get(candidate).copied()
     }
 
-    /// Warn once per name that nothing in the run's list answers to.
-    ///
-    /// `unread_inclusions` names inclusions and not actions. A skip qualified by
-    /// one of them is neither matched nor unmatched, since the manifest that
-    /// would have answered it was never read, so it is passed over in silence.
+    /// Warn once per name not in `present`. Names qualified by an
+    /// `unread_inclusions` ID are skipped silently: nothing read could answer
+    /// them.
     fn warn_unmatched(
         &self,
         present: &[&ItemAddress],
@@ -165,7 +156,7 @@ impl SkipList {
 }
 
 /// One namespace's run-only skips: the option's names unioned with the
-/// variable's, or nothing at all where this run waives them.
+/// variable's, or empty and unread where the target waives them.
 fn run_only(
     consulted: bool,
     values: &[String],
@@ -182,8 +173,8 @@ fn run_only(
     skips
 }
 
-/// What one run carries out: the records it asked for, less the ones either
-/// exclusion source names.
+/// What one run executes: the records its target asks for, less those that
+/// `disabled.toml` or a run-only skip excludes.
 #[derive(Debug)]
 pub(crate) struct Selection<'a> {
     target: Target<'a>,
@@ -193,8 +184,7 @@ pub(crate) struct Selection<'a> {
 }
 
 impl<'a> Selection<'a> {
-    /// The filter one run applies: everything the target asked for, less what
-    /// either source names and the target does not waive.
+    /// Build the run's selection, reading only the skips the target honors.
     pub fn new(
         target: Target<'a>,
         skip_actions: &[String],
@@ -225,30 +215,25 @@ impl<'a> Selection<'a> {
         }
     }
 
-    /// Whether this record is one of the ones the command asked for.
+    /// Whether the target asks for `record`.
     pub fn wants(&self, record: &RunRecord) -> bool {
         self.target.wants(record)
     }
 
-    /// Whether the command named something inside the inclusion written with
-    /// `id`, which is how a run that named one record reaches past an inclusion
-    /// to open it.
+    /// See [`Target::reaches_into`].
     pub fn reaches_into(&self, id: Option<&ItemId>) -> bool {
         self.target.reaches_into(id)
     }
 
-    /// The failure for a run whose target matched no record — or `None` where
-    /// matching none of them is an ordinary outcome.
+    /// See [`Target::unresolved`].
     pub fn unresolved(&self, manifest: PathBuf) -> Option<Error> {
         self.target.unresolved(manifest)
     }
 
-    /// The failure for a target that matched a record it cannot carry out, or
-    /// `None` where it may.
-    ///
-    /// One record is like this: `apply-action` naming an `include-remote`. Its
-    /// `id` is a prefix for the addresses of what it brings in, so an address
-    /// reaching the record itself named the wrong thing rather than nothing.
+    /// The error for a target naming a record the command cannot run, or
+    /// `None`. Only `apply-action` naming an `include-remote` is refused: the
+    /// inclusion's `id` qualifies its records' addresses, so naming the
+    /// inclusion itself names the wrong thing.
     pub fn refusal(&self, action: &Action) -> Option<Error> {
         match (&self.target, action) {
             (Target::Action(id), Action::IncludeRemote(_)) => {
@@ -258,12 +243,9 @@ impl<'a> Selection<'a> {
         }
     }
 
-    /// Warn about every run-only skip that names nothing in the run's list.
-    ///
-    /// Asked of the expanded list, because a qualified name is answered by what
-    /// an inclusion contributed. An inclusion this run did not open is the one
-    /// name that is neither answered nor unmatched: what would have answered it
-    /// was never read.
+    /// Warn about every run-only skip that names nothing in the assembled list,
+    /// which includes contributed records. Skips into an unread inclusion are
+    /// not warned about.
     pub fn warn_unmatched(&self, run_list: &RunList, reporter: &Reporter) {
         let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
             run_list
@@ -287,16 +269,12 @@ impl<'a> Selection<'a> {
         );
     }
 
-    /// Why this run is passing the record over, or `None` where it carries it
-    /// out.
+    /// Why this run passes the record over, or `None` if it runs.
     ///
-    /// A condition batfiles cannot decide closes the gate like any other
-    /// exclusion, and says so at every verbosity; the run names the record when
-    /// it reports it.
-    ///
-    /// The record's own condition is consulted last, so a record some list
-    /// already excludes is never evaluated: one that cannot be evaluated costs
-    /// only the runs that would otherwise have carried the record out.
+    /// Listed exclusions come first. The record's own condition is evaluated
+    /// only when nothing else excludes it, so an undecidable condition affects
+    /// only runs that would execute the record; there it excludes the record
+    /// like any other exclusion, reported at every verbosity.
     pub fn exclusion(&self, record: &RunRecord, bindings: &Bindings<'_>) -> Option<Exclusion> {
         if let Some(reason) = self.listed_reason(record) {
             return Some(Exclusion::Expected(reason.to_string()));
@@ -370,19 +348,14 @@ mod tests {
         ItemAddress::try_from(address.to_owned()).expect("valid address")
     }
 
-    /// One `create-dir` naming both an action and a group, which is the record
-    /// every rule below is decided against, as the leaf repository declared it.
+    /// A leaf `create-dir` with both an `id` and a `group`.
     fn action(id: &str, group: &str) -> RunRecord {
         RunRecord::leaf(create_dir(id, group), 1)
     }
 
-    /// The same record as the inclusion written with `inclusion` contributed it.
-    /// `None` is an inclusion written without an `id`, whose contents answer to
-    /// no address at all.
-    ///
-    /// Built from a real `include-remote` record, so a case here cannot set up a
-    /// record no run could produce. The scope is empty: these cases decide
-    /// addressing and exclusion rather than conditions.
+    /// The same record, contributed by an inclusion with `id = inclusion`
+    /// (`None`: no `id`). Built from a parsed `include-remote` so it matches what
+    /// a run produces; the scope is empty.
     fn included(id: &str, group: &str, inclusion: Option<&str>) -> RunRecord {
         let named = match inclusion {
             Some(id) => format!("id = \"{id}\"\n"),
@@ -448,15 +421,12 @@ mod tests {
         values.iter().copied().map(str::to_owned).collect()
     }
 
-    /// What a selection says about one record, rendered the way a run reports
-    /// it. The bindings are empty, since most of the rules below decide a
-    /// record that declares no condition at all.
+    /// The exclusion reason for `record`, with no variables bound.
     fn reason(selection: &Selection, record: &RunRecord) -> Option<String> {
         decided(selection, record, &[]).map(|exclusion| exclusion.reason().to_owned())
     }
 
-    /// The same, against a variable set, and keeping which kind of exclusion
-    /// it is.
+    /// The exclusion for `record` with `vars` bound.
     fn decided(
         selection: &Selection,
         record: &RunRecord,
@@ -481,8 +451,8 @@ mod tests {
         selection.exclusion(record, &bindings)
     }
 
-    /// The reason a record was passed over as asked, for a case that expects
-    /// one rather than a condition batfiles could not decide.
+    /// The reason for an [`Expected`](Exclusion::Expected) exclusion; panics on
+    /// an evaluation failure.
     fn expected_reason(
         selection: &Selection,
         record: &RunRecord,
@@ -671,9 +641,7 @@ mod tests {
 
     #[test]
     fn a_condition_is_consulted_only_where_nothing_else_excludes_the_record() {
-        // The reason a run with one bad condition on a disabled action still
-        // works: the arm is last, so it is never reached for a record some list
-        // already names. `nowhere` is declared by no layer.
+        // `nowhere` is declared by no layer, so evaluating it would fail.
         let skipping = selection(&["zshrc"], &[], &[], Disabled::default());
         assert_eq!(
             expected_reason(&skipping, &conditioned("when", "nowhere"), &[]).as_deref(),
@@ -690,9 +658,8 @@ mod tests {
 
     #[test]
     fn a_condition_that_cannot_be_decided_closes_the_gate_in_either_spelling() {
-        // The asymmetry the spellings hide: a false `unless` opens a gate, so
-        // reading a failure as false would install the very record the line was
-        // written to suppress. Both close, and both say which field decided it.
+        // A false `unless` installs, so treating a failure as false would
+        // install the record `unless` was written to suppress.
         let selection = selection(&[], &[], &[], Disabled::default());
 
         for spelling in ["when", "unless"] {
@@ -704,7 +671,7 @@ mod tests {
             assert!(why.starts_with(&format!("{spelling} \"nowhere\"")), "{why}");
             assert!(why.contains("cannot be evaluated"), "{why}");
             assert!(why.contains(NOT_INSTALLED), "{why}");
-            // The fix, which is the half of the line a reader acts on.
+            // The fix the reader acts on.
             assert!(why.contains("`nowhere` is not declared"), "{why}");
             assert!(why.contains("batfiles vars set nowhere"), "{why}");
         }
@@ -712,8 +679,7 @@ mod tests {
 
     #[test]
     fn asking_for_one_action_waives_its_condition_too() {
-        // A condition sits in the action tier, so the action waiver takes it --
-        // including one this machine cannot decide, which stops nothing either.
+        // Including a condition this machine cannot decide.
         let zshrc = address("zshrc");
         let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
         assert_eq!(
@@ -747,8 +713,7 @@ mod tests {
 
     #[test]
     fn a_condition_is_repeated_back_as_written_and_cannot_forge_a_line() {
-        // Repository text reaching a report, so it goes through the escaping
-        // every other repeated value does.
+        // Repository text in a report is escaped.
         let selection = selection(&[], &[], &[], Disabled::default());
         let record = conditioned("when", "work && vars['a\\nb']");
         let why = expected_reason(&selection, &record, &[("work", "true")])
@@ -759,8 +724,7 @@ mod tests {
 
     #[test]
     fn a_name_that_is_not_an_address_is_dropped_rather_than_kept() {
-        // It could never match, so it is warned about at the point it is read
-        // and takes no part in the filtering.
+        // Warned about when read, and never matched.
         let mut skips = SkipList::default();
         skips.extend(&names_of(&["a..b", "zshrc"]), "--skip-action", &quiet());
         assert_eq!(skips.origin(&address("zshrc")), Some("--skip-action"));
@@ -792,9 +756,7 @@ mod tests {
             assert_eq!(reason(&selection, &contributed).as_deref(), Some(expected));
         }
 
-        // The leaf's own names, which mean the leaf's own records. A repository
-        // that disables `zshrc` has said nothing about what a remote contributed
-        // under that ID.
+        // Unqualified names mean the leaf's records only.
         let unqualified = selection(
             &["zshrc"],
             &["shell"],
@@ -848,9 +810,7 @@ mod tests {
 
     #[test]
     fn a_target_reaches_into_the_inclusion_its_address_is_qualified_by() {
-        // Which inclusions a run opens, decided before anything inside one can
-        // be named. Asking for the whole manifest opens all of them, including
-        // the ones no address could reach.
+        // Asking for everything opens every inclusion, even unnamed ones.
         let core = item("core");
         let everything = selection(&[], &[], &[], Disabled::default());
         assert!(everything.reaches_into(Some(&core)));

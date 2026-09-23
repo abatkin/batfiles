@@ -20,19 +20,15 @@ pub(crate) enum DirectoryOutcome {
 }
 
 impl DirectoryOutcome {
-    /// Say what this cleared, in the order it was cleared, as ordinary progress.
-    ///
-    /// Reports an outcome and nothing more: reaches no filesystem and decides
-    /// nothing, and a dry run's lines read as intentions only because `mode`
-    /// words them that way.
+    /// Report what this cleared, in order, as ordinary progress. Touches no
+    /// filesystem; `mode` sets the tense.
     pub fn report_removals(&self, mode: RunMode, reporter: &Reporter) {
         for link in self.removals() {
             reporter.info(&link.removal_note(mode));
         }
     }
 
-    /// The links this cleared, for the deeper level of a path to carry up to the
-    /// one outcome its caller is handed.
+    /// The links this cleared, for merging into an ancestor's outcome.
     fn removals(&self) -> &[BrokenLink] {
         match self {
             Self::AlreadyThere => &[],

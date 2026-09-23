@@ -9,9 +9,8 @@ use crate::item::ItemId;
 
 /// One entry of `[remotes]`, selected by its required `type` field.
 ///
-/// The map key is the remote's ID, so unlike an action a remote is always
-/// named. That is what a diagnostic about one uses, and what an action writes
-/// to reach its content.
+/// The map key is the remote's ID, so a remote is always named: diagnostics
+/// and actions refer to it by that key.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum Remote {
@@ -51,18 +50,15 @@ impl Remote {
     }
 }
 
-/// Why a reserved remote type is refused, named apart from an unknown one
-/// because a reader of `docs/future/repoformat.md` has reason to expect it to
-/// work.
+/// Why a reserved remote type is refused. Distinguished from an unknown type
+/// because `docs/future/repoformat.md` describes it.
 fn unbuilt(record: RecordName, kind: &'static str) -> Invalid {
     Invalid::RemoteTypeUnbuilt { record, kind }
 }
 
 /// A remote type the schema reserves and nothing materializes yet.
 ///
-/// Deliberately not closed and holding nothing: the record is refused by its
-/// `type` alone, so checking the fields around it would report the second fault
-/// in a record that cannot be declared for the first reason anyway.
+/// Accepts and ignores every field: the record is refused by its `type` alone.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Unbuilt {}
 
@@ -71,9 +67,8 @@ pub(crate) struct Unbuilt {}
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitRemote {
-    /// The repository to clone, exactly as git is given it. The same value
-    /// [`GitCloneAction`](super::action::GitCloneAction) spells `source`, under
-    /// the name a remote declaration reads better with.
+    /// The repository to clone, passed to git as written: what a
+    /// [`GitCloneAction`](super::action::GitCloneAction) calls `source`.
     pub url: String,
 
     /// The branch, tag, or commit the materialization should be on, following
@@ -89,9 +84,8 @@ pub(crate) struct GitRemote {
 }
 
 impl GitRemote {
-    /// What a declared Git remote has to say to be one, which is what a
-    /// `git-clone` action's `source` and `ref` have to say, under one other
-    /// name.
+    /// The rules for `url` and `ref`, shared with a `git-clone` action's
+    /// `source` and `ref`.
     fn validate(&self, record: &RecordName) -> Result<(), Invalid> {
         if self.when.is_some() && self.unless.is_some() {
             return Err(Invalid::BothConditions {

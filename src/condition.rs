@@ -196,9 +196,8 @@ impl Exclusion {
 
 /// Why a candidate condition is not one.
 ///
-/// The message is rendered inside the TOML error that already names the file,
-/// line, and column, so it stays one line and the parser's own caret diagram is
-/// left unused: a second one would repeat the text and point at something else.
+/// Rendered inside TOML's error, which already names the file, line, and
+/// column, so the message is one line without the parser's caret diagram.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConditionError {
     candidate: String,
@@ -246,10 +245,8 @@ impl ConditionError {
 
 impl fmt::Display for ConditionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // A condition is repository text, and a TOML multi-line string is a
-        // legal place to write one, so the candidate goes through the same
-        // escaping every other untrusted value does: a raw newline here would
-        // add source lines inside TOML's own report.
+        // Repository text, possibly from a multi-line string: escaped so a
+        // newline cannot add lines to TOML's report.
         write!(
             f,
             "{} is not a valid condition: {}",
@@ -275,19 +272,16 @@ impl std::error::Error for ConditionError {}
 /// [`docs/environment.md`](../docs/environment.md#host-facts-in-conditions)
 /// specifies.
 ///
-/// These are the same for every condition in one invocation, unlike the `vars`
-/// namespace [`Bindings`] builds, which varies with the variable set. Captured
-/// once because reading the host name is a syscall and a namespace is an owned
-/// object, so rebuilding one per condition would rebuild what it reads too.
+/// Unlike the `vars` namespace [`Bindings`] builds, these are the same for every
+/// condition in an invocation, so they are captured once.
 pub(crate) struct HostNamespaces {
     facts: Value,
     env: Value,
 }
 
 impl HostNamespaces {
-    /// Build both namespaces, reading the host once: `std::env::consts`, the
-    /// host name, and the already captured [`Environment`], which batfiles
-    /// reads at startup and passes in rather than reading again here.
+    /// Build both namespaces from `std::env::consts`, the host name, and the
+    /// [`Environment`] captured at startup.
     pub fn capture(environment: &Environment) -> Self {
         let facts = Rc::new(facts());
         let entries = environment.entries();
@@ -300,16 +294,14 @@ impl HostNamespaces {
 
 /// The four facts, and the whole of what `facts` contains.
 ///
-/// Enumerating the set is the point of defining it here: a key batfiles does not
-/// define resolves to the empty string, so `facts.arhc == 'arm64'` is silently
-/// false, and an enumerated set is what a spelling can be checked against.
-/// Adding a key later stays a non-breaking change.
+/// An unknown key reads as the empty string, so `facts.arhc == 'arm64'` is
+/// silently false; the enumerated set is what a spelling can be checked
+/// against.
 ///
-/// The host name is whatever the platform reports, never truncated at the first
-/// dot — so a domain-joined Windows machine reports a shorter name than the same
-/// machine would under Unix. [The environment
-/// reference](../docs/environment.md#host-facts-in-conditions) specifies the
-/// difference; the qualified Windows name is
+/// The host name is the platform's, never truncated at a dot, so a
+/// domain-joined Windows machine reports a shorter name than Unix would. [The
+/// environment reference](../docs/environment.md#host-facts-in-conditions)
+/// specifies this; the qualified Windows name is
 /// [an enhancement](../docs/future/roadmap.md#enhancements).
 fn facts() -> BTreeMap<String, String> {
     BTreeMap::from([
@@ -351,21 +343,17 @@ impl<'a> Bindings<'a> {
     }
 }
 
-/// The four-arm dispatch, which needs no precedence check: `facts`, `env`, and
-/// `vars` are all reserved by [`VarName`](crate::var::VarName), so no user
-/// variable can be named any of them and the fourth arm cannot shadow the first
-/// three.
-///
-/// `true` and `false` never reach here at all — the grammar takes them as
-/// literals before a variable is looked up.
+/// No precedence check is needed: `facts`, `env`, and `vars` are reserved by
+/// [`VarName`](crate::var::VarName), so no variable shadows them. `true` and
+/// `false` are grammar literals and never reach here.
 impl VariableResolver for Bindings<'_> {
     fn resolve(&self, name: &str) -> Option<Value> {
         match name {
             FACTS => Some(self.host.facts.clone()),
             ENV => Some(self.host.env.clone()),
             VARS => Some(self.vars_namespace.clone()),
-            // `None` is what the evaluator turns into `ResolveFailed`, which is
-            // the undeclared-identifier error [`EvalError`] then names.
+            // `None` becomes the evaluator's `ResolveFailed`, reported as
+            // [`EvalError::Undeclared`].
             _ => self.vars.get(name).map(|value| string(value.to_owned())),
         }
     }
@@ -472,52 +460,39 @@ impl Coercions for BatfilesCoercions {
 
 /// The one sentence a value outside the table produces.
 ///
-/// One constant and two callers: the policy is applied from inside the evaluator
-/// for `&&`, `||`, and `!`, and by [`eval`] to the finished value. Sharing the
-/// text is what keeps which path fired invisible to the user.
+/// Shared by the evaluator's `&&`, `||`, and `!` and by [`eval`]'s check of the
+/// finished value, so both paths read the same.
 ///
-/// **The offending value is not named, and the example is a fixed one.** A
-/// condition is the one place a value reaches a diagnostic without having been
-/// asked for: `when = "env.GITHUB_TOKEN"` puts a credential outside the table,
-/// and a manifest batfiles evaluates is not always the user's own. Report the
-/// name a user acts on and not the value, as [`env_vars`](crate::env_vars)
-/// does; the condition's own text still names what failed.
+/// **The offending value is never named.** `when = "env.GITHUB_TOKEN"` would
+/// otherwise print a credential, and a manifest batfiles evaluates is not
+/// always the user's own. The condition's text still names what failed.
 const NOT_BOOLEAN: &str = "a value in it is not a boolean. Write a comparison, \
      such as `profile == 'personal'`, or use one of true, false, 1, 0, yes, no, on, or off";
 
-/// Evaluate one condition against one set of bindings.
-///
-/// Reached through [`Gate::admits`], which is where a record's `when` or
-/// `unless` decides what a bare `true` means for it.
+/// Evaluate one condition against one set of bindings. [`Gate::admits`] applies
+/// `when` or `unless` to the result.
 fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
     let evaluator = Evaluator::new_with_coercions(bindings, &COERCIONS);
     let value = evaluator
         .evaluate(&condition.expr)
         .map_err(|error| EvalError::from_expression(&error))?;
 
-    // The finished value goes through the same policy the evaluator applied
-    // inside `!`, `&&`, and `||`, so a whole condition and a subexpression of
-    // one cannot disagree.
+    // The same policy the evaluator applies inside `!`, `&&`, and `||`.
     COERCIONS.to_bool(&value).map_err(|_| EvalError::NotBoolean)
 }
 
 /// Why a condition could not be evaluated.
 ///
-/// No variant names the condition it is about: this is read long after the
-/// manifest was parsed, so the text a reader needs is the whole line
-/// [`Gate::unevaluable`] builds, which has the condition and the spelling that
-/// carried it. What is here is the fault clause of that line.
+/// Each variant is the fault clause only; [`Gate::unevaluable`] adds the
+/// condition and the field that carried it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EvalError {
     /// A bare identifier that no layer declares.
     Undeclared { name: String },
     /// The condition's own value is outside the truthiness table.
     NotBoolean,
-    /// Everything else the evaluator can produce — a divide by zero, an index
-    /// out of bounds, a member on a value that has none, a truthiness failure
-    /// inside an operator — flattened, because the crate's error is
-    /// `#[non_exhaustive]` and batfiles has nothing to add to `index out of
-    /// bounds: 5 (len: 3)`.
+    /// Any other evaluator error, such as a divide by zero, an index out of
+    /// bounds, or a truthiness failure inside an operator, with its message.
     Failed { message: String },
 }
 
@@ -525,9 +500,8 @@ impl EvalError {
     fn from_expression(error: &ExpressionError) -> Self {
         match error {
             ExpressionError::ResolveFailed(name) => Self::Undeclared { name: name.clone() },
-            // The inner string rather than the `Display`, which would prefix
-            // "evaluation failed: ". This is the arm a truthiness failure inside
-            // `&&`, `||`, or `!` arrives through, and its message is already
+            // The inner string, without `Display`'s "evaluation failed: "
+            // prefix. Operator truthiness failures arrive here as
             // [`NOT_BOOLEAN`].
             ExpressionError::EvaluationFailed(message) => Self::Failed {
                 message: message.clone(),
@@ -544,10 +518,9 @@ impl EvalError {
 impl fmt::Display for EvalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // Both messages do the teaching: these are the two errors a
-            // well-formed manifest can still hit. An identifier needs no
-            // escaping of its own -- the grammar admits only letters, digits,
-            // and underscores -- so it is written as read.
+            // Both messages explain the fix: a valid manifest can still hit
+            // them. Identifiers need no escaping; the grammar admits only
+            // letters, digits, and underscores.
             Self::Undeclared { name } => write!(
                 f,
                 "`{name}` is not declared. Add `{name} = \"false\"` to [vars] in batfiles.toml, \
@@ -566,8 +539,7 @@ mod tests {
 
     use crate::var::VarName;
 
-    /// A variable set built from one layer, since this module cares about what
-    /// a name is bound to and not about which layer bound it.
+    /// A single-layer variable set.
     fn vars(bindings: &[(&str, &str)]) -> Rc<VarSet> {
         let manifest = bindings
             .iter()
@@ -607,8 +579,6 @@ mod tests {
     }
 
     /// The whole line a reader sees for a condition that cannot be decided.
-    /// The fault clause names no condition on its own, so anything about how a
-    /// condition is repeated back is asserted here.
     fn reported(source: &str, bindings: &Bindings<'_>) -> String {
         let parsed = condition(source);
         Gate::When(&parsed).unevaluable(Some(CONSEQUENCE), &failure(source, bindings))
@@ -711,8 +681,7 @@ mod tests {
 
     #[test]
     fn vars_is_total_where_the_bare_identifier_is_strict() {
-        // The contrast is the whole of it: the two spellings can never disagree
-        // about a variable that *is* declared.
+        // The two spellings agree about a declared variable.
         let vars = vars(&[("valued", "yes")]);
         let host = host(&[]);
         let bindings = Bindings::new(&vars, &host);
@@ -843,10 +812,8 @@ mod tests {
 
     #[test]
     fn env_is_the_raw_environment_and_not_the_variable_layer() {
-        // Two distinct channels over one environment variable:
-        // `BATFILES_VAR_FOO` defines the user variable `FOO` -- which is
-        // `env_vars`' job, not this module's -- and stays readable under its own
-        // name here, while a bare `FOO` is only ever an `env` entry.
+        // `BATFILES_VAR_FOO` defines the variable `FOO` (through `env_vars`)
+        // and stays readable under its own name in `env`; `env.FOO` is empty.
         let vars = vars(&[("FOO", "from the variable layer")]);
         let host = host(&[("BATFILES_VAR_FOO", "raw"), ("BARE", "raw")]);
         let bindings = Bindings::new(&vars, &host);
@@ -886,8 +853,7 @@ mod tests {
 
     #[test]
     fn the_policy_applies_inside_the_operators_too() {
-        // Why this step wants the language's own `Coercions` rather than a
-        // check on the finished value: every line here is an operand.
+        // Every truthiness decision here is an operand, not a finished value.
         let vars = vars(&[("work", "1"), ("school", "0")]);
         let host = host(&[]);
         let bindings = Bindings::new(&vars, &host);
@@ -936,10 +902,7 @@ mod tests {
 
     #[test]
     fn a_value_outside_the_table_is_never_named_in_the_message() {
-        // A condition is the one place a value reaches a diagnostic without
-        // having been asked for, and a manifest batfiles evaluates is not
-        // always the user's own. Both paths are checked, since the operand one
-        // renders through the expression crate.
+        // Both paths: the operand one renders through the expression crate.
         let vars = vars(&[("token", "s3cret-value"), ("work", "true")]);
         let host = host(&[("GITHUB_TOKEN", "ghp_notarealtoken")]);
         let bindings = Bindings::new(&vars, &host);

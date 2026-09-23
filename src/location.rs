@@ -21,9 +21,8 @@ pub(crate) struct LocationInputs {
 /// Where batfiles keeps its own bookkeeping: the roots a command needs when it
 /// reads or edits machine-local state and installs nothing.
 ///
-/// This is the whole of what such a command may look at. It holds no repository
-/// and no destination home, so a command taking it cannot reach a leaf
-/// repository that nothing selected, or a home it has no business writing to.
+/// Holds no repository or destination home, so a command given only these
+/// cannot reach either.
 #[derive(Debug)]
 pub(crate) struct StateRoots {
     /// The directory holding `vars.toml` and `disabled.toml`.
@@ -314,9 +313,8 @@ mod tests {
         assert_eq!(roots.batfiles_dir, PathBuf::from("/option-repo"));
     }
 
-    // The state roots alone. There is no test that a state-only resolution
-    // skips working-directory discovery or invents a repository path: it takes
-    // no discovery closure and returns no repository, so neither is expressible.
+    // The state roots alone. State-only resolution takes no discovery closure
+    // and returns no repository, so neither needs a test.
 
     #[test]
     fn state_roots_resolve_the_way_the_full_set_resolves_them() {

@@ -19,10 +19,8 @@ impl BareRepo {
         repo
     }
 
-    /// A repository holding the fixture tree at `tests/fixtures/<name>`, for the
-    /// other kind of subject: a repository a manifest installs *from*, whose
-    /// content is worth reading and worth keeping in files rather than in string
-    /// literals.
+    /// A repository holding the fixture tree at `tests/fixtures/<name>`, for
+    /// tests where the repository's content matters.
     pub(crate) fn from_fixture(name: &str) -> Self {
         let repo = Self::empty();
         repo.stand_on("main");

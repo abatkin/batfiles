@@ -1,18 +1,12 @@
 //! `clone`: put a leaf repository on a machine that has none, and synchronize
 //! it.
 //!
-//! The command is `sync` with a download in front of it. Once the repository is
-//! on the machine the run that follows is the one `sync` performs, from the same
-//! roots, with the same selection, variables, and reporting, so nothing here
-//! decides anything about installation. The one thing it decides that `sync`
-//! does not is what the machine starts with switched off, which is
-//! [`crate::bootstrap`]'s and happens inside that run rather than here.
-//!
-//! What this module does decide is the destination, and it is the only
-//! repository command that does not discover one: [`crate::app`] resolves the
-//! roots without working-directory discovery, because discovery names a
-//! directory that already holds a manifest and this command requires one that
-//! holds nothing.
+//! After the download, the run is `sync`'s, with the same roots, selection,
+//! variables, and reporting; [`crate::bootstrap`] decides within that run what
+//! the machine starts with switched off. This module decides only the
+//! destination, which [`crate::app`] resolves without working-directory
+//! discovery: discovery finds a directory holding a manifest, and `clone`
+//! requires a vacant one.
 
 use crate::bootstrap::Bootstrap;
 use crate::cli::BootstrapOptions;
@@ -26,11 +20,9 @@ use crate::paths;
 
 /// Clone `url` into the selected leaf repository and synchronize it.
 ///
-/// The destination must hold nothing at all, and the bootstrap options must name
-/// addresses; both are settled before Git is launched. Afterwards nothing is
-/// unwound: a repository that arrived is kept whether or not the synchronization
-/// that follows succeeds, so the fix for a manifest this machine cannot carry
-/// out is an edit and a `sync` rather than a second download.
+/// The destination must be vacant and the bootstrap options valid; both are
+/// checked before Git runs. Nothing is unwound afterwards: the repository is
+/// kept even if the synchronization fails, so the fix is an edit and a `sync`.
 pub(crate) fn run(
     invocation: &Invocation<'_>,
     url: &str,
@@ -39,8 +31,7 @@ pub(crate) fn run(
     skip_actions: &[String],
     skip_groups: &[String],
 ) -> Result<(), Error> {
-    // Read before the clone, so an unusable `--disable-action` fails the command
-    // with nothing downloaded rather than after a repository is on the machine.
+    // Before the clone, so an invalid option fails with nothing downloaded.
     let bootstrap = Bootstrap::read(options, env, invocation.reporter)?;
 
     let dest = &invocation.roots.batfiles_dir;
@@ -54,15 +45,13 @@ pub(crate) fn run(
     git::clone_repository(url, dest)?;
     invocation.reporter.info(&format!(
         "{} {} from {url}",
-        // The mode is the constant it is for the whole command: `clone` accepts
-        // no `--dry-run`, since a run with nothing to read cannot describe a
-        // plan.
+        // `clone` has no `--dry-run`: with nothing cloned, there is no plan.
         Verb::Clone.say(RunMode::Perform),
         dest.display()
     ));
 
-    // A Git repository without a manifest is a wrong URL rather than a missing
-    // file, and the synchronization below would report it the other way around.
+    // A Git repository without a manifest means a wrong URL; the
+    // synchronization would report only a missing file.
     if !paths::occupied(&invocation.roots.manifest())? {
         return Err(Error::ClonedWithoutManifest { path: dest.clone() });
     }

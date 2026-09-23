@@ -9,12 +9,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::Error;
 
-/// One repository root, in both forms it is needed in: the anchored path that
-/// goes into a link, and the canonical one that containment is judged against.
-///
-/// A pair of paths and nothing more. What a repository declares, where it came
-/// from, and what it holds all live elsewhere; this answers only where its root
-/// is and whether a path is under it.
+/// One repository root in two forms: the anchored path written into links, and
+/// the canonical path containment is judged against.
 #[derive(Debug)]
 pub(crate) struct RepositoryRoot {
     anchored: PathBuf,
@@ -50,9 +46,7 @@ pub(crate) enum Occupancy {
     /// Nothing is there. The action may create what it was asked to.
     Vacant,
     /// A symlink holding no content of its own, so replacing it destroys
-    /// nothing. Either it resolves inside the repository — one batfiles would
-    /// have made — or it resolves nowhere at all, in which case it is already
-    /// broken and where it was meant to point decides nothing.
+    /// nothing: it resolves inside the repository, or it is broken.
     Replaceable {
         /// The target as written, for saying what a repair replaced.
         written: PathBuf,
@@ -123,8 +117,7 @@ pub(crate) enum ExistingNode {
 }
 
 impl ExistingNode {
-    /// Name what is sitting at a destination, so a refusal can say which kind
-    /// it found rather than only that it found one.
+    /// Classify what is at a destination, for a refusal to name.
     pub fn of(existing: &fs::Metadata) -> Self {
         if existing.is_file() {
             Self::File
@@ -195,11 +188,9 @@ pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Re
 /// Where a path that does not exist yet would land: the nearest existing
 /// ancestor canonicalized, with the missing components appended.
 ///
-/// Best effort, and the name is a prediction rather than a reading. Where no
-/// ancestor canonicalizes, the answer is the lexical one, which a symlink
-/// anywhere along the path can make wrong; where one does, the components below
-/// it have not been resolved because nothing is there to resolve. Use it to
-/// decide what a run is about to do, never to report where something is.
+/// Best effort: where no ancestor canonicalizes, the answer is lexical, which a
+/// symlink along the path can make wrong. Use it to predict what a run will do,
+/// never to report where something is.
 pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     let mut trailing = Vec::new();
     let mut ancestor = path;
@@ -222,10 +213,9 @@ pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
 /// The path as the filesystem reads it, or its lexical form where it cannot be
 /// canonicalized — a path that is not there, or one whose links cannot be read.
 ///
-/// The two halves are named because the answer does not say which one it is:
-/// the lexical fallback resolves `..` textually, which is a different place
-/// from where the filesystem would have gone through a symlink. Sound for
-/// comparing two paths that both exist, and best effort otherwise.
+/// The result does not say which form it is, and the lexical form resolves
+/// `..` textually, unlike the filesystem through a symlink. Sound for comparing
+/// two existing paths; best effort otherwise.
 pub(crate) fn canonicalize_or_normalize(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| normalize_lexically(path))
 }

@@ -53,13 +53,9 @@ impl Environment {
         self.entries.get(key).map(String::as_str)
     }
 
-    /// The whole capture, shared rather than copied.
-    ///
-    /// The `env` namespace a condition reads is an owned object, since the
-    /// expression language requires one, so it takes a share of the capture
-    /// instead of a copy of it. Every namespace built during a run therefore
-    /// reads the same map, and the promise that every lookup during a run sees
-    /// the same values holds for `env.HOME` as it does for [`Self::get`].
+    /// The whole capture, shared rather than copied. The expression language
+    /// needs an owned `env` namespace, so every namespace in a run shares this
+    /// map and sees what [`Self::get`] sees.
     pub fn entries(&self) -> Rc<BTreeMap<String, String>> {
         Rc::clone(&self.entries)
     }

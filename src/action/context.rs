@@ -53,11 +53,10 @@ impl<'a> RunContext<'a> {
 
     /// Resolve a validated source against the tree it is read from.
     ///
-    /// `remote` is the one whose materialization contributed the action, which
-    /// an [inclusion](crate::manifest::action::IncludeRemoteAction) sets and a
-    /// leaf action leaves `None`. It and the one a source names itself can never
-    /// disagree: an included action may not write a remote reference, so only a
-    /// leaf source carries one of its own.
+    /// `remote` is the materialization an
+    /// [inclusion](crate::manifest::action::IncludeRemoteAction)'s record came
+    /// from, or `None` for a leaf record. It never conflicts with a remote named
+    /// in `source`, which only a leaf action may write.
     ///
     /// The final node must exist; broken symlinks count as present.
     /// Returns an absolute path preserving repository symlinks.
@@ -121,13 +120,9 @@ impl<'a> RunContext<'a> {
         destination(&self.home, dest)
     }
 
-    /// Where one declared remote is materialized: `remotes/<id>` inside the leaf
-    /// repository, keyed by the ID the remote was declared under rather than by
-    /// anything that reaches it.
-    ///
-    /// A repository-owned path, so it is resolved here with the rest of them.
-    /// An ID is a path segment the manifest already validated, so nothing here
-    /// can leave the tree.
+    /// Where a declared remote is materialized: `remotes/<id>` inside the leaf
+    /// repository. The ID is a validated path segment, so the result stays in
+    /// the tree.
     pub fn materialization(&self, id: &ItemId) -> PathBuf {
         self.repository
             .path()
