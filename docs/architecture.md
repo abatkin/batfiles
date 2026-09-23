@@ -95,6 +95,42 @@ path; their replacement policy differs from seeds.
 - Modules may access the filesystem or processes when they own the operation;
   register that ownership in `tests/hygiene.rs`.
 
+### Execution
+
+`sync`, `clone`'s bootstrap, and the apply commands share one pipeline:
+
+| Module | Owns |
+| --- | --- |
+| `execute/mod.rs` | Command entry points, phase order, clone-list preparation, and the execution loop. |
+| `execute/record.rs` | The run's list: each record's identity, provenance, heading, scope, and disposition. |
+| `execute/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
+| `execute/inclusion.rs` | An inclusion's identity, filters, and the reading of its manifest. |
+| `selection.rs` | Targets and exclusions, applied to run records. |
+| `action/` | Dispatch of prepared install records. |
+
+A run proceeds in this order:
+
+1. Load the leaf manifest, resolve variables, and capture host inputs.
+2. For `clone`, [adopt](state.md#bootstrap-adoption) the bootstrap policy,
+   which writes `disabled.toml` before it is read.
+3. Capture the selection, decide remote conditions, and build the `RunContext`.
+4. For `sync` and `clone`, [materialize](repoformat.md#materialization) remotes.
+   Apply commands use the trees already present.
+5. Assemble and select, opening only reached, admitted
+   [inclusions](repoformat.md#include-remote).
+6. Warn about unmatched skips and [prepare](cmdline.md#clone-list-preparation)
+   every selected clone list.
+7. Walk the list once: report exclusions, print admitted inclusions' headings,
+   and dispatch every other admitted record.
+
+Steps 2 and 4 can write before assembly or preparation fails. Preparation
+precedes every action's writes, not every write in the command. Only
+dispatched records count as applied work; an inclusion never reaches the
+dispatcher. The user-visible rules are specified in
+[selection by command](cmdline.md#selection-by-command) and
+[execution failures](cmdline.md#execution-failures). Dry runs follow the same
+pipeline; see [Dry-run](#dry-run).
+
 ## Budgets
 
 Guidelines for review, not hard limits:

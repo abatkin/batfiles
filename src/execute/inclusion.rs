@@ -55,17 +55,17 @@ impl Inclusion {
     }
 
     /// The `id` this inclusion answers to, where it was written with one.
-    pub(crate) fn id(&self) -> Option<&ItemId> {
+    pub(super) fn id(&self) -> Option<&ItemId> {
         self.id.as_ref()
     }
 
     /// The remote it includes.
-    pub(crate) fn remote(&self) -> &ItemId {
+    pub(super) fn remote(&self) -> &ItemId {
         &self.remote
     }
 
     /// How a report names it.
-    pub(crate) fn label(&self) -> &str {
+    pub(super) fn label(&self) -> &str {
         &self.label
     }
 
@@ -78,7 +78,7 @@ impl Inclusion {
     }
 
     /// A remote's exclusion, restated for this inclusion with the same severity.
-    pub(crate) fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
+    pub(super) fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
         let reason = format!(
             "remote `{}` is excluded here: {}",
             self.remote,
@@ -115,29 +115,29 @@ pub(crate) struct Contribution {
 
 impl Contribution {
     /// The remote whose materialization holds these records' repository paths.
-    pub(crate) fn remote(&self) -> &ItemId {
+    pub(super) fn remote(&self) -> &ItemId {
         self.inclusion.remote()
     }
 
     /// The variable scope these records are decided in.
-    pub(crate) fn scope(&self) -> &Rc<VarSet> {
+    pub(super) fn scope(&self) -> &Rc<VarSet> {
         &self.vars
     }
 
     /// How lines about these records name the inclusion.
-    pub(crate) fn contributor(&self) -> Contributor<'_> {
+    pub(super) fn contributor(&self) -> Contributor<'_> {
         self.inclusion.contributor()
     }
 
     /// The exclusion for a record the inclusion's filters left out, naming the
     /// inclusion.
-    pub(crate) fn not_selected(&self) -> Exclusion {
+    pub(super) fn not_selected(&self) -> Exclusion {
         Exclusion::Expected(format!("not selected by {}", self.inclusion.label))
     }
 }
 
 /// What one `include-remote` read out of the manifest it opened.
-pub(crate) struct InclusionContents {
+pub(super) struct InclusionContents {
     /// The included manifest's `[vars]`: the layer below the leaf's in the
     /// inclusion's [scope](crate::var_set::VarSet::with_inclusion). Empty when
     /// the remote declares none.
@@ -149,7 +149,7 @@ pub(crate) struct InclusionContents {
 ///
 /// Records the filters leave out are kept, so a skip naming one still matches
 /// and the run can report why it was passed over.
-pub(crate) struct IncludedAction {
+pub(super) struct IncludedAction {
     /// One-based position in the included manifest.
     pub number: usize,
     pub action: Action,
@@ -173,7 +173,7 @@ impl Inclusion {
     /// not yet fetched.
     ///
     /// The caller must check the remote's condition before reading.
-    pub(crate) fn read(
+    pub(super) fn read(
         &self,
         context: &RunContext<'_>,
     ) -> Result<Option<InclusionContents>, Error> {

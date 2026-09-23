@@ -8,7 +8,7 @@ use crate::condition::{Bindings, Exclusion};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute::{RunList, RunRecord};
+use crate::execute::record::{RunList, RunRecord};
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
@@ -332,8 +332,8 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::action::Inclusion;
     use crate::condition::HostNamespaces;
+    use crate::execute::inclusion::Inclusion;
     use crate::output::Verbosity;
     use crate::var::VarName;
     use crate::var_set::VarSet;
