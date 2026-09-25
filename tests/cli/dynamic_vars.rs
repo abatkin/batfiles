@@ -213,7 +213,7 @@ unless = "has_tool"
 
 #[test]
 fn a_command_past_its_timeout_is_killed_and_fails() {
-    let tree = declaring(r#"{ command = "sleep 10", command-timeout = "200ms" }"#);
+    let tree = declaring(r#"{ command = ["sleep", "10"], command-timeout = "200ms" }"#);
     let started = std::time::Instant::now();
     let stderr = sync(&tree, &[]);
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
