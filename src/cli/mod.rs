@@ -1,6 +1,6 @@
 //! Command-line definitions and color resolution; other environment inputs are
-//! handled outside this module tree. Parsing includes unimplemented commands;
-//! [`crate::app`] dispatches or rejects them.
+//! handled outside this module tree. Parsing includes unimplemented options;
+//! [`crate::app`] dispatches the command or rejects them.
 
 mod actions;
 mod disabled;

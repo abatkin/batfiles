@@ -8,8 +8,9 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use super::record::RunRecord;
 use crate::action::RunContext;
-use crate::condition::Exclusion;
+use crate::condition::{Bindings, Exclusion};
 use crate::error::Error;
 use crate::item::{ItemId, ItemIdList};
 use crate::manifest::Manifest;
@@ -17,6 +18,7 @@ use crate::manifest::action::{Action, Contributor, IncludeRemoteAction};
 use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
 use crate::paths;
+use crate::selection::Selection;
 use crate::var::VarName;
 use crate::var_set::VarSet;
 
@@ -66,7 +68,7 @@ impl Inclusion {
     }
 
     /// How a report names it.
-    pub(super) fn label(&self) -> &str {
+    pub(crate) fn label(&self) -> &str {
         &self.label
     }
 
@@ -78,8 +80,29 @@ impl Inclusion {
         }
     }
 
+    /// Why a run would not open this inclusion, whose leaf record is `record`,
+    /// or `None` if it would.
+    ///
+    /// The first exclusion `selection` finds for the record, decided in the
+    /// leaf scope `bindings`: an inclusion's `vars` apply only to the records it
+    /// contributes, not to its own condition. Failing that, the remote's
+    /// condition closing in `context`, restated for this inclusion.
+    pub(crate) fn exclusion(
+        &self,
+        record: &RunRecord,
+        selection: &Selection<'_>,
+        bindings: &Bindings<'_>,
+        context: &RunContext<'_>,
+    ) -> Option<Exclusion> {
+        selection.exclusion(record, bindings).or_else(|| {
+            context
+                .excluded_remote(&self.remote)
+                .map(|exclusion| self.closed_by_remote(exclusion))
+        })
+    }
+
     /// A remote's exclusion, restated for this inclusion with the same severity.
-    pub(super) fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
+    fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
         let reason = format!(
             "remote `{}` is excluded here: {}",
             self.remote,
@@ -164,16 +187,12 @@ impl Inclusion {
     /// Read the included remote's manifest: its `[vars]`, and its records with
     /// the filters' verdict on each.
     ///
-    /// `None` means there was no materialization, so nothing was read. Contents
-    /// with no records mean a manifest was read and contributed nothing; only
-    /// then can a qualified name be checked against it.
+    /// `None` means there was no materialization, so nothing was read; that
+    /// warns. Contents with no records mean a manifest was read and contributed
+    /// nothing; only then can a qualified name be checked against it.
     ///
-    /// Fails when the materialization cannot be inspected or its manifest is
-    /// missing, unreadable, or invalid. A materialized tree without a manifest
-    /// is an error: a remote's manifest is optional, so it is absent rather than
-    /// not yet fetched.
-    ///
-    /// The caller must check the remote's condition before reading.
+    /// Fails as [`manifest`](Self::manifest) does. The caller must check the
+    /// remote's condition before reading.
     pub(super) fn read(
         &self,
         context: &RunContext<'_>,
@@ -182,28 +201,13 @@ impl Inclusion {
         let remote = self.remote();
         let reporter = context.reporter();
 
-        let tree = context.materialization(remote);
-        if !paths::occupied(&tree)? {
+        let Some(included) = self.manifest(context)? else {
             // An action sourcing from an absent materialization is refused; a
             // missing inclusion only warns, and the run continues with a
             // partial plan.
-            reporter.warn(&format!(
-                "remote `{remote}` is not materialized at {}, so what it includes \
-                 cannot be listed; run `batfiles sync` to bring it down",
-                tree.display()
-            ));
+            self.warn_not_materialized(context);
             return Ok(None);
-        }
-
-        let manifest = tree.join(Manifest::FILE_NAME);
-        if !paths::occupied(&manifest)? {
-            return Err(Error::IncludedManifestMissing {
-                remote: remote.clone(),
-                path: manifest,
-            });
-        }
-
-        let included = Manifest::load_included(&manifest)?;
+        };
         report_ignored_remotes(&included, label, remote, reporter);
         let by = self.contributor();
         let filter = &self.filter;
@@ -235,6 +239,42 @@ impl Inclusion {
             vars: included.vars,
             actions: records,
         }))
+    }
+
+    /// The included remote's manifest, read from this machine's
+    /// materialization of it, or `None` where there is none. Warns about
+    /// nothing.
+    ///
+    /// Fails when the materialization cannot be inspected or its manifest is
+    /// missing, unreadable, or invalid. A materialized tree without a manifest
+    /// is an error: a remote's manifest is optional, so it is absent rather than
+    /// not yet fetched.
+    ///
+    /// The caller must check the remote's condition before reading.
+    pub(crate) fn manifest(&self, context: &RunContext<'_>) -> Result<Option<Manifest>, Error> {
+        let tree = context.materialization(&self.remote);
+        if !paths::occupied(&tree)? {
+            return Ok(None);
+        }
+        let manifest = tree.join(Manifest::FILE_NAME);
+        if !paths::occupied(&manifest)? {
+            return Err(Error::IncludedManifestMissing {
+                remote: self.remote.clone(),
+                path: manifest,
+            });
+        }
+        Manifest::load_included(&manifest).map(Some)
+    }
+
+    /// Warn that the included remote has no materialization, so nothing in it
+    /// can be read.
+    pub(crate) fn warn_not_materialized(&self, context: &RunContext<'_>) {
+        context.reporter().warn(&format!(
+            "remote `{}` is not materialized at {}, so what it includes cannot be \
+             listed; run `batfiles sync` to bring it down",
+            self.remote,
+            context.materialization(&self.remote).display()
+        ));
     }
 }
 

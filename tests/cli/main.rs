@@ -34,3 +34,5 @@ mod dry_run;
 mod dynamic_vars;
 #[cfg(unix)]
 mod linking;
+#[cfg(unix)]
+mod vars_refresh;

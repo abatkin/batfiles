@@ -215,6 +215,17 @@ impl<'a> Selection<'a> {
         }
     }
 
+    /// Everything, less what `disabled.toml` excludes: no run-only skip is
+    /// read. What `vars refresh` decides reachability with.
+    pub fn persistent(disabled: Disabled) -> Self {
+        Self {
+            target: Target::Everything,
+            actions: SkipList::default(),
+            groups: SkipList::default(),
+            disabled,
+        }
+    }
+
     /// Whether the target asks for `record`.
     pub fn wants(&self, record: &RunRecord) -> bool {
         self.target.wants(record)

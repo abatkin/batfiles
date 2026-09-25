@@ -27,9 +27,9 @@ nothing in the repository you cannot read with `cat`.
 > your manifest at the position that includes it. `init` starts a new repository
 > in the current directory, and `clone` brings an existing one down onto a fresh
 > machine, adopts the bootstrap policy it declares, and installs it — all in one
-> command. `vars refresh` is the one command still unimplemented. See the
-> [command reference](docs/cmdline.md#what-runs-today) for supported commands
-> and the [roadmap](docs/future/roadmap.md) for remaining work.
+> command. See the [command reference](docs/cmdline.md#what-runs-today) for
+> supported commands and the [roadmap](docs/future/roadmap.md) for remaining
+> work.
 
 > [!NOTE]
 > There is a sample repository to read and install:
@@ -84,6 +84,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   [dynamic variable](docs/repoformat.md#dynamic-variables): a command whose
   output or exit status is the value, cached in `dynamic-vars.toml` for as long
   as its `cache` says. An included remote's run only where the leaf allows them.
+  `vars refresh` runs them ahead of a run, all of them or the ones it names; see
+  [`vars refresh`](docs/cmdline.md#vars-refresh).
 - **Validate declarations.** Invalid manifests fail when read, under the
   [manifest validation rules](docs/repoformat.md#reading-the-manifest).
 - **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`, and
@@ -102,7 +104,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   type. Directory, copy, fetching, and Git actions have Windows implementations.
   CI checks Windows compilation, but does not run Windows tests.
 
-Everything else — `vars refresh` alone — parses its arguments and exits 2.
+Every command works. An option that parses and is not built yet is
+[refused](docs/cmdline.md#unimplemented-options) with exit status 2.
 
 ## Example
 
@@ -255,7 +258,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 9     | `vars refresh`, file and archive remotes, `--refresh-content`       |
+| 9     | File and archive remotes, `--refresh-content`                       |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 
 ## Documentation

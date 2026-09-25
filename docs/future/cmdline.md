@@ -83,24 +83,8 @@ All four are built, and are specified in
   section per inclusion is open; such a section would have to read every
   inclusion this machine would open, which is work a listing does not do today.
 
-`vars refresh`, below, is the rest of the family.
-
-### `vars refresh`
-
-```text
-batfiles vars refresh [<key>...]
-```
-
-Refresh selected dynamic variables, as `--refresh-vars` does for a run's. With
-no keys, refresh the leaf repository's dynamic variables together with those of
-every remote that is in the effective inclusion set, is allowed to run commands,
-and is materialized.
-
-What that inclusion set is belongs to this command. A run resolves a remote's
-declarations only for an inclusion it [opens](../state.md#when-declarations-are-evaluated),
-which a disable, a skip, or an apply command's target can prevent; a refresh has
-no selection of its own, so it must decide whether those inclusions count. See
-[reachability](state.md#reachability).
+[`vars refresh`](../cmdline.md#vars-refresh), the rest of the family, is built
+too.
 
 ### `clone`
 

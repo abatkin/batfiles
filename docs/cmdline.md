@@ -4,7 +4,7 @@ The parts of the command-line interface that run today: the set of commands, the
 options every command accepts, where output goes, and what the exit status
 means.
 
-Unimplemented commands, options, and additional address forms are described in
+Unimplemented options and additional address forms are described in
 [`future/cmdline.md`](future/cmdline.md).
 
 ## What runs today
@@ -12,10 +12,9 @@ Unimplemented commands, options, and additional address forms are described in
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Only `vars refresh` is left.** It resolves the [state-only
-roots](environment.md#location-selection) — the roots it can resolve without
-work to do — and then reports that it is not implemented yet, exiting 2 having
-written nothing. Every other command does its work.
+**Every command does its work.** What is not built yet is options, which are
+[refused](#unimplemented-options) rather than ignored, and the behavior
+[`future/cmdline.md`](future/cmdline.md) describes.
 
 [`init`](#init) lays the conventional layout into the current directory and puts
 a Git repository around it. It resolves no roots at all, and what it creates is
@@ -56,7 +55,8 @@ the [dynamic variables](repoformat.md#dynamic-variables) there, or reusing what
 set](environment.md#variable-precedence), and `-vv` prints what that came to.
 `vars list` asks for that set on its own. It is what a record's [`when` or
 `unless`](repoformat.md#conditions) is decided against, which is the only thing
-that reads a variable.
+that reads a variable. [`vars refresh`](#vars-refresh) runs the dynamic
+variables' commands ahead of a run, whatever the cache holds.
 
 An option any command accepts but does not honor yet fails rather than being
 ignored, ahead of everything else the command would do — see
@@ -120,8 +120,8 @@ All four resolved roots are live. `sync` and the two apply commands read the
 leaf repository, [`disabled.toml`](state.md), and
 [`vars.toml`](state.md#varstoml-machine-local-variables), and write into the
 selected home; `clone` writes the leaf repository and `disabled.toml` before
-doing all of that; `vars list` reads the first and the last of those. Each of
-them also reads and writes
+doing all of that; `vars list` reads the first and the last of those, and
+`vars refresh` all three. Each of them also reads and writes
 [`dynamic-vars.toml`](state.md#dynamic-varstoml-dynamic-variable-cache) under
 the cache directory, when the manifest declares a dynamic variable. The enable
 and disable commands read and rewrite `disabled.toml` under the config
@@ -716,6 +716,70 @@ lowest precedence. An empty set writes nothing to standard output — an
 empty set is not data — and reports that there is nothing to list on standard
 error, where `--quiet` suppresses it.
 
+### `vars refresh`
+
+```text
+batfiles vars refresh [<key>...]
+```
+
+Run [dynamic variables](repoformat.md#dynamic-variables)' commands whatever the
+[cache](state.md#freshness-and-refresh-behavior) holds, and write what they
+capture back to it, so that a later run finds fresh values. With no key, every
+declaration [in play](state.md#when-declarations-are-evaluated) runs: the leaf
+repository's, and those of each remote an inclusion this machine would open
+names. A declaration a `vars.toml` value overrides runs too, as it does in a
+run.
+
+```console
+$ batfiles vars refresh
+refreshed `email`
+refreshed `corporate.has_op`
+```
+
+A key names one declaration: a leaf variable by its name, or a remote's as
+`<remote-id>.<name>`, where `<remote-id>` is the remote's key in the leaf's
+`[remotes]` rather than an inclusion's `id`. Only the declarations named run. A
+key that is neither a [variable name](repoformat.md#names-and-ids) nor a remote
+ID and a variable name joined by `.` is a usage error, before anything is read;
+the cache's own `remote:corporate.has_op` spelling is one.
+
+```console
+$ batfiles vars refresh corporate.has_op
+refreshed `corporate.has_op`
+```
+
+Which remotes are in play is decided in the leaf scope: the leaf's `[vars]`,
+`vars.toml`, and `BATFILES_VAR_*`, as `vars list` shows them. The command
+accepts no `--var`. Deciding needs the leaf's declarations, so a command that
+refreshes a remote resolves the leaf's first, as a run would: a fresh value is
+used, a stale one runs, and a leaf key named in the same command is refreshed
+before the decision reads it. Naming only leaf keys reads no remote at all.
+
+Every key is checked before any command it names runs. Each one that cannot be
+refreshed is listed with its reason in one error, and the command exits 1:
+
+```console
+$ batfiles vars refresh editor corporate.team
+error: cannot refresh 2 dynamic variables:
+  `editor`: it is a static variable, with no command to run
+  `corporate.team`: remote `corporate` is not allowed to run dynamic variables; set `allow-dynamic-vars = true` on it to run them
+```
+
+A key is refused when the manifest that would declare it does not, or declares
+it as a plain string, and when it names a remote the leaf does not declare, does
+not [allow](repoformat.md#git) to run commands, has out of play, or has not
+materialized. A leaf key refreshed to decide a remote key's reachability stays
+refreshed when that key is then refused. Without keys, a remote in play that is
+not materialized warns and is passed over, as it is in a run. `vars refresh`
+fetches nothing; [`sync`](#sync) brings a remote down.
+
+Each declaration refreshed is named on standard error, without its value;
+`--quiet` suppresses these lines, and a command with nothing to refresh says so.
+Nothing is written to standard output. A command that fails warns as it does in
+a run and keeps its cached value; once every other capture is saved, the command
+exits 1 saying how many could not be refreshed. A status capture that could not
+be started counts: the `"false"` a run assumes is not a captured value.
+
 ## Selecting What a Run Does
 
 Selection preserves manifest declaration order. `sync` considers all actions;
@@ -1183,9 +1247,9 @@ An option that parses but is not honored yet is **refused, never ignored**:
 the run exits 2 naming the option and the step that makes it live, before any
 root is resolved or any file is opened.
 
-The refusal comes ahead of everything the command would otherwise do, its own
-not-implemented message included, so `batfiles clone <url> --interactive`
-reports `--interactive` and clones nothing. The option is the part of the
+The refusal comes ahead of everything the command would otherwise do, so
+`batfiles clone <url> --interactive` reports `--interactive` and clones
+nothing. The option is the part of the
 invocation that is wrong, and a run batfiles cannot finish as asked is not one
 to start.
 
@@ -1246,17 +1310,17 @@ defines the action warning format.
 The distinction that matters is between 1 and 2. A status of 1 means batfiles
 started doing the work and something went wrong partway, so the filesystem may
 have been touched. A status of 2 means nothing was attempted — a usage error, or
-a command or option batfiles does not implement yet — so nothing was read or
-written and the invocation can be corrected and retried freely.
+an option batfiles does not implement yet — so nothing was read or written and
+the invocation can be corrected and retried freely.
 
 Status 2 is what clap already uses for the usage errors it renders, and an
-unimplemented command or option joins it rather than reporting a failure it
-never had.
+unimplemented option joins it rather than reporting a failure it never had.
 
 Status 1 covers a command that needs a home directory and cannot determine one,
 a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
 `disabled.toml` is malformed, a `vars get` naming a variable this machine has no
-value for, an argument that is not a well-formed address or variable name, an
+value for, a [`vars refresh`](#vars-refresh) naming a key it cannot refresh or
+whose command failed, an argument that is not a well-formed address or variable name, an
 [`init`](#init) that refused the directory it was run in or could not put a Git
 repository around it, and an
 action that could not be carried out — a source the repository does not contain,

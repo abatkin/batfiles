@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::archive;
 use crate::clone_list;
+use crate::dynamic::refresh;
 use crate::git;
 use crate::init;
 use crate::item::{ItemAddress, ItemAddressError, ItemId};
@@ -209,6 +210,11 @@ pub(crate) enum Error {
         url: String,
         source: archive::Invalid,
     },
+
+    // Refreshing dynamic variables.
+    /// A `vars refresh` naming what it cannot refresh, or whose commands failed.
+    #[error(transparent)]
+    Refresh(#[from] refresh::Failure),
 
     // Laying out a new repository.
     /// An `init` that refused the directory it was run in, or could not put a

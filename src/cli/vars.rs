@@ -1,7 +1,12 @@
 //! The `vars` command family. These read or edit machine-local variable state
-//! and the dynamic-variable cache; only `vars list` consults the repository.
+//! and the dynamic-variable cache; `vars list` and `vars refresh` also read the
+//! repository.
 
 use clap::Subcommand;
+
+use crate::dynamic::VarIdentity;
+use crate::item::ItemId;
+use crate::var::VarName;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum VarsCommand {
@@ -25,12 +30,29 @@ pub(crate) enum VarsCommand {
     /// Remove one persisted machine-local variable
     Unset { key: String },
 
-    /// Refresh the leaf repository's dynamic variables
+    /// Run dynamic variables' commands, even where the cached value is fresh
     Refresh {
-        /// Variables to refresh; all leaf dynamic variables when omitted
-        #[arg(value_name = "KEY")]
-        keys: Vec<String>,
+        /// A leaf variable, or `<remote-id>.<name>`; every one in play when
+        /// omitted
+        #[arg(value_name = "KEY", value_parser = parse_key)]
+        keys: Vec<VarIdentity>,
     },
+}
+
+/// Parse a key: a leaf variable's name, or a remote's ID and the name it
+/// declares, joined by the first `.`. Checked here, so a malformed key is a
+/// usage error before any root is resolved.
+fn parse_key(raw: &str) -> Result<VarIdentity, String> {
+    let (remote, name) = match raw.split_once('.') {
+        Some((remote, name)) => (
+            Some(ItemId::try_from(remote.to_owned()).map_err(|error| error.to_string())?),
+            name,
+        ),
+        None => (None, raw),
+    };
+    let name = VarName::try_from(name.to_owned())
+        .map_err(|error| format!("`{name}` is not a valid variable name: {error}"))?;
+    Ok(VarIdentity { remote, name })
 }
 
 #[cfg(test)]
@@ -85,11 +107,36 @@ mod tests {
         assert!(machine_only && no_refresh);
     }
 
-    #[test]
-    fn refresh_defaults_to_every_leaf_variable() {
-        let VarsCommand::Refresh { keys } = vars(&["batfiles", "vars", "refresh"]) else {
+    fn keys(args: &[&str]) -> Vec<String> {
+        let VarsCommand::Refresh { keys } = vars(args) else {
             panic!("expected vars refresh");
         };
-        assert!(keys.is_empty());
+        keys.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn refresh_takes_no_keys_or_leaf_and_remote_ones() {
+        assert!(keys(&["batfiles", "vars", "refresh"]).is_empty());
+        assert_eq!(
+            keys(&["batfiles", "vars", "refresh", "email", "core.has_op"]),
+            ["email", "core.has_op"]
+        );
+    }
+
+    #[test]
+    fn a_malformed_refresh_key_is_a_usage_error() {
+        for key in [
+            "remote:core.has_op",
+            "core.has-op",
+            "1up",
+            "core.",
+            ".email",
+        ] {
+            assert_eq!(
+                error_kind(&["batfiles", "vars", "refresh", key]),
+                ErrorKind::ValueValidation,
+                "{key}"
+            );
+        }
     }
 }

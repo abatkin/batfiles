@@ -54,39 +54,31 @@ pub(super) fn assemble(
             return Err(error);
         }
 
-        // Whether the run intends to read the inclusion's manifest; an exclusion
-        // or a missing materialization can still leave it unread. A target
-        // inside it, like `apply-action --id corp.zshrc`, opens it without
-        // naming the inclusion.
-        let should_open_inclusion = match &record.action {
-            Action::IncludeRemote(inclusion) => {
-                target_names_record || selection.reaches_into(inclusion.id.as_ref())
-            }
-            _ => false,
-        };
-
-        if target_names_record || should_open_inclusion {
-            // Decided in the leaf's scope: an inclusion's `vars` apply only to the
-            // records it contributes, not to its own condition.
-            record.disposition = disposition(&record, selection, &bindings);
-        }
-
         let Action::IncludeRemote(declaration) = &record.action else {
+            if target_names_record {
+                record.disposition = disposition(&record, selection, &bindings);
+            }
             run_list.records.push(record);
             continue;
         };
         // Owns copies of the declaration's fields, since `record` moves into the
         // list below.
         let inclusion = Inclusion::at(declaration, index + 1);
-        // Unread when not requested, excluded, closed by the remote's condition
-        // (which becomes the record's exclusion), or not materialized.
-        let contents = match context.excluded_remote(inclusion.remote()) {
-            Some(exclusion) if matches!(record.disposition, Disposition::Run) => {
-                record.disposition = Disposition::Excluded(inclusion.closed_by_remote(exclusion));
-                None
-            }
-            _ if !should_open_inclusion || !matches!(record.disposition, Disposition::Run) => None,
-            _ => inclusion.read(context)?,
+        // Whether the run intends to read the inclusion's manifest; an exclusion
+        // or a missing materialization can still leave it unread. A target
+        // inside it, like `apply-action --id corp.zshrc`, opens it without
+        // naming the inclusion.
+        let should_open_inclusion = target_names_record || selection.reaches_into(inclusion.id());
+        if should_open_inclusion {
+            record.disposition = match inclusion.exclusion(&record, selection, &bindings, context) {
+                Some(exclusion) => Disposition::Excluded(exclusion),
+                None => Disposition::Run,
+            };
+        }
+        // Unread when not requested, excluded, or not materialized.
+        let contents = match record.disposition {
+            Disposition::Run => inclusion.read(context)?,
+            _ => None,
         };
         let Some(InclusionContents {
             vars: remote_vars,

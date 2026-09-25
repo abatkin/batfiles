@@ -111,8 +111,10 @@ conditionally. It is also what `vars get` answers, what a run reports at `-vv`,
 and what [`vars list`](cmdline.md#vars-list) shows in its place among the layers
 — alone, under `--machine-only`, which is the one listing that reads this file
 and nothing else. A value stored here also keeps `vars list` from running the
-dynamic variable it overrides. What `vars refresh` will read it for is in
-[`future/state.md`](future/state.md#vars-refresh-and-varstoml).
+dynamic variable it overrides. [`vars refresh`](cmdline.md#vars-refresh) reads
+it only as a layer of the leaf scope that decides [which remotes are in
+play](#when-declarations-are-evaluated), and a value stored here does not keep
+it from running the declaration the value overrides.
 
 ### Schema
 
@@ -203,6 +205,8 @@ command run. How a run treats an entry depends on the command:
 - **`--refresh-vars`** runs every command, fresh entry or not.
 - **`vars list --no-refresh`** runs nothing and writes nothing: it reports a
   fresh entry, a stale one as stale, and an absent one as having no value.
+- **`vars refresh`** runs every command it refreshes, fresh entry or not, and
+  treats any other leaf declaration it needs as a run does.
 
 A command that succeeds writes its entry, with `captured-at` taken as it
 finished. One that fails — by exiting non-zero under `capture = "stdout"`, by
@@ -226,6 +230,30 @@ every declaration in each remote an inclusion opens that the leaf
 overrides, so its entry stays current. An inclusion that is not opened runs
 nothing. `vars list` resolves the leaf alone, and leaves unrun a declaration a
 `vars.toml` value overrides.
+
+`vars refresh` has no selection to open inclusions with, so it refreshes the
+declarations **in play** instead. Every declaration in the leaf is in play, and
+a remote's are when an `include-remote` names that remote and a run on this
+machine would open it:
+
+- Neither the inclusion's address nor its group is in
+  [`disabled.toml`](#disabledtoml-disabled-actions-and-groups). Disabling an
+  inclusion is how a machine keeps a remote's commands from running, so a
+  refresh runs nothing that no `sync` here would. A run-only skip does not
+  count: it belongs to one action run.
+- The inclusion's own `when` or `unless` passes, and so does the one on the
+  leaf's [`[remotes]`](repoformat.md#a-remotes-condition) entry. Either closing
+  excludes that inclusion, and a remote no remaining inclusion names is not in
+  play.
+
+Both gates are leaf records, decided against the **leaf scope**, which needs
+nothing but the leaf repository: nothing in it depends on a remote, and an
+inclusion's own `vars` play no part in its gate. So the leaf's declarations
+resolve first, the leaf scope decides which remotes are in play, and only then
+are those remotes' manifests read and their declarations run, where the leaf
+[allows](repoformat.md#git) them. A remote not in play is never read and runs
+nothing, whatever its `allow-dynamic-vars`; a malformed manifest in one that is
+in play fails the command before anything in that remote runs.
 
 Neither `disabled.toml` nor a run-only skip changes what a declaration does
 once its inclusion is opened. [Dry-run](cmdline.md#dry-run-behavior) is not an

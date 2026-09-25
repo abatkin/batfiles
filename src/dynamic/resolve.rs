@@ -22,8 +22,9 @@ const DEFAULT_CACHE: Duration = Duration::from_secs(24 * 60 * 60);
 /// What an age below a second reads as.
 const JUST_NOW: &str = "just now";
 
-/// Resolve `declarations` against `cache` under `policy`, running commands the
-/// policy calls for and writing each successful capture into `cache`.
+/// Resolve `declarations` against `cache`, running the commands each
+/// declaration's policy calls for and writing each successful capture into
+/// `cache`.
 ///
 /// `now` is read once to judge every existing entry, and again for each
 /// capture's `captured-at`. Failures are warned about through `reporter`, whose
@@ -31,7 +32,6 @@ const JUST_NOW: &str = "just now";
 /// must be distinct.
 pub(crate) fn resolve(
     declarations: &[ScopedDeclaration<'_>],
-    policy: CachePolicy,
     cache: &mut DynamicVarCache,
     now: impl Fn() -> Timestamp,
     reporter: &Reporter,
@@ -62,7 +62,7 @@ pub(crate) fn resolve(
             None => CacheEntryState::Absent,
         };
 
-        if !runs(policy, entry) {
+        if !runs(declaration.policy, entry) {
             let refresh = match entry {
                 CacheEntryState::Fresh(age) => RefreshOutcome::Fresh { age },
                 CacheEntryState::Stale(age) => RefreshOutcome::Stale { age },
@@ -119,6 +119,8 @@ pub(crate) struct ScopedDeclaration<'a> {
     pub spec: &'a DynamicVarSpec,
     /// The declaring repository's root: the command's working directory.
     pub cwd: &'a Path,
+    /// How this declaration treats its cache entry.
+    pub policy: CachePolicy,
     /// A higher layer already wins and the command is deliberately not run.
     /// Only `vars list` sets it.
     pub shadowed: bool,
@@ -499,6 +501,7 @@ mod tests {
                 identity: identity.clone(),
                 spec,
                 cwd: dir.path(),
+                policy: CachePolicy::Auto,
                 shadowed: false,
             }
         }
@@ -529,7 +532,14 @@ mod tests {
             policy: CachePolicy,
             cache: &mut DynamicVarCache,
         ) -> Resolution {
-            resolve(declarations, policy, cache, judged_at, &quiet())
+            let declarations: Vec<ScopedDeclaration<'_>> = declarations
+                .iter()
+                .map(|declaration| ScopedDeclaration {
+                    policy,
+                    ..declaration.clone()
+                })
+                .collect();
+            resolve(&declarations, cache, judged_at, &quiet())
         }
 
         fn only(resolution: &Resolution) -> &ResolvedDynamicVar {
@@ -662,7 +672,6 @@ mod tests {
                     declaration(&first, &spec, &dir),
                     declaration(&second, &spec, &dir),
                 ],
-                CachePolicy::Auto,
                 &mut cache,
                 tick,
                 &quiet(),

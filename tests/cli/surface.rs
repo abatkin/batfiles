@@ -45,29 +45,23 @@ fn help_lists_every_documented_command() {
     }
 }
 
-/// The one command that still parses and does not run. It resolves its roots
-/// before reporting that, which is what a stub does instead of the work.
-fn a_stub() -> [&'static str; 2] {
-    ["vars", "refresh"]
+/// An invocation batfiles refuses itself rather than through clap: an option
+/// that parses and is not honored yet.
+fn withheld() -> [&'static str; 2] {
+    ["sync", "--interactive"]
 }
 
-#[test]
-fn the_unimplemented_command_fails_with_a_clear_message_naming_it_in_full() {
-    // The last stub is a subcommand, so the message has to name the whole path
-    // rather than the `vars` family it belongs to.
-    let tree = Tree::new();
-    let assertion = tree.batfiles().args(a_stub()).assert().failure().code(2);
-    let stderr = stderr_of(&assertion);
-    assert!(
-        stderr.contains("`vars refresh` is not implemented yet"),
-        "unexpected stderr:\n{stderr}"
-    );
-}
+/// What batfiles says about [`withheld`].
+const WITHHELD: &str = "`--interactive` is not implemented yet; it arrives at step 9.4";
 
 #[test]
-fn an_unimplemented_command_writes_nothing_to_standard_output() {
+fn a_withheld_option_writes_nothing_to_standard_output() {
     let tree = Tree::new();
-    tree.batfiles().args(a_stub()).assert().failure().stdout("");
+    tree.batfiles()
+        .args(withheld())
+        .assert()
+        .failure()
+        .stdout("");
 }
 
 #[test]
@@ -322,12 +316,12 @@ fn an_error_is_labeled() {
     let assertion = tree
         .batfiles()
         .args(["--color", "never"])
-        .args(a_stub())
+        .args(withheld())
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
-    assert_eq!(stderr, "error: `vars refresh` is not implemented yet\n");
+    assert_eq!(stderr, format!("error: {WITHHELD}\n"));
 }
 
 #[test]
@@ -336,13 +330,13 @@ fn color_always_colors_the_label_of_an_error_batfiles_raised() {
     let assertion = tree
         .batfiles()
         .args(["--color", "always"])
-        .args(a_stub())
+        .args(withheld())
         .assert()
         .failure()
         .code(2);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("\x1b[1;31merror:\x1b[0m `vars refresh` is not implemented yet"),
+        stderr.contains(&format!("\x1b[1;31merror:\x1b[0m {WITHHELD}")),
         "expected a colored label:\n{stderr:?}"
     );
 }
