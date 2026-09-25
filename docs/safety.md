@@ -3,6 +3,16 @@
 These rules describe implemented behavior. Backup and refresh proposals are in
 [future/safety.md](future/safety.md).
 
+## What is not sandboxed
+
+Batfiles protects what is already at a destination; it is not a security
+boundary. It runs with the invoking user's permissions, and a [dynamic
+variable](repoformat.md#dynamic-variables)'s command is an arbitrary program run
+as that user, with no sandbox, in dry runs as well as real ones. A leaf
+repository's commands always run; an included remote's run only where the leaf
+sets [`allow-dynamic-vars`](repoformat.md#git) on it. What such a command does
+besides printing its value is outside every rule below.
+
 ## Path resolution
 
 Written paths are validated when the manifest is read. Repository and home roots

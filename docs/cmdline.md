@@ -49,7 +49,9 @@ writers; `clone`'s bootstrap, above, is the other.
 
 `vars set`, `vars get`, and `vars unset` maintain the other machine-local
 document, [`vars.toml`](state.md#varstoml-machine-local-variables). Every
-command that executes actions merges it with the repository's `[vars]`,
+command that executes actions merges it with the repository's `[vars]` — running
+the [dynamic variables](repoformat.md#dynamic-variables) there, or reusing what
+[`dynamic-vars.toml`](state.md#dynamic-varstoml-dynamic-variable-cache) cached —
 `BATFILES_VAR_*`, and `--var` into one [effective
 set](environment.md#variable-precedence), and `-vv` prints what that came to.
 `vars list` asks for that set on its own. It is what a record's [`when` or
@@ -114,15 +116,17 @@ already correct. A second level, `-vv`, adds the [effective
 variable listing](#vars-list) a run resolved. `--quiet`
 suppresses the lines saying what `sync` did, and nothing else.
 
-Three of the four resolved roots are live. `sync` and the two apply commands
-read the leaf repository, [`disabled.toml`](state.md), and
+All four resolved roots are live. `sync` and the two apply commands read the
+leaf repository, [`disabled.toml`](state.md), and
 [`vars.toml`](state.md#varstoml-machine-local-variables), and write into the
 selected home; `clone` writes the leaf repository and `disabled.toml` before
-doing all of that; `vars list` reads the first and the last of those and writes
-nothing. The enable and disable commands read and rewrite `disabled.toml`
-under the config directory, and the machine-local variable commands do the
-same for `vars.toml` beside it. Neither kind resolves the repository or the
-home at all. Nothing reads or writes anything under the cache directory yet. See
+doing all of that; `vars list` reads the first and the last of those. Each of
+them also reads and writes
+[`dynamic-vars.toml`](state.md#dynamic-varstoml-dynamic-variable-cache) under
+the cache directory, when the manifest declares a dynamic variable. The enable
+and disable commands read and rewrite `disabled.toml` under the config
+directory, and the machine-local variable commands do the same for `vars.toml`
+beside it. Neither kind resolves the repository or the home at all. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -130,12 +134,13 @@ run a command with `-v` to see what it selected.
 
 These options are accepted by every command that executes actions: `sync`,
 `apply-action`, `apply-group`, and `clone`, which forwards them to its follow-up
-synchronization. One of them is honored so far; the rest are
+synchronization. Two of them are honored so far; the rest are
 [refused for now](#unimplemented-options).
 
-| Option              | Purpose                                                                    |
-|---------------------|-----------------------------------------------------------------------------|
-| `--var <key=value>` | Set a one-shot variable. Repeatable; the last value for a key wins.        |
+| Option              | Purpose                                                                         |
+|---------------------|---------------------------------------------------------------------------------|
+| `--var <key=value>` | Set a one-shot variable. Repeatable; the last value for a key wins.             |
+| `--refresh-vars`    | Run every dynamic variable's command, even where its cached value is fresh.     |
 
 A `--var` key must be a valid [user-variable name](repoformat.md#names-and-ids).
 An invalid one fails the command as a usage error, before the location roots are
@@ -149,9 +154,14 @@ string, which is a value like any other and overrides the layers below it. Where
 a `--var` sits relative to the other three layers is
 [variable precedence](environment.md#variable-precedence).
 
-Variables exist only to feed `when` and `unless` conditions, and no command
-evaluates one yet, so a `--var` changes nothing about what a run installs.
-`-vv` prints the set it produced.
+Variables exist only to feed `when` and `unless` conditions, and `-vv` prints
+the set a run produced.
+
+`--refresh-vars` changes which [dynamic
+variables](repoformat.md#dynamic-variables) run, not which are evaluated: the
+leaf's, and each opened inclusion's whose remote [allows](repoformat.md#git)
+them, run whatever the [cache](state.md#freshness-and-refresh-behavior) holds,
+and what they capture is written back.
 
 ## Output Streams
 
@@ -176,6 +186,13 @@ and the label alone is colored when color is enabled — bold red and bold yello
 respectively. Detail added by `-v` is unlabeled: it elaborates on what a command
 is doing rather than reporting a problem. Nothing on standard output is ever
 labeled or colored.
+
+A [dynamic variable](repoformat.md#dynamic-variables)'s command writes its own
+standard error straight to batfiles', unlabeled, rather than through batfiles;
+`--quiet` disconnects it instead of leaving the noisiest output on an otherwise
+quiet channel, and batfiles' own warning about a failed capture remains. Its
+standard output never reaches batfiles' standard output. See [how dynamic
+commands are run](environment.md#how-dynamic-commands-are-run).
 
 ## Commands
 
@@ -578,7 +595,7 @@ no condition is unaffected by anything these three commands do.
 ### `vars list`
 
 ```text
-batfiles vars list [--machine-only]
+batfiles vars list [--machine-only] [--no-refresh]
 ```
 
 List the effective variables on standard output, one per line: the value in
@@ -638,6 +655,24 @@ without an `id` heads its block with [the name it does
 have](repoformat.md#include-remote), so two inclusions of one remote report two
 blocks rather than one ambiguous pair.
 
+A [dynamic variable](repoformat.md#dynamic-variables) in force says how it
+arrived, after its origin, and one with no value says so in place of a value:
+
+```console
+$ batfiles vars list
+email  = "me@corp.example" (batfiles.toml, command)
+has_op = "false" (batfiles.toml, command could not start)
+shell  = "zsh" (batfiles.toml, cached 3h ago)
+team   = "platform" (batfiles.toml, command failed, cached 2d ago)
+token  = no value (batfiles.toml, command failed)
+```
+
+`command` means it ran now; `cached` gives the age of the cache entry used, in
+its largest whole unit; `command failed, cached` is a failed command falling
+back on that entry; `command could not start` is a status capture read as
+`"false"` for this run. A declaration a higher layer overrides is listed as that
+layer's line says, with no state of its own.
+
 Both listings explicitly print values; mutation reports name only the key to
 avoid disclosing values incidentally. `vars get` supplies a bare persisted value
 when that is what a script needs.
@@ -652,9 +687,21 @@ It also does not list what an
 those values hold inside one inclusion's records rather than in the set this
 command lists, and an action command's `-vv` output is where they are reported.
 
-| Option           | Purpose                                                          |
-|------------------|--------------------------------------------------------------------|
-| `--machine-only` | List `vars.toml` alone, reading no repository and no environment. |
+The leaf's dynamic variables are resolved as a run resolves them — a fresh cache
+entry is used, and a stale or missing one runs its command and is written back —
+with one exception: a declaration a `vars.toml` value overrides is not run,
+since the listing would not show what it produced.
+
+| Option           | Purpose                                                               |
+|------------------|-----------------------------------------------------------------------|
+| `--machine-only` | List `vars.toml` alone, reading no repository and no environment.     |
+| `--no-refresh`   | Run no dynamic variable's command and write no cache; list what it holds. |
+
+`--no-refresh` reports each dynamic variable from [the
+cache](state.md#freshness-and-refresh-behavior) alone, so a fresh entry reads as
+it would anyway, a stale one reads `stale, cached 2d ago`, and one with no entry
+reads `no value (batfiles.toml, not cached)`. It adds nothing to
+`--machine-only`, which reads neither the manifest nor the cache.
 
 `--machine-only` answers with what this machine has persisted, so every line it
 prints names a variable `vars unset` would remove and nothing can be shown as
@@ -985,6 +1032,16 @@ writes nothing anywhere — it is a promise that none of the plan it prints is
 carried out. "Nothing under the home changes" would be both weaker and false,
 since the repository can default to `<selected-home>/dotfiles`.
 
+**A dry run runs dynamic variables' commands.** The plan is decided by
+conditions, and a condition may read a [dynamic
+variable](repoformat.md#dynamic-variables), so a dry run resolves them exactly as
+a real run does: a stale or missing value's command runs, `--refresh-vars` runs
+every one, and what they capture is written to
+[`dynamic-vars.toml`](state.md#dynamic-varstoml-dynamic-variable-cache). Those
+commands are arbitrary programs, and whatever else they do — to the filesystem,
+the network, or anything — is the one part of a dry run batfiles does not
+control.
+
 A dry run's lines are the real run's lines in a different tense: `would link`
 and `would copy` where a real run reports `linked` and `copied`. Order and
 granularity match too — one line per child for the directory-wide actions, and
@@ -1134,11 +1191,10 @@ to start.
 
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                        | `--refresh-remotes`, `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive` |
-| `clone`                       | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all |
-| `apply-action`, `apply-group` | `--refresh-vars`, `--refresh-content`, `--no-overwrite`, `--interactive`                                              |
-| `vars list`                   | `--no-refresh`                                                                                                                             |
-| everything else               | none                                                                                                                                       |
+| `sync`                        | `--refresh-remotes`, `--refresh-content`, `--no-overwrite`, `--interactive`                                                |
+| `clone`                       | `--refresh-content`, `--no-overwrite`, `--interactive`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all     |
+| `apply-action`, `apply-group` | `--refresh-content`, `--no-overwrite`, `--interactive`                                                                     |
+| everything else               | none                                                                                                                       |
 
 An option that arrives together with the command that takes it is never listed.
 Until the command lands, its own not-implemented message covers the whole

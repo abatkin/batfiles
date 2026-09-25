@@ -18,7 +18,8 @@ nothing in the repository you cannot read with `cat`.
 > on its own.
 >
 > A record can also carry a `when` or an `unless`, so an action, or one
-> repository in a plugin list, belongs to some machines and not others.
+> repository in a plugin list, belongs to some machines and not others. What a
+> condition reads can be written down, or found out by running a command.
 >
 > Composition is built: a `[remotes]` section names other Git repositories,
 > `sync` clones each one into your repository's own `remotes/` tree, an action
@@ -79,6 +80,10 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   machine values, environment variables, and CLI overrides follow the
   [variable precedence rules](docs/environment.md#variable-precedence).
   Actions, clone-list entries, and remotes accept [`when` or `unless`](docs/repoformat.md#conditions).
+- **Discover values with commands.** A table under `[vars]` is a
+  [dynamic variable](docs/repoformat.md#dynamic-variables): a command whose
+  output or exit status is the value, cached in `dynamic-vars.toml` for as long
+  as its `cache` says. An included remote's run only where the leaf allows them.
 - **Validate declarations.** Invalid manifests fail when read, under the
   [manifest validation rules](docs/repoformat.md#reading-the-manifest).
 - **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`, and
@@ -250,7 +255,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 9     | Dynamic variables, file and archive remotes, `--refresh-content`    |
+| 9     | `vars refresh`, file and archive remotes, `--refresh-content`       |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 
 ## Documentation

@@ -4,13 +4,13 @@
 //! Three sources say something about it -- the leaf's `[default-disabled]`
 //! candidates, the `BATFILES_*` bootstrap lists, and the command's own
 //! enable/disable options -- and the
-//! [precedence](../../docs/environment.md#bootstrap-enable-and-disable-lists)
+//! [precedence](../docs/environment.md#bootstrap-enable-and-disable-lists)
 //! between them is a sequence: each source is applied over the one before it, so
 //! the last to name an action or group is the one that decides it.
 //!
 //! Only a machine with no `disabled.toml` is offered the candidates. The
 //! document existing is the machine having an opinion of its own, and
-//! [the section](../../docs/repoformat.md#default-disabled-bootstrap-entries)
+//! [the section](../docs/repoformat.md#default-disabled-bootstrap-entries)
 //! cannot switch an action off again on a machine that has already enabled it.
 //! The explicit decisions apply either way: they were written for this
 //! invocation rather than by the repository.
@@ -295,7 +295,7 @@ mod tests {
             .map(|(name, value)| {
                 (
                     crate::var::VarName::try_from((*name).to_owned()).expect("valid name"),
-                    (*value).to_owned(),
+                    crate::var_set::VarValue::Static((*value).to_owned()),
                 )
             })
             .collect();

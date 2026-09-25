@@ -37,9 +37,10 @@ cross-cutting read and write failures shared. Use hand-written `Display` only
 where rendering requires it.
 
 **6. Shell out to Git.** Use the user's executable, configuration, credentials,
-and SSH agent. Keep subprocess launch and environment handling in `git.rs`.
-The supported environment is specified in
-[environment.md](environment.md#variables-passed-on-to-git).
+and SSH agent. Keep Git's subprocess launch and environment handling in
+`git.rs`. The supported environment is specified in
+[environment.md](environment.md#variables-passed-on-to-git). The only other
+subprocess is a dynamic variable's command, launched in `dynamic/run.rs`.
 
 **7. Dry-run never simulates a filesystem.** Use the same action implementations
 in both modes, with writes gated at helpers. See [Dry-run](#dry-run).
@@ -105,25 +106,28 @@ path; their replacement policy differs from seeds.
 | `execute/record.rs` | The run's list: each record's identity, provenance, heading, scope, and disposition. |
 | `execute/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
 | `execute/inclusion.rs` | An inclusion's identity, filters, and the reading of its manifest. |
+| `dynamic/` | Running dynamic variables' commands, and their cache. |
 | `selection.rs` | Targets and exclusions, applied to run records. |
 | `action/` | Dispatch of prepared install records. |
 
 A run proceeds in this order:
 
-1. Load the leaf manifest, resolve variables, and capture host inputs.
+1. Load the leaf manifest, resolve variables — running the leaf's dynamic
+   variables and saving what they captured — and capture host inputs.
 2. For `clone`, [adopt](state.md#bootstrap-adoption) the bootstrap policy,
    which writes `disabled.toml` before it is read.
 3. Capture the selection, decide remote conditions, and build the `RunContext`.
 4. For `sync` and `clone`, [materialize](repoformat.md#materialization) remotes.
    Apply commands use the trees already present.
 5. Assemble and select, opening only reached, admitted
-   [inclusions](repoformat.md#include-remote).
+   [inclusions](repoformat.md#include-remote) and resolving each opened
+   remote's dynamic variables, if the leaf allows them.
 6. Warn about unmatched skips and [prepare](cmdline.md#clone-list-preparation)
    every selected clone list.
 7. Walk the list once: report exclusions, print admitted inclusions' headings,
    and dispatch every other admitted record.
 
-Steps 2 and 4 can write before assembly or preparation fails. Preparation
+Steps 1, 2, 4, and 5 can write before assembly or preparation fails. Preparation
 precedes every action's writes, not every write in the command. Only
 dispatched records count as applied work; an inclusion never reaches the
 dispatcher. The user-visible rules are specified in
@@ -190,8 +194,10 @@ Actions must not implement an alternate dry-run path or simulate earlier writes.
 
 The user-visible contract, including source validation, shared destinations,
 per-child output, and reporting limits, is owned by
-[cmdline.md](cmdline.md#dry-run-behavior). Batfiles bookkeeping may run in both
-modes; document additional bookkeeping only when implemented.
+[cmdline.md](cmdline.md#dry-run-behavior). Batfiles bookkeeping runs in both
+modes: the state documents `tomlfile.rs` rewrites, and the dynamic-variable
+commands `dynamic/run.rs` runs, which never consult `RunMode` because the plan
+itself depends on their values.
 
 ### Filesystem ownership checks
 
@@ -215,8 +221,9 @@ scope is derived once per opened inclusion, carried by the records it
 contributed, and every condition on a record is decided against the scope that
 record holds. Conditions and precedence are specified in
 [repoformat.md](repoformat.md#conditions) and
-[environment.md](environment.md#variable-precedence); the dynamic-variable
-proposals stay in `docs/future/` until implemented.
+[environment.md](environment.md#variable-precedence). A manifest's layer holds
+its dynamic variables' resolved values beside its static ones; one
+`DynamicVarResolver` per command resolves each declaration once and owns the cache.
 
 ## Centralized decisions
 

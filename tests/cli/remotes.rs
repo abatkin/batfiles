@@ -446,8 +446,6 @@ fn a_git_remote_is_closed_over_the_fields_it_accepts() {
         // The spelling `docs/future/repoformat.md` used for the ref field.
         // Batfiles reads it under `git-clone`'s name, with `git-clone`'s rules.
         ("branch = \"main\"\n", "branch"),
-        // Arrives with the dynamic variables it would permit, at 9.1.
-        ("allow-dynamic-vars = true\n", "allow-dynamic-vars"),
         // A field belonging to a remote type that is not this one.
         ("archive-root = \"*\"\n", "archive-root"),
     ] {

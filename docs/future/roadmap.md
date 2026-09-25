@@ -13,12 +13,14 @@ routed here.
 
 Build on demand, in any order except that 9.2 requires 9.1.
 
-- **9.1** Add dynamic-variable records, execution, timeouts, caching, and
-  `allow-dynamic-vars`. Register the runner as bookkeeping in the filesystem-owner
-  inventory, explicitly recording arbitrary unsandboxed subprocess execution.
-  It does not consult `RunMode`. Promote the dry-run cache/execution caveat and
-  relevant state and environment sections when implemented.
-- **9.2** Add `vars refresh`, including selective refresh by key.
+- **9.1** ✅ Dynamic variables, their cache, `allow-dynamic-vars`,
+  `--refresh-vars`, and `vars list --no-refresh`.
+- **9.2** Add `vars refresh`, including selective refresh by key. Reuse
+  `dynamic::DynamicVarResolver` under `CachePolicy::Force`; keys name a leaf
+  variable or `<remote-id>.<name>`, never the `remote:` cache key. Settle the open
+  [reachability](state.md#reachability) question — whether a disabled or
+  skipped inclusion's remote is refreshed — and make the command's roots those
+  of a repository command rather than the state-only ones it resolves today.
 - **9.3** Add file and archive remotes.
 - **9.4** Add `--refresh-content`, backups, `--no-overwrite`, and interactive
   conflict handling. Update current destination refusals and remedies. Seed
@@ -59,7 +61,6 @@ import unused layers or tests for unbuilt behavior.
 
 | Step | Reference | Useful contract |
 | --- | --- | --- |
-| 9.1 | `src/repo/duration.rs`, `src/repo/var_decl.rs`, `src/state/dynamic_vars.rs` | Duration and dynamic-variable records |
 | 9.3 | `src/repo/remote.rs` | File and archive remote records |
 
 Preserve hand-written serde visitors for short/long value forms: choose the form

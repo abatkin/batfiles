@@ -8,9 +8,10 @@ ownership](../AGENTS.md#documentation) defines promotion and placement.
   from implemented features.
 - [Command-line surface](cmdline.md): commands, options, selection, output,
   dry-run, and exit statuses.
-- [Environment](environment.md): environment parsing and location/color precedence.
+- [Environment](environment.md): environment parsing, location/color
+  precedence, and how dynamic variables' commands run.
 - [Repository format](repoformat.md): manifest schema, action fields, static
-  variables, clone lists.
+  and dynamic variables, clone lists.
 - [Installation safety](safety.md): path resolution, destination handling,
   staging, permissions, archive validation, and Git updates.
 - [Local state](state.md): state schemas, lifecycle, and atomic replacement.

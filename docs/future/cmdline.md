@@ -8,28 +8,16 @@ statuses are built, and are specified in
 [`docs/cmdline.md`](../cmdline.md). Everything below is intended behavior and
 binds nothing.
 
-## Output Streams
-
-The stream rule itself is in [`docs/cmdline.md`](../cmdline.md#output-streams).
-One case is specific to a command that does not exist yet:
-
-A subprocess batfiles runs — a dynamic variable's command — inherits standard
-error rather than writing through batfiles, and `--quiet` disconnects it instead
-of leaving the noisiest output on an otherwise quiet channel. See [how dynamic
-commands are run](environment.md#how-dynamic-commands-are-run) for the rest of
-that contract.
-
 ## Shared Action Execution Options
 
 These controls are accepted by every command that executes actions. `clone`
 accepts them because it forwards them to its follow-up synchronization. The
-section and its one built option, `--var`, are specified in
-[`docs/cmdline.md`](../cmdline.md#shared-action-execution-options); the rest are
-proposed here.
+section and its two built options, `--var` and `--refresh-vars`, are specified
+in [`docs/cmdline.md`](../cmdline.md#shared-action-execution-options); the rest
+are proposed here.
 
 | Option                | Purpose                                                                                          |
 |-----------------------|--------------------------------------------------------------------------------------------------|
-| `--refresh-vars`      | Recompute allowed dynamic variables instead of using fresh cached values.                        |
 | `--refresh-content`   | Refresh existing [seed content](safety.md#seed-actions-and-deletion).                            |
 | `--no-overwrite`      | Skip unmanaged destination conflicts instead of backing them up and replacing them.             |
 | `--interactive`       | At each unmanaged destination conflict, choose backup-and-replace (default), overwrite, or skip. |
@@ -37,14 +25,6 @@ proposed here.
 `--no-overwrite` and `--interactive` are mutually exclusive. Without either,
 batfiles backs up conflicting unmanaged destinations and proceeds. Interactive
 overwrite is an explicit waiver of the backup for that conflict only.
-
-`sync`, `clone`, `apply-action`, and `apply-group` already merge the same
-[effective variable set](../environment.md#variable-precedence); what is not
-built is the evaluation it feeds — see [string-valued
-variables](repoformat.md#string-valued-variables). Dynamic variables will use
-fresh cached values and automatically resolve stale or missing ones;
-`--refresh-vars` instead forces allowed dynamic variables to be recomputed even
-when their cached values are fresh.
 
 ## Shared Selection Options
 
@@ -57,21 +37,6 @@ what an inclusion contributed. What is not built is the rest of that reach:
 | Option                 | Comes to reach                                                  |
 |------------------------|-----------------------------------------------------------------|
 | `--skip-action <id>`   | An addressable clone-list entry, as well as an action.          |
-
-## Dry-Run Behavior
-
-The mechanism, the tense, what a dry run promises, and what it makes of the
-remotes an inclusion composes over are specified in
-[`docs/cmdline.md`](../cmdline.md#dry-run-behavior), with the complete-or-partial
-plan that comes out of it in [plan completeness](../cmdline.md#plan-completeness).
-What is left here is the one thing a dry run does that is not describing.
-
-Dry run still performs normal dynamic-variable resolution. Allowed dynamic
-commands may run, and successful results are written to `dynamic-vars.toml`;
-with `--refresh-vars --dry-run`, fresh entries are recomputed as well. Those
-commands are arbitrary programs and may have filesystem, network, or other side
-effects of their own, which is the one part of a dry run batfiles does not
-control.
 
 ## Commands
 
@@ -108,13 +73,9 @@ with [`apply-action`](../cmdline.md#apply-action).
 ### `vars set`, `vars get`, `vars list`, and `vars unset`
 
 All four are built, and are specified in
-[`docs/cmdline.md`](../cmdline.md#vars-set). What is not built is the dynamic
-layer they would have to account for:
+[`docs/cmdline.md`](../cmdline.md#vars-set), dynamic variables and
+`vars list --no-refresh` included. One question about them is open:
 
-- `vars list --no-refresh` is [refused for now](../cmdline.md#unimplemented-options).
-  It says not to run dynamic commands or write the cache, and to show available
-  cached state as fresh, stale, or missing — none of which exists to be shown.
-  It has no additional effect alongside `--machine-only`, which reads neither.
 - A listing shows the leaf repository's flat set, which is
   [specified](../cmdline.md#vars-list) and deliberately leaves out what an
   inclusion's scope holds: those values hold inside one inclusion's records, and
@@ -130,9 +91,16 @@ layer they would have to account for:
 batfiles vars refresh [<key>...]
 ```
 
-Refresh selected dynamic variables. With no keys, refresh the leaf repository's
-dynamic variables together with those of every remote that is in the effective
-inclusion set, is allowed to run commands, and is materialized.
+Refresh selected dynamic variables, as `--refresh-vars` does for a run's. With
+no keys, refresh the leaf repository's dynamic variables together with those of
+every remote that is in the effective inclusion set, is allowed to run commands,
+and is materialized.
+
+What that inclusion set is belongs to this command. A run resolves a remote's
+declarations only for an inclusion it [opens](../state.md#when-declarations-are-evaluated),
+which a disable, a skip, or an apply command's target can prevent; a refresh has
+no selection of its own, so it must decide whether those inclusions count. See
+[reachability](state.md#reachability).
 
 ### `clone`
 

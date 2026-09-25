@@ -5,12 +5,14 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::dynamic::{CachePolicy, DynamicVarResolver, ManifestSource, ResolvedDynamicVar};
 use crate::env::Environment;
 use crate::env_vars;
 use crate::error::Error;
 use crate::location::{Roots, StateRoots};
 use crate::machine_vars::MachineVars;
 use crate::manifest::Manifest;
+use crate::manifest::vars::VarSpec;
 use crate::output::{Reporter, quoted_value};
 use crate::var::VarName;
 
@@ -66,11 +68,52 @@ impl Origin {
     }
 }
 
+/// One declared value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VarValue {
+    /// A string written in a manifest, a state file, the environment, or on
+    /// the command line.
+    Static(String),
+    /// What a manifest's dynamic declaration resolved to. One that produced no
+    /// value still overrides the layers beneath it, and reads as empty.
+    Dynamic(ResolvedDynamicVar),
+}
+
+impl VarValue {
+    /// The text a condition reads.
+    fn text(&self) -> &str {
+        match self {
+            Self::Static(value) => value,
+            Self::Dynamic(resolved) => resolved.value.as_deref().unwrap_or_default(),
+        }
+    }
+
+    /// How a listing shows the value: quoted, or `no value`.
+    fn shown(&self) -> String {
+        match self {
+            Self::Static(value) => quoted_value(value),
+            Self::Dynamic(ResolvedDynamicVar {
+                value: Some(value), ..
+            }) => quoted_value(value),
+            Self::Dynamic(ResolvedDynamicVar { value: None, .. }) => "no value".to_owned(),
+        }
+    }
+
+    /// How a listing describes where a dynamic value came from, after its
+    /// origin. `None` for a static value.
+    fn state(&self) -> Option<String> {
+        match self {
+            Self::Static(_) => None,
+            Self::Dynamic(resolved) => Some(resolved.refresh.describe()),
+        }
+    }
+}
+
 /// One source and everything it declared.
 #[derive(Debug, Clone)]
 struct Layer {
     origin: Origin,
-    values: BTreeMap<VarName, String>,
+    values: BTreeMap<VarName, VarValue>,
 }
 
 /// Variable layers for one condition scope, stored in increasing precedence
@@ -82,29 +125,33 @@ pub(crate) struct VarSet {
 
 impl VarSet {
     /// Read the machine and environment layers and stack them with the leaf's
-    /// `[vars]` (`manifest`) and every `--var` (`cli`, in written order).
+    /// `[vars]` (`manifest`, declared in `repository`) and every `--var`
+    /// (`cli`, in written order). `dynamic` resolves the leaf's declarations.
     ///
-    /// An unreadable or malformed `vars.toml` fails; [`env_vars`] warns about
-    /// and drops unusable environment names.
+    /// An unreadable or malformed `vars.toml` or dynamic-variable cache fails;
+    /// [`env_vars`] warns about and drops unusable environment names.
     pub fn resolve(
-        manifest: &BTreeMap<VarName, String>,
+        manifest: &BTreeMap<VarName, VarSpec>,
+        repository: &std::path::Path,
         roots: &StateRoots,
         env: &Environment,
         cli: &[(VarName, String)],
+        dynamic: &mut DynamicVarResolver<'_>,
         reporter: &Reporter,
     ) -> Result<Self, Error> {
         let machine = MachineVars::load(&roots.machine_vars())?;
-        Ok(Self::stack(
-            manifest.clone(),
-            machine.values,
-            env_vars::overrides(env, reporter),
-            cli,
-        ))
+        let environment = env_vars::overrides(env, reporter);
+        let source = ManifestSource {
+            remote: None,
+            root: repository,
+        };
+        let manifest = dynamic.layer(manifest, &source, &machine.values)?;
+        Ok(Self::stack(manifest, machine.values, environment, cli))
     }
 
     /// Stack four already-read layers in increasing precedence order.
     pub fn stack(
-        manifest: BTreeMap<VarName, String>,
+        manifest: BTreeMap<VarName, VarValue>,
         machine: BTreeMap<VarName, String>,
         environment: BTreeMap<VarName, String>,
         cli: &[(VarName, String)],
@@ -117,15 +164,15 @@ impl VarSet {
                 },
                 Layer {
                     origin: Origin::Machine,
-                    values: machine,
+                    values: statics(machine),
                 },
                 Layer {
                     origin: Origin::Environment,
-                    values: environment,
+                    values: statics(environment),
                 },
                 Layer {
                     origin: Origin::CommandLine,
-                    values: cli_overrides(cli),
+                    values: statics(cli_overrides(cli)),
                 },
             ],
         }
@@ -141,7 +188,7 @@ impl VarSet {
     /// one layer of each kind. Derive one scope per opened inclusion.
     pub fn with_inclusion(
         &self,
-        remote: &BTreeMap<VarName, String>,
+        remote: &BTreeMap<VarName, VarValue>,
         overrides: &BTreeMap<VarName, String>,
         label: &str,
     ) -> Self {
@@ -157,7 +204,7 @@ impl VarSet {
             if leaf {
                 layers.push(Layer {
                     origin: Origin::Inclusion(label.to_owned()),
-                    values: overrides.clone(),
+                    values: statics(overrides.clone()),
                 });
             }
         }
@@ -179,18 +226,20 @@ impl VarSet {
     }
 
     /// The highest-precedence value, or `None` if no layer declares the name.
-    /// A declared empty string is a value. The result borrows only from the set.
+    /// A declared empty string is a value, and so is a dynamic declaration that
+    /// produced none, which reads as empty. The result borrows only from the
+    /// set.
     pub fn get<'a>(&'a self, name: &str) -> Option<&'a str> {
-        self.declaring(name).next().map(|(_, value)| value)
+        self.declaring(name).next().map(|(_, value)| value.text())
     }
 
     /// Declarations of arbitrary `name` text, highest precedence first.
     /// Returns an empty iterator if no layer declares it.
-    fn declaring<'a>(&'a self, name: &str) -> impl Iterator<Item = (&'a Origin, &'a str)> {
+    fn declaring<'a>(&'a self, name: &str) -> impl Iterator<Item = (&'a Origin, &'a VarValue)> {
         self.layers
             .iter()
             .rev()
-            .filter_map(move |layer| Some((&layer.origin, layer.values.get(name)?.as_str())))
+            .filter_map(move |layer| Some((&layer.origin, layer.values.get(name)?)))
     }
 
     /// Every name any layer declared, in order and without repeats.
@@ -286,15 +335,19 @@ impl VarSet {
             .collect()
     }
 
-    /// The line for one name: the value in force, its layer, and the layers it
-    /// overrode; `None` if no layer declares the name. Values are untrusted
-    /// text, so they go through [`quoted_value`].
+    /// The line for one name: the value in force, its layer and how a dynamic
+    /// declaration arrived at it, and the layers it overrode; `None` if no
+    /// layer declares the name. Values are untrusted text, so they go through
+    /// [`quoted_value`].
     fn line(&self, name: &VarName, width: usize) -> Option<String> {
         let name = name.as_str();
         let mut declaring = self.declaring(name);
         let (origin, winner) = declaring.next()?;
-        let value = quoted_value(winner);
-        let label = origin.label();
+        let value = winner.shown();
+        let label = match winner.state() {
+            Some(state) => format!("{}, {state}", origin.label()),
+            None => origin.label().into_owned(),
+        };
         let shadowed: Vec<Cow<'_, str>> = declaring.map(|(origin, _)| origin.label()).collect();
         let over = if shadowed.is_empty() {
             String::new()
@@ -306,9 +359,28 @@ impl VarSet {
 }
 
 /// List variables for the selected leaf repository, without CLI overrides.
-pub(crate) fn list(roots: &Roots, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
+///
+/// Resolves the leaf's dynamic declarations under `policy`, leaving unrun any
+/// a machine-local value shadows, and writes what it captured to the cache.
+pub(crate) fn list(
+    roots: &Roots,
+    env: &Environment,
+    policy: CachePolicy,
+    reporter: &Reporter,
+) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest())?;
-    VarSet::resolve(&manifest.vars, &roots.state, env, &[], reporter)?.list(reporter);
+    let mut dynamic = DynamicVarResolver::lazy(&roots.state, policy, reporter);
+    let set = VarSet::resolve(
+        &manifest.vars,
+        &roots.batfiles_dir,
+        &roots.state,
+        env,
+        &[],
+        &mut dynamic,
+        reporter,
+    )?;
+    dynamic.save();
+    set.list(reporter);
     Ok(())
 }
 
@@ -317,6 +389,14 @@ pub(crate) fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<()
     let machine = MachineVars::load(&state.machine_vars())?;
     VarSet::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
     Ok(())
+}
+
+/// A layer of plain strings.
+pub(crate) fn statics(values: BTreeMap<VarName, String>) -> BTreeMap<VarName, VarValue> {
+    values
+        .into_iter()
+        .map(|(name, value)| (name, VarValue::Static(value)))
+        .collect()
 }
 
 /// Collect `--var` pairs in argument order; the last value for each name wins.
@@ -358,7 +438,7 @@ mod tests {
         cli: [(&str, &str); D],
     ) -> VarSet {
         VarSet::stack(
-            layer(manifest),
+            statics(layer(manifest)),
             layer(machine),
             layer(environment),
             &command_line(cli),
@@ -371,7 +451,7 @@ mod tests {
             .declaring(key)
             .next()
             .expect("some layer should declare it");
-        (value.to_owned(), origin.clone())
+        (value.text().to_owned(), origin.clone())
     }
 
     /// The layers that value overrode, highest first.
@@ -554,7 +634,7 @@ mod tests {
         remote: [(&str, &str); M],
         overrides: [(&str, &str); N],
     ) -> VarSet {
-        base.with_inclusion(&layer(remote), &layer(overrides), CORP)
+        base.with_inclusion(&statics(layer(remote)), &layer(overrides), CORP)
     }
 
     /// The lines [`VarSet::report_inclusion`] would print.

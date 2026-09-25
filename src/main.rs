@@ -10,6 +10,7 @@ mod clone_list;
 mod condition;
 mod directory;
 mod disabled;
+mod dynamic;
 mod env;
 mod env_vars;
 mod error;

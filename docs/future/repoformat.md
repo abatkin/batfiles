@@ -34,9 +34,10 @@ inclusions of one remote share its single materialization.
 The part of this section that runs — every section optional, no format-version
 field, and known records closed — is specified in
 [`docs/repoformat.md`](../repoformat.md), along with all four sections:
-`[remotes]`, `[[actions]]`, `[vars]`, and `[default-disabled]`. What is not
-built is two of the value shapes below: a `file` or `archive` remote, and a
-table-valued variable.
+`[remotes]`, `[[actions]]`, `[vars]`, and `[default-disabled]`, and a table
+under `[vars]`, which is a [dynamic
+variable](../repoformat.md#dynamic-variables). What is not built is one of the
+value shapes below: a `file` or `archive` remote.
 
 All top-level sections are optional:
 
@@ -55,8 +56,8 @@ All top-level sections are optional:
 There is no format-version field in the current schema.
 
 Known records are closed: unknown fields in the top-level document, a remote,
-an action, a dynamic variable, a structured path reference, or a
-default-disabled entry are invalid. Map keys under `[remotes]` and `[vars]` are
+an action, a structured path reference, or a default-disabled entry are
+invalid. Map keys under `[remotes]` and `[vars]` are
 user-defined data and therefore are not treated as schema fields; their values
 must still match one of the known value shapes. The built half of that rule,
 including the two naming rules the keys themselves follow, is specified in
@@ -74,9 +75,9 @@ a string and nothing else, are specified in
 layer follows the same rule and is built; its document is specified in
 [`docs/state.md`](../state.md#varstoml-machine-local-variables). An inclusion's
 [`vars`](../repoformat.md#variables-for-one-inclusion) follow it and are built
-too. The rule extends to the layers that are not: an included remote's own
-`[vars]` and dynamic-command results are strings as well, and batfiles does not
-infer types from their contents.
+too, and so do an included remote's own `[vars]` and [dynamic
+variables](../repoformat.md#dynamic-variables)' results: batfiles infers no type
+from any value's contents.
 
 The one exception is built and specified with the
 [truthiness table](../repoformat.md#truthiness): a condition is where a string
@@ -150,17 +151,12 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 map, the ID its keys follow, the shared `type` / `when` / `unless` fields, the
 whole of the `git` record, and [materializing
 one](../repoformat.md#materialization) are built and specified in
-[`docs/repoformat.md`](../repoformat.md#remotes). Two things about the section
-are not.
+[`docs/repoformat.md`](../repoformat.md#remotes). One thing about the section
+is not.
 
 **The other two record variants**, below. A manifest declaring either is refused
 by name, so a remote that batfiles cannot fetch is never read as one it can.
 Nothing downloads or unpacks a remote; only a Git one materializes.
-
-**One field of the `git` record**: `allow-dynamic-vars`, a boolean defaulting to
-`false`, which says whether an included remote's dynamic variable declarations
-may be executed. It arrives with the dynamic variables it governs, at step 9.1,
-and is refused as an unknown field until then.
 
 ### File remote
 
@@ -199,71 +195,6 @@ exclude = ["*.md"]
 That declaring a remote only names a source, and that actions decide whether and
 where its content is installed, holds for these two as it does for a `git`
 remote and is specified with it.
-
-## Variables
-
-The static half of `[vars]` — the map, its name rule, and its string-only
-values — is specified in
-[`docs/repoformat.md`](../repoformat.md#variables). What is not built is the
-other value shape: a table is a dynamic variable record, which arrives at step
-9.1 and is rejected as a non-string value meanwhile.
-
-```toml
-[vars]
-work = "false"
-profile = "personal"
-rank = "3"
-
-[vars.has_op]
-command = ["sh", "-c", "command -v op >/dev/null"]
-capture = "status"
-cache = "1h"
-command-timeout = "5s"
-```
-
-Dynamic declarations may also use inline-table syntax:
-
-```toml
-[vars]
-email = { command = ["git", "config", "user.email"], cache = "24h" }
-```
-
-### Dynamic variable record
-
-| Field             | Type                               | Required | Default    | Description                                                                     |
-|-------------------|------------------------------------|:--------:|------------|---------------------------------------------------------------------------------|
-| `command`         | string or non-empty `list<string>` |   yes    | —          | Shell command string or direct argument vector.                                 |
-| `capture`         | `"stdout" \| "status"`             |    no    | `"stdout"` | Produce a string from trimmed stdout or `"true"`/`"false"` from command status. |
-| `cache`           | duration string                    |    no    | `"1d"`     | Cache lifetime, using a friendly duration such as `"1h"`.                       |
-| `command-timeout` | duration string                    |    no    | `"5s"`     | Maximum command runtime; must be greater than zero.                             |
-
-Arbitrary table-shaped variable values are not supported; every table value in
-`[vars]` must match this closed dynamic-variable record.
-
-A captured value holds at most 1 MiB. A `capture = "stdout"` command that writes
-more than that fails rather than having its output truncated, in the same way
-that output which is not valid UTF-8 fails rather than being reinterpreted. See
-[how dynamic commands are run](environment.md#how-dynamic-commands-are-run).
-
-#### Duration values
-
-`cache` and `command-timeout` accept a friendly duration: a number and a unit,
-optionally repeated, such as `30s`, `5m`, `1h`, `1d`, `1w`, or `1h 30m`. Units
-may be abbreviated or spelled out (`2 hrs`, `90 minutes`), separated by
-whitespace or commas, and sub-second units are accepted (`500ms`). A clock-style
-`HH:MM:SS` form is also accepted (`01:30:00`). A fractional quantity is allowed
-on the last unit written and only for hours or smaller: `1.5h` and `1m 30.5s`
-are durations, `1.5d` and `1.5h 30m` are not. ISO 8601 durations such as `PT1H`
-are not accepted.
-
-A day is exactly 24 hours and a week is exactly 7 days. Months and years have no
-fixed length, so they are not durations; freshness compares two instants rather
-than two calendar dates. A negative duration — written `-1h` or `1h ago` — is
-invalid.
-
-Zero is valid as a `cache`, where it means the value is never fresh. It is not
-valid as a `command-timeout`: a zero timeout asks for a command that is
-guaranteed to fail, so `command-timeout` must be greater than zero.
 
 ## Default-Disabled Bootstrap Entries
 
@@ -398,13 +329,6 @@ One thing about `remote` is outstanding: naming a declared `file` or
 `archive` remote must be invalid configuration. Both types are refused by name as
 the manifest is read, so today no inclusion can reach one; the rule arrives with
 them at step 9.3.
-
-The inclusion `id` is not used to namespace dynamic-variable cache entries.
-Allowed dynamic declarations are cached by the declared remote's map key, so
-multiple inclusions of the same remote share their declaration captures even
-when the inclusions have different IDs or `vars` overrides. The state
-specification defines the [remote cache-key
-format](state.md#dynamic-varstoml-dynamic-variable-cache).
 
 ## Serializer-Oriented Summary
 

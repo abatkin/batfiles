@@ -1,10 +1,10 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, the static variables and Git remotes it can declare, and the nine
-kinds of action it can declare. The rest of the schema — file and archive
-remotes, dynamic variables, and the other action types — is in
-[`future/repoformat.md`](future/repoformat.md) until those records parse.
+it is read, the variables and Git remotes it can declare, and the nine kinds of
+action it can declare. The rest of the schema — file and archive remotes, and
+the other action types — is in [`future/repoformat.md`](future/repoformat.md)
+until those records parse.
 
 ## Repository layout
 
@@ -46,9 +46,12 @@ file](state.md) is an empty document rather than an error. How a document
 batfiles owns is replaced when it changes is specified alongside that one, under
 [writing](state.md#writing).
 
-- The document is read and checked whole before anything in it is used. A
-  command that cannot make sense of its manifest stops before it has done any
-  work.
+- The document is read and checked whole before anything in it is used, its
+  [dynamic variables](#dynamic-variables)' commands included. A command that
+  cannot make sense of its manifest stops before it has done any work. An
+  included manifest is read only once the leaf's variables have decided that
+  its inclusion is opened, so a malformed one fails the command after the
+  leaf's own commands have run, though before anything in it runs.
 - A missing manifest is an error. A repository is a repository because it has
   one, so batfiles reports the path rather than proceeding as if the file were
   empty. This is the one rule a [state file](state.md) does not share: a machine
@@ -77,7 +80,7 @@ sections exist:
 
 [[actions]]                # ordered list<Action>
 
-[vars]                     # map<variable name, string>
+[vars]                     # map<variable name, string | dynamic variable>
 
 [default-disabled]         # leaf bootstrap policy
 [[default-disabled.actions]]
@@ -87,8 +90,8 @@ sections exist:
 Known records are closed: an unknown key, in the document or in a record, is
 invalid. That is what a field from an unbuilt part of the format runs into, and
 what an unbuilt *value* shape runs into is the same rule read one level down —
-a `file` [remote](#remotes) and a table-valued [variable](#variables) are each
-refused by name rather than appearing to have been understood.
+a `file` or `archive` [remote](#remotes) is refused by name rather than
+appearing to have been understood.
 
 The map keys under `[remotes]` and `[vars]` are user-chosen names rather than
 schema fields, so neither section is closed against the names it holds; what
@@ -168,10 +171,11 @@ all is refused as exactly that, because there is no record behind it to check.
 
 A repository for git to clone.
 
-| Field | Type   | Required | Description                                                |
-|-------|--------|:--------:|------------------------------------------------------------|
-| `url` | string |   yes    | A repository for git to clone. Never empty.                |
-| `ref` | string |    no    | A branch, tag, or commit to follow. Never empty.           |
+| Field                | Type    | Required | Description                                                                 |
+|----------------------|---------|:--------:|-----------------------------------------------------------------------------|
+| `url`                | string  |   yes    | A repository for git to clone. Never empty.                                 |
+| `ref`                | string  |    no    | A branch, tag, or commit to follow. Never empty.                            |
+| `allow-dynamic-vars` | boolean |    no    | Whether an included manifest's [dynamic variables](#dynamic-variables) run. Defaults to `false`. |
 
 **`url` and `ref` are [`git-clone`](#git-clone)'s `source` and `ref`, under the
 name a remote declaration reads better with.** So `url` is whatever git accepts —
@@ -184,6 +188,12 @@ anything else that resolves is checked out detached.
 One spelling and one rule, so a repository that pins a clone and a repository
 that pins a remote are written the same way and read the same way. `branch` is
 not a field of either, and a manifest writing it is refused as an unknown field.
+
+**`allow-dynamic-vars` is what lets a remote run commands on this machine.** A
+dynamic variable is an arbitrary program, so the leaf decides whether the
+manifest an [`include-remote`](#include-remote) reads from this remote may run
+its own. Without it, each dynamic declaration in that manifest declares nothing,
+and `-v` names the ones left out. The leaf's own declarations always run.
 
 **Declaring a remote does not install anything.** It names a source, and an
 action decides whether and where its content is installed. That is why the
@@ -263,10 +273,6 @@ machines according to which of them once satisfied the condition.
 
 A condition batfiles [cannot evaluate](#when-a-condition-cannot-be-evaluated)
 closes the gate here as everywhere else, with the warning that rule specifies.
-
-One thing about the section still does nothing: the `allow-dynamic-vars` field
-the future schema gives a Git remote is refused as unknown until batfiles can run
-a dynamic variable.
 
 ## Sources and destinations
 
@@ -1051,6 +1057,16 @@ the inclusion opened, so the inclusion's own condition and [the remote's
 own](#a-remotes-condition) are settled before it — against the leaf's variables,
 exactly as the inclusion's `vars` are.
 
+**Its dynamic variables run only if the leaf allows them.** A remote whose
+[`[remotes]` entry](#git) does not set `allow-dynamic-vars = true` runs none of
+its [dynamic variables](#dynamic-variables), and each of them declares nothing,
+so what is beneath it stands. Allowed, they run in the remote's materialization
+as the inclusion is opened, and every inclusion of that remote shares one
+capture and one [cache entry](state.md#dynamic-varstoml-dynamic-variable-cache)
+per variable, whatever its `id` or `vars`. An inclusion the run does not open —
+excluded, disabled, skipped, or not reached by an apply command's target — runs
+nothing.
+
 At `-vv` its declarations appear in the same block as that inclusion's
 overrides, with an origin naming the inclusion that opened the manifest:
 
@@ -1222,13 +1238,15 @@ next run reports the rest, which is how the manifest's own rules behave.
 
 ## Variables
 
-`[vars]` is a map from a [variable name](#names-and-ids) to a string:
+`[vars]` is a map from a [variable name](#names-and-ids) to a string, or to a
+[dynamic variable](#dynamic-variables) whose value a command produces:
 
 ```toml
 [vars]
 work = "false"
 profile = "personal"
 rank = "3"
+email = { command = ["git", "config", "user.email"], cache = "1d" }
 ```
 
 **Variables exist only to feed conditions.** A variable is read by a `when` or an
@@ -1239,14 +1257,14 @@ format has no interpolation syntax at all.
 dates, and arrays are not variable values, so `work = true` and `rank = 3` are
 errors naming the line they are written on rather than values converted to
 `"true"` and `"3"`. Write the string. An empty value is a legitimate one. A
-*table* is not a value either: it is a dynamic-variable declaration, specified in
-[`future/repoformat.md`](future/repoformat.md#dynamic-variable-record) and
-rejected on the same terms until batfiles can run one.
+*table* is not a value either: it is a [dynamic variable](#dynamic-variables),
+and must be exactly that record.
 
-What is checked is the name and the type of the value, both while the document is
-being read. Declaring the section changes no run on its own: a manifest whose
-records carry no [condition](#conditions) installs exactly what it would have
-installed without a `[vars]` at all.
+What is checked is the name and the shape of the value, both while the document
+is being read. Declaring the section installs nothing on its own: a manifest
+whose records carry no [condition](#conditions) installs exactly what it would
+have installed without a `[vars]` at all — although its dynamic variables' commands
+still run.
 
 **This is the lowest layer of the leaf repository's own set.** Machine-local
 values in [`vars.toml`](state.md#varstoml-machine-local-variables), the
@@ -1258,6 +1276,77 @@ precedence](environment.md#variable-precedence). A record an
 two more layers in it: [the inclusion's own `vars`](#variables-for-one-inclusion)
 directly above this one, and [the included remote's own
 `[vars]`](#variables-an-included-remote-declares) below it.
+
+### Dynamic variables
+
+A table under `[vars]` declares a variable whose value a command produces. Both
+TOML spellings are the same record:
+
+```toml
+[vars]
+email = { command = ["git", "config", "user.email"], cache = "24h" }
+
+[vars.has_op]
+command = "command -v op >/dev/null"
+capture = "status"
+cache = "1h"
+command-timeout = "5s"
+```
+
+| Field             | Type                               | Required | Default    | Description                                                                     |
+|-------------------|------------------------------------|:--------:|------------|---------------------------------------------------------------------------------|
+| `command`         | string or non-empty list of strings |   yes    |            | A shell command line, or a program and its arguments run without a shell.       |
+| `capture`         | `"stdout"` or `"status"`           |    no    | `"stdout"` | The trimmed standard output, or `"true"`/`"false"` from the exit status.        |
+| `cache`           | duration                           |    no    | `"1d"`     | How long a captured value is reused before the command runs again.              |
+| `command-timeout` | duration                           |    no    | `"5s"`     | How long the command may run before it is killed. Greater than zero.            |
+
+The record is closed, and every rule on it is checked as the document is read,
+with the line it is on: an unknown field, an empty `command` list, a `capture`
+other than the two, a duration that does not parse, and a zero
+`command-timeout` are each refused by name.
+
+**A command is an arbitrary program, run as you.** It runs in the root of the
+repository that declared it, with batfiles' own environment, and in a dry run
+too; [how dynamic commands are
+run](environment.md#how-dynamic-commands-are-run) is the whole contract. A
+repository's own declarations always run. An included remote's run only when
+the leaf [allows it](#git), and only for an inclusion the run opens.
+
+**What it produces is a string, like every other value.** `capture = "stdout"`
+takes the command's standard output with surrounding whitespace trimmed, and
+requires it to exit zero; output that is not UTF-8, or more than 1 MiB of it, is
+a failure rather than being reinterpreted or cut short. `capture = "status"`
+takes `"true"` for an exit status of zero and `"false"` for anything else, and
+reads no output at all.
+
+**A value is cached, and reused while it is fresh.** Every command that runs one
+records the result in the [dynamic-variable
+cache](state.md#dynamic-varstoml-dynamic-variable-cache), and a later run uses
+that entry instead until `cache` has passed. The state reference says what a
+failure falls back on.
+
+**A declaration with no value still declares the variable.** A command that
+fails with nothing cached leaves the variable valueless, and a condition reads
+it as the empty string — not the value a lower layer declared. That is false,
+so `when = "has_op"` closes and `unless = "has_op"` opens: a repository that
+must not install something when its command cannot answer should write `when`,
+not `unless`.
+
+#### Duration values
+
+`cache` and `command-timeout` are strings holding a number and a unit,
+optionally repeated: `30s`, `5m`, `1h`, `1d`, `1w`, `1h 30m`. Units may be
+abbreviated or spelled out (`2 hrs`, `90 minutes`), separated by whitespace or
+commas, and sub-second units are accepted (`500ms`). A clock-style `HH:MM:SS`
+form is accepted too (`01:30:00`). A fraction is allowed on the last unit
+written, and only for hours or smaller: `1.5h` and `1m 30.5s` are durations,
+`1.5d` and `1.5h 30m` are not. ISO 8601 durations such as `PT1H` are not.
+
+A day is exactly 24 hours and a week exactly 7 days. Months and years have no
+fixed length, so they are not durations. A negative duration, written `-1h` or
+`1h ago`, is invalid. Zero is a valid `cache`, where it means a value is never
+fresh, and an invalid `command-timeout`, which would kill every command before
+it could answer.
 
 ## Conditions
 
@@ -1365,7 +1454,9 @@ rather than heuristic for that reason.
 
 A condition that parses can still fail on the machine that evaluates it: on an
 identifier no layer declares, on a result outside the truthiness table, on
-arithmetic that overflows. **The failure closes the gate**: the record is passed
+arithmetic that overflows. A [dynamic variable](#dynamic-variables) whose
+command failed with nothing cached is not one of these: it is declared, and
+reads as the empty string. **The failure closes the gate**: the record is passed
 over. The command reference specifies [warnings](cmdline.md#exclusion-reporting)
 and [continuation and exit behavior](cmdline.md#execution-failures).
 

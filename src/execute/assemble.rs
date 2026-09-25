@@ -8,12 +8,13 @@ use super::inclusion::{IncludedAction, Inclusion, InclusionContents};
 use super::record::{Disposition, RunList, RunRecord};
 use crate::action::RunContext;
 use crate::condition::{Bindings, HostNamespaces};
+use crate::dynamic::{DynamicVarResolver, ManifestSource};
 use crate::error::Error;
 use crate::manifest::action::Action;
 use crate::output::Reporter;
 use crate::selection::Selection;
 use crate::var::VarName;
-use crate::var_set::VarSet;
+use crate::var_set::{VarSet, VarValue};
 
 /// Build the run's list from the leaf's actions, expanding each inclusion the
 /// run reaches, and set every record's disposition.
@@ -26,12 +27,15 @@ use crate::var_set::VarSet;
 /// `context` must hold this command's materializations. `variables` is the
 /// run's set, used for every record except those whose inclusion derived a
 /// [scope](RunRecord::scope) of its own; `host` backs each scope's bindings.
+/// `dynamic` resolves the declarations of each manifest an inclusion opens, in
+/// that remote's materialization; an unreadable cache fails here.
 pub(super) fn assemble(
     actions: Vec<Action>,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
     variables: &Rc<VarSet>,
     host: &HostNamespaces,
+    dynamic: &mut DynamicVarResolver<'_>,
 ) -> Result<RunList, Error> {
     let bindings = Bindings::new(variables, host);
     let mut run_list = RunList {
@@ -93,6 +97,14 @@ pub(super) fn assemble(
             run_list.records.push(record);
             continue;
         };
+        // Resolved only for an opened inclusion, once its gates have been
+        // decided in the leaf's scope.
+        let tree = context.materialization(inclusion.remote());
+        let source = ManifestSource {
+            remote: Some(inclusion.remote()),
+            root: &tree,
+        };
+        let remote_vars = dynamic.layer(&remote_vars, &source, &BTreeMap::new())?;
         // Derived, and reported, only for an opened inclusion.
         let scope = inclusion_scope(
             &remote_vars,
@@ -163,7 +175,7 @@ fn disposition(
 /// Returns the run's set when both layers are empty; otherwise reports the
 /// derived scope at `-vv`.
 fn inclusion_scope(
-    remote: &BTreeMap<VarName, String>,
+    remote: &BTreeMap<VarName, VarValue>,
     overrides: &BTreeMap<VarName, String>,
     label: &str,
     run: &Rc<VarSet>,

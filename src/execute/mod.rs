@@ -13,6 +13,7 @@ use crate::bootstrap::Bootstrap;
 use crate::clone_list::PreparedList;
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::disabled::Disabled;
+use crate::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::item::ItemAddress;
@@ -32,6 +33,9 @@ pub(crate) struct Invocation<'a> {
     pub mode: RunMode,
     /// `--var` values, in the order they were written.
     pub vars: &'a [(VarName, String)],
+    /// Whether `--refresh-vars` asks for every dynamic command to run, fresh
+    /// cache or not.
+    pub refresh_vars: bool,
     pub env: &'a Environment,
     pub reporter: &'a Reporter,
 }
@@ -231,8 +235,9 @@ fn executable<'a>(
 /// failures are errors.
 ///
 /// Variables resolve before bootstrap adoption, which decides candidate
-/// conditions against them. Adoption writes `disabled.toml` before the
-/// selection reads it.
+/// conditions against them, and the leaf's dynamic commands run and are cached
+/// then. An included remote's run as assembly opens it, if the leaf allows
+/// them. Adoption writes `disabled.toml` before the selection reads it.
 ///
 /// Returns the number of records dispatched, which never includes an
 /// inclusion. A record counts whether or not it changed anything, including in
@@ -245,14 +250,25 @@ fn run(
 ) -> Result<usize, Error> {
     let reporter = invocation.reporter;
     let manifest = Manifest::load(&invocation.roots.manifest())?;
+    let policy = if invocation.refresh_vars {
+        CachePolicy::Force
+    } else {
+        CachePolicy::Auto
+    };
+    let mut dynamic =
+        DynamicVarResolver::eager(&invocation.roots.state, policy, &manifest.remotes, reporter);
     // Resolve variables even when no action declares a condition.
     let variables = Rc::new(VarSet::resolve(
         &manifest.vars,
+        &invocation.roots.batfiles_dir,
         &invocation.roots.state,
         invocation.env,
         invocation.vars,
+        &mut dynamic,
         reporter,
     )?);
+    // Before anything that can fail, so the leaf's captures outlive it.
+    dynamic.save();
     variables.report(reporter);
     // Captured once; every condition in the run is decided against it.
     let host = HostNamespaces::capture(invocation.env);
@@ -295,7 +311,18 @@ fn run(
         remotes::materialize(&manifest.remotes, &context)?;
     }
 
-    let run_list = assemble(manifest.actions, &selection, &context, &variables, &host)?;
+    let run_list = assemble(
+        manifest.actions,
+        &selection,
+        &context,
+        &variables,
+        &host,
+        &mut dynamic,
+    );
+    // Before the result is judged: an inclusion that fails must not discard
+    // what the ones before it captured.
+    dynamic.save();
+    let run_list = run_list?;
     // After assembly: only then can a name that matched nothing be told from
     // one an inclusion answers.
     selection.warn_unmatched(&run_list, reporter);

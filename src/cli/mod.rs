@@ -16,9 +16,10 @@ pub(crate) mod unsupported;
 pub(crate) use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
 pub(crate) use disabled::{ActionAddresses, GroupAddresses};
 pub(crate) use init::InitArgs;
-// Not a variant's type: the bootstrap reads this group on its own, the way
-// `init` reads its command's arguments.
-pub(crate) use options::BootstrapOptions;
+// Not variants' types: the bootstrap reads its group on its own, the way
+// `init` reads its command's arguments, and every action-executing command
+// hands the shared group to its run.
+pub(crate) use options::{ActionOptions, BootstrapOptions};
 pub(crate) use vars::VarsCommand;
 
 use std::path::PathBuf;

@@ -106,9 +106,10 @@ synchronization.
   [precedence](environment.md#variable-precedence).
 - Keep every variable a string, whichever layer produced it; a condition is the
   one place a string becomes a decision ([variables](repoformat.md#variables)).
-- *Intended*: cached command-backed variables for facts that must be discovered
-  locally, with explicit refresh controls and a way for the leaf repository to
-  forbid executing a remote's dynamic variable commands.
+- Cache command-backed variables for facts that must be discovered locally,
+  with explicit refresh controls, and let the leaf repository decide whether a
+  remote's [dynamic variables](repoformat.md#dynamic-variables) run; a
+  `vars refresh` command is *intended*.
 - Allow actions and groups to be persistently enabled or disabled or skipped for
   one run, and (*intended*) default-disabled during first-machine bootstrap.
 - Express machine variation through these declarative controls rather than
@@ -143,7 +144,7 @@ cache data:
 
 - machine-local variable overrides and disabled action/group lists are user
   configuration;
-- dynamic variable results are disposable cache data (*intended*); and
+- dynamic variable results are disposable cache data; and
 - installed home-directory content has no persistent ownership record.
 
 State-file updates should be atomic whole-document replacements. Configuration

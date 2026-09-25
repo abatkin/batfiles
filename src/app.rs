@@ -8,9 +8,10 @@ use std::process::ExitCode;
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::cli::unsupported::{self, Unsupported};
-use crate::cli::{Cli, Command, GlobalOptions, VarsCommand, color};
+use crate::cli::{ActionOptions, Cli, Command, GlobalOptions, VarsCommand, color};
 use crate::clone;
 use crate::disabled::{self, Change, DisabledList};
+use crate::dynamic::CachePolicy;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::execute::{self, Invocation};
@@ -22,7 +23,6 @@ use crate::location::{
 use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
-use crate::var::VarName;
 use crate::var_set;
 
 /// A command that ran and failed.
@@ -97,7 +97,7 @@ fn dispatch(
         Command::Clone(args) => {
             let roots = locate_destination(cli, env, reporter)?;
             clone::run(
-                &invocation(&roots, false, &args.action.vars, env, reporter),
+                &invocation(&roots, false, &args.action, env, reporter),
                 &args.url,
                 &args.bootstrap,
                 env,
@@ -109,7 +109,7 @@ fn dispatch(
         Command::Sync(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::sync(
-                &invocation(&roots, args.dry_run, &args.action.vars, env, reporter),
+                &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
             )?;
@@ -118,7 +118,7 @@ fn dispatch(
         Command::ApplyAction(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::apply_action(
-                &invocation(&roots, args.dry_run, &args.action.vars, env, reporter),
+                &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.id,
             )?;
             Ok(ExitCode::SUCCESS)
@@ -126,7 +126,7 @@ fn dispatch(
         Command::ApplyGroup(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             execute::apply_group(
-                &invocation(&roots, args.dry_run, &args.action.vars, env, reporter),
+                &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.group,
                 &args.selection.skip_actions,
             )?;
@@ -185,13 +185,21 @@ fn dispatch(
         // The only `vars` command that reads more than `vars.toml`, and the only
         // command whose roots depend on an option: `--machine-only` answers from
         // machine-local state alone, so it resolves no repository to read.
-        Command::Vars(VarsCommand::List { machine_only, .. }) => {
+        Command::Vars(VarsCommand::List {
+            machine_only,
+            no_refresh,
+        }) => {
             if *machine_only {
                 let state = locate_state(cli, env, reporter)?;
                 var_set::list_machine(&state, reporter)?;
             } else {
                 let roots = locate_repository(cli, env, reporter)?;
-                var_set::list(&roots, env, reporter)?;
+                let policy = if *no_refresh {
+                    CachePolicy::Never
+                } else {
+                    CachePolicy::Auto
+                };
+                var_set::list(&roots, env, policy, reporter)?;
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -207,14 +215,15 @@ fn dispatch(
 fn invocation<'a>(
     roots: &'a Roots,
     dry_run: bool,
-    vars: &'a [(VarName, String)],
+    action: &'a ActionOptions,
     env: &'a Environment,
     reporter: &'a Reporter,
 ) -> Invocation<'a> {
     Invocation {
         roots,
         mode: RunMode::new(dry_run),
-        vars,
+        vars: &action.vars,
+        refresh_vars: action.refresh_vars,
         env,
         reporter,
     }

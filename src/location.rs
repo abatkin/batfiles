@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::disabled::Disabled;
+use crate::dynamic::DynamicVarCache;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::machine_vars::MachineVars;
@@ -55,6 +56,12 @@ impl StateRoots {
     /// the same reason: they describe this machine rather than this repository.
     pub fn machine_vars(&self) -> PathBuf {
         self.config_dir.join(MachineVars::FILE_NAME)
+    }
+
+    /// The disposable dynamic-variable cache. Under the cache root, apart from
+    /// the configuration a user wrote.
+    pub fn dynamic_vars(&self) -> PathBuf {
+        self.cache_dir.join(DynamicVarCache::FILE_NAME)
     }
 }
 

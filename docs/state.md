@@ -1,20 +1,20 @@
 # Local state files
 
 Batfiles keeps machine-local state outside the leaf repository, in documents it
-owns and rewrites. Two exist today:
+owns and rewrites. Three exist:
 
-| File            | Default location                                                                                | Classification                   | Regenerable? |
-|-----------------|-------------------------------------------------------------------------------------------------|----------------------------------|--------------|
-| `disabled.toml` | `$XDG_CONFIG_HOME/batfiles/disabled.toml`, otherwise `<os-home>/.config/batfiles/disabled.toml` | Machine-local user configuration | No           |
-| `vars.toml`     | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<os-home>/.config/batfiles/vars.toml`         | Machine-local user configuration | No           |
+| File                | Default location                                                                                      | Classification                    | Regenerable? |
+|---------------------|-------------------------------------------------------------------------------------------------------|-----------------------------------|--------------|
+| `disabled.toml`     | `$XDG_CONFIG_HOME/batfiles/disabled.toml`, otherwise `<os-home>/.config/batfiles/disabled.toml`       | Machine-local user configuration  | No           |
+| `vars.toml`         | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<os-home>/.config/batfiles/vars.toml`               | Machine-local user configuration  | No           |
+| `dynamic-vars.toml` | `$XDG_CACHE_HOME/batfiles/dynamic-vars.toml`, otherwise `<os-home>/.cache/batfiles/dynamic-vars.toml` | Disposable dynamic-variable cache | Yes          |
 
-The `dynamic-vars.toml` cache is specified in
-[`future/state.md`](future/state.md) and is not built.
-
-The config directory holds the non-regenerable state. It defaults under the
-invoking user's OS home and is independent of `--home-dir`, so selecting a
-different home moves the repository and the destinations but not these files. The
-authoritative rules are in [location selection](environment.md#location-selection).
+The config directory holds the non-regenerable state, and the cache directory,
+apart from it, the one document that can be deleted at no cost. Both default
+under the invoking user's OS home and are independent of `--home-dir`, so
+selecting a different home moves the repository and the destinations but not
+these files. The authoritative rules are in [location
+selection](environment.md#location-selection).
 
 ## `disabled.toml`: disabled actions and groups
 
@@ -110,8 +110,9 @@ decides, which is how one machine says it wants what a shared repository declare
 conditionally. It is also what `vars get` answers, what a run reports at `-vv`,
 and what [`vars list`](cmdline.md#vars-list) shows in its place among the layers
 — alone, under `--machine-only`, which is the one listing that reads this file
-and nothing else. The parts of this document that remain unbuilt are specified in
-[`future/state.md`](future/state.md#varstoml-the-parts-that-are-not-built).
+and nothing else. A value stored here also keeps `vars list` from running the
+dynamic variable it overrides. What `vars refresh` will read it for is in
+[`future/state.md`](future/state.md#vars-refresh-and-varstoml).
 
 ### Schema
 
@@ -154,6 +155,92 @@ the document.
   document, and does not create a `vars.toml` that was not there before.
 - Deleting `vars.toml` removes the machine-local values. It does not remove or
   otherwise alter installed home-directory content.
+
+## `dynamic-vars.toml`: dynamic-variable cache
+
+`dynamic-vars.toml` holds what [dynamic
+variables](repoformat.md#dynamic-variables)' commands captured, so that a run
+need not repeat a command whose answer is still fresh. It is named unlike
+`vars.toml` so that cache is never mistaken for configuration someone wrote.
+
+### Schema
+
+The document is a map keyed by the declaration a value came from. A leaf
+repository's variable uses its bare name; a remote's uses
+`remote:<remote-id>.<name>`, where `<remote-id>` is the remote's key in the
+leaf's `[remotes]`:
+
+```toml
+[work_email]
+value = "me@work.com"
+captured-at = "2026-06-19T12:00:00Z"
+
+["remote:core.has_op"]
+value = "true"
+captured-at = "2026-06-19T12:00:00Z"
+```
+
+- The `remote:` prefix keeps a leaf's and a remote's variables of one name
+  apart. The key is quoted so the dot stays inside one key.
+- A remote's key names the declared remote, not an `include-remote`, so every
+  inclusion of one remote shares one entry per variable, whatever its `id` or
+  `vars`.
+- An entry is a closed record of two required fields: `value`, the captured
+  string (a status capture is `"true"` or `"false"`), and `captured-at`, an RFC
+  3339 timestamp written as a string. An unknown field, or a TOML datetime in
+  place of the string, is invalid.
+
+### Freshness and refresh behavior
+
+An entry is **fresh** while less time than its declaration's `cache` (default
+`1d`) has passed since `captured-at`, and **stale** after that. A `captured-at`
+in the future counts as captured now, so a skewed clock does not make every
+command run. How a run treats an entry depends on the command:
+
+- **By default**, a fresh entry is used and a stale or absent one runs its
+  command. This is every command that executes actions — `sync`, `clone`,
+  `apply-action`, and `apply-group` — and `vars list`.
+- **`--refresh-vars`** runs every command, fresh entry or not.
+- **`vars list --no-refresh`** runs nothing and writes nothing: it reports a
+  fresh entry, a stale one as stale, and an absent one as having no value.
+
+A command that succeeds writes its entry, with `captured-at` taken as it
+finished. One that fails — by exiting non-zero under `capture = "stdout"`, by
+being killed at its `command-timeout`, by leaving its output open past that
+timeout, by writing too much or writing something that is not UTF-8 — keeps whatever entry there was, fresh or stale, and the run
+uses it, with a warning that says how old it is. With nothing cached, the
+variable has [no value](repoformat.md#dynamic-variables) and the warning says
+so.
+
+A `capture = "status"` command that cannot be started at all is different: the
+run uses `"false"` whether or not a value is cached, warns, and writes nothing,
+so installing the missing program is noticed on the next run rather than after
+the cache expires. A `capture = "stdout"` command that cannot be started is an
+ordinary failure.
+
+### When declarations are evaluated
+
+A command that executes actions evaluates every declaration in the leaf, then
+every declaration in each remote an inclusion opens that the leaf
+[allows](repoformat.md#git) to run them — including one a higher layer
+overrides, so its entry stays current. An inclusion that is not opened runs
+nothing. `vars list` resolves the leaf alone, and leaves unrun a declaration a
+`vars.toml` value overrides.
+
+Neither `disabled.toml` nor a run-only skip changes what a declaration does
+once its inclusion is opened. [Dry-run](cmdline.md#dry-run-behavior) is not an
+exception either: commands run and captures are written in both modes.
+
+### Lifecycle
+
+- A missing file is an empty cache, and a command with no dynamic declaration to
+  resolve neither reads nor creates it, nor its directory.
+- A malformed file fails the command before any declaration runs, and is left
+  untouched. Deleting it is the remedy, and is always safe: the next run
+  captures again.
+- The document is written only when a command captured something, by the rules
+  below. One that cannot be written warns rather than fails; the values captured
+  still decide that run.
 
 ## Writing
 

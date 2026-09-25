@@ -145,6 +145,13 @@ contains "$HOME/.config/corporate/gitconfig" "you@corp.example" \
     "the seed holds the corporate identity"
 is_file "$HOME/.config/corporate/npmrc" "the included seeds are copies"
 
+step "the leaf's dynamic variable ran, and was cached under the XDG default"
+
+cache=$HOME/.cache/batfiles/dynamic-vars.toml
+is_file "$cache" "the capture wrote no cache under the XDG default"
+contains "$cache" "[has_git]" "the leaf's variable was not cached"
+contains "$cache" 'value = "true"' "git ran, so the status capture is true"
+
 step "the bootstrap policy was adopted before the first action, not after it"
 
 disabled=$HOME/.config/batfiles/disabled.toml

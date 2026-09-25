@@ -24,7 +24,7 @@ changing behavior and update it in the same change.
 | Product overview, quick start, supported features | Project `README.md` |
 | Product goals and intended scope | `docs/goals.md` |
 | Command syntax, output, selection, dry-run, exit statuses | `docs/cmdline.md` |
-| Environment parsing and location/color precedence | `docs/environment.md` |
+| Environment parsing, location/color precedence, dynamic-command execution | `docs/environment.md` |
 | Manifest schema, action fields, clone-list syntax | `docs/repoformat.md` |
 | Destination safety, seed installation, archive safety, Git update policy | `docs/safety.md` |
 | State schemas, lifecycle, and atomic document replacement | `docs/state.md` |

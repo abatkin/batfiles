@@ -27,10 +27,8 @@ without one, batfiles cannot promise content identity or authenticity beyond
 the transport and source selected by the user.
 
 Batfiles runs with the invoking user's permissions and does not elevate
-privileges. It does not sandbox Git, dynamic-variable commands, or filesystem
-access. In particular, a dry run may execute allowed dynamic-variable commands
-and update their cache, as described by the command-line specification's
-[proposed dry-run behavior](cmdline.md#dry-run-behavior).
+privileges. It does not sandbox Git or filesystem access, and [dynamic
+variables](../safety.md#what-is-not-sandboxed) are not sandboxed either.
 
 ## Destination paths
 

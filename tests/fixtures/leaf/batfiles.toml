@@ -7,10 +7,12 @@
 
 # What this repository answers a condition with. Only the one gated action below
 # reads them, so the rest of the installed tree is the same with them as
-# without.
+# without. `has_git` is found out rather than written down: its value is whether
+# `git --version` succeeds, cached for a day, and nothing reads it.
 [vars]
 work = "false"
 profile = "personal"
+has_git = { command = ["git", "--version"], capture = "status" }
 
 # The shell writes its history here, and writing it is what fails if the
 # directory is missing — a directory nothing else in the manifest creates.

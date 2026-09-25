@@ -115,27 +115,36 @@ fn a_value_that_is_not_a_string_is_rejected_where_it_is_written() {
     }
 }
 
-// CARRY(9.1): dynamic variables are declared as a table under `[vars]`, so this
-// is the assertion that step replaces.
 #[test]
-fn a_dynamic_variable_declaration_is_rejected_in_both_spellings() {
-    // A table under `[vars]` is a dynamic-variable declaration, which arrives at
-    // 9.1. Until then it is refused as the non-string value it is, rather than
-    // parsed into a record nothing would ever run.
-    for document in [
-        r#"[vars.has_op]
-command = ["sh", "-c", "command -v op"]
-cache = "1h"
-"#,
-        r#"[vars]
-has_op = { command = ["sh", "-c", "command -v op"] }
-"#,
+fn a_malformed_dynamic_variable_declaration_is_rejected_by_line() {
+    // A table under `[vars]` is a dynamic-variable declaration, and a closed
+    // record: what is wrong with it is named, on the line it is written.
+    for (document, expected) in [
+        (
+            "[vars.has_op]\ncommand = \"true\"\nchache = \"1h\"\n",
+            "unknown field `chache`",
+        ),
+        (
+            "[vars]\nemail = { cache = \"1h\" }\n",
+            "missing field `command`",
+        ),
+        ("[vars]\nemail = { command = [] }\n", "has nothing to run"),
+        (
+            "[vars]\nemail = { command = \"true\", cache = \"-1h\" }\n",
+            "cannot be negative",
+        ),
+        (
+            "[vars]\nemail = { command = \"true\", command-timeout = \"0s\" }\n",
+            "must be greater than zero",
+        ),
+        (
+            "[vars]\nemail = { command = \"true\", capture = \"stderr\" }\n",
+            "unknown variant `stderr`",
+        ),
     ] {
         let stderr = rejected(document);
-        assert!(
-            stderr.contains("expected a string"),
-            "the declaration was accepted:\n{stderr}"
-        );
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+        assert!(stderr.contains("line"), "no line in:\n{stderr}");
     }
 }
 

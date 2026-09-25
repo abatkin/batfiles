@@ -3,7 +3,9 @@
 pub(crate) mod action;
 pub(crate) mod check;
 pub(crate) mod default_disabled;
+pub(crate) mod duration;
 pub(crate) mod remote;
+pub(crate) mod vars;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,6 +18,7 @@ use crate::manifest::action::Action;
 use crate::manifest::check::{RecordName, check_included_source};
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::manifest::remote::Remote;
+use crate::manifest::vars::VarSpec;
 use crate::tomlfile;
 use crate::var::VarName;
 
@@ -54,11 +57,12 @@ pub(crate) struct Manifest {
     #[serde(default)]
     pub actions: Vec<Action>,
 
-    /// Static variable values, keyed by name. Serde rejects invalid names and
-    /// non-string values as the document is read. The lowest layer of the run's
-    /// own [variable set](crate::var_set).
+    /// Variable values and dynamic declarations, keyed by name. Serde rejects
+    /// invalid names, values that are neither a string nor a declaration, and
+    /// malformed declarations as the document is read. The lowest layer of the
+    /// run's own [variable set](crate::var_set).
     #[serde(default)]
-    pub vars: BTreeMap<VarName, String>,
+    pub vars: BTreeMap<VarName, VarSpec>,
 
     /// What a fresh machine starts with switched off. Accepted and checked as
     /// the document is read, including the conditions its entries carry;

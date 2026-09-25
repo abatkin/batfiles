@@ -2,10 +2,9 @@
 
 The environment inputs batfiles reads today: the four location variables that
 select where it works, the two run-only skip lists, the four bootstrap lists,
-the one-shot user variables, and the color selection. There is also one family
-it deliberately does *not* pass on, covered at the end. What is left —
-what dynamic declarations do to variable precedence — is in
-[`future/environment.md`](future/environment.md).
+the one-shot user variables, and the color selection; and the environment a
+[dynamic variable](#how-dynamic-commands-are-run)'s command runs in. There is
+also one family it deliberately does *not* pass on to Git, covered at the end.
 
 The process environment is captured once when batfiles starts, so every lookup
 during a run sees the same values.
@@ -29,15 +28,16 @@ command still reads or acts on only the roots it needs, and a command that needs
 none of them — `version`, and `init`, which works on the current directory —
 skips location resolution entirely.
 
-Three of the four are live so far. `sync`, the two apply commands, and a normal
-`vars list` open the `batfiles.toml` in the leaf repository and both documents
-under the config directory — [`disabled.toml`](state.md) and
+All four are live. `sync`, the two apply commands, and a normal `vars list` open
+the `batfiles.toml` in the leaf repository and both documents under the config
+directory — [`disabled.toml`](state.md) and
 [`vars.toml`](state.md#varstoml-machine-local-variables); the first three also
-install into the selected home. The enable and disable commands rewrite
-`disabled.toml` and open nothing else, as the machine-local variable commands do
-for `vars.toml`. Only the cache directory is still an answer to where a command
-*would* work. Which of the four a given command resolves is settled under
-[location selection](#location-selection).
+install into the selected home. Each of them reads and writes
+[`dynamic-vars.toml`](state.md#dynamic-varstoml-dynamic-variable-cache) under
+the cache directory when the manifest declares a dynamic variable. The enable
+and disable commands rewrite `disabled.toml` and open nothing else, as the
+machine-local variable commands do for `vars.toml`. Which of the four a given
+command resolves is settled under [location selection](#location-selection).
 
 ## Run-only skips
 
@@ -188,14 +188,74 @@ inclusions of one remote are two scopes and can get different answers out of the
 same manifest, while nothing in either scope reaches the leaf's own records, the
 inclusion's own condition, or the remote's.
 
+**A [dynamic variable](repoformat.md#dynamic-variables) takes the place of the
+manifest that declared it.** A leaf's is in the leaf's `[vars]` layer and a
+remote's in that remote's, so every layer above overrides it the same way. Two
+cases are the declaration's rather than its value's:
+
+- One a remote is not [allowed](repoformat.md#git) to run declares nothing at
+  all, so whatever is beneath it stands, as though it were not written.
+- One that ran and has no value still overrides the layers beneath it. The
+  variable reads as the empty string rather than as the lower layer's value:
+  the higher declaration won, and produced nothing.
+
 Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables),
 a malformed or unreadable one fails these commands as a malformed manifest does.
+So does a malformed `dynamic-vars.toml`, when a declaration needs it.
 
 The merged set supplies [condition](repoformat.md#conditions) values. Use
 `vars list` or an action command's `-vv` output to inspect values and origins;
 the command reference owns the [listing format](cmdline.md#vars-list). A line
 naming a layer one inclusion derived says which inclusion, since `batfiles.toml`
 alone names three documents in a run that includes two remotes.
+
+## How dynamic commands are run
+
+A [dynamic variable](repoformat.md#dynamic-variables)'s command is an arbitrary
+program. Batfiles runs it as the invoking user, with no sandbox, in both a real
+and a [dry](cmdline.md#dry-run-behavior) run, and whatever it does besides
+printing is its own business.
+
+It **inherits the batfiles process environment**, and nothing is added to it:
+the resolved variables are not exported, so a command that needs an input reads
+the ordinary environment, or a file in the repository that declared it.
+
+It **runs in the root of the repository that declared it**: the leaf
+repository, or the materialization of the remote whose manifest declared it. A
+relative path in the command resolves there, not in the directory batfiles was
+started from.
+
+A `command` written as a string runs under `sh -c` on Unix and `cmd /C` on
+Windows — never the user's login shell, whose startup files would make one
+manifest capture differently on two machines whose owner prefers a different
+shell. A `command` written as a list is run directly, with no shell.
+
+Its three standard streams are connected as follows:
+
+- **Standard input** is connected to nothing, so a command that reads it sees
+  end of input rather than waiting on a terminal nobody is watching.
+- **Standard output** is captured for `capture = "stdout"` and discarded for
+  `capture = "status"`. It never reaches batfiles' own [standard
+  output](cmdline.md#output-streams). The value is everything written to it
+  until it closes, which is normally when the command exits. A process the
+  command leaves running that still holds it open delays the capture, and if it
+  is still open at `command-timeout` the capture fails: nothing says the value
+  is complete. A command that starts something in the background should
+  redirect that process's output, as `daemon >/dev/null &` does.
+- **Standard error** is inherited, so the command's own diagnostics reach the
+  user verbatim. `--quiet` disconnects it; batfiles still warns about a failed
+  capture itself.
+
+`command-timeout` bounds the whole run. When it expires the command is killed,
+and the run is a failure under either capture, so a status capture that was cut
+off does not read as `"false"`. Only the process batfiles started is killed; one
+it started in the background keeps running.
+
+A `capture = "stdout"` command is also stopped as soon as it has written more
+than 1 MiB. Batfiles holds the output in memory and never more than that, and
+once it stops reading, it closes the output: anything still writing to it,
+including a process the command left running, has its writes refused rather
+than stored anywhere.
 
 ## Host facts in conditions
 

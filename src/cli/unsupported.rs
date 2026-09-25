@@ -42,11 +42,9 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
         Command::ApplyAction(args) => action(&args.action),
         Command::ApplyGroup(args) => action(&args.action),
         Command::Vars(command) => match command {
-            VarsCommand::List { no_refresh, .. } => {
-                first_given([(*no_refresh, "--no-refresh", "9.1")])
-            }
             VarsCommand::Set { .. }
             | VarsCommand::Get { .. }
+            | VarsCommand::List { .. }
             | VarsCommand::Unset { .. }
             | VarsCommand::Refresh { .. } => None,
         },
@@ -57,7 +55,6 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
 /// whichever of the four commands accepted it.
 fn action(options: &ActionOptions) -> Option<Unsupported> {
     first_given([
-        (options.refresh_vars, "--refresh-vars", "9.1"),
         (options.refresh_content, "--refresh-content", "9.4"),
         (options.no_overwrite, "--no-overwrite", "9.4"),
         (options.interactive, "--interactive", "9.4"),
@@ -88,7 +85,8 @@ mod tests {
             &["batfiles", "version"][..],
             &["batfiles", "init", "--no-git-init"],
             &["batfiles", "disable-action", "vim"],
-            &["batfiles", "vars", "list", "--machine-only"],
+            &["batfiles", "vars", "list", "--machine-only", "--no-refresh"],
+            &["batfiles", "sync", "--refresh-vars"],
             &["batfiles", "sync"],
             &["batfiles", "sync", "--dry-run"],
         ] {
@@ -111,7 +109,7 @@ mod tests {
     #[test]
     fn the_first_listed_option_is_the_one_reported() {
         assert_eq!(
-            withheld(&["batfiles", "sync", "--refresh-vars", "--refresh-remotes"]),
+            withheld(&["batfiles", "sync", "--refresh-content", "--refresh-remotes"]),
             Some(("--refresh-remotes", "9.3"))
         );
     }

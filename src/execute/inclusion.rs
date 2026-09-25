@@ -14,6 +14,7 @@ use crate::error::Error;
 use crate::item::{ItemId, ItemIdList};
 use crate::manifest::Manifest;
 use crate::manifest::action::{Action, Contributor, IncludeRemoteAction};
+use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
 use crate::paths;
 use crate::var::VarName;
@@ -141,7 +142,7 @@ pub(super) struct InclusionContents {
     /// The included manifest's `[vars]`: the layer below the leaf's in the
     /// inclusion's [scope](crate::var_set::VarSet::with_inclusion). Empty when
     /// the remote declares none.
-    pub vars: BTreeMap<VarName, String>,
+    pub vars: BTreeMap<VarName, VarSpec>,
     pub actions: Vec<IncludedAction>,
 }
 

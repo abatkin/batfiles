@@ -42,6 +42,11 @@ sha2 = "0.11"
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 
+# The friendly duration grammar of a dynamic variable's `cache` and
+# `command-timeout`, and the RFC 3339 `captured-at` of its cache entry. No time
+# zones are needed, so the bundled database and system lookup are left out.
+jiff = { version = "0.2.37", default-features = false, features = ["std", "serde"] }
+
 [dev-dependencies]
 # Run the binary in CLI tests.
 assert_cmd = "2"

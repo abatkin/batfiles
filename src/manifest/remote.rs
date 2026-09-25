@@ -38,6 +38,15 @@ impl Remote {
         }
     }
 
+    /// Whether an included manifest's dynamic declarations may run their
+    /// commands. Only a `git` remote has a manifest to include.
+    pub fn allows_dynamic_vars(&self) -> bool {
+        match self {
+            Self::Git(remote) => remote.allow_dynamic_vars,
+            Self::File(_) | Self::Archive(_) => false,
+        }
+    }
+
     /// The condition deciding whether this machine has the remote at all, or
     /// `None` where the record declares neither field.
     pub fn gate(&self) -> Option<Gate<'_>> {
@@ -76,6 +85,11 @@ pub(crate) struct GitRemote {
     /// rules. Absent, the materialization follows whatever branch it is on.
     #[serde(rename = "ref")]
     pub git_ref: Option<String>,
+
+    /// Whether the manifest an `include-remote` reads from this remote may run
+    /// its dynamic variables' commands.
+    #[serde(default)]
+    pub allow_dynamic_vars: bool,
 
     /// The condition under which this machine materializes the remote at all.
     pub when: Option<Condition>,
@@ -164,6 +178,25 @@ mod tests {
     }
 
     #[test]
+    fn a_git_remote_runs_no_dynamic_commands_unless_it_says_so() {
+        let allows = |document: &str| {
+            parse(document)
+                .unwrap_or_else(|error| panic!("{error}"))
+                .allows_dynamic_vars()
+        };
+        assert!(!allows(COMPLETE));
+        assert!(allows(
+            "type = \"git\"\nurl = \"https://e.example/a.git\"\nallow-dynamic-vars = true\n"
+        ));
+        assert!(
+            parse(
+                "type = \"git\"\nurl = \"https://e.example/a.git\"\nallow-dynamic-vars = \"yes\"\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn a_reserved_type_names_the_step_that_builds_it() {
         // Refused by its `type` rather than by the fields around it, so the
         // record is read as the future schema writes it and the diagnostic is
@@ -202,11 +235,6 @@ mod tests {
             (
                 "type = \"git\"\nurl = \"https://e.example/a.git\"\nbranch = \"main\"\n",
                 "branch",
-            ),
-            // Arrives with the dynamic variables it would permit, at 9.1.
-            (
-                "type = \"git\"\nurl = \"https://e.example/a.git\"\nallow-dynamic-vars = true\n",
-                "allow-dynamic-vars",
             ),
             // A field belonging to another variant.
             (

@@ -79,7 +79,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 11] = [
+const FILESYSTEM_OWNERS: [Owner; 12] = [
     Owner {
         path: "src/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -124,6 +124,12 @@ const FILESYSTEM_OWNERS: [Owner; 11] = [
         path: "src/action/symlink.rs",
         kind: Kind::ModeReader,
         reason: "the platform-specific call every symlink action makes",
+    },
+    Owner {
+        path: "src/dynamic/run.rs",
+        kind: Kind::Bookkeeping,
+        reason: "runs dynamic-variable commands: arbitrary, unsandboxed subprocesses as the \
+                 invoking user, in both modes and whatever they do",
     },
     Owner {
         path: "src/tomlfile.rs",
@@ -333,7 +339,16 @@ fn filesystem_mentions(source: &str) -> Vec<(usize, &'static str)> {
         {
             found.push((index + 1, "a platform `fs` module"));
         }
-        if packed.contains("process::Command") {
+        // A single line also catches the braced spelling, `process::{Child,
+        // Command}`, as long as the group is written on one line.
+        let braced = packed.split_once("process::{").is_some_and(|(_, rest)| {
+            rest.split('}')
+                .next()
+                .unwrap_or_default()
+                .split(',')
+                .any(|name| name == "Command" || name.starts_with("Commandas"))
+        });
+        if packed.contains("process::Command") || braced {
             found.push((index + 1, "std::process::Command"));
         }
     }
@@ -827,6 +842,10 @@ fn supported_filesystem_import_spellings_are_detected() {
         ),
         ("use std::process::Command;", "std::process::Command"),
         (
+            "use std::process::{Child, Command, Stdio};",
+            "std::process::Command",
+        ),
+        (
             "    process::Command::new(\"git\")",
             "std::process::Command",
         ),
@@ -840,6 +859,7 @@ fn a_name_that_is_not_the_filesystem_is_left_alone() {
     for source in [
         // The exit status every command returns, which `app.rs` needs.
         "use std::process::ExitCode;",
+        "use std::process::{Child, ExitStatus};",
         // Platform-specific and not the filesystem.
         "use std::os::unix::ffi::OsStrExt;",
         "let contents = read_to_string(path)?;",

@@ -546,7 +546,7 @@ mod tests {
             .map(|(name, value)| {
                 (
                     VarName::try_from((*name).to_owned()).expect("valid name"),
-                    (*value).to_owned(),
+                    crate::var_set::VarValue::Static((*value).to_owned()),
                 )
             })
             .collect();
@@ -724,7 +724,7 @@ mod tests {
             .map(|(name, value)| {
                 (
                     VarName::try_from(name.to_owned()).expect("valid name"),
-                    value.to_owned(),
+                    crate::var_set::VarValue::Static(value.to_owned()),
                 )
             })
             .collect();

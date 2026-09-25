@@ -163,6 +163,11 @@ impl Reporter {
         println!("{message}");
     }
 
+    /// Whether `--quiet` was given.
+    pub fn is_quiet(&self) -> bool {
+        matches!(self.verbosity, Verbosity::Quiet)
+    }
+
     /// Whether [`Self::detail`] at `level` is enabled; check before expensive formatting.
     pub fn shows_detail(&self, level: u8) -> bool {
         self.verbosity.shows_detail(level)
