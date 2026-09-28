@@ -40,24 +40,6 @@ what an inclusion contributed. What is not built is the rest of that reach:
 
 ## Commands
 
-### `sync`
-
-```text
-batfiles sync [action-options] [selection-options] [--dry-run] [--refresh-remotes]
-```
-
-Build and apply the desired installation plan for an existing leaf repository.
-In addition to the shared action-execution and sync/clone selection options,
-it accepts:
-
-| Option              | Purpose                                                                                                                               |
-|---------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| `--dry-run`         | Report the action plan using the shared [dry-run behavior](../cmdline.md#dry-run-behavior).                                                        |
-| `--refresh-remotes` | Re-fetch file and archive remotes, replacing their tool-owned materializations. Git remotes are already fetched on every normal sync. |
-
-`--dry-run` and `--refresh-remotes` are mutually exclusive: a dry run
-materializes nothing, so there is nothing for it to refresh.
-
 ### `apply-action` and `apply-group`
 
 Both are built, and are specified in

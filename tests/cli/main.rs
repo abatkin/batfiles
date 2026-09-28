@@ -33,6 +33,8 @@ mod dry_run;
 #[cfg(unix)]
 mod dynamic_vars;
 #[cfg(unix)]
+mod fetched_remotes;
+#[cfg(unix)]
 mod linking;
 #[cfg(unix)]
 mod vars_refresh;

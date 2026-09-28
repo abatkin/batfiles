@@ -98,7 +98,7 @@ const FILESYSTEM_OWNERS: [Owner; 12] = [
     Owner {
         path: "src/fetch.rs",
         kind: Kind::Downstream,
-        reason: "writes a download into a staging file install.rs opened, and widens its mode",
+        reason: "writes a download or a file:// source into a staging file install.rs opened, and widens its mode",
     },
     Owner {
         path: "src/archive.rs",
@@ -113,7 +113,7 @@ const FILESYSTEM_OWNERS: [Owner; 12] = [
     Owner {
         path: "src/install.rs",
         kind: Kind::ModeReader,
-        reason: "creates, publishes, and cleans up seed staging nodes",
+        reason: "creates, publishes, and cleans up seed staging nodes, and swaps rebuilt remote materializations into place",
     },
     Owner {
         path: "src/git.rs",
@@ -134,7 +134,7 @@ const FILESYSTEM_OWNERS: [Owner; 12] = [
     Owner {
         path: "src/tomlfile.rs",
         kind: Kind::Bookkeeping,
-        reason: "reads and atomically rewrites the documents batfiles owns",
+        reason: "reads, atomically rewrites, and removes the documents batfiles owns",
     },
     Owner {
         path: "src/init.rs",

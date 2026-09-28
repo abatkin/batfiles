@@ -359,7 +359,7 @@ and the rest of that list still applies.
 ### `sync`
 
 ```text
-batfiles sync [--dry-run] [--skip-action <id>]... [--skip-group <group>]...
+batfiles sync [--dry-run | --refresh-remotes] [--skip-action <id>]... [--skip-group <group>]...
 ```
 
 Read the leaf repository's [manifest](repoformat.md#reading-the-manifest) and
@@ -395,23 +395,30 @@ is how a load error names one too, so a heading and a diagnostic point at the
 same record by the same words. An action with no group ends after its name.
 
 Before any of them, `sync` [materializes](repoformat.md#materialization) every
-[remote](repoformat.md#remotes) the manifest declares, cloning what is missing
-and updating what is there. Those lines come first and are the same lines a
-`git-clone` action prints, under a heading naming the record they belong to:
+[remote](repoformat.md#remotes) the manifest declares: it clones a Git remote
+that is missing and updates one that is there, and fetches a file or archive
+remote that is missing or whose declaration has changed. Those lines come first,
+under a heading naming the record they belong to. A Git remote's are the lines a
+`git-clone` action prints, and a file or archive remote's the lines a fetching
+action does, with `refetched` where one replaces an earlier fetch:
 
 ```text
 remote core
 cloned /home/you/dotfiles/remotes/core from git@github.com:me/dotfiles-core.git
+remote fzf
+extracted /home/you/dotfiles/remotes/fzf from https://example.com/fzf-0.65.2.tar.gz
+remote pathogen
+refetched /home/you/dotfiles/remotes/pathogen from https://example.com/pathogen.vim
 symlink zshrc (group shell)
 linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
 ```
 
 A materialization that was already up to date says nothing, as an unchanged
-destination does. A remote that cannot be cloned or updated fails the run before
-any action, so a `sync` that reaches its first action has every declared remote
-it takes in place. Under `--dry-run` batfiles says what it would clone or update
-and runs no git at all, which is the [dry-run rule](#dry-run-behavior) for every
-caller.
+destination does. A remote that cannot be cloned, updated, or fetched fails the
+run before any action, so a `sync` that reaches its first action has every
+declared remote it takes in place. Under `--dry-run` batfiles says what it would
+clone, update, or fetch, and runs no git and fetches nothing at all, which is the
+[dry-run rule](#dry-run-behavior) for every caller.
 
 A remote whose own [condition](repoformat.md#a-remotes-condition) closes on this
 machine is passed over instead, under the same heading and by the rules in
@@ -432,8 +439,18 @@ load](#selection-by-command).
 | Option                 | Purpose                                                                |
 |------------------------|--------------------------------------------------------------------------|
 | `--dry-run`            | Report the action plan without executing it — see [dry-run behavior](#dry-run-behavior). |
+| `--refresh-remotes`    | Fetch every file and archive remote again, current or not.               |
 | `--skip-action <id>`   | Leave one action out of this run. Repeatable.                            |
 | `--skip-group <group>` | Leave every action in one group out of this run. Repeatable.             |
+
+**`--refresh-remotes` fetches every file and archive remote again**, including
+one whose [stamp](repoformat.md#materialization) says it is current, and
+replaces it as a changed declaration would be; it is how a remote whose URL
+publishes new content under the same name is brought up to date. It excludes
+nothing it would otherwise include: a remote its condition closes is still passed
+over, and a `remotes/<id>` no stamp claims is still refused. Git remotes are
+unaffected, since every `sync` updates them already. It cannot be combined with
+`--dry-run`, which materializes nothing and so has nothing to refresh.
 
 Every other option `sync` accepts is [refused for now](#unimplemented-options);
 that list shrinking to empty is how you know `sync` is finished.
@@ -1168,8 +1185,12 @@ run it again.
 **A declared remote is described, not materialized.** `sync`
 [brings every declared remote down](repoformat.md#materialization) before its
 first action; under `--dry-run` it says what it would clone or update for each
-of them on exactly the terms above, runs no git, and creates no `remotes/` tree
-to say it in. The one command that fetches a remote fetches none here, so a dry
+Git remote on exactly the terms above, runs no git, and creates no `remotes/`
+tree to say it in. A file or archive remote is described the way a fetching
+action is: whether it would be fetched, fetched again, or left alone is decided
+from what is at `remotes/<id>` and the stamp beside it, which are inspection, and
+nothing is requested. A `remotes/<id>` batfiles would refuse to replace is
+refused in a dry run too. The one command that fetches a remote fetches none here, so a dry
 run leaves the repository as untouched as it leaves the home. A remote whose
 [condition](repoformat.md#a-remotes-condition) closes is passed over instead,
 and reports the line it reports in a real run — a skip is the line that takes no
@@ -1255,7 +1276,7 @@ to start.
 
 | Command                       | Options refused for now                                                                                                                    |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                        | `--refresh-remotes`, `--refresh-content`, `--no-overwrite`, `--interactive`                                                |
+| `sync`                        | `--refresh-content`, `--no-overwrite`, `--interactive`                                                                     |
 | `clone`                       | `--refresh-content`, `--no-overwrite`, `--interactive`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all     |
 | `apply-action`, `apply-group` | `--refresh-content`, `--no-overwrite`, `--interactive`                                                                     |
 | everything else               | none                                                                                                                       |

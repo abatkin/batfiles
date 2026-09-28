@@ -1,4 +1,5 @@
-//! Read TOML documents and atomically replace them through owned temporary files.
+//! Read TOML documents, atomically replace them through owned temporary files,
+//! and remove them.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -56,6 +57,17 @@ pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(),
     // The temporary file is a sibling so the rename stays within one filesystem.
     let temp = temp_path(path);
     publish(&temp, path, text.as_bytes()).map_err(write_error)
+}
+
+/// Remove a document. A missing one is already removed.
+pub(crate) fn remove(path: &Path) -> Result<(), Error> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(Error::Write {
+            path: path.to_path_buf(),
+            source: error,
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Write through an exclusively created temporary file and rename it over `dest`.

@@ -1,13 +1,15 @@
-//! Download HTTP content into a caller-provided staging or scratch file.
-//! Transfers require status 200 and verify an optional SHA-256 digest.
+//! Download HTTP or `file://` content into a caller-provided staging or scratch
+//! file. HTTP transfers require status 200; both verify an optional SHA-256
+//! digest.
 
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Read, Write};
-use std::path::Path;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sha2::{Digest as _, Sha256};
+use thiserror::Error;
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::error::Error;
@@ -44,53 +46,52 @@ pub(crate) fn download_file(
     set_download_permissions(&mut into, built_at)
 }
 
-/// Download a complete HTTP 200 response into `into`, verifying an optional digest.
-/// `built_at` names the staging or scratch file for diagnostics. Failure may leave
-/// partial content in the sink; the caller must discard it rather than publish it.
+/// Download a complete HTTP 200 response, or a whole local file for a
+/// `file://` URL, into `into`, verifying an optional digest. `built_at` names
+/// the staging or scratch file for diagnostics. Failure may leave partial
+/// content in the sink; the caller must discard it rather than publish it.
 pub(crate) fn download(
     url: &str,
     sha256: Option<&str>,
     into: &mut impl Write,
     built_at: &Path,
 ) -> Result<(), Error> {
-    let mut response = agent()
-        .get(url)
-        .call()
-        .map_err(|error| failed(url, error))?;
-
-    let status = response.status();
-    if status != ureq::http::StatusCode::OK {
-        return Err(Error::FetchStatus {
-            url: url.to_owned(),
-            status: status.as_u16(),
-        });
-    }
-
-    let mut reader = response.body_mut().as_reader();
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 64 * 1024];
-
-    loop {
-        let filled = reader
-            .read(&mut buffer)
-            .map_err(|error| failed(url, error.into()))?;
-        if filled == 0 {
-            break;
+    let digest = match file_url_path(url) {
+        Some(path) => {
+            let path = path.map_err(|source| Error::FileUrl {
+                url: url.to_owned(),
+                source,
+            })?;
+            let unreadable = |error| Error::Read {
+                path: path.clone(),
+                source: error,
+            };
+            let file = fs::File::open(&path).map_err(unreadable)?;
+            copy_hashed(file, into, built_at, unreadable)?
         }
-        let arrived = &buffer[..filled];
-        hasher.update(arrived);
-        into.write_all(arrived).map_err(|error| Error::Write {
-            path: built_at.to_path_buf(),
-            source: error,
-        })?;
-    }
-    into.flush().map_err(|error| Error::Write {
-        path: built_at.to_path_buf(),
-        source: error,
-    })?;
+        None => {
+            let mut response = agent()
+                .get(url)
+                .call()
+                .map_err(|error| failed(url, error))?;
+            let status = response.status();
+            if status != ureq::http::StatusCode::OK {
+                return Err(Error::FetchStatus {
+                    url: url.to_owned(),
+                    status: status.as_u16(),
+                });
+            }
+            copy_hashed(
+                response.body_mut().as_reader(),
+                into,
+                built_at,
+                |error: io::Error| failed(url, error.into()),
+            )?
+        }
+    };
 
     if let Some(expected) = sha256 {
-        let actual = hex(&hasher.finalize());
+        let actual = hex(&digest);
         if !actual.eq_ignore_ascii_case(expected) {
             return Err(Error::DigestMismatch {
                 url: url.to_owned(),
@@ -100,6 +101,110 @@ pub(crate) fn download(
         }
     }
     Ok(())
+}
+
+/// Copy everything `reader` holds into `into`, returning its SHA-256.
+/// `unreadable` turns a failure reading the source into the caller's error.
+fn copy_hashed(
+    mut reader: impl Read,
+    into: &mut impl Write,
+    built_at: &Path,
+    unreadable: impl Fn(io::Error) -> Error,
+) -> Result<Vec<u8>, Error> {
+    let written = |error| Error::Write {
+        path: built_at.to_path_buf(),
+        source: error,
+    };
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let filled = reader.read(&mut buffer).map_err(&unreadable)?;
+        if filled == 0 {
+            break;
+        }
+        let arrived = &buffer[..filled];
+        hasher.update(arrived);
+        into.write_all(arrived).map_err(written)?;
+    }
+    into.flush().map_err(written)?;
+    Ok(hasher.finalize().to_vec())
+}
+
+/// Why a `file://` URL names no file on this machine.
+#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
+pub(crate) enum FileUrlError {
+    #[error(
+        "names a host other than `localhost`; a file URL reads this machine, \
+         as `file:///path` or `file://localhost/path`"
+    )]
+    Host,
+
+    #[error(
+        "has a query or fragment, which a file does not; \
+         write a `?` or `#` in the path as `%3F` or `%23`"
+    )]
+    QueryOrFragment,
+
+    #[error("does not name an absolute path")]
+    NotAbsolute,
+
+    #[error("does not decode to a path this platform can open")]
+    Undecodable,
+}
+
+/// The local path a `file://` URL names, or `None` for any other URL. The
+/// scheme is matched without regard to case and the path is percent-decoded.
+/// The host must be empty or `localhost`.
+pub(crate) fn file_url_path(url: &str) -> Option<Result<PathBuf, FileUrlError>> {
+    const SCHEME: &str = "file://";
+    let rest = url
+        .get(..SCHEME.len())
+        .filter(|scheme| scheme.eq_ignore_ascii_case(SCHEME))
+        .map(|_| &url[SCHEME.len()..])?;
+    Some(local_path(rest))
+}
+
+/// The path after `file://`: an optional host, then an absolute path.
+fn local_path(rest: &str) -> Result<PathBuf, FileUrlError> {
+    let (host, path) = rest.find('/').map_or((rest, ""), |at| rest.split_at(at));
+    if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+        return Err(FileUrlError::Host);
+    }
+    if path.contains(['?', '#']) {
+        return Err(FileUrlError::QueryOrFragment);
+    }
+    let decoded: Vec<u8> = percent_encoding::percent_decode_str(path).collect();
+    if decoded.is_empty() {
+        return Err(FileUrlError::NotAbsolute);
+    }
+    if decoded.contains(&0) {
+        return Err(FileUrlError::Undecodable);
+    }
+    let path = platform_path(decoded)?;
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(FileUrlError::NotAbsolute)
+    }
+}
+
+/// A decoded URL path as a Unix path: any bytes, as written.
+#[cfg(unix)]
+fn platform_path(decoded: Vec<u8>) -> Result<PathBuf, FileUrlError> {
+    use std::os::unix::ffi::OsStringExt;
+
+    Ok(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
+}
+
+/// A decoded URL path as a Windows path: `/C:/dir` is `C:/dir`.
+#[cfg(not(unix))]
+fn platform_path(decoded: Vec<u8>) -> Result<PathBuf, FileUrlError> {
+    let path = String::from_utf8(decoded).map_err(|_| FileUrlError::Undecodable)?;
+    let drive = path
+        .as_bytes()
+        .get(1..3)
+        .is_some_and(|it| it[0].is_ascii_alphabetic() && it[1] == b':');
+    Ok(PathBuf::from(if drive { &path[1..] } else { &path }))
 }
 
 /// The client every fetch goes through.
@@ -176,6 +281,35 @@ mod tests {
             hex(&Sha256::digest(b"")),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_file_url_names_a_path_on_this_machine() {
+        let path = |url: &str| file_url_path(url).expect("a file URL");
+        assert_eq!(path("file:///etc/hosts"), Ok(PathBuf::from("/etc/hosts")));
+        assert_eq!(
+            path("FILE://localhost/etc/hosts"),
+            Ok(PathBuf::from("/etc/hosts")),
+            "the scheme and the one host a file URL may name are matched without case"
+        );
+        assert_eq!(
+            path("file:///srv/my%20files/a%3Fb"),
+            Ok(PathBuf::from("/srv/my files/a?b"))
+        );
+        assert!(file_url_path("https://e.example/a").is_none());
+        assert!(file_url_path("file:").is_none());
+    }
+
+    #[test]
+    fn a_file_url_that_names_no_local_file_says_why() {
+        let path = |url: &str| file_url_path(url).expect("a file URL");
+        assert_eq!(path("file://server/share/a"), Err(FileUrlError::Host));
+        assert_eq!(path("file:///a?b"), Err(FileUrlError::QueryOrFragment));
+        assert_eq!(path("file:///a#b"), Err(FileUrlError::QueryOrFragment));
+        assert_eq!(path("file://"), Err(FileUrlError::NotAbsolute));
+        assert_eq!(path("file://localhost"), Err(FileUrlError::NotAbsolute));
+        assert_eq!(path("file:///a%00b"), Err(FileUrlError::Undecodable));
     }
 
     #[test]

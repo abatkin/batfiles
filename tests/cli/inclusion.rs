@@ -547,8 +547,8 @@ remote = "corporate"
 fn an_included_manifests_remotes_are_ignored_and_reported_once() {
     // The last of the one-level rules, and the one about a section rather than a
     // record. Ignored means unchecked as well as unused, which is what `vendor`
-    // is here for: `file` is a type a leaf is refused for declaring
-    // (`remotes.rs`), and this is someone else's declaration.
+    // is here for: its digest is one a leaf is refused for declaring, and this
+    // is someone else's declaration.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",

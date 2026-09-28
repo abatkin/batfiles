@@ -154,11 +154,12 @@ impl<'de> Visitor<'de> for RepoPathVisitor {
             }
         }
         // The structured spelling is the one that names a remote outright, so
-        // both halves are required: a table with only a path is the string
-        // spelling written the long way around, and means nothing else.
+        // `remote` is required: a table with only a path is the string spelling
+        // written the long way around, and means nothing else. Without `path`
+        // it is `@<remote>`, which names a file remote whole.
         Ok(RepoPath {
             remote: Some(remote.ok_or_else(|| de::Error::missing_field("remote"))?),
-            path: path.ok_or_else(|| de::Error::missing_field("path"))?,
+            path: path.unwrap_or_default(),
         })
     }
 }
@@ -249,13 +250,16 @@ mod tests {
     }
 
     #[test]
-    fn the_structured_spelling_is_closed_and_needs_both_halves() {
+    fn the_structured_spelling_is_closed_and_needs_a_remote() {
         let unknown = refused("source = { remote = \"core\", path = \"a\", ref = \"main\" }\n");
         assert!(unknown.contains("unknown field `ref`"), "{unknown}");
         let missing = refused("source = { path = \"files/zshrc\" }\n");
         assert!(missing.contains("missing field `remote`"), "{missing}");
-        let pathless = refused("source = { remote = \"core\" }\n");
-        assert!(pathless.contains("missing field `path`"), "{pathless}");
+        // What `@core` says, the way a file remote is named whole.
+        assert_eq!(
+            parsed("source = { remote = \"core\" }\n"),
+            parsed("source = \"@core\"\n")
+        );
     }
 
     #[test]

@@ -49,6 +49,27 @@ pub(crate) fn batfiles() -> Command {
     command
 }
 
+/// A `file://` URL naming `path`, as a manifest writes one, with the four
+/// characters a URL path cannot hold as written percent-encoded.
+pub(crate) fn file_url(path: &std::path::Path) -> String {
+    let path = path.to_str().expect("fixture paths are UTF-8");
+    let mut url = String::from("file://");
+    // On Windows an absolute path starts with its drive, and a URL path with `/`.
+    if !path.starts_with('/') {
+        url.push('/');
+    }
+    for character in path.replace('\\', "/").chars() {
+        match character {
+            '%' => url.push_str("%25"),
+            ' ' => url.push_str("%20"),
+            '?' => url.push_str("%3F"),
+            '#' => url.push_str("%23"),
+            other => url.push(other),
+        }
+    }
+    url
+}
+
 pub(crate) fn stderr_of(assertion: &assert_cmd::assert::Assert) -> String {
     String::from_utf8_lossy(&assertion.get_output().stderr).into_owned()
 }

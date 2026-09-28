@@ -66,8 +66,9 @@ interactive mode by itself does not weaken the backup guarantee. Non-interactive
 operation remains predictable and backup-first by default, while
 `--no-overwrite` skips unmanaged conflicts.
 
-Tool-owned materializations, temporary files, and disposable caches may be
-replaced without user-content backups. Machine-local configuration such as
+Temporary files and disposable caches may be replaced without user-content
+backups, as [remote materializations](../safety.md#replacing-a-materialization)
+already are. Machine-local configuration such as
 `vars.toml` and `disabled.toml` is not disposable and follows the atomic write
 rules in [`docs/state.md`](../state.md#writing).
 

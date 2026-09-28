@@ -33,12 +33,7 @@ pub(crate) fn first(command: &Command) -> Option<Unsupported> {
         | Command::DisableGroup(_)
         | Command::EnableGroup(_) => None,
         Command::Clone(args) => action(&args.action),
-        Command::Sync(args) => first_given([
-            // Not 6.2: a git remote is fetched on every ordinary sync, so this
-            // option has nothing to refresh until file and archive remotes land.
-            (args.refresh_remotes, "--refresh-remotes", "9.3"),
-        ])
-        .or_else(|| action(&args.action)),
+        Command::Sync(args) => action(&args.action),
         Command::ApplyAction(args) => action(&args.action),
         Command::ApplyGroup(args) => action(&args.action),
         Command::Vars(command) => match command {
@@ -89,6 +84,7 @@ mod tests {
             &["batfiles", "sync", "--refresh-vars"],
             &["batfiles", "sync"],
             &["batfiles", "sync", "--dry-run"],
+            &["batfiles", "sync", "--refresh-remotes"],
         ] {
             assert_eq!(withheld(args), None, "{args:?}");
         }
@@ -109,8 +105,8 @@ mod tests {
     #[test]
     fn the_first_listed_option_is_the_one_reported() {
         assert_eq!(
-            withheld(&["batfiles", "sync", "--refresh-content", "--refresh-remotes"]),
-            Some(("--refresh-remotes", "9.3"))
+            withheld(&["batfiles", "sync", "--interactive", "--refresh-content"]),
+            Some(("--refresh-content", "9.4"))
         );
     }
 }

@@ -1,10 +1,10 @@
 # Batfiles Repository Format
 
 The part of the repository format that runs today: where the manifest lives, how
-it is read, the variables and Git remotes it can declare, and the nine kinds of
-action it can declare. The rest of the schema — file and archive remotes, and
-the other action types — is in [`future/repoformat.md`](future/repoformat.md)
-until those records parse.
+it is read, the variables and remotes it can declare, and the nine kinds of
+action it can declare. The rest of the schema — entry filters, and addresses
+reaching a single clone-list entry — is in
+[`future/repoformat.md`](future/repoformat.md) until it is built.
 
 ## Repository layout
 
@@ -22,9 +22,9 @@ Only `batfiles.toml` has intrinsic meaning. Every other name in the tree becomes
 meaningful when an action references it, and means nothing on its own.
 
 `remotes/` is the exception, and it is not yours to write: batfiles generates it
-to hold the [remotes](#remotes) the manifest declares, one directory per remote
-ID. It is a checkout of somebody else's repository rather than content of this
-one, so a repository under version control should ignore it.
+to hold the [remotes](#remotes) the manifest declares, one per remote ID. What is
+in it is somebody else's content rather than this repository's, so a repository
+under version control should ignore it.
 
 The **leaf repository** is the one a command works on, selected by
 `--batfiles-dir` or `BATFILES_DIR`, then by a `batfiles.toml` in the current
@@ -142,8 +142,9 @@ variable name = string matching [A-Za-z_][A-Za-z0-9_]*
 
 ## Remotes
 
-`[remotes]` is a map from a name to a record describing a repository this one
-does not hold. The key is the remote's [ID](#names-and-ids):
+`[remotes]` is a map from a name to a record describing content this repository
+does not hold: another repository, a file, or an archive. The key is the remote's
+[ID](#names-and-ids):
 
 ```toml
 [remotes.core]
@@ -156,16 +157,13 @@ Every remote is a closed record selected by its required `type`:
 
 | Field    | Type               | Required | Description                                                     |
 |----------|--------------------|:--------:|-----------------------------------------------------------------|
-| `type`   | remote-type string |   yes    | Selects the record variant. `git` is the one that exists.       |
+| `type`   | remote-type string |   yes    | Selects the record variant: [`git`](#git), [`file`](#file), or [`archive`](#archive). |
 | `when`   | condition          |    no    | See [conditions](#conditions).                                  |
 | `unless` | condition          |    no    | At most one of the two.                                         |
 
-**`file` and `archive` are reserved and not built.** Both are specified in
-[`future/repoformat.md`](future/repoformat.md#file-remote), and a manifest
-declaring either is refused by name and told which step builds it — rather than
-being told that its type does not exist, which is the wrong thing to tell
-someone who read the type in the schema. A `type` the schema does not reserve at
-all is refused as exactly that, because there is no record behind it to check.
+A `type` the schema does not name is refused as the manifest is read, because
+there is no record behind it to check, and so is a field the selected variant
+does not have.
 
 ### `git`
 
@@ -205,11 +203,72 @@ happens before the ordered list and depends on nothing in it.
 manifest declares is [ignored](#an-included-manifests-own-remotes), because
 inclusion is one level deep and nothing in the run can reach one of its records.
 
+### `file`
+
+One file, fetched from a URL.
+
+```toml
+[remotes.pathogen]
+type = "file"
+url = "https://raw.githubusercontent.com/tpope/vim-pathogen/master/autoload/pathogen.vim"
+```
+
+| Field    | Type   | Required | Description                                                     |
+|----------|--------|:--------:|-----------------------------------------------------------------|
+| `url`    | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.       |
+| `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.  |
+
+**The materialization is the file itself**, at `remotes/<id>`, so a
+[repository path](#sources-and-destinations) names it whole — as `@pathogen`, or
+`{ remote = "pathogen" }` — and names nothing within it:
+
+```toml
+[[actions]]
+type = "symlink"
+source = "@pathogen"
+dest = "~/.vim/autoload/pathogen.vim"
+```
+
+A path under a file remote is refused as the manifest is read, and so is a
+`source-dir` naming one, since a file is never a directory. It is fetched by
+[the transfer the fetching actions share](#the-transfer-both-fetching-actions-share)
+and lands with the [permissions](safety.md#installed-permissions) a fetched file
+does.
+
+### `archive`
+
+A tarball fetched from a URL and unpacked.
+
+```toml
+[remotes.fzf]
+type = "archive"
+url = "https://example.com/fzf-0.65.2.tar.gz"
+archive-root = "*"
+```
+
+| Field          | Type   | Required | Description                                                            |
+|----------------|--------|:--------:|------------------------------------------------------------------------|
+| `url`          | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.              |
+| `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
+| `archive-root` | string |    no    | A prefix every entry is written without, or `*` for the archive's single top-level directory. |
+
+**The archive is unpacked into `remotes/<id>/` exactly as a
+[`fetch-archive`](#fetch-archive) unpacks one into its `dest`**: the same formats,
+the same `archive-root`, and the same [archive safety](safety.md#archive-extraction).
+An action then reads paths within it as it would within a Git remote's clone —
+`@fzf/bin/fzf`. Filtering the entries is not built for an archive remote any more
+than for `fetch-archive`, and `include` or `exclude` on one is refused as an
+unknown field; see [`future/repoformat.md`](future/repoformat.md#fetch-archive-entry-filters).
+
+Neither a file nor an archive remote has a manifest, so neither can be named by an
+[`include-remote`](#include-remote).
+
 ### Materialization
 
-**Declaring a remote is what brings it onto the machine.** `sync` clones each
-declared remote into `remotes/<id>/` inside the leaf repository, before the first
-action, and updates it there on every later run. Nothing has to name a remote for
+**Declaring a remote is what brings it onto the machine.** `sync` materializes
+each declared remote at `remotes/<id>` inside the leaf repository, before the
+first action — cloning a Git remote, fetching a file, unpacking an archive — and
+brings it up to date there on every later run. Nothing has to name a remote for
 this to happen: a declared remote is materialized whether or not an action
 installs from it.
 
@@ -219,12 +278,42 @@ naming one repository are two materializations, and a
 the record rather than the URL. Because the ID is a directory name,
 [two of them may not differ only in case](#names-and-ids).
 
-**A materialization is a clone like any other.** It follows `ref` where one is
-written and the branch it is on where none is, and later runs update it under the
-[Git update policy](safety.md#git-updates) — fast-forward only, and left alone
-with a warning where that is not possible. A `remotes/<id>` holding something
-that is not a clone is refused the same way a `git-clone` destination is, and
-[clone validation](safety.md#clone-validation) applies unchanged.
+**A Git remote's materialization is a clone like any other.** It follows `ref`
+where one is written and the branch it is on where none is, and later runs update
+it under the [Git update policy](safety.md#git-updates) — fast-forward only, and
+left alone with a warning where that is not possible. A `remotes/<id>` holding
+something that is not a clone is refused the same way a `git-clone` destination
+is, and [clone validation](safety.md#clone-validation) applies unchanged.
+
+**A file or archive remote is fetched when it is missing or its declaration has
+changed.** Once one is in place, batfiles writes a stamp beside it,
+`remotes/<id>.batfiles-source`, recording the `type`, `url`, `sha256`, and
+`archive-root` it was fetched from. A later `sync` compares the stamp with the
+manifest:
+
+| At `remotes/<id>` | Stamp | `sync` |
+| --- | --- | --- |
+| Nothing | Any, or none | Fetches it |
+| The kind of node the stamp's type is | Matches the manifest | Leaves it; nothing is requested, and `-v` reports it unchanged |
+| The kind of node the stamp's type is | Differs from the manifest | Fetches it again and replaces it |
+| Anything else | | Refuses, naming what is there |
+
+A digest is compared without regard to case, so rewriting one in capitals fetches
+nothing. Whatever is fetched is built beside the materialization and
+[replaces it](safety.md#replacing-a-materialization) only once it is complete and
+verified, so a failed fetch — a server that is down, a digest that does not
+match — leaves the earlier materialization and its stamp as they were, and fails
+the run. To fetch one again whose declaration has not changed, run
+[`sync --refresh-remotes`](cmdline.md#sync).
+
+**What no stamp claims is not batfiles' to replace.** A `remotes/<id>` with no
+stamp beside it, with one that cannot be read as one, or holding a node of the
+other kind — a directory where the stamp records a file — is refused, naming the
+path and what is there, and nothing is fetched. The usual cause is a clone left
+by a Git remote once declared under the same ID, which may hold work of its own;
+move it aside or remove it, and run `sync` again. The reverse needs nothing: a Git
+remote materialized under an ID removes a stamp left beside it, since what is
+there now is a clone.
 
 **A remote that cannot be materialized stops the run**, before any action, the
 way a failed action stops it. What `sync` reports while doing all this is in
@@ -233,8 +322,8 @@ way a failed action stops it. What `sync` reports while doing all this is in
 **Only `sync` materializes, and not `sync --dry-run`.** The
 [apply commands](cmdline.md#apply-action) use whatever is on the machine already
 and fetch nothing, and a dry run is in the same position by the
-[dry-run rule](cmdline.md#dry-run-behavior): it says what it would clone or
-update and does neither. So an action any of them runs that installs from a
+[dry-run rule](cmdline.md#dry-run-behavior): it says what it would clone, update,
+or fetch, and does none of it. So an action any of them runs that installs from a
 remote reads the materialization as it stands, however stale that is. Where
 there is none, the action is refused by name rather than reported as a missing
 file.
@@ -295,9 +384,9 @@ A plain string is a path within the repository that declared the action. A
 string beginning with `@` is shorthand for the structured form, and the two are
 the same value: `@core/files/zshrc` and
 `{ remote = "core", path = "files/zshrc" }` resolve alike and are quoted alike
-in diagnostics. The structured form is closed and requires both halves — a table
+in diagnostics. The structured form is closed and requires `remote` — a table
 with only a `path` is the plain string written the long way around and means
-nothing else.
+nothing else. Without `path`, it is `@<remote>`.
 
 **The remote must be one the same manifest [declares](#remotes).** A path naming
 a remote no `[remotes]` entry declares is refused when the manifest is read,
@@ -307,7 +396,12 @@ already be on this machine: `sync` brings the declared remotes down before the
 first action, and a path into one that is not there is refused by name rather
 than reported as a missing file. So an [apply command](cmdline.md#apply-action),
 which materializes nothing, can only install from a remote `sync` has already
-cloned.
+brought down.
+
+**A [file remote](#file) is named whole.** Its materialization is the one file,
+so `@pathogen` and `{ remote = "pathogen" }` name it, a path within it is refused,
+and so is a `source-dir` naming it. Every other remote is a tree, and is named by
+a path within it.
 
 **`@` at the start of a repository path is reserved and has no escape.** The
 character introduces a remote reference wherever a repository path begins with
@@ -319,7 +413,8 @@ repository whose files begin with `@` therefore cannot name one as a source.
 Every other rule holds whichever tree the path reads from. A repository path is a
 nonempty relative path within that tree. It may contain `.` and `..` only if it
 remains strictly inside; `.`, `./`, `shell/..`, and a reference naming a remote
-and no path cannot name the whole of a tree. Use `/` separators. Anchored paths
+and no path cannot name the whole of a tree — a file remote, which is not a
+tree, aside. Use `/` separators. Anchored paths
 and drive prefixes are rejected according to the host's path syntax. A symlink
 stored inside a repository may point outside it. Diagnostics name the tree the
 path is read from, so a refusal about `@core/../secrets` says `remote core`
@@ -628,7 +723,7 @@ dest = "~/.vim/autoload/pathogen.vim"
 
 | Field    | Type   | Required | Description                                                          |
 |----------|--------|:--------:|----------------------------------------------------------------------|
-| `source` | string |   yes    | An `http://` or `https://` URL. Not a repository path.               |
+| `source` | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL. Not a repository path. |
 | `dest`   | string |   yes    | Where the file goes, exactly. Never empty; `~` is the home.          |
 | `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.       |
 
@@ -647,8 +742,7 @@ shared [staging](safety.md#staging-and-publication) and
 URL names a tarball installs the tarball. Unpacking one is
 [`fetch-archive`](#fetch-archive), a separate action type; `archive-root` is its
 field and is unknown here, so a manifest that writes it on a `fetch-file` is
-rejected rather than fetching an archive it would not unpack. A `file://`
-source is rejected on the same terms.
+rejected rather than fetching an archive it would not unpack.
 
 ### `fetch-archive`
 
@@ -665,7 +759,7 @@ archive-root = "*"
 
 | Field          | Type   | Required | Description                                                            |
 |----------------|--------|:--------:|------------------------------------------------------------------------|
-| `source`       | string |   yes    | An `http://` or `https://` URL. Not a repository path.                 |
+| `source`       | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL. Not a repository path. |
 | `dest`         | string |   yes    | Where the unpacked directory goes, exactly. Never empty; `~` is the home. |
 | `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
 | `archive-root` | string |    no    | A prefix every entry is written without, spelled as an entry path is, or `*` for the archive's single top-level directory. |
@@ -712,7 +806,7 @@ is not built. A manifest that writes one is rejected.
 
 Both fetching actions use these rules:
 
-- HTTP and HTTPS URLs; up to five redirects.
+- HTTP, HTTPS, and [`file://`](#file-urls) URLs; up to five redirects.
 - Status `200 OK` is required. Partial, empty-status, and conditional responses
   such as 206, 204, and 304 fail.
 - An optional `sha256` is checked against the downloaded bytes. A mismatch
@@ -726,6 +820,23 @@ Both fetching actions use these rules:
 
 An incomplete or failed transfer is not published. See
 [staging and publication](safety.md#staging-and-publication).
+
+#### File URLs
+
+A `file://` URL reads a file on this machine through the same transfer: the
+whole file is read, and `sha256` is checked against it, exactly as a download's
+bytes are. Status codes, redirects, proxies, and timeouts have nothing to apply
+to.
+
+It names an absolute path, as `file:///home/you/tool.tar.gz` or
+`file://localhost/home/you/tool.tar.gz`; on Windows, `file:///C:/tools/a.zip`.
+The path is percent-decoded, so a space is written `%20`, and a `?` or `#` that
+belongs in it is written `%3F` or `%23` — written as themselves, they would be a
+query or fragment, which a file does not have, and a URL holding either is
+refused. So is one naming any host but `localhost`: a file URL reads this
+machine. Both are refused as the manifest is read. A path naming nothing, or
+something that cannot be read as a file, fails when the action runs, naming the
+path.
 
 ### `git-clone`
 
@@ -848,7 +959,7 @@ exclude-actions = ["p10k"]
 
 | Field             | Type                  | Required | Description                                             |
 |-------------------|-----------------------|:--------:|---------------------------------------------------------|
-| `remote`          | ID                    |   yes    | A [remote](#remotes) this same manifest declares.       |
+| `remote`          | ID                    |   yes    | A [`git` remote](#git) this same manifest declares.     |
 | `install-actions` | ID or list of IDs     |    no    | Take only the actions named.                            |
 | `install-groups`  | ID or list of IDs     |    no    | Take only the actions naming these groups.              |
 | `exclude-actions` | ID or list of IDs     |    no    | Leave out the actions named.                            |
@@ -857,7 +968,8 @@ exclude-actions = ["p10k"]
 
 **`remote` names a declaration, not a URL.** It must be a key of `[remotes]` in
 the manifest writing the inclusion; naming one nothing declares is refused as the
-manifest is read, the way a source naming an undeclared remote is. One remote may
+manifest is read, the way a source naming an undeclared remote is. So is naming
+a [`file`](#file) or [`archive`](#archive) remote, which has no manifest to read. One remote may
 be included more than once, and every inclusion of it reads the one
 [materialization](#materialization) its ID owns.
 
@@ -1111,12 +1223,12 @@ run can name one of its records — an included action may not source from a
 remote, and an included `include-remote` is left out.
 
 Ignored includes unchecked. A record there is read far enough to be a `[remotes]`
-entry this batfiles understands, and no further: a [reserved
-type](#remotes) it has yet to build, an empty `url`, a `ref` written with nothing
-in it, and two keys differing only in case each fail the repository that declared
-them **where that repository is the leaf**, and none of them fails a run that
-merely includes it. A `type` no version of the schema reserves is still refused,
-because the document stops being one batfiles can read.
+entry this batfiles understands, and no further: an empty or malformed `url`, a
+`sha256` that is not a digest, a `ref` written with nothing in it, and two keys
+differing only in case each fail the repository that declared them **where that
+repository is the leaf**, and none of them fails a run that merely includes it. A
+`type` the schema does not name, or a field its record does not have, is still
+refused, because the document stops being one batfiles can read.
 
 The map is reported once per inclusion, naming every record passed over, for the
 same reason a dropped nested inclusion is reported: a declaration that is not

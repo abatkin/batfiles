@@ -41,10 +41,13 @@ pub(crate) struct Invocation<'a> {
 }
 
 /// `sync`: bring the home directory to the state the whole manifest describes.
+/// `refresh_remotes` fetches every file and archive remote again, current or
+/// not.
 pub(crate) fn sync(
     invocation: &Invocation<'_>,
     skip_actions: &[String],
     skip_groups: &[String],
+    refresh_remotes: bool,
 ) -> Result<(), Error> {
     // A sync that dispatches nothing is an ordinary success.
     run(
@@ -53,7 +56,7 @@ pub(crate) fn sync(
             actions: skip_actions,
             groups: skip_groups,
         },
-        Kind::Sync,
+        Kind::Sync { refresh_remotes },
         invocation,
     )?;
     Ok(())
@@ -89,8 +92,9 @@ struct Skips<'a> {
 /// The command a run serves. Decides whether remotes are materialized before
 /// assembly and whether a bootstrap writes `disabled.toml` before it is read.
 enum Kind<'a> {
-    /// `sync`: materializes; adopts nothing.
-    Sync,
+    /// `sync`: materializes, fetching every file and archive remote again
+    /// where `refresh_remotes` says to; adopts nothing.
+    Sync { refresh_remotes: bool },
     /// `clone`: adopts the bootstrap policy, then materializes.
     Bootstrap(&'a Bootstrap),
     /// `apply-action` and `apply-group`: use existing materializations and fetch
@@ -103,6 +107,16 @@ impl Kind<'_> {
     /// one record or group; updating every remote is `sync`'s job.
     fn materializes(&self) -> bool {
         !matches!(self, Self::Apply)
+    }
+
+    /// Whether materializing fetches file and archive remotes that are current.
+    fn refreshes_remotes(&self) -> bool {
+        matches!(
+            self,
+            Self::Sync {
+                refresh_remotes: true
+            }
+        )
     }
 }
 
@@ -308,7 +322,7 @@ fn run(
     // manifest from a materialization, and an action's source, including a
     // clone list, may be inside one.
     if kind.materializes() {
-        remotes::materialize(&manifest.remotes, &context)?;
+        remotes::materialize(&manifest.remotes, &context, kind.refreshes_remotes())?;
     }
 
     let run_list = assemble(

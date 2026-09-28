@@ -8,11 +8,13 @@ use thiserror::Error;
 use crate::archive;
 use crate::clone_list;
 use crate::dynamic::refresh;
+use crate::fetch;
 use crate::git;
 use crate::init;
 use crate::item::{ItemAddress, ItemAddressError, ItemId};
 use crate::manifest;
 use crate::paths::ExistingNode;
+use crate::remotes;
 use crate::var::{VarName, VarNameError};
 
 #[derive(Debug, Error)]
@@ -102,6 +104,33 @@ pub(crate) enum Error {
     )]
     RemoteNotMaterialized { remote: ItemId, path: PathBuf },
 
+    /// A file or archive remote whose materialization path holds something no
+    /// stamp says batfiles fetched there, which is therefore not its to replace.
+    #[error(
+        "cannot materialize remote `{remote}`: {} is {found} that batfiles did not \
+         fetch for it; remove it and run sync again",
+        .path.display()
+    )]
+    MaterializationNotFetched {
+        remote: ItemId,
+        path: PathBuf,
+        found: remotes::Found,
+    },
+
+    /// A file or archive remote put in place whose stamp could not be written,
+    /// so what records it is missing or describes an earlier fetch.
+    #[error(
+        "remote `{remote}` was fetched to {}, but the stamp recording it could not be \
+         written: {source}; delete {} and run sync again",
+        .path.display(),
+        .path.display()
+    )]
+    StampNotWritten {
+        remote: ItemId,
+        path: PathBuf,
+        source: Box<Error>,
+    },
+
     /// An action sourcing from a remote whose condition excludes it on this
     /// machine. `reason` is the remote's exclusion; a `sync` would not help.
     #[error("remote `{remote}` is excluded on this machine: {reason}")]
@@ -189,6 +218,14 @@ pub(crate) enum Error {
     /// A server that answered, with something other than the file.
     #[error("could not fetch {url}: the server answered {status}")]
     FetchStatus { url: String, status: u16 },
+
+    /// A `file://` URL naming no file on this machine. Refused as the manifest
+    /// is read, so reached only by a caller that fetches an unchecked URL.
+    #[error("could not fetch {url}: the URL {source}")]
+    FileUrl {
+        url: String,
+        source: fetch::FileUrlError,
+    },
 
     /// Bytes that arrived whole but are not the ones the manifest named.
     #[error(

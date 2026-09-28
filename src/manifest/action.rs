@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use super::ReadAs;
 use super::check::{
-    Invalid, RecordName, check_archive_root, check_dest, check_digest, check_git_ref,
+    Invalid, RecordName, SourceShape, check_archive_root, check_dest, check_digest, check_git_ref,
     check_git_source, check_inclusion_filters, check_inclusion_remote, check_source, check_url,
 };
 use super::remote::Remote;
@@ -69,30 +69,30 @@ impl Action {
     ) -> Result<(), Invalid> {
         match self {
             Self::Symlink(action) => {
-                check_source(&action.source, record, remotes)?;
+                check_source(&action.source, SourceShape::Any, record, remotes)?;
                 check_dest(&action.dest, record)
             }
             Self::SymlinkDir(action) => {
-                check_source(&action.source_dir, record, remotes)?;
+                check_source(&action.source_dir, SourceShape::Directory, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
             Self::CreateDir(action) => check_dest(&action.dest, record),
             Self::Copy(action) => {
-                check_source(&action.source, record, remotes)?;
+                check_source(&action.source, SourceShape::Any, record, remotes)?;
                 check_dest(&action.dest, record)
             }
             Self::CopyDir(action) => {
-                check_source(&action.source_dir, record, remotes)?;
+                check_source(&action.source_dir, SourceShape::Directory, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
             // `source` is a URL, not a repository path.
             Self::FetchFile(action) => {
-                check_url(&action.source, record)?;
+                check_url(&action.source, "source", record)?;
                 check_digest(action.sha256.as_deref(), record)?;
                 check_dest(&action.dest, record)
             }
             Self::FetchArchive(action) => {
-                check_url(&action.source, record)?;
+                check_url(&action.source, "source", record)?;
                 check_digest(action.sha256.as_deref(), record)?;
                 check_archive_root(action.archive_root.as_deref(), record)?;
                 check_dest(&action.dest, record)
@@ -105,7 +105,7 @@ impl Action {
                 check_dest(&action.dest, record)
             }
             Self::GitCloneList(action) => {
-                check_source(&action.source, record, remotes)?;
+                check_source(&action.source, SourceShape::Any, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
             // No source or destination. Only a leaf inclusion's remote must

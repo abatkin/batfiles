@@ -17,6 +17,9 @@ const PATHOGEN: &str =
 /// The starship body. The digest in the fixture manifest is this text's.
 const STARSHIP: &str = "add_newline = false\n";
 
+/// [`STARSHIP`]'s digest, as the fixture manifest writes it.
+const STARSHIP_SHA256: &str = "0fbf196b3612d0bafdaaa79b45efb1d03c813bedc53bbe3e6e0f5550ec14683f";
+
 /// What the `fetching` fixture asks for, and the three bodies behind it.
 ///
 /// A function rather than a constant because one of the three is an archive
@@ -349,19 +352,86 @@ dest = "~/.ackrc"
     let assertion = tree.batfiles().arg("sync").assert().failure();
 
     assert!(
-        stderr_of(&assertion).contains("is not an http:// or https:// URL"),
+        stderr_of(&assertion).contains("is not an http://, https://, or file:// URL"),
         "{}",
         stderr_of(&assertion)
     );
 }
 
 #[test]
-fn a_file_url_names_the_step_that_makes_it_work() {
+fn a_file_url_fetches_a_file_on_this_machine() {
+    // The same transfer a server's answer goes through, digest included, so the
+    // one thing a local source changes is where the bytes come from.
+    let tree = Tree::new();
+    let published = tree.path("published");
+    fs::create_dir_all(&published).expect("the published directory");
+    fs::write(published.join("starship.toml"), STARSHIP).expect("the published file");
+    fs::write(published.join("fzf.tar.gz"), tarball(FZF)).expect("the published archive");
+    tree.write_manifest(&format!(
+        r#"[[actions]]
+type = "fetch-file"
+source = "{}"
+sha256 = "{STARSHIP_SHA256}"
+dest = "~/.config/starship.toml"
+
+[[actions]]
+type = "fetch-archive"
+source = "{}"
+dest = "~/.local/fzf"
+archive-root = "*"
+"#,
+        file_url(&published.join("starship.toml")),
+        file_url(&published.join("fzf.tar.gz")),
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(tree.home(".config/starship.toml")).expect("the fetched file"),
+        STARSHIP,
+        "{}",
+        stderr_of(&assertion)
+    );
+    assert!(
+        tree.home(".local/fzf/bin/fzf").is_file(),
+        "the archive was not unpacked:\n{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_file_url_naming_nothing_fails_naming_the_path() {
+    let tree = Tree::new();
+    let missing = tree.path("nowhere/pathogen.vim");
+    tree.write_manifest(&format!(
+        r#"[[actions]]
+type = "fetch-file"
+source = "{}"
+dest = "~/.vim/autoload/pathogen.vim"
+"#,
+        file_url(&missing)
+    ));
+
+    let assertion = tree.batfiles().arg("sync").assert().failure();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains(&format!("could not read {}", missing.display())),
+        "{stderr}"
+    );
+    assert!(
+        !tree.home(".vim/autoload/pathogen.vim").exists(),
+        "nothing should be installed"
+    );
+}
+
+#[test]
+fn a_file_url_naming_another_host_is_refused_as_the_manifest_is_read() {
     let tree = Tree::new();
     tree.write_manifest(
         r#"[[actions]]
 type = "fetch-file"
-source = "file:///etc/hosts"
+source = "file://fileserver/share/hosts"
 dest = "~/.hosts"
 "#,
     );
@@ -369,7 +439,7 @@ dest = "~/.hosts"
     let assertion = tree.batfiles().arg("sync").assert().failure();
 
     assert!(
-        stderr_of(&assertion).contains("step 9.3"),
+        stderr_of(&assertion).contains("names a host other than `localhost`"),
         "{}",
         stderr_of(&assertion)
     );

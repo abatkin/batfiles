@@ -85,7 +85,8 @@ an unbuilt [refresh proposal](future/safety.md#seed-actions-and-deletion).
 
 ## Staging and publication
 
-Seeds are built at `<destination>.batfiles-incomplete`, beside their destination.
+Seeds and fetched [remote materializations](repoformat.md#materialization) are
+built at `<destination>.batfiles-incomplete`, beside their destination.
 Archive downloads first use `<destination>.batfiles-download`; verification
 finishes before extraction into the staging directory. Downloads and extraction
 use the same open archive file.
@@ -104,12 +105,37 @@ Completed files are published using a hard link where supported. A destination
 that appeared during the build is kept. Directory publication and the file
 fallback check occupancy and then rename.
 
+### Replacing a materialization
+
+A file or archive remote's materialization is tool-owned: batfiles
+[replaces one](repoformat.md#materialization) that its stamp says it fetched,
+without a backup, and refuses one that no stamp claims. Replacement never
+exposes a partial materialization:
+
+1. The new content is built and verified at the staging path, as a seed is.
+2. The earlier materialization is renamed to `<destination>.batfiles-old`.
+3. The new content is renamed into place.
+4. The renamed-aside materialization is removed.
+5. The stamp is rewritten.
+
+A failure before step 2 leaves the earlier materialization and its stamp in
+place. If step 3's rename fails, the earlier materialization is renamed back. An
+occupied `.batfiles-old` path fails before anything moves, as an occupied
+staging path does. Removal in step 4 is best-effort: one that fails warns and
+leaves the path, which then blocks the next replacement until it is removed.
+
+The stamp is not written with the content, so a failure at step 5 leaves the new
+materialization in place with a stamp that describes an earlier fetch, or with
+none after a first fetch. The error names the materialization and says to delete
+it and run `sync` again, which fetches it afresh.
+
 ### Concurrent writers
 
 Batfiles does not lock installation destinations or guarantee safety against a
 concurrent writer. The check and rename fallback are separate operations; another
 process can create a node between them. Symlink replacement also has separate
-inspection, removal, and creation operations. Do not run simultaneous installs
+inspection, removal, and creation operations, and so does replacing a
+materialization. Do not run simultaneous installs
 against the same destinations.
 
 Git clones write directly to their destination. Subsequent runs reject incomplete

@@ -94,6 +94,7 @@ dependencies = [
  "flate2",
  "gethostname",
  "jiff",
+ "percent-encoding",
  "serde",
  "sha2",
  "simple-expressions",

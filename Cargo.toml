@@ -38,6 +38,9 @@ ureq = { version = "3.4", default-features = false, features = [
 # Download checksum verification.
 sha2 = "0.11"
 
+# Decoding the path of a `file://` URL.
+percent-encoding = "2"
+
 # Tar and gzip extraction; extended attributes are not restored.
 tar = { version = "0.4", default-features = false }
 flate2 = "1"

@@ -1,5 +1,6 @@
-//! Stage and publish seed content without exposing partial installations.
-//! Temporary paths are created exclusively and cleanup only removes owned paths.
+//! Stage and publish seed content, and rebuild tool-owned content, without
+//! exposing partial installations. Temporary paths are created exclusively and
+//! cleanup only removes owned paths.
 
 use std::fs;
 use std::io;
@@ -118,6 +119,119 @@ fn seed<T>(
         ));
     } else {
         reporter.detail(1, &format!("{} {}", Verb::Keep.say(mode), dest.display()));
+    }
+    Ok(())
+}
+
+/// Build tool-owned content beside `dest` and put it there, replacing without a
+/// backup whatever is there already: the caller must have established that it
+/// is an earlier build of its own. `fill` is handed the staging file, opened for
+/// writing and reachable by nobody else, and the path it is at.
+///
+/// Creates missing parents. Reports nothing; the caller words the result. Dry
+/// runs create nothing and never call `fill`.
+pub(crate) fn rebuild_file(
+    dest: &Path,
+    mode: RunMode,
+    reporter: &Reporter,
+    fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
+) -> Result<(), Error> {
+    rebuild(
+        SeedKind::File,
+        dest,
+        mode,
+        reporter,
+        create_private_file,
+        fill,
+    )
+}
+
+/// [`rebuild_file`] for a directory: `fill` is handed the staging directory's
+/// path, created private to this run.
+pub(crate) fn rebuild_directory(
+    dest: &Path,
+    mode: RunMode,
+    reporter: &Reporter,
+    fill: impl FnOnce(&Path) -> Result<(), Error>,
+) -> Result<(), Error> {
+    rebuild(
+        SeedKind::Directory,
+        dest,
+        mode,
+        reporter,
+        create_private_directory,
+        |(), staging| fill(staging),
+    )
+}
+
+/// Build complete content at the staging path, then publish it at a vacant
+/// `dest` or [swap](swap) it for the node there. A failure before the swap
+/// leaves `dest` as it was.
+fn rebuild<T>(
+    kind: SeedKind,
+    dest: &Path,
+    mode: RunMode,
+    reporter: &Reporter,
+    make: impl FnOnce(&Path) -> io::Result<T>,
+    fill: impl FnOnce(T, &Path) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let replacing = paths::occupied(dest)?;
+    if !replacing {
+        directory::create_parents(dest, mode)?.report_removals(mode, reporter);
+    }
+    if !mode.writes() {
+        return Ok(());
+    }
+    let staging = staging_path(dest);
+    let node = create_staging(&staging, make)?;
+    let built = fill(node, &staging).and_then(|()| {
+        if replacing {
+            swap(&staging, dest, reporter)
+        } else if publish(&staging, kind, dest)? {
+            Ok(())
+        } else {
+            // Something arrived at `dest` while the content was being built,
+            // and it is nobody's to replace.
+            Err(Error::Write {
+                path: dest.to_path_buf(),
+                source: io::ErrorKind::AlreadyExists.into(),
+            })
+        }
+    });
+    discard(&staging, kind, reporter);
+    built
+}
+
+/// Put complete staged content at `dest` in place of the node there: move that
+/// node aside, rename the staged content in, then remove what was moved aside.
+/// If the rename fails, the earlier node is moved back.
+///
+/// The aside path is `<dest>.batfiles-old`; an occupied one fails before
+/// anything moves, as an occupied staging path does.
+fn swap(staging: &Path, dest: &Path, reporter: &Reporter) -> Result<(), Error> {
+    let aside = beside(dest, ".batfiles-old");
+    if paths::occupied(&aside)? {
+        return Err(Error::StagingPathTaken { path: aside });
+    }
+    let failed = |source| Error::Write {
+        path: dest.to_path_buf(),
+        source,
+    };
+    fs::rename(dest, &aside).map_err(failed)?;
+    if let Err(error) = fs::rename(staging, dest) {
+        let _ = fs::rename(&aside, dest);
+        return Err(failed(error));
+    }
+    let removed = match fs::symlink_metadata(&aside) {
+        Ok(found) if found.is_dir() => fs::remove_dir_all(&aside),
+        Ok(_) => fs::remove_file(&aside),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = removed {
+        reporter.warn(&format!(
+            "could not remove the replaced content at {}: {error}",
+            aside.display()
+        ));
     }
     Ok(())
 }

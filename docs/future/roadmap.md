@@ -16,18 +16,20 @@ Build on demand, in any order except that 9.2 requires 9.1.
 - **9.1** ✅ Dynamic variables, their cache, `allow-dynamic-vars`,
   `--refresh-vars`, and `vars list --no-refresh`.
 - **9.2** ✅ `vars refresh`, selective refresh by key, and reachability.
-- **9.3** Add file and archive remotes.
+- **9.3** ✅ File and archive remotes, `file://` URLs, and `--refresh-remotes`.
 - **9.4** Add `--refresh-content`, backups, `--no-overwrite`, and interactive
   conflict handling. Update current destination refusals and remedies. Seed
   refresh must change both the early occupancy decision in `install::seed` and
   publication in `install::publish`; complete content must exist before backup
-  and replacement. Review this together with 9.5.
+  and replacement. `install::rebuild` already replaces a remote materialization
+  by building beside it and swapping it in through a move-aside; a backup-first
+  seed refresh may build on it. Review this together with 9.5.
 - **9.5** Address concurrent-writer safety across all actions, including the
   inspection/removal/create sequence for symlinks and rename publication for
   directories. Evaluate platform no-replace operations and filesystem fallbacks;
   preserve the current limitation in [safety.md](../safety.md) until all action
   paths meet the stronger contract. Include refresh and backup operations from
-  9.4.
+  9.4, and the move-aside swap that replaces a remote materialization.
 - **9.6** Report prospective directory creations and link removals once per run.
   Cover repeated parent inspection under a broken `dest-dir` and multiple
   actions sharing a destination container, such as linking and cloning plugins
@@ -46,22 +48,6 @@ Begin after slice 8 is in real use.
 - **10.3** Test installation end to end against a local release server, by
   extending the [pristine-machine
   acceptance](../architecture.md#the-pristine-machine).
-
-## Reference code
-
-Read reference implementations from tag `before-rewrite-20260819` as needed; the
-paths below refer to that tag. Do not merge from it. Adapt code to current
-callers, error handling, and [architecture.md](../architecture.md); do not
-import unused layers or tests for unbuilt behavior.
-
-| Step | Reference | Useful contract |
-| --- | --- | --- |
-| 9.3 | `src/repo/remote.rs` | File and archive remote records |
-
-Preserve hand-written serde visitors for short/long value forms: choose the form
-by TOML type and retain specific errors and locations. Use the existing
-`Reporter`, TOML read/write helpers, Git launcher, selection, and execution
-loop.
 
 ## Enhancements
 

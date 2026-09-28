@@ -31,37 +31,9 @@ inclusions of one remote share its single materialization.
 
 ## Top-Level `batfiles.toml` Schema
 
-The part of this section that runs — every section optional, no format-version
-field, and known records closed — is specified in
-[`docs/repoformat.md`](../repoformat.md), along with all four sections:
-`[remotes]`, `[[actions]]`, `[vars]`, and `[default-disabled]`, and a table
-under `[vars]`, which is a [dynamic
-variable](../repoformat.md#dynamic-variables). What is not built is one of the
-value shapes below: a `file` or `archive` remote.
-
-All top-level sections are optional:
-
-```toml
-[remotes]                  # map<string, Remote>
-
-[vars]                     # map<string, string | DynamicVariable>
-
-[default-disabled]         # leaf bootstrap policy
-[[default-disabled.actions]]
-[[default-disabled.groups]]
-
-[[actions]]                # ordered list<Action>
-```
-
-There is no format-version field in the current schema.
-
-Known records are closed: unknown fields in the top-level document, a remote,
-an action, a structured path reference, or a default-disabled entry are
-invalid. Map keys under `[remotes]` and `[vars]` are
-user-defined data and therefore are not treated as schema fields; their values
-must still match one of the known value shapes. The built half of that rule,
-including the two naming rules the keys themselves follow, is specified in
-[`docs/repoformat.md`](../repoformat.md#top-level-schema).
+Built, and specified in [`docs/repoformat.md`](../repoformat.md#top-level-schema):
+every section optional, no format-version field, known records closed, and every
+value shape each section takes. Nothing about it is outstanding.
 
 ## Shared Value Types
 
@@ -147,54 +119,11 @@ ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
 
 ## Remotes
 
-`[remotes]` is a map from a user-selected name to a tagged remote record. The
-map, the ID its keys follow, the shared `type` / `when` / `unless` fields, the
-whole of the `git` record, and [materializing
-one](../repoformat.md#materialization) are built and specified in
-[`docs/repoformat.md`](../repoformat.md#remotes). One thing about the section
-is not.
-
-**The other two record variants**, below. A manifest declaring either is refused
-by name, so a remote that batfiles cannot fetch is never read as one it can.
-Nothing downloads or unpacks a remote; only a Git one materializes.
-
-### File remote
-
-```toml
-[remotes.pathogen]
-type = "file"
-url = "https://example.com/pathogen.vim"
-sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-```
-
-| Field    | Type   | Required | Description                                               |
-|----------|--------|:--------:|-----------------------------------------------------------|
-| `url`    | string |   yes    | `https://`, `http://`, or `file://` source URL.           |
-| `sha256` | string |    no    | 64-digit hexadecimal SHA-256 digest of the fetched bytes. |
-
-### Archive remote
-
-```toml
-[remotes.fzf]
-type = "archive"
-url = "https://example.com/fzf.tar.gz"
-sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-archive-root = "*"
-include = ["bin/*"]
-exclude = ["*.md"]
-```
-
-| Field          | Type         | Required | Description                                                                 |
-|----------------|--------------|:--------:|-----------------------------------------------------------------------------|
-| `url`          | string       |   yes    | `https://`, `http://`, or `file://` archive URL.                            |
-| `sha256`       | string       |    no    | 64-digit hexadecimal SHA-256 digest of the archive bytes.                   |
-| `archive-root` | string       |    no    | Archive path prefix to strip, or `"*"` for automatic single-root detection. |
-| `include`      | `GlobFilter` |    no    | Archive entries to include.                                                 |
-| `exclude`      | `GlobFilter` |    no    | Archive entries to exclude.                                                 |
-
-That declaring a remote only names a source, and that actions decide whether and
-where its content is installed, holds for these two as it does for a `git`
-remote and is specified with it.
+Built, all three record variants — `git`, `file`, and `archive` — along with
+[materializing](../repoformat.md#materialization) each, and specified in
+[`docs/repoformat.md`](../repoformat.md#remotes). What an archive remote does not
+take is the pair of [entry filters](#fetch-archive-entry-filters) a
+`fetch-archive` does not take either.
 
 ## Default-Disabled Bootstrap Entries
 
@@ -280,9 +209,10 @@ selection the machine states for itself rather than the repository.
 
 ### `fetch-archive` entry filters
 
-[`fetch-archive`](../repoformat.md#fetch-archive) is built. Two of the fields
-specified for it are not: `include` and `exclude`, which select which of an
-archive's entries are unpacked.
+[`fetch-archive`](../repoformat.md#fetch-archive) and the [`archive`
+remote](../repoformat.md#archive) are built. Two of the fields specified for
+them are not: `include` and `exclude`, which select which of an archive's entries
+are unpacked, and would apply to both alike.
 
 | Field     | Type         | Required | Default     | Description                          |
 |-----------|--------------|:--------:|-------------|--------------------------------------|
@@ -301,8 +231,9 @@ exclude = ["*.md"]
 
 They match against an entry's path with `archive-root` already stripped, so a
 filter is written against the tree as it will be installed rather than as the
-archive spells it. Neither is accepted today: a manifest that writes one is
-rejected, rather than installing more of an archive than it asked for.
+archive spells it. Neither is accepted today, on either record: a manifest that
+writes one is rejected, rather than installing more of an archive than it asked
+for.
 
 They have no step. A named `archive-root` already installs one directory out of
 an archive and nothing beside it, which is what the two repositories driving this
@@ -312,9 +243,6 @@ fields is built, but that is the spelling alone: what an inclusion's fields hold
 are IDs, compared for equality against what a manifest declared. A caller that
 wants a glob is what makes `GlobFilter` worth building.
 
-A `file://` source is not fetched by either fetching action yet; it arrives with
-file remotes at step 9.3.
-
 ### `include-remote`
 
 The record, its required `remote`, the manifest it reads, the actions it splices
@@ -322,13 +250,8 @@ into the list, how those are addressed, the four selection fields that say which
 of them it takes, its `vars` overrides and the included remote's own `[vars]`
 with what each reaches, what it does with a remote that is excluded or not
 materialized, and the rule that an inclusion is never applyable are built and
-specified in [`docs/repoformat.md`](../repoformat.md#include-remote). Every field
-the record accepts is built; what is outstanding is below.
-
-One thing about `remote` is outstanding: naming a declared `file` or
-`archive` remote must be invalid configuration. Both types are refused by name as
-the manifest is read, so today no inclusion can reach one; the rule arrives with
-them at step 9.3.
+specified in [`docs/repoformat.md`](../repoformat.md#include-remote), including
+the rule that `remote` names a `git` remote. Nothing about it is outstanding.
 
 ## Serializer-Oriented Summary
 

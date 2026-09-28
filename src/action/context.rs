@@ -62,11 +62,13 @@ impl<'a> RunContext<'a> {
     /// Returns an absolute path preserving repository symlinks.
     /// Excluded or missing remote materializations are errors.
     pub fn source(&self, remote: Option<&ItemId>, source: &RepoPath) -> Result<PathBuf, Error> {
-        let resolved = paths::normalize_lexically(
-            &self
-                .tree_root(remote.or(source.remote()))?
-                .join(source.path()),
-        );
+        let root = self.tree_root(remote.or(source.remote()))?;
+        // A file remote is named with no path, and is its materialization.
+        let resolved = if source.path().is_empty() {
+            root
+        } else {
+            paths::normalize_lexically(&root.join(source.path()))
+        };
 
         // Presence, not reachability: a source that is itself a broken symlink
         // is there, and linking at it is what the repository asked for.

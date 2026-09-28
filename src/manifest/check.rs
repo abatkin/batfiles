@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use super::action::IncludeRemoteAction;
 use super::remote::Remote;
+use crate::fetch::{FileUrlError, file_url_path};
 use crate::item::ItemId;
 use crate::repo_path::{REMOTE_PREFIX, RepoPath};
 
@@ -170,6 +171,41 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
+    /// A source naming a path within a file remote, whose materialization is
+    /// the one file rather than a tree holding it.
+    #[error(
+        "{record}: source `{written}` names a path within {}, which is a single file; \
+         write `@{}` to name the file itself",
+        tree_of(.written),
+        named_remote_of(.written)
+    )]
+    SourceInsideFileRemote {
+        record: RecordName,
+        written: RepoPath,
+    },
+
+    /// A `source-dir` naming a file remote, which is never a directory.
+    #[error(
+        "{record}: source `{written}` names {}, which is a single file; \
+         this action installs from a directory",
+        tree_of(.written)
+    )]
+    SourceDirIsFileRemote {
+        record: RecordName,
+        written: RepoPath,
+    },
+
+    /// An `include-remote` naming a remote that holds no manifest to read.
+    #[error(
+        "{record}: remote `{remote}` is of type `{kind}`; \
+         an include-remote reads the manifest of a `git` remote"
+    )]
+    InclusionRemoteNotGit {
+        record: RecordName,
+        remote: ItemId,
+        kind: &'static str,
+    },
+
     /// An `include-remote` naming a remote no `[remotes]` entry declares.
     #[error(
         "{record}: remote `{remote}` is not declared by this manifest; \
@@ -200,19 +236,23 @@ pub(crate) enum Invalid {
     )]
     DestinationOtherHome { record: RecordName, value: String },
 
-    // Fetching actions: a URL source and an optional digest.
-    #[error("{record}: source `{value}` is not an http:// or https:// URL")]
-    SourceNotAUrl { record: RecordName, value: String },
+    // Fetching actions and file and archive remotes: a URL and an optional
+    // digest.
+    #[error("{record}: {field} `{value}` is not an http://, https://, or file:// URL")]
+    SourceNotAUrl {
+        record: RecordName,
+        /// What the record spells it: `source` on an action, `url` on a remote.
+        field: &'static str,
+        value: String,
+    },
 
-    /// A `file://` source, which the format reserves but nothing fetches yet.
-    /// Distinguished because `docs/future/repoformat.md` describes it.
-    // CARRY(9.3): file and archive remotes are where a `file://` source starts
-    // being fetched; delete this variant and its check then.
-    #[error(
-        "{record}: source `{value}` is a `file://` URL, which arrives with \
-         file remotes at step 9.3; use a `copy` action for a path on this machine"
-    )]
-    SourceIsFileUrl { record: RecordName, value: String },
+    #[error("{record}: {field} `{value}` {source}")]
+    FileUrl {
+        record: RecordName,
+        field: &'static str,
+        value: String,
+        source: FileUrlError,
+    },
 
     #[error("{record}: sha256 `{value}` is not 64 hexadecimal digits")]
     DigestNotSha256 { record: RecordName, value: String },
@@ -238,36 +278,47 @@ pub(crate) enum Invalid {
          write a prefix such as `tool-1.0`, or `*` for the archive's single top-level directory"
     )]
     ArchiveRootNotInside { record: RecordName, value: String },
+}
 
-    /// A remote type the schema reserves and nothing materializes yet.
-    /// Distinguished for the reason [`Self::SourceIsFileUrl`] is.
-    // CARRY(9.3): file and archive remotes are what these two types become;
-    // delete this variant and the arms that raise it then.
-    #[error(
-        "{record}: type `{kind}` arrives with file and archive remotes at step 9.3; \
-         declare a `git` remote, or fetch the content with a fetch-file or fetch-archive action"
-    )]
-    RemoteTypeUnbuilt {
-        record: RecordName,
-        kind: &'static str,
-    },
+/// What a field installs from: a `source-dir` names a directory, and any
+/// other source a file or a directory.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum SourceShape {
+    Any,
+    Directory,
 }
 
 /// The rules a `source` satisfies as written, including that a named remote is
-/// declared in `remotes`. Whether anything exists at the path is decided when
-/// the action runs.
+/// declared in `remotes`, and that a file remote is named whole and never as a
+/// directory. Whether anything exists at the path is decided when the action
+/// runs.
 pub(super) fn check_source(
     written: &RepoPath,
+    shape: SourceShape,
     record: &RecordName,
     remotes: &BTreeMap<ItemId, Remote>,
 ) -> Result<(), Invalid> {
     let path = written.path();
     // Only a plain string can say nothing at all; a reference that names a
-    // remote and no path has named a tree, and is refused as naming all of it.
+    // remote and no path has named a tree, and is refused as naming all of it,
+    // unless the remote is a single file.
     if written.remote().is_none() && path.is_empty() {
         return Err(Invalid::SourceEmpty {
             record: record.clone(),
         });
+    }
+    if let Some(Remote::File(_)) = written.remote().and_then(|id| remotes.get(id)) {
+        return match (path.is_empty(), shape) {
+            (false, _) => Err(Invalid::SourceInsideFileRemote {
+                record: record.clone(),
+                written: written.clone(),
+            }),
+            (true, SourceShape::Directory) => Err(Invalid::SourceDirIsFileRemote {
+                record: record.clone(),
+                written: written.clone(),
+            }),
+            (true, SourceShape::Any) => Ok(()),
+        };
     }
     if path.starts_with(REMOTE_PREFIX) {
         return Err(Invalid::SourceStartsWithRemotePrefix {
@@ -311,22 +362,24 @@ pub(super) fn check_source(
     Ok(())
 }
 
-/// An `include-remote`'s `remote` must be declared in the same manifest.
-// CARRY(9.3): once a manifest can declare a `file` or `archive` remote, an
-// inclusion naming one has to be refused here too; today both are refused as the
-// manifest is read, so every declared remote reaching this point is a Git one.
+/// An `include-remote`'s `remote` must be a `git` remote declared in the same
+/// manifest: only a repository has a manifest to read.
 pub(super) fn check_inclusion_remote(
     remote: &ItemId,
     record: &RecordName,
     remotes: &BTreeMap<ItemId, Remote>,
 ) -> Result<(), Invalid> {
-    if remotes.contains_key(remote) {
-        Ok(())
-    } else {
-        Err(Invalid::InclusionRemoteUndeclared {
+    match remotes.get(remote) {
+        Some(Remote::Git(_)) => Ok(()),
+        Some(other) => Err(Invalid::InclusionRemoteNotGit {
             record: record.clone(),
             remote: remote.clone(),
-        })
+            kind: other.kind(),
+        }),
+        None => Err(Invalid::InclusionRemoteUndeclared {
+            record: record.clone(),
+            remote: remote.clone(),
+        }),
     }
 }
 
@@ -425,8 +478,13 @@ pub(super) fn check_dest(dest: &str, record: &RecordName) -> Result<(), Invalid>
     }
 }
 
-/// The rules a fetching action's `source` satisfies as written.
-pub(super) fn check_url(source: &str, record: &RecordName) -> Result<(), Invalid> {
+/// The rules a URL to fetch satisfies as written: a fetching action's `source`
+/// or a file or archive remote's `url`, which `field` names.
+pub(super) fn check_url(
+    source: &str,
+    field: &'static str,
+    record: &RecordName,
+) -> Result<(), Invalid> {
     let scheme = |prefix: &str| {
         let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
         source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
@@ -434,16 +492,20 @@ pub(super) fn check_url(source: &str, record: &RecordName) -> Result<(), Invalid
     if scheme("http://") || scheme("https://") {
         return Ok(());
     }
-    if scheme("file://") {
-        return Err(Invalid::SourceIsFileUrl {
+    match file_url_path(source) {
+        Some(Ok(_)) => Ok(()),
+        Some(Err(error)) => Err(Invalid::FileUrl {
             record: record.clone(),
+            field,
             value: source.to_owned(),
-        });
+            source: error,
+        }),
+        None => Err(Invalid::SourceNotAUrl {
+            record: record.clone(),
+            field,
+            value: source.to_owned(),
+        }),
     }
-    Err(Invalid::SourceNotAUrl {
-        record: record.clone(),
-        value: source.to_owned(),
-    })
 }
 
 /// The rule a repository for git to clone satisfies as written. `field` is
@@ -553,7 +615,7 @@ mod tests {
     }
 
     fn source_error(source: &str) -> Invalid {
-        check_source(&local(source), &record(), &declaring(&[]))
+        check_source(&local(source), SourceShape::Any, &record(), &declaring(&[]))
             .expect_err("expected the source to be refused")
     }
 
@@ -576,7 +638,13 @@ mod tests {
     fn a_source_names_a_path_within_its_repository() {
         for accepted in ["shell/zshrc", "editor/nvim", "a/../b", "./bin/batgrep"] {
             assert!(
-                check_source(&local(accepted), &record(), &declaring(&[])).is_ok(),
+                check_source(
+                    &local(accepted),
+                    SourceShape::Any,
+                    &record(),
+                    &declaring(&[])
+                )
+                .is_ok(),
                 "`{accepted}` was refused"
             );
         }
@@ -649,15 +717,26 @@ mod tests {
     }
 
     fn remote_error(written: &str) -> Invalid {
-        check_source(&remote_path(written), &record(), &declaring(&["core"]))
-            .expect_err("expected the source to be refused")
+        check_source(
+            &remote_path(written),
+            SourceShape::Any,
+            &record(),
+            &declaring(&["core"]),
+        )
+        .expect_err("expected the source to be refused")
     }
 
     #[test]
     fn a_remote_reference_follows_the_same_rules_as_a_local_source() {
         for accepted in ["@core/shell/zshrc", "@core/a/../b", "@core/./bin/batgrep"] {
             assert!(
-                check_source(&remote_path(accepted), &record(), &declaring(&["core"])).is_ok(),
+                check_source(
+                    &remote_path(accepted),
+                    SourceShape::Any,
+                    &record(),
+                    &declaring(&["core"])
+                )
+                .is_ok(),
                 "`{accepted}` was refused"
             );
         }
@@ -666,8 +745,8 @@ mod tests {
     #[test]
     fn a_source_may_only_name_a_remote_the_manifest_declares() {
         let written = remote_path("@core/shell/zshrc");
-        assert!(check_source(&written, &record(), &declaring(&["core"])).is_ok());
-        let refused = check_source(&written, &record(), &declaring(&["work"]))
+        assert!(check_source(&written, SourceShape::Any, &record(), &declaring(&["core"])).is_ok());
+        let refused = check_source(&written, SourceShape::Any, &record(), &declaring(&["work"]))
             .expect_err("expected an undeclared remote to be refused");
         assert!(matches!(refused, Invalid::SourceRemoteUndeclared { .. }));
         let message = refused.to_string();
@@ -679,8 +758,13 @@ mod tests {
     fn a_path_that_breaks_a_rule_is_reported_as_that_rather_than_as_an_undeclared_remote() {
         // Both faults at once: the path rules come first.
         assert!(matches!(
-            check_source(&remote_path("@core/../secrets"), &record(), &declaring(&[]))
-                .expect_err("expected the source to be refused"),
+            check_source(
+                &remote_path("@core/../secrets"),
+                SourceShape::Any,
+                &record(),
+                &declaring(&[])
+            )
+            .expect_err("expected the source to be refused"),
             Invalid::SourceOutsideTree { .. }
         ));
     }
@@ -714,10 +798,64 @@ mod tests {
             toml::from_str("source = { remote = \"core\", path = \"@other/zshrc\" }\n")
                 .expect("a well-formed reference");
         assert!(matches!(
-            check_source(&structured["source"], &record(), &declaring(&["core"]))
-                .expect_err("expected the source to be refused"),
+            check_source(
+                &structured["source"],
+                SourceShape::Any,
+                &record(),
+                &declaring(&["core"])
+            )
+            .expect_err("expected the source to be refused"),
             Invalid::SourceStartsWithRemotePrefix { .. }
         ));
+    }
+
+    /// A manifest's `[remotes]` declaring one file remote, `pathogen`.
+    fn declaring_a_file() -> BTreeMap<ItemId, Remote> {
+        let remote = toml::from_str("type = \"file\"\nurl = \"https://e.example/p.vim\"\n")
+            .expect("a well-formed remote");
+        BTreeMap::from([(
+            ItemId::try_from("pathogen".to_owned()).expect("valid ID"),
+            remote,
+        )])
+    }
+
+    #[test]
+    fn a_file_remote_is_named_whole_and_never_as_a_directory() {
+        let remotes = declaring_a_file();
+        let check =
+            |written: &str, shape| check_source(&remote_path(written), shape, &record(), &remotes);
+        assert!(check("@pathogen", SourceShape::Any).is_ok());
+        let structured: BTreeMap<String, RepoPath> =
+            toml::from_str("source = { remote = \"pathogen\" }\n")
+                .expect("a well-formed reference");
+        assert!(check_source(&structured["source"], SourceShape::Any, &record(), &remotes).is_ok());
+
+        let inside = check("@pathogen/autoload/pathogen.vim", SourceShape::Any)
+            .expect_err("a file remote has no paths inside it")
+            .to_string();
+        assert!(inside.contains("which is a single file"), "{inside}");
+        assert!(inside.contains("write `@pathogen`"), "{inside}");
+
+        let directory = check("@pathogen", SourceShape::Directory)
+            .expect_err("a file remote is not a directory")
+            .to_string();
+        assert!(
+            directory.contains("installs from a directory"),
+            "{directory}"
+        );
+    }
+
+    #[test]
+    fn an_inclusion_names_a_git_remote() {
+        let pathogen = ItemId::try_from("pathogen".to_owned()).expect("valid ID");
+        let message = check_inclusion_remote(&pathogen, &record(), &declaring_a_file())
+            .expect_err("a file remote has no manifest")
+            .to_string();
+        assert!(
+            message.contains("remote `pathogen` is of type `file`"),
+            "{message}"
+        );
+        assert!(message.contains("manifest of a `git` remote"), "{message}");
     }
 
     #[test]
@@ -848,7 +986,7 @@ mod tests {
             "https://example.com/a b?c=d#e",
         ] {
             assert!(
-                check_url(accepted, &record()).is_ok(),
+                check_url(accepted, "source", &record()).is_ok(),
                 "`{accepted}` was refused"
             );
         }
@@ -868,7 +1006,8 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    check_url(refused, &record()).expect_err("expected the source to be refused"),
+                    check_url(refused, "source", &record())
+                        .expect_err("expected the source to be refused"),
                     Invalid::SourceNotAUrl { .. }
                 ),
                 "`{refused}` was accepted"
@@ -877,12 +1016,16 @@ mod tests {
     }
 
     #[test]
-    fn a_file_url_says_which_step_makes_it_work() {
-        assert!(matches!(
-            check_url("file:///etc/hosts", &record())
-                .expect_err("expected a file URL to be refused"),
-            Invalid::SourceIsFileUrl { .. }
-        ));
+    #[cfg(unix)]
+    fn a_file_url_names_a_file_on_this_machine() {
+        assert!(check_url("file:///etc/hosts", "source", &record()).is_ok());
+        let message = check_url("file://server/etc/hosts", "url", &record())
+            .expect_err("expected a file URL naming a host to be refused")
+            .to_string();
+        assert!(
+            message.contains("url `file://server/etc/hosts` names a host other than `localhost`"),
+            "{message}"
+        );
     }
 
     #[test]

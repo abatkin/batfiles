@@ -1,9 +1,12 @@
-//! `[remotes]`: the repositories a manifest names so its actions can reach
-//! content it does not hold itself.
+//! `[remotes]`: the sources a manifest names so its actions can reach content
+//! it does not hold itself — a Git repository, a file, or an unpacked archive.
 
 use serde::Deserialize;
 
-use super::check::{Invalid, RecordName, check_git_ref, check_git_source};
+use super::check::{
+    Invalid, RecordName, check_archive_root, check_digest, check_git_ref, check_git_source,
+    check_url,
+};
 use crate::condition::{Condition, Gate};
 use crate::item::ItemId;
 
@@ -15,10 +18,8 @@ use crate::item::ItemId;
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum Remote {
     Git(GitRemote),
-    /// Reserved by the schema and refused by [`Remote::validate`] until 9.3.
-    File(Unbuilt),
-    /// The same.
-    Archive(Unbuilt),
+    File(FileRemote),
+    Archive(ArchiveRemote),
 }
 
 impl Remote {
@@ -28,13 +29,33 @@ impl Remote {
     /// diagnostic here names it.
     pub fn validate(&self, id: &ItemId) -> Result<(), Invalid> {
         let record = RecordName::Remote(id.clone());
+        let (when, unless) = self.gate_fields();
+        if when.is_some() && unless.is_some() {
+            return Err(Invalid::BothConditions { record });
+        }
         match self {
-            Self::Git(remote) => remote.validate(&record),
-            // CARRY(9.3): file and archive remotes are what makes these two
-            // records mean something; delete this arm, `Unbuilt`, and
-            // `Invalid::RemoteTypeUnbuilt` then.
-            Self::File(_) => Err(unbuilt(record, "file")),
-            Self::Archive(_) => Err(unbuilt(record, "archive")),
+            Self::Git(remote) => {
+                check_git_source(&remote.url, "url", &record)?;
+                check_git_ref(remote.git_ref.as_deref(), &record)
+            }
+            Self::File(remote) => {
+                check_url(&remote.url, "url", &record)?;
+                check_digest(remote.sha256.as_deref(), &record)
+            }
+            Self::Archive(remote) => {
+                check_url(&remote.url, "url", &record)?;
+                check_digest(remote.sha256.as_deref(), &record)?;
+                check_archive_root(remote.archive_root.as_deref(), &record)
+            }
+        }
+    }
+
+    /// The `type` this remote was declared with, as the manifest spells it.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Git(_) => "git",
+            Self::File(_) => "file",
+            Self::Archive(_) => "archive",
         }
     }
 
@@ -50,26 +71,19 @@ impl Remote {
     /// The condition deciding whether this machine has the remote at all, or
     /// `None` where the record declares neither field.
     pub fn gate(&self) -> Option<Gate<'_>> {
+        let (when, unless) = self.gate_fields();
+        Gate::declared(when, unless)
+    }
+
+    /// The record's `when` and `unless`, in that order.
+    fn gate_fields(&self) -> (Option<&Condition>, Option<&Condition>) {
         match self {
-            Self::Git(remote) => Gate::declared(remote.when.as_ref(), remote.unless.as_ref()),
-            // CARRY(9.3): refused as the manifest is read, so no run reaches
-            // one. Each gains its conditions with the record that builds it.
-            Self::File(_) | Self::Archive(_) => None,
+            Self::Git(remote) => (remote.when.as_ref(), remote.unless.as_ref()),
+            Self::File(remote) => (remote.when.as_ref(), remote.unless.as_ref()),
+            Self::Archive(remote) => (remote.when.as_ref(), remote.unless.as_ref()),
         }
     }
 }
-
-/// Why a reserved remote type is refused. Distinguished from an unknown type
-/// because `docs/future/repoformat.md` describes it.
-fn unbuilt(record: RecordName, kind: &'static str) -> Invalid {
-    Invalid::RemoteTypeUnbuilt { record, kind }
-}
-
-/// A remote type the schema reserves and nothing materializes yet.
-///
-/// Accepts and ignores every field: the record is refused by its `type` alone.
-#[derive(Debug, Deserialize)]
-pub(crate) struct Unbuilt {}
 
 /// `git`: a repository batfiles clones and keeps up to date on its own, so that
 /// actions can install from a tree the leaf repository does not hold.
@@ -97,18 +111,38 @@ pub(crate) struct GitRemote {
     pub unless: Option<Condition>,
 }
 
-impl GitRemote {
-    /// The rules for `url` and `ref`, shared with a `git-clone` action's
-    /// `source` and `ref`.
-    fn validate(&self, record: &RecordName) -> Result<(), Invalid> {
-        if self.when.is_some() && self.unless.is_some() {
-            return Err(Invalid::BothConditions {
-                record: record.clone(),
-            });
-        }
-        check_git_source(&self.url, "url", record)?;
-        check_git_ref(self.git_ref.as_deref(), record)
-    }
+/// `file`: one file fetched from a URL, materialized as `remotes/<id>` itself.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct FileRemote {
+    /// An `http://`, `https://`, or `file://` URL.
+    pub url: String,
+    /// The digest the fetched bytes must have, if the manifest pins one.
+    pub sha256: Option<String>,
+
+    /// The condition under which this machine materializes the remote at all.
+    pub when: Option<Condition>,
+    /// The condition under which it does not.
+    pub unless: Option<Condition>,
+}
+
+/// `archive`: a tarball fetched from a URL and unpacked into `remotes/<id>`,
+/// by the rules a [`fetch-archive`](super::action::FetchArchiveAction) follows.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct ArchiveRemote {
+    /// An `http://`, `https://`, or `file://` URL.
+    pub url: String,
+    /// The digest the fetched archive must have, if the manifest pins one.
+    pub sha256: Option<String>,
+    /// A prefix every entry is written without, or `*` for the archive's
+    /// single top-level directory.
+    pub archive_root: Option<String>,
+
+    /// The condition under which this machine materializes the remote at all.
+    pub when: Option<Condition>,
+    /// The condition under which it does not.
+    pub unless: Option<Condition>,
 }
 
 #[cfg(test)]
@@ -196,39 +230,73 @@ mod tests {
         );
     }
 
+    /// A digest of the right shape, which nothing here fetches.
+    const SHA: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
     #[test]
-    fn a_reserved_type_names_the_step_that_builds_it() {
-        // Refused by its `type` rather than by the fields around it, so the
-        // record is read as the future schema writes it and the diagnostic is
-        // about the one thing that is wrong with it.
-        for (kind, document) in [
-            (
-                "file",
-                "type = \"file\"\nurl = \"https://e.example/a.vim\"\nsha256 = \"00\"\n",
-            ),
-            (
-                "archive",
-                "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\narchive-root = \"*\"\n",
-            ),
-        ] {
-            let message = refused(document);
-            assert!(message.contains("remote `core`"), "{message}");
-            assert!(message.contains(&format!("type `{kind}`")), "{message}");
-            assert!(message.contains("step 9.3"), "{message}");
-        }
+    fn a_file_remote_takes_a_url_a_digest_and_one_condition() {
+        assert!(checked(&format!("type = \"file\"\nurl = \"https://e.example/a.vim\"\nsha256 = \"{SHA}\"\nwhen = \"work\"\n")).is_ok());
+        assert!(checked("type = \"file\"\nurl = \"file:///srv/a.vim\"\n").is_ok());
+        let message = refused("type = \"file\"\nurl = \"e.example/a.vim\"\n");
+        assert!(
+            message.contains("remote `core`: url `e.example/a.vim`"),
+            "{message}"
+        );
+        let message = refused("type = \"file\"\nurl = \"https://e.example/a\"\nsha256 = \"00\"\n");
+        assert!(message.contains("sha256 `00`"), "{message}");
+        let message = refused(
+            "type = \"file\"\nurl = \"https://e.example/a\"\nwhen = \"a\"\nunless = \"b\"\n",
+        );
+        assert!(
+            message.contains("writes both `when` and `unless`"),
+            "{message}"
+        );
     }
 
     #[test]
-    fn a_type_the_schema_does_not_reserve_is_not_a_remote_at_all() {
-        // Unlike the two above, this one fails while the document is read: a
-        // remote is selected by its `type`, and there is no record to check.
+    fn an_archive_remote_takes_what_a_fetch_archive_does() {
+        assert!(
+            checked(&format!(
+                "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\nsha256 = \"{SHA}\"\n\
+                 archive-root = \"*\"\nunless = \"work\"\n"
+            ))
+            .is_ok()
+        );
+        let message = refused(
+            "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\narchive-root = \"../x\"\n",
+        );
+        assert!(
+            message.contains("remote `core`: archive-root `../x`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn only_a_git_remote_may_run_an_included_manifests_commands() {
+        for document in [
+            "type = \"file\"\nurl = \"https://e.example/a.vim\"\n",
+            "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\n",
+        ] {
+            let remote = parse(document).unwrap_or_else(|error| panic!("{error}"));
+            assert!(!remote.allows_dynamic_vars());
+        }
+        assert!(
+            parse("type = \"file\"\nurl = \"https://e.example/a\"\nallow-dynamic-vars = true\n")
+                .is_err(),
+            "a file has no manifest to include"
+        );
+    }
+
+    #[test]
+    fn an_unknown_type_is_not_a_remote_at_all() {
+        // A remote is selected by its `type`, and there is no record to check.
         let error = parse("type = \"rsync\"\nurl = \"e.example:/a\"\n")
             .expect_err("an unknown type should not deserialize");
         assert!(error.to_string().contains("rsync"), "{error}");
     }
 
     #[test]
-    fn a_git_remote_is_closed_over_the_fields_it_accepts() {
+    fn every_remote_is_closed_over_the_fields_it_accepts() {
         for (document, unknown) in [
             // The spelling `docs/future/repoformat.md` gives the ref field,
             // which batfiles reads under `git-clone`'s name instead.
@@ -240,6 +308,16 @@ mod tests {
             (
                 "type = \"git\"\nurl = \"https://e.example/a.git\"\nsha256 = \"00\"\n",
                 "sha256",
+            ),
+            (
+                "type = \"file\"\nurl = \"https://e.example/a\"\narchive-root = \"*\"\n",
+                "archive-root",
+            ),
+            // The entry filters, which are not built for an archive remote any
+            // more than for a `fetch-archive`.
+            (
+                "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\ninclude = \"bin/*\"\n",
+                "include",
             ),
         ] {
             let error = parse(document).expect_err("a closed record should reject the field");

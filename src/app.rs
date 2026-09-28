@@ -107,6 +107,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
+                args.refresh_remotes,
             )?;
             Ok(ExitCode::SUCCESS)
         }

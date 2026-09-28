@@ -22,9 +22,9 @@ nothing in the repository you cannot read with `cat`.
 > condition reads can be written down, or found out by running a command.
 >
 > Composition is built: a `[remotes]` section names other Git repositories,
-> `sync` clones each one into your repository's own `remotes/` tree, an action
-> can install from one, and `include-remote` splices a remote's own actions into
-> your manifest at the position that includes it. `init` starts a new repository
+> files, and archives, `sync` brings each one into your repository's own
+> `remotes/` tree, an action can install from one, and `include-remote` splices
+> a Git remote's own actions into your manifest at the position that includes it. `init` starts a new repository
 > in the current directory, and `clone` brings an existing one down onto a fresh
 > machine, adopts the bootstrap policy it declares, and installs it — all in one
 > command. See the [command reference](docs/cmdline.md#what-runs-today) for
@@ -44,8 +44,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   container. See the [action reference](docs/repoformat.md#actions) and
   [destination policy](docs/safety.md#replacing-what-is-already-there).
 - **Download files and archives.** `fetch-file` downloads a file and
-  `fetch-archive` unpacks a plain or gzipped tarball, optionally checking a
-  SHA-256 digest. Both install only at vacant destinations using
+  `fetch-archive` unpacks a plain or gzipped tarball, from an `http://`,
+  `https://`, or `file://` URL, optionally checking a SHA-256 digest. Both install only at vacant destinations using
   [staging and publication](docs/safety.md#staging-and-publication).
   Archives follow the [extraction safety rules](docs/safety.md#archive-extraction).
 - **Manage Git repositories and plugin lists.** `git-clone` clones or updates a
@@ -54,10 +54,12 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   [branch, tag, or commit selection](docs/repoformat.md#ref-following-one-branch-tag-or-commit).
   Lists can continue after [recoverable entry failures](docs/cmdline.md#clone-list-entry-failures),
   so check warnings even when the command succeeds.
-- **Install content from other repositories.** `[remotes]` declares Git sources
-  that `sync` materializes under `remotes/<id>/`. Actions reference their content
-  with paths such as `@core/files/zshrc`. `include-remote` takes the actions a
-  remote's own manifest declares into the list at its position, addressable as
+- **Install content from other repositories.** `[remotes]` declares Git
+  repositories, files, and archives that `sync` materializes under
+  `remotes/<id>`, fetching a file or archive again only when its declaration
+  changes. Actions reference their content with paths such as
+  `@core/files/zshrc`, or `@pathogen` for a file. `include-remote` takes the
+  actions a Git remote's own manifest declares into the list at its position, addressable as
   `corp.zshrc`, either all of them or the ones its `install-actions`,
   `install-groups`, `exclude-actions`, and `exclude-groups` select. The remote's
   conditions read what it declared in its own `[vars]`, which the inclusion's
@@ -258,7 +260,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 9     | File and archive remotes, `--refresh-content`                       |
+| 9     | `--refresh-content`, backups, and conflict handling                 |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 
 ## Documentation

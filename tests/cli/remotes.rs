@@ -1,5 +1,6 @@
-//! `[remotes]`: the repositories a manifest names, and the tree `sync` brings
-//! them onto the machine in.
+//! `[remotes]`: the Git repositories a manifest names, and the tree `sync`
+//! brings them onto the machine in. File and archive remotes are in
+//! `fetched_remotes.rs`.
 //!
 //! The rules about what a record may say are settled as the manifest is read,
 //! so those cases execute nothing. The rest clone from a local bare repository
@@ -408,36 +409,6 @@ fn a_condition_flipped_on_the_command_line_decides_the_remote() {
         .success();
 
     assert_eq!(materialized(&tree, "README.md"), "a plugin\n");
-}
-
-#[test]
-fn a_remote_type_that_is_reserved_and_unbuilt_names_its_step() {
-    // A reader of the future schema has reason to expect these two to work, so
-    // each says which step builds it rather than that it is not a type.
-    for (kind, document) in [
-        (
-            "file",
-            r#"[remotes.pathogen]
-type = "file"
-url = "https://e.example/pathogen.vim"
-"#,
-        ),
-        (
-            "archive",
-            r#"[remotes.pathogen]
-type = "archive"
-url = "https://e.example/fzf.tar.gz"
-"#,
-        ),
-    ] {
-        let stderr = rejected(document);
-        assert!(stderr.contains("remote `pathogen`"), "{stderr}");
-        assert!(
-            stderr.contains(&format!("type `{kind}`")),
-            "the type was not named:\n{stderr}"
-        );
-        assert!(stderr.contains("9.3"), "the step was not named:\n{stderr}");
-    }
 }
 
 #[test]
