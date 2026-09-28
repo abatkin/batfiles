@@ -7,7 +7,7 @@ pub(crate) mod record;
 use std::rc::Rc;
 
 use self::assemble::assemble;
-use self::record::{Disposition, RunList, RunRecord};
+use self::record::{Disposition, Node, RunList, RunRecord};
 use crate::action::{self, Executable, RunContext};
 use crate::bootstrap::Bootstrap;
 use crate::clone_list::PreparedList;
@@ -16,7 +16,7 @@ use crate::disabled::Disabled;
 use crate::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::env::Environment;
 use crate::error::Error;
-use crate::item::ItemAddress;
+use crate::item::{ItemAddress, ItemId};
 use crate::location::Roots;
 use crate::manifest::Manifest;
 use crate::manifest::action::Action;
@@ -176,70 +176,138 @@ pub(crate) fn apply_group(
 
 /// What the action loop does with one record, with its inputs already read.
 ///
-/// Only [`prepare`] builds steps, one per record in declaration order. A clone
-/// list becomes a [`Run`](Self::Run) only once it has been read.
+/// Only [`prepare`] builds steps. A clone list becomes a [`Run`](Self::Run)
+/// only once it has been read.
 enum Step<'a> {
     /// Nothing: the record was not requested.
     Skip,
     /// Report the exclusion under the record's heading.
     Report(&'a RunRecord, &'a Exclusion),
-    /// Report the record's heading and execute nothing: an admitted inclusion,
-    /// whose records assembly already placed after it.
-    Heading(&'a RunRecord),
     /// Execute the record.
     Run(&'a RunRecord, Executable<'a>),
 }
 
-/// Turn each record into a [`Step`], reading every selected, unexcluded clone
-/// list once.
+/// One record of the leaf manifest, prepared.
+enum Prepared<'a> {
+    /// Any record but an admitted inclusion.
+    Step(Step<'a>),
+    /// An admitted inclusion: report its heading, then carry out the steps of
+    /// the records it contributed, in their order, reading repository paths
+    /// from `remote`'s materialization. No steps when its manifest was not
+    /// read or declared nothing.
+    Inclusion {
+        heading: &'a str,
+        remote: &'a ItemId,
+        steps: Vec<Step<'a>>,
+    },
+}
+
+/// Prepare every record of the run's list in declaration order, reading every
+/// selected, unexcluded clone list once.
 ///
 /// Runs after bootstrap adoption and remote materialization, and before the
 /// first action. A missing or malformed list fails the run before any action
-/// writes, even if its record comes last; what adoption and materialization
-/// already wrote remains. A list an earlier action would produce is not yet
-/// available. Unwanted and excluded lists are not opened.
+/// writes, even if its record comes last or an inclusion contributed it; what
+/// adoption and materialization already wrote remains. A list an earlier
+/// action would produce is not yet available. Unwanted and excluded lists are
+/// not opened.
 fn prepare<'a>(
-    records: &'a [RunRecord],
+    run_list: &'a RunList,
     context: &RunContext<'_>,
     variables: &Rc<VarSet>,
     host: &HostNamespaces,
-) -> Result<Vec<Step<'a>>, Error> {
-    records
+) -> Result<Vec<Prepared<'a>>, Error> {
+    run_list
+        .nodes
         .iter()
-        .map(|record| match &record.disposition {
-            Disposition::Unwanted => Ok(Step::Skip),
-            Disposition::Excluded(exclusion) => Ok(Step::Report(record, exclusion)),
-            Disposition::Run if matches!(record.action, Action::IncludeRemote(_)) => {
-                Ok(Step::Heading(record))
-            }
-            Disposition::Run => Ok(Step::Run(
+        .map(|node| match node {
+            Node::Inclusion {
                 record,
-                executable(record, context, variables, host)?,
-            )),
+                inclusion,
+                opened,
+            } if matches!(record.disposition, Disposition::Run) => {
+                let remote = inclusion.remote();
+                let steps = opened
+                    .iter()
+                    .flat_map(|opened| {
+                        opened
+                            .records
+                            .iter()
+                            .map(|it| step(it, Some(remote), &opened.scope, context, host))
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(Prepared::Inclusion {
+                    heading: &record.heading,
+                    remote,
+                    steps,
+                })
+            }
+            // An inclusion that is not admitted is skipped or reported like any
+            // other record.
+            Node::Action(record) | Node::Inclusion { record, .. } => Ok(Prepared::Step(step(
+                record, None, variables, context, host,
+            )?)),
         })
         .collect()
 }
 
+/// The step for one record, from `remote`'s tree (`None`: the leaf's) and
+/// decided in `scope`.
+fn step<'a>(
+    record: &'a RunRecord,
+    remote: Option<&ItemId>,
+    scope: &Rc<VarSet>,
+    context: &RunContext<'_>,
+    host: &HostNamespaces,
+) -> Result<Step<'a>, Error> {
+    Ok(match &record.disposition {
+        Disposition::Unwanted => Step::Skip,
+        Disposition::Excluded(exclusion) => Step::Report(record, exclusion),
+        Disposition::Run => Step::Run(record, executable(record, remote, scope, context, host)?),
+    })
+}
+
 /// What executing `record` works from.
 ///
-/// Only a clone list reads anything: its list, from the same tree as the
-/// record's other paths, with entry conditions decided in the record's
-/// [scope](RunRecord::scope). Every other record executes from its declaration
-/// and cannot fail here.
+/// Only a clone list reads anything: its list, from `remote`'s tree like the
+/// record's other paths, with entry conditions decided in `scope`. Every other
+/// record executes from its declaration and cannot fail here.
 fn executable<'a>(
     record: &'a RunRecord,
+    remote: Option<&ItemId>,
+    scope: &Rc<VarSet>,
     context: &RunContext<'_>,
-    variables: &Rc<VarSet>,
     host: &HostNamespaces,
 ) -> Result<Executable<'a>, Error> {
     let Action::GitCloneList(list) = &record.action else {
         return Ok(Executable::Declared(&record.action));
     };
-    let path = context.source(record.remote(), &list.source)?;
-    let bindings = Bindings::new(record.scope(variables), host);
+    let path = context.source(remote, &list.source)?;
+    let bindings = Bindings::new(scope, host);
     Ok(Executable::CloneList(PreparedList::prepare(
         list, &path, &bindings,
     )?))
+}
+
+/// Carry out one step, whose record is read from `remote`'s tree (`None`: the
+/// leaf's). Returns whether the record was dispatched.
+fn execute(
+    step: &Step<'_>,
+    remote: Option<&ItemId>,
+    context: &RunContext<'_>,
+) -> Result<bool, Error> {
+    match step {
+        Step::Skip => Ok(false),
+        Step::Report(record, exclusion) => {
+            exclusion.report_heading(context.reporter(), &record.heading);
+            Ok(false)
+        }
+        Step::Run(record, executable) => {
+            context.reporter().detail(1, &record.heading);
+            action::run(executable, remote, context)?;
+            Ok(true)
+        }
+    }
 }
 
 /// Load the manifest and variables, adopt any bootstrap policy, materialize
@@ -341,30 +409,30 @@ fn run(
     // one an inclusion answers.
     selection.warn_unmatched(&run_list, reporter);
 
-    let RunList {
-        records,
-        target_found,
-        ..
-    } = run_list;
-    let steps = prepare(&records, &context, &variables, &host)?;
+    let plan = prepare(&run_list, &context, &variables, &host)?;
     let mut processed_action_count = 0;
 
-    for step in &steps {
-        match step {
-            Step::Skip => {}
-            Step::Report(record, exclusion) => {
-                exclusion.report_heading(reporter, &record.heading);
+    for prepared in &plan {
+        match prepared {
+            Prepared::Step(step) => {
+                processed_action_count += usize::from(execute(step, None, &context)?);
             }
-            Step::Heading(record) => reporter.detail(1, &record.heading),
-            Step::Run(record, executable) => {
-                reporter.detail(1, &record.heading);
-                action::run(executable, record.remote(), &context)?;
-                processed_action_count += 1;
+            Prepared::Inclusion {
+                heading,
+                remote,
+                steps,
+            } => {
+                reporter.detail(1, heading);
+                for step in steps {
+                    processed_action_count += usize::from(execute(step, Some(remote), &context)?);
+                }
             }
         }
     }
 
-    if !target_found && let Some(error) = selection.unresolved(invocation.roots.manifest()) {
+    if !run_list.target_found
+        && let Some(error) = selection.unresolved(invocation.roots.manifest())
+    {
         return Err(error);
     }
     Ok(processed_action_count)

@@ -142,7 +142,7 @@ impl SkipList {
     fn warn_unmatched(
         &self,
         present: &[&ItemAddress],
-        unread_inclusions: &[ItemId],
+        unread_inclusions: &[&ItemId],
         noun: &str,
         reporter: &Reporter,
     ) {
@@ -260,21 +260,20 @@ impl<'a> Selection<'a> {
     pub fn warn_unmatched(&self, run_list: &RunList, reporter: &Reporter) {
         let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
             run_list
-                .records
-                .iter()
+                .records()
                 .filter_map(|it| of(it).as_ref())
                 .collect()
         };
-        let unread_inclusions = &run_list.unread_inclusions;
+        let unread_inclusions: Vec<&ItemId> = run_list.unread_inclusions().collect();
         self.actions.warn_unmatched(
             &names(|it| &it.address),
-            unread_inclusions,
+            &unread_inclusions,
             "action",
             reporter,
         );
         self.groups.warn_unmatched(
             &names(|it| &it.group_address),
-            unread_inclusions,
+            &unread_inclusions,
             "group",
             reporter,
         );
@@ -366,7 +365,7 @@ mod tests {
 
     /// The same record, contributed by an inclusion with `id = inclusion`
     /// (`None`: no `id`). Built from a parsed `include-remote` so it matches what
-    /// a run produces; the scope is empty.
+    /// a run produces.
     fn included(id: &str, group: &str, inclusion: Option<&str>) -> RunRecord {
         let named = match inclusion {
             Some(id) => format!("id = \"{id}\"\n"),
@@ -374,13 +373,8 @@ mod tests {
         };
         let declaration = toml::from_str(&format!("{named}remote = \"corporate\"\n"))
             .expect("the record should parse");
-        let from = Inclusion::at(&declaration, 1).with_scope(Rc::new(VarSet::stack(
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            &[],
-        )));
-        RunRecord::contributed(create_dir(id, group), 1, &Rc::new(from))
+        let by = Inclusion::at(&declaration, 1);
+        RunRecord::contributed(create_dir(id, group), 1, by.contributor())
     }
 
     fn create_dir(id: &str, group: &str) -> Action {

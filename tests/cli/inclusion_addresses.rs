@@ -289,6 +289,28 @@ fn a_skip_qualified_by_an_inclusion_with_nothing_to_read_is_treated_the_same_way
 }
 
 #[test]
+fn a_skip_qualified_by_an_inclusion_that_was_read_and_holds_nothing_is_reported() {
+    // Unlike the two cases above, the list that would answer the name was read:
+    // the manifest is there and declares no actions, so nothing answers it.
+    let origin = BareRepo::new();
+    origin.publish("batfiles.toml", "", "a remote with no actions");
+    let tree = Tree::fixture("inclusion");
+    tree.point_at_origin(&origin);
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--skip-action", "corp.zshrc"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains("`corp.zshrc` matched no action"),
+        "a name an opened inclusion could not answer went unreported:\n{stderr}"
+    );
+}
+
+#[test]
 fn an_inclusion_opened_to_reach_a_group_is_not_an_applied_action() {
     // `apply-group` says so when it applies nothing, and an inclusion installs
     // nothing: the run opened `corp` only to reach the group named inside it, so

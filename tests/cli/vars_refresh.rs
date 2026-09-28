@@ -385,3 +385,33 @@ fn a_remote_no_inclusion_names_is_not_in_play() {
         "{stderr}"
     );
 }
+
+#[test]
+fn a_remote_in_play_is_refreshed_without_reading_what_it_contributes() {
+    // Reachability is decided by the inclusions' gates; what the remote's
+    // actions would need, such as a list it does not hold, is never read, and
+    // nothing is installed.
+    let (origin, tree) = unsynchronized(ALLOWED, "");
+    origin.publish(
+        "batfiles.toml",
+        r#"[vars]
+team = { command = "echo ran >> ../../remote-runs; printf platform" }
+
+[[actions]]
+type = "git-clone-list"
+id = "plugins"
+source = "missing.txt"
+dest-dir = "~/.plugins"
+"#,
+        "a list the remote does not hold",
+    );
+    // Materialized by a sync that opens neither inclusion, so the missing list
+    // is not what fails it.
+    tree.batfiles()
+        .args(["sync", "--skip-action", "first", "--skip-action", "second"])
+        .assert()
+        .success();
+
+    assert_eq!(refresh(&tree, &[]), "refreshed `corporate.team`\n");
+    assert!(!tree.home(".plugins").exists());
+}

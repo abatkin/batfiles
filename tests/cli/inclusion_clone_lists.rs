@@ -1,0 +1,222 @@
+//! A clone list an inclusion contributed: read from the remote's tree, decided
+//! in the inclusion's scope, and prepared with every other list before the
+//! first action writes.
+//!
+//! Each case publishes its own remote manifest and list, and includes it as
+//! `corp` from a leaf written beside it.
+
+use crate::support::*;
+
+/// A remote holding `manifest` as its `batfiles.toml` and `list` as
+/// `plugins.txt`.
+fn remote(manifest: &str, list: &str) -> BareRepo {
+    let origin = BareRepo::new();
+    origin.publish("plugins.txt", list, "a plugin list");
+    origin.publish("batfiles.toml", manifest, "the remote's actions");
+    origin
+}
+
+/// A leaf that declares `corporate`, then writes `before` (tables, such as
+/// `[vars]`, and actions), includes the remote as `corp` with `fields` on the
+/// inclusion, and writes the actions in `after`.
+fn leaf(origin: &BareRepo, before: &str, fields: &str, after: &str) -> Tree {
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        r#"[remotes.corporate]
+type = "git"
+url = "{{origin}}"
+
+{before}
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+{fields}
+{after}"#
+    ));
+    tree.point_at_origin(origin);
+    tree
+}
+
+/// A `create-dir` of `~/.<id>`, as a manifest writes one.
+fn create_dir(id: &str) -> String {
+    format!("[[actions]]\ntype = \"create-dir\"\nid = \"{id}\"\ndest = \"~/.{id}\"\n")
+}
+
+/// The `plugins` list a remote declares, with `fields` added to the record.
+fn plugins(fields: &str) -> String {
+    format!(
+        "[[actions]]\ntype = \"git-clone-list\"\nid = \"plugins\"\nsource = \"plugins.txt\"\n\
+         dest-dir = \"~/.plugins\"\n{fields}"
+    )
+}
+
+#[test]
+fn an_inclusions_actions_and_list_run_where_the_inclusion_is_written() {
+    // Declaration order across both manifests: the leaf's first action, the
+    // inclusion's heading, what it contributed in the order its remote wrote
+    // them, and then the rest of the leaf. Each once.
+    let upstream = BareRepo::new();
+    let plugin = upstream.another("zsh-z");
+    let origin = remote(
+        &format!(
+            "{}{}{}",
+            create_dir("corp-first"),
+            plugins(""),
+            create_dir("corp-last")
+        ),
+        &format!(
+            "{plugin}\n{plugin} dest-name=only-at-work when=\"work\"\n",
+            plugin = display(&plugin)
+        ),
+    );
+    let tree = leaf(
+        &origin,
+        &format!("[vars]\nwork = \"false\"\n\n{}", create_dir("first")),
+        "",
+        &create_dir("last"),
+    );
+
+    let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
+    let stderr = stderr_of(&assertion);
+
+    let clone = display(&tree.home(".plugins/zsh-z"));
+    let excluded = format!(
+        "not cloning {} (plugins.txt line 2): when \"work\" is false",
+        display(&plugin)
+    );
+    let order = [
+        "create-dir first",
+        "include-remote corp",
+        "create-dir corp.corp-first",
+        "git-clone-list corp.plugins",
+        clone.as_str(),
+        excluded.as_str(),
+        "create-dir corp.corp-last",
+        "create-dir last",
+    ];
+    for line in order {
+        assert_eq!(
+            stderr.matches(line).count(),
+            1,
+            "`{line}` was not reported exactly once:\n{stderr}"
+        );
+    }
+    let at = |line: &str| stderr.find(line).expect("reported above");
+    for pair in order.windows(2) {
+        assert!(
+            at(pair[0]) < at(pair[1]),
+            "`{}` was not reported before `{}`:\n{stderr}",
+            pair[0],
+            pair[1]
+        );
+    }
+    for installed in [
+        ".first",
+        ".corp-first",
+        ".plugins/zsh-z",
+        ".corp-last",
+        ".last",
+    ] {
+        assert!(
+            tree.home(installed).exists(),
+            "`{installed}` was not installed"
+        );
+    }
+    assert!(!tree.home(".plugins/only-at-work").exists());
+}
+
+#[test]
+fn a_malformed_list_in_a_late_inclusion_stops_the_run_before_the_first_action() {
+    // Every selected list is read before anything is installed, wherever in
+    // the run its record sits: the leaf's action ahead of the inclusion does
+    // not run.
+    let origin = remote(
+        &plugins(""),
+        "https://e.example/a.git\nhttps://e.example/b.git colour=blue\n",
+    );
+    let tree = leaf(&origin, &create_dir("first"), "", "");
+
+    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        !tree.home(".first").exists(),
+        "the leaf's action ran before the included list was checked"
+    );
+    assert!(stderr.contains("plugins.txt"), "{stderr}");
+    assert!(stderr.contains("line 2"), "{stderr}");
+    assert!(stderr.contains("unknown key `colour`"), "{stderr}");
+}
+
+#[test]
+fn applying_an_included_list_waives_its_condition_and_not_its_entries() {
+    // The list and its entries are decided in the inclusion's scope, where
+    // `work` is false though the leaf says true. Naming the list waives the
+    // record's own condition; its entries keep theirs. The list is read from
+    // the remote's tree, which is the only place it exists.
+    let upstream = BareRepo::new();
+    let origin = remote(
+        &plugins("when = \"work\"\n"),
+        &format!(
+            "{origin} dest-name=everywhere\n{origin} dest-name=only-at-work when=\"work\"\n",
+            origin = display(&upstream.origin())
+        ),
+    );
+    let tree = leaf(
+        &origin,
+        "[vars]\nwork = \"true\"\n",
+        "vars = { work = \"false\" }\n",
+        "",
+    );
+
+    // Honored by a run that did not name it.
+    tree.batfiles().arg("sync").assert().success();
+    assert!(!tree.home(".plugins").exists());
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-action", "--id", "corp.plugins", "-v"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+
+    assert_eq!(entries(&tree.home(".plugins")), ["everywhere"], "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "not cloning {} (plugins.txt line 2): when \"work\" is false",
+            display(&upstream.origin())
+        )),
+        "the entry's own gate should still close it:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_included_list_with_nothing_to_clone_still_makes_its_directory() {
+    // Whether it declares no entries or this machine excludes every one, the
+    // list is carried out: the directory is made, and naming it applies one
+    // action rather than nothing.
+    let upstream = BareRepo::new();
+    for list in [
+        String::new(),
+        format!("{} when=\"work\"\n", display(&upstream.origin())),
+    ] {
+        let origin = remote(&plugins(""), &list);
+        let tree = leaf(&origin, "[vars]\nwork = \"false\"\n", "", "");
+        tree.batfiles().arg("sync").assert().success();
+        std::fs::remove_dir(tree.home(".plugins")).expect("the directory sync made");
+
+        let assertion = tree
+            .batfiles()
+            .args(["apply-action", "--id", "corp.plugins"])
+            .assert()
+            .success();
+        let stderr = stderr_of(&assertion);
+
+        assert!(tree.home(".plugins").is_dir(), "{list:?}: {stderr}");
+        assert!(
+            !stderr.contains("nothing to apply"),
+            "{list:?}: the list did not count as applied:\n{stderr}"
+        );
+    }
+}

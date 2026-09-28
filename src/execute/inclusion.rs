@@ -6,7 +6,6 @@
 //! nothing, making the plan [partial](../../docs/cmdline.md#plan-completeness).
 
 use std::collections::BTreeMap;
-use std::rc::Rc;
 
 use super::record::RunRecord;
 use crate::action::RunContext;
@@ -20,11 +19,11 @@ use crate::output::Reporter;
 use crate::paths;
 use crate::selection::Selection;
 use crate::var::VarName;
-use crate::var_set::VarSet;
 
 /// One `include-remote` the run reached, as the leaf manifest declared it.
 ///
-/// Owns its identity and selection filters before the remote manifest is read.
+/// Owns its identity and selection filters, whether or not the remote manifest
+/// is read.
 pub(crate) struct Inclusion {
     /// The written `id`, which qualifies its records' addresses. `None`: its
     /// records have no address, and [`label`](Self::label) names it.
@@ -73,7 +72,7 @@ impl Inclusion {
     }
 
     /// How lines name its records: by `id`, or by label when it has none.
-    fn contributor(&self) -> Contributor<'_> {
+    pub(crate) fn contributor(&self) -> Contributor<'_> {
         match &self.id {
             Some(id) => Contributor::Inclusion(id),
             None => Contributor::UnnamedInclusion(&self.label),
@@ -114,49 +113,10 @@ impl Inclusion {
         }
     }
 
-    /// Pair this opened inclusion with the scope derived for its records.
-    pub(crate) fn with_scope(self, vars: Rc<VarSet>) -> Contribution {
-        Contribution {
-            inclusion: self,
-            vars,
-        }
-    }
-}
-
-/// An opened inclusion, shared by every record it contributed.
-///
-/// Those records come from one manifest, resolve repository paths in one
-/// materialization, and are decided in one variable scope; sharing keeps them
-/// consistent with each other and with the inclusion.
-pub(crate) struct Contribution {
-    inclusion: Inclusion,
-    /// The scope for these records' conditions and their clone lists' entry
-    /// conditions: [derived](crate::var_set::VarSet::with_inclusion) for the
-    /// inclusion, or the run's set where neither it nor its remote declared
-    /// variables.
-    vars: Rc<VarSet>,
-}
-
-impl Contribution {
-    /// The remote whose materialization holds these records' repository paths.
-    pub(super) fn remote(&self) -> &ItemId {
-        self.inclusion.remote()
-    }
-
-    /// The variable scope these records are decided in.
-    pub(super) fn scope(&self) -> &Rc<VarSet> {
-        &self.vars
-    }
-
-    /// How lines about these records name the inclusion.
-    pub(super) fn contributor(&self) -> Contributor<'_> {
-        self.inclusion.contributor()
-    }
-
     /// The exclusion for a record the inclusion's filters left out, naming the
     /// inclusion.
     pub(super) fn not_selected(&self) -> Exclusion {
-        Exclusion::Expected(format!("not selected by {}", self.inclusion.label))
+        Exclusion::Expected(format!("not selected by {}", self.label))
     }
 }
 

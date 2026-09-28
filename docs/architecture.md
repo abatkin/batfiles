@@ -103,7 +103,7 @@ path; their replacement policy differs from seeds.
 | Module | Owns |
 | --- | --- |
 | `execute/mod.rs` | Command entry points, phase order, clone-list preparation, and the execution loop. |
-| `execute/record.rs` | The run's list: each record's identity, provenance, heading, scope, and disposition. |
+| `execute/record.rs` | The run's list: each record's identity, heading, and disposition, and each inclusion's ownership of the records it contributed, with their scope. |
 | `execute/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
 | `execute/inclusion.rs` | An inclusion's identity, filters, and the reading of its manifest. |
 | `dynamic/` | Running dynamic variables' commands, and their cache. |
@@ -124,8 +124,10 @@ A run proceeds in this order:
    remote's dynamic variables, if the leaf allows them.
 6. Warn about unmatched skips and [prepare](cmdline.md#clone-list-preparation)
    every selected clone list.
-7. Walk the list once: report exclusions, print admitted inclusions' headings,
-   and dispatch every other admitted record.
+7. Walk the list once in declaration order: report exclusions and dispatch
+   admitted records. An admitted inclusion prints its heading and then walks
+   the records it contributed, reading their repository paths from its
+   remote's materialization.
 
 Steps 1, 2, 4, and 5 can write before assembly or preparation fails. Preparation
 precedes every action's writes, not every write in the command. Only
@@ -217,9 +219,8 @@ The four sources resolve into one flat scope: one namespace, in which a name
 resolves the same way whatever declared it. The representation is not
 prescribed; the seam below is. An opened inclusion derives a second scope from
 that one, holding its `vars` overrides and the included remote's own `[vars]`: a
-scope is derived once per opened inclusion, carried by the records it
-contributed, and every condition on a record is decided against the scope that
-record holds. Conditions and precedence are specified in
+scope is derived once per opened inclusion and held beside the records it
+contributed, and every condition on those records is decided against it. Conditions and precedence are specified in
 [repoformat.md](repoformat.md#conditions) and
 [environment.md](environment.md#variable-precedence). A manifest's layer holds
 its dynamic variables' resolved values beside its static ones; one
@@ -231,12 +232,14 @@ Keep each of these in one place, without building future abstractions:
 
 1. Effective variable values and their origins are produced by one function.
 2. Run settings are carried by `RunContext`; write helpers consult the mode.
-3. Execution captures selection once, prepares selected clone lists, and uses
-   one loop over the run's list.
+3. Execution captures selection once, prepares selected clone lists, and
+   walks the run's list once, visiting each inclusion's records at its
+   position.
 4. Repository source paths use one resolver, which takes the tree a record came
    from.
 5. The manifest owns declaration order; `execute` assembles the run's list from
-   it, expanding every inclusion it reaches. Assembly and selection are one
-   pass, and both finish before clone-list preparation. The assembled list is
-   not a simulation and never becomes one: it is the same records, read from
-   more than one file. See [Dry-run](#dry-run).
+   it, opening every inclusion it reaches. Each opened inclusion owns the
+   records it contributed; inclusion is one level deep, so they are never
+   inclusions themselves. Assembly and selection are one pass, and both finish
+   before clone-list preparation. The assembled list is not a simulation and
+   never becomes one: it is the same records, read from more than one file. See [Dry-run](#dry-run).

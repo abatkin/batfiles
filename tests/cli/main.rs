@@ -17,6 +17,7 @@ mod fetching;
 mod groups;
 mod inclusion;
 mod inclusion_addresses;
+mod inclusion_clone_lists;
 mod inclusion_composition;
 mod inclusion_filters;
 mod inclusion_vars;

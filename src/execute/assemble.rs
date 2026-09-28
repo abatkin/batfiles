@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::inclusion::{IncludedAction, Inclusion, InclusionContents};
-use super::record::{Disposition, RunList, RunRecord};
+use super::record::{Disposition, Node, Opened, RunList, RunRecord};
 use crate::action::RunContext;
 use crate::condition::{Bindings, HostNamespaces};
 use crate::dynamic::{DynamicVarResolver, ManifestSource};
@@ -20,15 +20,16 @@ use crate::var_set::{VarSet, VarValue};
 /// run reaches, and set every record's disposition.
 ///
 /// Expansion and selection share one pass: an inclusion is opened only if the
-/// selection admits it, and its records are then selected like any other. An
-/// unreadable inclusion manifest, or a target naming a record the command
-/// cannot run, fails here, before any action runs.
+/// selection admits it, and the records it contributes are then selected like
+/// any other. An unreadable inclusion manifest, or a target naming a record the
+/// command cannot run, fails here, before any action runs.
 ///
 /// `context` must hold this command's materializations. `variables` is the
-/// run's set, used for every record except those whose inclusion derived a
-/// [scope](RunRecord::scope) of its own; `host` backs each scope's bindings.
-/// `dynamic` resolves the declarations of each manifest an inclusion opens, in
-/// that remote's materialization; an unreadable cache fails here.
+/// run's set, used for every record except those an opened inclusion
+/// contributed, which are decided in its [scope](Opened::scope); `host` backs
+/// each scope's bindings. `dynamic` resolves the declarations of each manifest
+/// an inclusion opens, in that remote's materialization; an unreadable cache
+/// fails here.
 pub(super) fn assemble(
     actions: Vec<Action>,
     selection: &Selection<'_>,
@@ -39,9 +40,8 @@ pub(super) fn assemble(
 ) -> Result<RunList, Error> {
     let bindings = Bindings::new(variables, host);
     let mut run_list = RunList {
-        records: Vec::with_capacity(actions.len()),
+        nodes: Vec::with_capacity(actions.len()),
         target_found: false,
-        unread_inclusions: Vec::new(),
     };
 
     for (index, action) in actions.into_iter().enumerate() {
@@ -58,11 +58,9 @@ pub(super) fn assemble(
             if target_names_record {
                 record.disposition = disposition(&record, selection, &bindings);
             }
-            run_list.records.push(record);
+            run_list.nodes.push(Node::Action(record));
             continue;
         };
-        // Owns copies of the declaration's fields, since `record` moves into the
-        // list below.
         let inclusion = Inclusion::at(declaration, index + 1);
         // Whether the run intends to read the inclusion's manifest; an exclusion
         // or a missing materialization can still leave it unread. A target
@@ -85,8 +83,11 @@ pub(super) fn assemble(
             actions: included_actions,
         }) = contents
         else {
-            run_list.unread_inclusions.extend(inclusion.id().cloned());
-            run_list.records.push(record);
+            run_list.nodes.push(Node::Inclusion {
+                record,
+                inclusion,
+                opened: None,
+            });
             continue;
         };
         // Resolved only for an opened inclusion, once its gates have been
@@ -105,17 +106,16 @@ pub(super) fn assemble(
             variables,
             context.reporter(),
         );
-        let from = Rc::new(inclusion.with_scope(scope));
-        let scoped = Bindings::new(from.scope(), host);
-        run_list.records.push(record);
+        let scoped = Bindings::new(&scope, host);
 
+        let mut records = Vec::with_capacity(included_actions.len());
         for IncludedAction {
             number,
             action,
             included_by_filter,
         } in included_actions
         {
-            let mut contributed = RunRecord::contributed(action, number, &from);
+            let mut contributed = RunRecord::contributed(action, number, inclusion.contributor());
             // Targeting the inclusion targets every record it contributed; a
             // qualified address targets one.
             let target_names_contributed =
@@ -127,11 +127,16 @@ pub(super) fn assemble(
                 contributed.disposition = if included_by_filter {
                     disposition(&contributed, selection, &scoped)
                 } else {
-                    Disposition::Excluded(from.not_selected())
+                    Disposition::Excluded(inclusion.not_selected())
                 };
             }
-            run_list.records.push(contributed);
+            records.push(contributed);
         }
+        run_list.nodes.push(Node::Inclusion {
+            record,
+            inclusion,
+            opened: Some(Opened { scope, records }),
+        });
     }
 
     Ok(run_list)
