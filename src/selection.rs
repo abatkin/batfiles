@@ -8,7 +8,7 @@ use crate::condition::{Bindings, Exclusion};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute::record::{RunList, RunRecord};
+use crate::execute::record::{RunList, RunRecord, Unread};
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
@@ -56,20 +56,47 @@ impl Target<'_> {
         }
     }
 
-    /// The error for a target that matched no record; `None` for
-    /// [`Everything`](Self::Everything).
-    fn unresolved(&self, manifest: PathBuf) -> Option<Error> {
-        match self {
-            Self::Everything => None,
-            Self::Action(id) => Some(Error::UnknownAction {
+    /// The error for a target that matched no record in `run_list`; `None` for
+    /// [`Everything`](Self::Everything). A target into an inclusion the run did
+    /// not read names that inclusion and why, since its manifest might have
+    /// answered.
+    fn unresolved(&self, manifest: PathBuf, run_list: &RunList) -> Option<Error> {
+        let (noun, address) = match self {
+            Self::Everything => return None,
+            Self::Action(id) => ("action", *id),
+            Self::Group(group) => ("group", *group),
+        };
+        let unread = run_list
+            .unread_inclusions()
+            .filter(|(id, _)| address.qualified_by(id))
+            .find_map(|(inclusion, unread)| {
+                let (address, inclusion) = (address.clone(), inclusion.clone());
+                match unread {
+                    Unread::NotRequested => None,
+                    Unread::Excluded(exclusion) => Some(Error::TargetInExcludedInclusion {
+                        noun,
+                        address,
+                        inclusion,
+                        reason: exclusion.reason().to_owned(),
+                    }),
+                    Unread::NotMaterialized(remote) => Some(Error::TargetInUnreadInclusion {
+                        noun,
+                        address,
+                        inclusion,
+                        remote: remote.clone(),
+                    }),
+                }
+            });
+        Some(unread.unwrap_or_else(|| match self {
+            Self::Group(_) => Error::UnknownGroup {
                 path: manifest,
-                id: (*id).clone(),
-            }),
-            Self::Group(group) => Some(Error::UnknownGroup {
+                group: address.clone(),
+            },
+            _ => Error::UnknownAction {
                 path: manifest,
-                group: (*group).clone(),
-            }),
-        }
+                id: address.clone(),
+            },
+        }))
     }
 
     /// Whether exclusions naming a record's own address apply. `apply-action`
@@ -82,6 +109,25 @@ impl Target<'_> {
     /// [`Everything`](Self::Everything) honors them.
     fn honors_group_exclusions(&self) -> bool {
         matches!(self, Self::Everything)
+    }
+}
+
+/// Which exclusions a decision waives.
+#[derive(Clone, Copy)]
+enum Waivers {
+    /// Those the target waives for what it names.
+    Target,
+    /// None.
+    None,
+}
+
+impl Waivers {
+    fn honors_action_exclusions(self, target: &Target<'_>) -> bool {
+        matches!(self, Self::None) || target.honors_action_exclusions()
+    }
+
+    fn honors_group_exclusions(self, target: &Target<'_>) -> bool {
+        matches!(self, Self::None) || target.honors_group_exclusions()
     }
 }
 
@@ -237,8 +283,8 @@ impl<'a> Selection<'a> {
     }
 
     /// See [`Target::unresolved`].
-    pub fn unresolved(&self, manifest: PathBuf) -> Option<Error> {
-        self.target.unresolved(manifest)
+    pub fn unresolved(&self, manifest: PathBuf, run_list: &RunList) -> Option<Error> {
+        self.target.unresolved(manifest, run_list)
     }
 
     /// The error for a target naming a record the command cannot run, or
@@ -264,7 +310,8 @@ impl<'a> Selection<'a> {
                 .filter_map(|it| of(it).as_ref())
                 .collect()
         };
-        let unread_inclusions: Vec<&ItemId> = run_list.unread_inclusions().collect();
+        let unread_inclusions: Vec<&ItemId> =
+            run_list.unread_inclusions().map(|(id, _)| id).collect();
         self.actions.warn_unmatched(
             &names(|it| &it.address),
             &unread_inclusions,
@@ -286,30 +333,51 @@ impl<'a> Selection<'a> {
     /// only runs that would execute the record; there it excludes the record
     /// like any other exclusion, reported at every verbosity.
     pub fn exclusion(&self, record: &RunRecord, bindings: &Bindings<'_>) -> Option<Exclusion> {
-        if let Some(reason) = self.listed_reason(record) {
+        self.decide(record, bindings, Waivers::Target)
+    }
+
+    /// Why this run passes the record over, as [`exclusion`](Self::exclusion)
+    /// decides it but with nothing the target waives waived: every list this
+    /// selection read, and the record's condition. For an inclusion the target
+    /// reaches into without naming.
+    pub fn unwaived_exclusion(
+        &self,
+        record: &RunRecord,
+        bindings: &Bindings<'_>,
+    ) -> Option<Exclusion> {
+        self.decide(record, bindings, Waivers::None)
+    }
+
+    fn decide(
+        &self,
+        record: &RunRecord,
+        bindings: &Bindings<'_>,
+        waivers: Waivers,
+    ) -> Option<Exclusion> {
+        if let Some(reason) = self.listed_reason(record, waivers) {
             return Some(Exclusion::Expected(reason.to_string()));
         }
         // Waived exactly where an exclusion naming the action is.
         let gate = record
             .action
             .gate()
-            .filter(|_| self.target.honors_action_exclusions())?;
+            .filter(|_| waivers.honors_action_exclusions(&self.target))?;
         gate.exclusion(bindings, Some(NOT_INSTALLED))
     }
 
     /// The first exclusion either list names, or `None` where neither does.
     /// Persistent disables precede run-only skips; action exclusions precede
-    /// group exclusions within each source. The target determines which
+    /// group exclusions within each source. `waivers` determines which
     /// exclusions are honored.
-    fn listed_reason<'b>(&self, record: &'b RunRecord) -> Option<SkipReason<'b>> {
+    fn listed_reason<'b>(&self, record: &'b RunRecord, waivers: Waivers) -> Option<SkipReason<'b>> {
         let address = record
             .address
             .as_ref()
-            .filter(|_| self.target.honors_action_exclusions());
+            .filter(|_| waivers.honors_action_exclusions(&self.target));
         let group_address = record
             .group_address
             .as_ref()
-            .filter(|_| self.target.honors_group_exclusions());
+            .filter(|_| waivers.honors_group_exclusions(&self.target));
 
         let listed = |list: &BTreeSet<ItemAddress>, item: &ItemAddress| list.contains(item);
 
@@ -437,6 +505,16 @@ mod tests {
         record: &RunRecord,
         vars: &[(&str, &str)],
     ) -> Option<Exclusion> {
+        decided_with(selection, record, vars, Waivers::Target)
+    }
+
+    /// The same, waiving only what `waivers` does.
+    fn decided_with(
+        selection: &Selection,
+        record: &RunRecord,
+        vars: &[(&str, &str)],
+        waivers: Waivers,
+    ) -> Option<Exclusion> {
         let variables = Rc::new(VarSet::stack(
             vars.iter()
                 .map(|(name, value)| {
@@ -453,7 +531,7 @@ mod tests {
         let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
         let host = HostNamespaces::capture(&empty);
         let bindings = Bindings::new(&variables, &host);
-        selection.exclusion(record, &bindings)
+        selection.decide(record, &bindings, waivers)
     }
 
     /// The reason for an [`Expected`](Exclusion::Expected) exclusion; panics on
@@ -612,6 +690,47 @@ mod tests {
             disabled(&["zshrc"], &["shell"]),
         );
         assert_eq!(reason(&selection, &action("zshrc", "shell")), None);
+    }
+
+    #[test]
+    fn an_unwaived_decision_honors_every_list_the_selection_read() {
+        // For a record the target reaches through without naming. A list the
+        // target never read stays unread: `apply-group` has no group skips.
+        let shell = address("corp.shell");
+        let unwaived = |skip_actions: &[&str], skip_groups: &[&str], disabled| {
+            let selection = filter(
+                Target::Group(&shell),
+                skip_actions,
+                skip_groups,
+                &[],
+                disabled,
+            );
+            decided_with(&selection, &action("corp", "work"), &[], Waivers::None)
+                .map(|it| it.reason().to_owned())
+        };
+        assert_eq!(
+            unwaived(&[], &[], disabled(&[], &["work"])).as_deref(),
+            Some("group `work` is disabled")
+        );
+        assert_eq!(
+            unwaived(&["corp"], &[], Disabled::default()).as_deref(),
+            Some("`corp` from --skip-action")
+        );
+        assert_eq!(unwaived(&[], &["work"], Disabled::default()), None);
+
+        // And the record's condition, which naming an action would waive.
+        let zshrc = address("corp.zshrc");
+        let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
+        let unwaived = decided_with(
+            &by_name,
+            &conditioned("when", "work"),
+            &[("work", "false")],
+            Waivers::None,
+        );
+        assert_eq!(
+            unwaived.map(|it| it.reason().to_owned()).as_deref(),
+            Some("when \"work\" is false")
+        );
     }
 
     // The record's own condition, which is the one exclusion the manifest

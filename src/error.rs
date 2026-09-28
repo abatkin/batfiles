@@ -83,6 +83,33 @@ pub(crate) enum Error {
     #[error("no action in {} is in the group `{group}`", .path.display())]
     UnknownGroup { path: PathBuf, group: ItemAddress },
 
+    /// An apply command's target inside an inclusion the run excluded, whose
+    /// manifest was therefore not read. `noun` says what the target names.
+    #[error(
+        "{noun} `{address}` would come from include-remote `{inclusion}`, which is \
+         excluded: {reason}"
+    )]
+    TargetInExcludedInclusion {
+        noun: &'static str,
+        address: ItemAddress,
+        inclusion: ItemId,
+        reason: String,
+    },
+
+    /// An apply command's target inside an inclusion whose remote has no
+    /// materialization to read. `noun` says what the target names.
+    #[error(
+        "{noun} `{address}` would come from include-remote `{inclusion}`, which \
+         cannot be read: remote `{remote}` is not materialized; run `batfiles sync` \
+         to bring it down"
+    )]
+    TargetInUnreadInclusion {
+        noun: &'static str,
+        address: ItemAddress,
+        inclusion: ItemId,
+        remote: ItemId,
+    },
+
     /// An `apply-action` naming an `include-remote`, whose `id` qualifies what it
     /// contributes; the inclusion itself is nothing to run.
     #[error(

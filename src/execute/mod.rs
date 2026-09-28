@@ -124,7 +124,8 @@ impl Kind<'_> {
 /// machine-local lists say about it.
 pub(crate) fn apply_action(invocation: &Invocation<'_>, id: &str) -> Result<(), Error> {
     let id = ItemAddress::try_from(id.to_owned())?;
-    // Naming an action waives its exclusions, but not remote conditions.
+    // Naming an action waives its exclusions, but not its inclusion's or remote
+    // conditions.
     let processed_action_count = run(
         Target::Action(&id),
         Skips {
@@ -431,7 +432,7 @@ fn run(
     }
 
     if !run_list.target_found
-        && let Some(error) = selection.unresolved(invocation.roots.manifest())
+        && let Some(error) = selection.unresolved(invocation.roots.manifest(), &run_list)
     {
         return Err(error);
     }

@@ -118,16 +118,34 @@ impl RunList {
         })
     }
 
-    /// IDs of inclusions whose manifest this run did not read. A qualified skip
-    /// into one of them is not reported as matching nothing.
-    pub fn unread_inclusions(&self) -> impl Iterator<Item = &ItemId> {
+    /// The ID of each inclusion whose manifest this run did not read, and why.
+    /// Nothing inside one was listed, so no address qualified by its ID can be
+    /// told to match nothing.
+    pub fn unread_inclusions(&self) -> impl Iterator<Item = (&ItemId, Unread<'_>)> {
         self.nodes.iter().filter_map(|node| match node {
             Node::Inclusion {
+                record,
                 inclusion,
                 opened: None,
-                ..
-            } => inclusion.id(),
+            } => {
+                let unread = match &record.disposition {
+                    Disposition::Unwanted => Unread::NotRequested,
+                    Disposition::Excluded(exclusion) => Unread::Excluded(exclusion),
+                    Disposition::Run => Unread::NotMaterialized(inclusion.remote()),
+                };
+                Some((inclusion.id()?, unread))
+            }
             _ => None,
         })
     }
+}
+
+/// Why an inclusion's manifest was not read.
+pub(crate) enum Unread<'a> {
+    /// The run did not request it.
+    NotRequested,
+    /// Requested, and excluded for this reason.
+    Excluded(&'a Exclusion),
+    /// Admitted, with no materialization of this remote to read.
+    NotMaterialized(&'a ItemId),
 }

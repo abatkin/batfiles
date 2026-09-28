@@ -388,6 +388,176 @@ fn a_qualified_address_that_names_nothing_is_a_failure_like_any_other() {
     );
 }
 
+/// Rewrite the leaf manifest, replacing `from` with `to` once.
+fn edit_manifest(tree: &Tree, from: &str, to: &str) {
+    let manifest = std::fs::read_to_string(tree.manifest()).expect("the leaf manifest");
+    assert!(manifest.contains(from), "the manifest has no `{from}`");
+    tree.write_manifest(&manifest.replacen(from, to, 1));
+}
+
+/// One way to exclude `corp` on this machine.
+struct Excluding {
+    case: &'static str,
+    /// Applies it to a ready tree.
+    exclude: fn(&Tree),
+    /// The reason a run gives for it.
+    reason: &'static str,
+}
+
+/// Each way to exclude `corp` on this machine.
+const EXCLUDING_CORP: [Excluding; 4] = [
+    Excluding {
+        case: "disabled",
+        exclude: |tree| {
+            tree.batfiles()
+                .args(["disable-action", "corp"])
+                .assert()
+                .success();
+        },
+        reason: "action `corp` is disabled",
+    },
+    Excluding {
+        case: "group disabled",
+        exclude: |tree| {
+            tree.batfiles()
+                .args(["disable-group", "work"])
+                .assert()
+                .success();
+        },
+        reason: "group `work` is disabled",
+    },
+    Excluding {
+        case: "condition",
+        exclude: |tree| {
+            edit_manifest(
+                tree,
+                "remote = \"corporate\"\n",
+                "remote = \"corporate\"\nwhen = \"work\"\n",
+            );
+            tree.batfiles()
+                .args(["vars", "set", "work", "false"])
+                .assert()
+                .success();
+        },
+        reason: "when \"work\" is false",
+    },
+    Excluding {
+        case: "remote's condition",
+        exclude: |tree| {
+            edit_manifest(
+                tree,
+                "[remotes.corporate]\n",
+                "[remotes.corporate]\nwhen = \"work\"\n",
+            );
+            tree.batfiles()
+                .args(["vars", "set", "work", "false"])
+                .assert()
+                .success();
+        },
+        reason: "remote `corporate` is excluded here: when \"work\" is false",
+    },
+];
+
+#[test]
+fn naming_an_included_action_does_not_waive_its_inclusions_exclusions() {
+    // `apply-action`'s waiver covers the record it names. The inclusion it
+    // reaches through is decided as a `sync` would decide it, so what this
+    // machine keeps out stays out, and the target fails naming why.
+    for Excluding {
+        case,
+        exclude,
+        reason,
+    } in EXCLUDING_CORP
+    {
+        let (_origin, tree) = ready();
+        exclude(&tree);
+
+        let assertion = tree
+            .batfiles()
+            .args(["apply-action", "--id", "corp.zshrc"])
+            .assert()
+            .failure()
+            .code(1);
+        let stderr = stderr_of(&assertion);
+
+        let expected = format!(
+            "action `corp.zshrc` would come from include-remote `corp`, which is excluded: {reason}"
+        );
+        assert!(stderr.contains(&expected), "{case}:\n{stderr}");
+        assert_eq!(installed(&tree), (false, false), "{case}: something ran");
+    }
+}
+
+#[test]
+fn naming_an_included_group_does_not_waive_its_inclusions_exclusions() {
+    // `apply-group` waives group exclusions for what it names; `corp` is in the
+    // disabled group `work`, and naming `corp.shell` does not name it.
+    let (_origin, tree) = ready();
+    tree.batfiles()
+        .args(["disable-group", "work"])
+        .assert()
+        .success();
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-group", "--group", "corp.shell"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains(
+            "group `corp.shell` would come from include-remote `corp`, which is excluded: \
+             group `work` is disabled"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(installed(&tree), (false, false), "something ran");
+}
+
+#[test]
+fn naming_the_inclusions_own_group_still_waives_it() {
+    // The inclusion is what `apply-group --group work` names, so the group's
+    // disable is waived for it as for any member.
+    let (_origin, tree) = ready();
+    tree.batfiles()
+        .args(["disable-group", "work"])
+        .assert()
+        .success();
+
+    tree.batfiles()
+        .args(["apply-group", "--group", "work"])
+        .assert()
+        .success();
+
+    assert_eq!(installed(&tree), (true, true), "the group's disable held");
+}
+
+#[test]
+fn naming_an_action_in_an_unmaterialized_inclusion_says_to_synchronize() {
+    // Its manifest might have answered, so the failure names the inclusion and
+    // the remedy rather than reporting an address nothing carries.
+    let (_origin, tree) = including_unmaterialized();
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-action", "--id", "corp.zshrc"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = stderr_of(&assertion);
+
+    assert!(
+        stderr.contains(
+            "action `corp.zshrc` would come from include-remote `corp`, which cannot be read: \
+             remote `corporate` is not materialized; run `batfiles sync` to bring it down"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("has the id"), "{stderr}");
+}
+
 #[test]
 fn two_inclusions_of_one_remote_are_two_sets_of_records() {
     // One remote, one materialization, and two inclusions of it. Each gets its

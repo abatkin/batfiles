@@ -474,7 +474,10 @@ An `--id` that no action answers to is a failure: the command resolved nothing,
 so it exits 1 naming the address and the manifest, and writes nothing. That
 covers a well-formed [address](#addresses) no action carries, qualified or not.
 A value that is not a valid address fails the same way, before the repository is
-opened.
+opened. An `--id` inside an inclusion the run did not read — one this machine
+[excludes](#selection-by-command), or one whose remote has not been
+fetched — fails as well, naming the inclusion and why rather than an address
+nothing carries.
 
 **An `--id` naming an [`include-remote`](repoformat.md#include-remote) is
 refused**, and refused as that rather than as an unknown action. The inclusion's
@@ -508,7 +511,8 @@ Carry out the actions naming `--group`, in declaration order, with the same
 semantics `sync` gives them. A [group](repoformat.md#groups) is nothing but the
 actions naming it, so a group no action names does not exist: it exits 1 naming
 the group, exactly as `apply-action` does for an unknown ID, and there is no
-separate empty-group case to succeed quietly over.
+separate empty-group case to succeed quietly over. A qualified group inside an
+inclusion the run did not read fails the same way, naming the inclusion instead.
 
 Naming a group bypasses group exclusions; each member's own exclusions still
 apply. See the [selection table](#selection-by-command) for the complete rules.
@@ -885,6 +889,20 @@ every row above under its qualified address, and the inclusion that contributed
 it answers under its own. Asking for the inclusion — `apply-group` naming the
 group it is in — reaches everything it brought in.
 
+**Naming what an inclusion contributed does not name the inclusion.** A
+qualified target makes the command read the inclusion's manifest, but the
+inclusion itself is decided as `sync` decides it: its disables, the run-only
+skips the command reads, and its own `when`/`unless` all apply, and nothing the
+table waives for a named record is waived for it. So an inclusion this machine
+keeps out keeps what it contributes out under every command. Its manifest goes
+unread, so the target cannot be resolved, and the command fails naming the
+inclusion and the reason:
+
+```console
+$ batfiles apply-action --id corp.zshrc
+error: action `corp.zshrc` would come from include-remote `corp`, which is excluded: group `work` is disabled
+```
+
 **An inclusion's [selection filters](repoformat.md#selecting-part-of-a-remote)
 are honored everywhere**, which is the one row no command waives. They are the
 leaf repository describing what it composed rather than a list this machine
@@ -952,7 +970,8 @@ was written rather than by an address.
 
 An address qualified by an inclusion is also what makes a command read that
 inclusion's manifest, which is how `apply-action --id corp.zshrc` reaches past a
-record it does not name.
+record it does not name. Reaching past the inclusion waives none of its
+exclusions — see [selection by command](#selection-by-command).
 
 The remaining form — an addressable entry inside a `git-clone-list` — is in
 [`future/cmdline.md`](future/cmdline.md#address-forms) with the slice that gives

@@ -65,7 +65,7 @@ pub(super) fn assemble(
         // Whether the run intends to read the inclusion's manifest; an exclusion
         // or a missing materialization can still leave it unread. A target
         // inside it, like `apply-action --id corp.zshrc`, opens it without
-        // naming the inclusion.
+        // naming the inclusion, and so without waiving its exclusions.
         let should_open_inclusion = target_names_record || selection.reaches_into(inclusion.id());
         if should_open_inclusion {
             record.disposition = match inclusion.exclusion(&record, selection, &bindings, context) {

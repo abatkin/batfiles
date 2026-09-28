@@ -84,8 +84,10 @@ impl Inclusion {
     ///
     /// The first exclusion `selection` finds for the record, decided in the
     /// leaf scope `bindings`: an inclusion's `vars` apply only to the records it
-    /// contributes, not to its own condition. Failing that, the remote's
-    /// condition closing in `context`, restated for this inclusion.
+    /// contributes, not to its own condition. What the target waives is waived
+    /// only where it names the record; a target reaching into the inclusion
+    /// without naming it waives nothing. Failing that, the remote's condition
+    /// closing in `context`, restated for this inclusion.
     pub(crate) fn exclusion(
         &self,
         record: &RunRecord,
@@ -93,7 +95,12 @@ impl Inclusion {
         bindings: &Bindings<'_>,
         context: &RunContext<'_>,
     ) -> Option<Exclusion> {
-        selection.exclusion(record, bindings).or_else(|| {
+        let exclusion = if selection.wants(record) {
+            selection.exclusion(record, bindings)
+        } else {
+            selection.unwaived_exclusion(record, bindings)
+        };
+        exclusion.or_else(|| {
             context
                 .excluded_remote(&self.remote)
                 .map(|exclusion| self.closed_by_remote(exclusion))
