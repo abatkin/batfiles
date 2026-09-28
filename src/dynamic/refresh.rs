@@ -9,22 +9,20 @@ use std::rc::Rc;
 use thiserror::Error as ThisError;
 
 use super::{DynamicVarResolver, ManifestSource, RefreshOutcome, RefreshSelection, VarIdentity};
-use crate::action::RunContext;
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute::inclusion::Inclusion;
-use crate::execute::record::RunRecord;
-use crate::item::ItemId;
+use crate::inclusion::{self, Inclusion};
+use crate::item::{ItemAddress, ItemId};
 use crate::location::Roots;
 use crate::manifest::Manifest;
 use crate::manifest::action::Action;
 use crate::manifest::vars::VarSpec;
-use crate::mode::RunMode;
 use crate::output::Reporter;
+use crate::paths;
 use crate::remotes;
-use crate::selection::Selection;
+use crate::selection::{Selection, Subject};
 use crate::var_set::VarSet;
 
 /// Refresh the named keys, or every declaration in play when none are named,
@@ -92,14 +90,11 @@ fn refresh_with_remotes(
     let host = HostNamespaces::capture(env);
     let bindings = Bindings::new(&variables, &host);
     let selection = Selection::persistent(Disabled::load(&roots.state.disabled())?);
-    // A refresh installs nothing, so no write helper consults the mode.
-    let context = RunContext::new(
-        roots,
-        RunMode::new(true),
-        remotes::excluded(&manifest.remotes, &bindings),
-        reporter,
-    )?;
-    let reach = reachability(manifest.actions, &selection, &bindings, &context);
+    let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
+    // Anchored as a run anchors it, so a materialization, and the commands run
+    // in it, are where a run finds them.
+    let repository = paths::anchor(&roots.batfiles_dir)?;
+    let reach = reachability(&manifest.actions, &selection, &bindings, &excluded_remotes);
 
     let wanted: BTreeSet<&ItemId> = match asked {
         RefreshSelection::All => reach.keys().collect(),
@@ -125,14 +120,16 @@ fn refresh_with_remotes(
                         .collect(),
                 }
             }
-            Some(Reach::InPlay(inclusion)) => match inclusion.manifest(&context)? {
+            // Admitted by `reachability`, so its tree may be read.
+            Some(Reach::InPlay(inclusion)) => match inclusion.manifest(&repository)? {
                 None if matches!(asked, RefreshSelection::All) => {
-                    inclusion.warn_not_materialized(&context);
+                    let path = remotes::materialization(&repository, remote);
+                    inclusion::warn_not_materialized(remote, &path, reporter);
                     continue;
                 }
                 None => Reason::NotMaterialized {
                     remote: remote.clone(),
-                    path: context.materialization(remote),
+                    path: remotes::materialization(&repository, remote),
                 },
                 Some(included) => {
                     for key in asked.keys_for(remote) {
@@ -153,7 +150,7 @@ fn refresh_with_remotes(
     refuse(refusals)?;
 
     for (remote, vars) in &opened {
-        let tree = context.materialization(remote);
+        let tree = remotes::materialization(&repository, remote);
         let source = ManifestSource {
             remote: Some(remote),
             root: &tree,
@@ -173,23 +170,36 @@ enum Reach {
 }
 
 /// Decide, for every remote an `include-remote` names, whether it is in play,
-/// by asking each inclusion what a run of `selection` would. A remote no
-/// inclusion names is absent from the result.
+/// by asking each inclusion what a run of `selection` would, with the remote
+/// conditions `excluded_remotes` decided. A remote no inclusion names is absent
+/// from the result.
 fn reachability(
-    actions: Vec<Action>,
+    actions: &[Action],
     selection: &Selection<'_>,
     bindings: &Bindings<'_>,
-    context: &RunContext<'_>,
+    excluded_remotes: &BTreeMap<ItemId, Exclusion>,
 ) -> BTreeMap<ItemId, Reach> {
     let mut reach = BTreeMap::new();
-    for (index, action) in actions.into_iter().enumerate() {
-        let Action::IncludeRemote(declaration) = &action else {
+    for (index, action) in actions.iter().enumerate() {
+        let Action::IncludeRemote(declaration) = action else {
             continue;
         };
         let remote = declaration.remote.clone();
         let inclusion = Inclusion::at(declaration, index + 1);
-        let record = RunRecord::leaf(action, index + 1);
-        let exclusion = inclusion.exclusion(&record, selection, bindings, context);
+        // A leaf record's addresses are unqualified.
+        let leaf = |id: Option<&ItemId>| id.map(|id| ItemAddress::qualified(None, id));
+        let (address, group_address) = (leaf(action.id()), leaf(action.group()));
+        let record = Subject {
+            address: address.as_ref(),
+            group_address: group_address.as_ref(),
+            gate: action.gate(),
+        };
+        let exclusion = inclusion.exclusion(
+            record,
+            selection,
+            bindings,
+            excluded_remotes.get(inclusion.remote()),
+        );
         match (
             exclusion,
             reach

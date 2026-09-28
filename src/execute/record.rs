@@ -1,12 +1,16 @@
 //! The run's list: each record's action, addresses, heading, and what this run
 //! does with it, with each inclusion owning the records it contributed.
 
+use std::path::PathBuf;
 use std::rc::Rc;
 
-use super::inclusion::Inclusion;
 use crate::condition::Exclusion;
+use crate::error::Error;
+use crate::inclusion::{Inclusion, Unread};
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::{Action, Contributor};
+use crate::output::Reporter;
+use crate::selection::{Selection, Subject};
 use crate::var_set::VarSet;
 
 /// One record in the run's list: an action, its addresses, its report heading,
@@ -56,6 +60,15 @@ impl RunRecord {
             address,
             group_address,
             disposition: Disposition::Unwanted,
+        }
+    }
+
+    /// The record as selection reads it.
+    pub fn subject(&self) -> Subject<'_> {
+        Subject {
+            address: self.address.as_ref(),
+            group_address: self.group_address.as_ref(),
+            gate: self.action.gate(),
         }
     }
 }
@@ -138,14 +151,28 @@ impl RunList {
             _ => None,
         })
     }
-}
 
-/// Why an inclusion's manifest was not read.
-pub(crate) enum Unread<'a> {
-    /// The run did not request it.
-    NotRequested,
-    /// Requested, and excluded for this reason.
-    Excluded(&'a Exclusion),
-    /// Admitted, with no materialization of this remote to read.
-    NotMaterialized(&'a ItemId),
+    /// Warn about every run-only skip in `selection` that names nothing listed
+    /// here. See [`Selection::warn_unmatched`].
+    pub fn warn_unmatched(&self, selection: &Selection<'_>, reporter: &Reporter) {
+        let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
+            self.records().filter_map(|it| of(it).as_ref()).collect()
+        };
+        let unread: Vec<&ItemId> = self.unread_inclusions().map(|(id, _)| id).collect();
+        selection.warn_unmatched(
+            &names(|it| &it.address),
+            &names(|it| &it.group_address),
+            &unread,
+            reporter,
+        );
+    }
+
+    /// The error for a target that named nothing listed here, read from
+    /// `manifest`, or `None` where it named something or asked for everything.
+    pub fn unresolved(&self, selection: &Selection<'_>, manifest: PathBuf) -> Option<Error> {
+        if self.target_found {
+            return None;
+        }
+        selection.unresolved(manifest, self.unread_inclusions())
+    }
 }

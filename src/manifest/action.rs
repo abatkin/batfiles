@@ -191,7 +191,7 @@ pub(crate) enum Contributor<'a> {
     Inclusion(&'a ItemId),
     /// Contributed by an `include-remote` without an `id`. Nothing is
     /// qualified; the line names the inclusion by its
-    /// [label](crate::execute::inclusion::Inclusion::at).
+    /// [label](crate::inclusion::Inclusion::at).
     UnnamedInclusion(&'a str),
 }
 

@@ -105,9 +105,10 @@ path; their replacement policy differs from seeds.
 | `execute/mod.rs` | Command entry points, phase order, clone-list preparation, and the execution loop. |
 | `execute/record.rs` | The run's list: each record's identity, heading, and disposition, and each inclusion's ownership of the records it contributed, with their scope. |
 | `execute/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
-| `execute/inclusion.rs` | An inclusion's identity, filters, and the reading of its manifest. |
+| `execute/inclusion.rs` | What an opened inclusion contributes: its filters' verdicts, dropped nested inclusions, and the warnings composing it gives. |
+| `inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
 | `dynamic/` | Running dynamic variables' commands, and their cache. |
-| `selection.rs` | Targets and exclusions, applied to run records. |
+| `selection.rs` | Targets and exclusions, decided on a record's addresses and condition. |
 | `action/` | Dispatch of prepared install records. |
 
 A run proceeds in this order:
@@ -243,3 +244,8 @@ Keep each of these in one place, without building future abstractions:
    inclusions themselves. Assembly and selection are one pass, and both finish
    before clone-list preparation. The assembled list is not a simulation and
    never becomes one: it is the same records, read from more than one file. See [Dry-run](#dry-run).
+6. Whether an inclusion is opened, and the reading of its manifest, belong to
+   `inclusion.rs`, which `execute` and `vars refresh` both call, admission
+   first. It takes the anchored repository path rather than a `RunContext`.
+   Composing what an inclusion contributes belongs to `execute` alone; refresh
+   folds admitted inclusions by remote instead.

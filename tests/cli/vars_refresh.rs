@@ -415,3 +415,195 @@ dest-dir = "~/.plugins"
     assert_eq!(refresh(&tree, &[]), "refreshed `corporate.team`\n");
     assert!(!tree.home(".plugins").exists());
 }
+
+// What a refresh reads of the remotes in play: each requested remote's whole
+// manifest, and nothing that composing an inclusion reads or reports.
+
+/// A leaf including `alpha`, whose remote declares `team` by command as
+/// [`remote`] does, and `zeta`, whose remote publishes `zeta_manifest`. Both
+/// allow commands. Synchronized once, whatever that sync makes of `zeta`, so
+/// both are materialized.
+fn two_remotes(zeta_manifest: &str) -> Tree {
+    let alpha = remote();
+    let zeta = BareRepo::new();
+    zeta.publish("batfiles.toml", zeta_manifest, "the second remote");
+    let tree = Tree::new();
+    tree.write_manifest(
+        r#"[remotes.alpha]
+type = "git"
+url = "{alpha}"
+allow-dynamic-vars = true
+
+[remotes.zeta]
+type = "git"
+url = "{zeta}"
+allow-dynamic-vars = true
+
+[[actions]]
+type = "include-remote"
+id = "a"
+remote = "alpha"
+
+[[actions]]
+type = "include-remote"
+id = "z"
+remote = "zeta"
+"#,
+    );
+    tree.point_remote_at("alpha", &alpha);
+    tree.point_remote_at("zeta", &zeta);
+    // Materialization precedes assembly, so a `zeta` it cannot read still lands.
+    let _ = tree.batfiles().arg("sync").assert();
+    for remote in ["alpha", "zeta"] {
+        assert!(
+            tree.path(&format!("repo/remotes/{remote}")).is_dir(),
+            "`{remote}` was not materialized"
+        );
+    }
+    tree
+}
+
+/// A remote manifest declaring `team` by command, with `actions` after it.
+fn declaring_team(actions: &str) -> String {
+    format!(
+        "[vars]\nteam = {{ command = \"echo ran >> ../../remote-runs; printf platform\" }}\n\n{actions}"
+    )
+}
+
+#[test]
+fn a_named_remote_is_the_only_one_opened() {
+    // `zeta`'s manifest does not parse; refreshing `alpha` never reads it.
+    let tree = two_remotes("[vars\n");
+
+    assert_eq!(refresh(&tree, &["alpha.team"]), "refreshed `alpha.team`\n");
+
+    let stderr = refused(&tree, &[]);
+    assert!(stderr.contains("remotes/zeta/batfiles.toml"), "{stderr}");
+}
+
+#[test]
+fn an_included_manifest_is_validated_whole_though_refresh_prepares_nothing() {
+    let tree = two_remotes(&declaring_team(
+        "[[actions]]\ntype = \"create-dir\"\nid = \"nowhere\"\n",
+    ));
+    let before = runs(&tree, "remote-runs");
+
+    let stderr = refused(&tree, &["zeta.team"]);
+
+    assert!(stderr.contains("remotes/zeta/batfiles.toml"), "{stderr}");
+    assert!(stderr.contains("dest"), "{stderr}");
+    assert_eq!(runs(&tree, "remote-runs"), before);
+}
+
+#[test]
+fn no_remote_command_runs_until_every_remote_key_is_checked() {
+    // `alpha.team` is refreshable and sorts first; `zeta.nope` is not, so
+    // neither runs.
+    let tree = two_remotes(&declaring_team(""));
+    let before = runs(&tree, "remote-runs");
+
+    let stderr = refused(&tree, &["alpha.team", "zeta.nope"]);
+
+    assert!(
+        stderr.contains(
+            "cannot refresh `zeta.nope`: batfiles.toml of remote `zeta` does not declare it"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(runs(&tree, "remote-runs"), before);
+}
+
+#[test]
+fn leaf_keys_need_neither_the_inclusions_nor_the_disabled_lists() {
+    // The remote was never brought down and `disabled.toml` does not parse:
+    // a refresh of leaf keys alone consults neither.
+    let tree = leaf();
+    let manifest = std::fs::read_to_string(tree.manifest()).expect("the leaf manifest");
+    tree.write_manifest(&format!(
+        "{manifest}\n[remotes.corporate]\ntype = \"git\"\nurl = \"/nowhere\"\n\
+         allow-dynamic-vars = true\n\n[[actions]]\ntype = \"include-remote\"\n\
+         id = \"corp\"\nremote = \"corporate\"\n"
+    ));
+    tree.write_disabled("actions = [\n");
+
+    assert_eq!(refresh(&tree, &["email"]), "refreshed `email`\n");
+    assert_eq!(runs(&tree, "email-runs"), 1);
+}
+
+#[test]
+fn an_inclusion_whose_filters_take_nothing_keeps_its_remote_in_play() {
+    let (_origin, tree) = including(ALLOWED, "");
+    let manifest = std::fs::read_to_string(tree.manifest()).expect("the leaf manifest");
+    tree.write_manifest(&manifest.replace(
+        "remote = \"corporate\"\n",
+        "remote = \"corporate\"\ninstall-actions = []\n",
+    ));
+
+    assert_eq!(refresh(&tree, &[]), "refreshed `corporate.team`\n");
+}
+
+#[test]
+fn a_refresh_reports_nothing_composing_an_inclusion_would() {
+    // The remote declares remotes of its own and an inclusion, and the leaf's
+    // filter names an action it does not declare: a sync warns about all
+    // three, and a refresh, which composes nothing, about none.
+    let origin = BareRepo::new();
+    origin.publish(
+        "batfiles.toml",
+        &declaring_team(
+            "[remotes.elsewhere]\ntype = \"git\"\nurl = \"/nowhere\"\n\n\
+             [[actions]]\ntype = \"include-remote\"\nid = \"deeper\"\nremote = \"elsewhere\"\n",
+        ),
+        "a remote reaching further",
+    );
+    let tree = Tree::new();
+    tree.write_manifest(
+        "[remotes.corporate]\ntype = \"git\"\nurl = \"{origin}\"\nallow-dynamic-vars = true\n\n\
+         [[actions]]\ntype = \"include-remote\"\nid = \"corp\"\nremote = \"corporate\"\n\
+         install-actions = [\"missing\"]\n",
+    );
+    tree.point_at_origin(&origin);
+    let composing = [
+        "ignoring the remotes",
+        "not included:",
+        "`missing` matched no action",
+    ];
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+    let stderr = stderr_of(&assertion);
+    for warning in composing {
+        assert!(stderr.contains(warning), "sync: `{warning}`:\n{stderr}");
+    }
+
+    let stderr = refresh(&tree, &["-v"]);
+    assert!(stderr.contains("refreshed `corporate.team`"), "{stderr}");
+    for warning in composing {
+        assert!(!stderr.contains(warning), "refresh: `{warning}`:\n{stderr}");
+    }
+}
+
+#[test]
+fn an_excluded_inclusion_is_not_opened_whatever_its_manifest_holds() {
+    let (origin, tree) = including(ALLOWED, "");
+    origin.publish("batfiles.toml", "[vars\n", "a manifest that does not parse");
+    tree.write_disabled("actions = [\"first\", \"second\"]\n");
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(refresh(&tree, &[]), "nothing to refresh\n");
+}
+
+#[test]
+fn a_relative_repository_root_finds_the_remote_it_materialized() {
+    let (_origin, tree) = including(ALLOWED, "");
+    let before = runs(&tree, "remote-runs");
+
+    tree.batfiles()
+        .current_dir(tree.path("cache"))
+        .env("BATFILES_DIR", "../repo")
+        .args(["vars", "refresh", "corporate.team"])
+        .assert()
+        .success()
+        .stderr("refreshed `corporate.team`\n");
+
+    assert_eq!(runs(&tree, "remote-runs"), before + 1);
+}

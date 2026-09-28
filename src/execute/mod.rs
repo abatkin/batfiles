@@ -1,7 +1,7 @@
 //! Select, prepare, and execute manifest actions for sync and apply commands.
 
 mod assemble;
-pub(crate) mod inclusion;
+mod inclusion;
 pub(crate) mod record;
 
 use std::rc::Rc;
@@ -408,7 +408,7 @@ fn run(
     let run_list = run_list?;
     // After assembly: only then can a name that matched nothing be told from
     // one an inclusion answers.
-    selection.warn_unmatched(&run_list, reporter);
+    run_list.warn_unmatched(&selection, reporter);
 
     let plan = prepare(&run_list, &context, &variables, &host)?;
     let mut processed_action_count = 0;
@@ -431,9 +431,7 @@ fn run(
         }
     }
 
-    if !run_list.target_found
-        && let Some(error) = selection.unresolved(invocation.roots.manifest(), &run_list)
-    {
+    if let Some(error) = run_list.unresolved(&selection, invocation.roots.manifest()) {
         return Err(error);
     }
     Ok(processed_action_count)

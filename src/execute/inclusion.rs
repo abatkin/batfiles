@@ -1,131 +1,20 @@
-//! `include-remote`: reads another repository's actions and `[vars]` from this
-//! machine's materialization of it, however stale.
+//! What an opened `include-remote` contributes to a run: the records of the
+//! manifest it read, with its filters' verdict on each.
 //!
-//! Reading happens while the run's list is assembled; the record itself
-//! installs nothing. An inclusion with no materialization warns and contributes
-//! nothing, making the plan [partial](../../docs/cmdline.md#plan-completeness).
+//! Composition happens while the run's list is assembled; the record itself
+//! installs nothing. Which inclusion it is, whether it is opened, and reading
+//! its manifest are [`inclusion`](crate::inclusion)'s.
 
 use std::collections::BTreeMap;
 
-use super::record::RunRecord;
-use crate::action::RunContext;
-use crate::condition::{Bindings, Exclusion};
-use crate::error::Error;
+use crate::condition::Exclusion;
+use crate::inclusion::Inclusion;
 use crate::item::{ItemId, ItemIdList};
 use crate::manifest::Manifest;
-use crate::manifest::action::{Action, Contributor, IncludeRemoteAction};
+use crate::manifest::action::{Action, IncludeRemoteAction};
 use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
-use crate::paths;
-use crate::selection::Selection;
 use crate::var::VarName;
-
-/// One `include-remote` the run reached, as the leaf manifest declared it.
-///
-/// Owns its identity and selection filters, whether or not the remote manifest
-/// is read.
-pub(crate) struct Inclusion {
-    /// The written `id`, which qualifies its records' addresses. `None`: its
-    /// records have no address, and [`label`](Self::label) names it.
-    id: Option<ItemId>,
-    /// The included remote, whose materialization holds its records' repository
-    /// paths.
-    remote: ItemId,
-    label: String,
-    filter: Filter,
-}
-
-impl Inclusion {
-    /// Identify the inclusion the record at one-based position `number` writes.
-    ///
-    /// Reports name it by `id`, or by its position and remote if unnamed.
-    /// `number` must be its position in the validated leaf manifest.
-    pub(crate) fn at(action: &IncludeRemoteAction, number: usize) -> Self {
-        let label = match &action.id {
-            Some(id) => format!("include-remote `{id}`"),
-            None => format!(
-                "include-remote action {number} of remote `{}`",
-                action.remote
-            ),
-        };
-        Self {
-            id: action.id.clone(),
-            remote: action.remote.clone(),
-            label,
-            filter: Filter::of(action),
-        }
-    }
-
-    /// The `id` this inclusion answers to, where it was written with one.
-    pub(super) fn id(&self) -> Option<&ItemId> {
-        self.id.as_ref()
-    }
-
-    /// The remote it includes.
-    pub(super) fn remote(&self) -> &ItemId {
-        &self.remote
-    }
-
-    /// How a report names it.
-    pub(crate) fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// How lines name its records: by `id`, or by label when it has none.
-    pub(crate) fn contributor(&self) -> Contributor<'_> {
-        match &self.id {
-            Some(id) => Contributor::Inclusion(id),
-            None => Contributor::UnnamedInclusion(&self.label),
-        }
-    }
-
-    /// Why a run would not open this inclusion, whose leaf record is `record`,
-    /// or `None` if it would.
-    ///
-    /// The first exclusion `selection` finds for the record, decided in the
-    /// leaf scope `bindings`: an inclusion's `vars` apply only to the records it
-    /// contributes, not to its own condition. What the target waives is waived
-    /// only where it names the record; a target reaching into the inclusion
-    /// without naming it waives nothing. Failing that, the remote's condition
-    /// closing in `context`, restated for this inclusion.
-    pub(crate) fn exclusion(
-        &self,
-        record: &RunRecord,
-        selection: &Selection<'_>,
-        bindings: &Bindings<'_>,
-        context: &RunContext<'_>,
-    ) -> Option<Exclusion> {
-        let exclusion = if selection.wants(record) {
-            selection.exclusion(record, bindings)
-        } else {
-            selection.unwaived_exclusion(record, bindings)
-        };
-        exclusion.or_else(|| {
-            context
-                .excluded_remote(&self.remote)
-                .map(|exclusion| self.closed_by_remote(exclusion))
-        })
-    }
-
-    /// A remote's exclusion, restated for this inclusion with the same severity.
-    fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
-        let reason = format!(
-            "remote `{}` is excluded here: {}",
-            self.remote,
-            exclusion.reason()
-        );
-        match exclusion {
-            Exclusion::Expected(_) => Exclusion::Expected(reason),
-            Exclusion::EvaluationFailed(_) => Exclusion::EvaluationFailed(reason),
-        }
-    }
-
-    /// The exclusion for a record the inclusion's filters left out, naming the
-    /// inclusion.
-    pub(super) fn not_selected(&self) -> Exclusion {
-        Exclusion::Expected(format!("not selected by {}", self.label))
-    }
-}
 
 /// What one `include-remote` read out of the manifest it opened.
 pub(super) struct InclusionContents {
@@ -150,99 +39,59 @@ pub(super) struct IncludedAction {
     pub included_by_filter: bool,
 }
 
-impl Inclusion {
-    /// Read the included remote's manifest: its `[vars]`, and its records with
-    /// the filters' verdict on each.
-    ///
-    /// `None` means there was no materialization, so nothing was read; that
-    /// warns. Contents with no records mean a manifest was read and contributed
-    /// nothing; only then can a qualified name be checked against it.
-    ///
-    /// Fails as [`manifest`](Self::manifest) does. The caller must check the
-    /// remote's condition before reading.
-    pub(super) fn read(
-        &self,
-        context: &RunContext<'_>,
-    ) -> Result<Option<InclusionContents>, Error> {
-        let label = self.label();
-        let remote = self.remote();
-        let reporter = context.reporter();
-
-        let Some(included) = self.manifest(context)? else {
-            // An action sourcing from an absent materialization is refused; a
-            // missing inclusion only warns, and the run continues with a
-            // partial plan.
-            self.warn_not_materialized(context);
-            return Ok(None);
-        };
-        report_ignored_remotes(&included, label, remote, reporter);
-        let by = self.contributor();
-        let filter = &self.filter;
-        let mut records = Vec::with_capacity(included.actions.len());
-        for (index, record) in included.actions.into_iter().enumerate() {
-            // The declared position, not recomputed after filtering: a record
-            // without an `id` is named by where it was written.
-            let number = index + 1;
-            // Inclusion is one level deep: a nested inclusion is dropped with a
-            // warning, before the filters, so its `id` cannot satisfy one.
-            if let Action::IncludeRemote(_) = record {
-                reporter.warn(&format!(
-                    "not included: {}; an included repository does not reach \
-                     further repositories",
-                    record.describe(number, by)
-                ));
-                continue;
-            }
-            let included_by_filter = filter.selects(&record);
-            records.push(IncludedAction {
-                number,
-                action: record,
-                included_by_filter,
-            });
+/// What `inclusion`, written as `declaration`, contributes from `included`,
+/// the manifest it opened: its `[vars]`, and its records with the filters'
+/// verdict on each.
+///
+/// Warns about the manifest's own `[remotes]`, any inclusion it declares, which
+/// is dropped, and each filter name it does not declare. Contents with no
+/// records mean the manifest contributed nothing; only then can a qualified
+/// name be checked against it.
+pub(super) fn compose(
+    inclusion: &Inclusion,
+    declaration: &IncludeRemoteAction,
+    included: Manifest,
+    reporter: &Reporter,
+) -> InclusionContents {
+    let label = inclusion.label();
+    let remote = inclusion.remote();
+    report_ignored_remotes(&included, label, remote, reporter);
+    let by = inclusion.contributor();
+    let filter = Filter::of(declaration);
+    let mut records = Vec::with_capacity(included.actions.len());
+    for (index, record) in included.actions.into_iter().enumerate() {
+        // The declared position, not recomputed after filtering: a record
+        // without an `id` is named by where it was written.
+        let number = index + 1;
+        // Inclusion is one level deep: a nested inclusion is dropped with a
+        // warning, before the filters, so its `id` cannot satisfy one.
+        if let Action::IncludeRemote(_) = record {
+            reporter.warn(&format!(
+                "not included: {}; an included repository does not reach \
+                 further repositories",
+                record.describe(number, by)
+            ));
+            continue;
         }
-        filter.warn_unmatched(&records, label, remote, reporter);
-        Ok(Some(InclusionContents {
-            // The remote's `[vars]` apply whichever records the filters took.
-            vars: included.vars,
-            actions: records,
-        }))
+        let included_by_filter = filter.selects(&record);
+        records.push(IncludedAction {
+            number,
+            action: record,
+            included_by_filter,
+        });
     }
+    filter.warn_unmatched(&records, label, remote, reporter);
+    InclusionContents {
+        // The remote's `[vars]` apply whichever records the filters took.
+        vars: included.vars,
+        actions: records,
+    }
+}
 
-    /// The included remote's manifest, read from this machine's
-    /// materialization of it, or `None` where there is none. Warns about
-    /// nothing.
-    ///
-    /// Fails when the materialization cannot be inspected or its manifest is
-    /// missing, unreadable, or invalid. A materialized tree without a manifest
-    /// is an error: a remote's manifest is optional, so it is absent rather than
-    /// not yet fetched.
-    ///
-    /// The caller must check the remote's condition before reading.
-    pub(crate) fn manifest(&self, context: &RunContext<'_>) -> Result<Option<Manifest>, Error> {
-        let tree = context.materialization(&self.remote);
-        if !paths::occupied(&tree)? {
-            return Ok(None);
-        }
-        let manifest = tree.join(Manifest::FILE_NAME);
-        if !paths::occupied(&manifest)? {
-            return Err(Error::IncludedManifestMissing {
-                remote: self.remote.clone(),
-                path: manifest,
-            });
-        }
-        Manifest::load_included(&manifest).map(Some)
-    }
-
-    /// Warn that the included remote has no materialization, so nothing in it
-    /// can be read.
-    pub(crate) fn warn_not_materialized(&self, context: &RunContext<'_>) {
-        context.reporter().warn(&format!(
-            "remote `{}` is not materialized at {}, so what it includes cannot be \
-             listed; run `batfiles sync` to bring it down",
-            self.remote,
-            context.materialization(&self.remote).display()
-        ));
-    }
+/// The exclusion for a record `inclusion`'s filters left out, naming the
+/// inclusion.
+pub(super) fn not_selected(inclusion: &Inclusion) -> Exclusion {
+    Exclusion::Expected(format!("not selected by {}", inclusion.label()))
 }
 
 /// Warn, once per inclusion, that the included manifest's `[remotes]` are
@@ -399,25 +248,6 @@ mod tests {
             taken.push("<unnamed>");
         }
         taken
-    }
-
-    #[test]
-    fn an_inclusion_is_labelled_by_its_id_or_by_where_it_was_written() {
-        let labelled =
-            |action: &IncludeRemoteAction, number| Inclusion::at(action, number).label().to_owned();
-        assert_eq!(labelled(&inclusion(""), 3), "include-remote `corp`");
-        // Two inclusions of one remote, neither written with an `id`: the
-        // position is the whole of what tells the labels apart.
-        let unnamed: IncludeRemoteAction =
-            toml::from_str("remote = \"corporate\"\n").expect("the record should parse");
-        assert_eq!(
-            labelled(&unnamed, 2),
-            "include-remote action 2 of remote `corporate`"
-        );
-        assert_eq!(
-            labelled(&unnamed, 5),
-            "include-remote action 5 of remote `corporate`"
-        );
     }
 
     #[test]

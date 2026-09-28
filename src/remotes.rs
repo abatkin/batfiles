@@ -35,6 +35,13 @@ const NOT_MATERIALIZED: &str = "it is not materialized";
 /// The suffix naming a fetched materialization's stamp, beside it.
 const STAMP_SUFFIX: &str = ".batfiles-source";
 
+/// Where the declared remote `id` is materialized: `remotes/<id>` inside the
+/// leaf repository at the anchored path `repository`. The ID is a validated
+/// path segment, so the result stays in the tree.
+pub(crate) fn materialization(repository: &Path, id: &ItemId) -> PathBuf {
+    repository.join(DIRECTORY).join(id.as_str())
+}
+
 /// Evaluate declared remote conditions without I/O.
 /// Returns excluded remotes and their reasons, even when an old tree exists.
 /// Used by sync and apply commands to prevent reads from excluded remotes.

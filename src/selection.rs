@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::condition::{Bindings, Exclusion};
+use crate::condition::{Bindings, Exclusion, Gate};
 use crate::disabled::Disabled;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute::record::{RunList, RunRecord, Unread};
+use crate::inclusion::Unread;
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
@@ -23,6 +23,19 @@ const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
 /// failed `unless` could read as installing the record.
 const NOT_INSTALLED: &str = "it is not installed";
 
+/// What selection reads of one record: the addresses its `id` and `group`
+/// answer to, and its condition.
+///
+/// The addresses are qualified as the record's are, so a leaf record's are
+/// unqualified. `None` where the record has no such field, or where it came
+/// from an inclusion without an `id`, which leaves it no address.
+#[derive(Clone, Copy)]
+pub(crate) struct Subject<'a> {
+    pub address: Option<&'a ItemAddress>,
+    pub group_address: Option<&'a ItemAddress>,
+    pub gate: Option<Gate<'a>>,
+}
+
 /// Which of the manifest's records a command asked for.
 #[derive(Debug)]
 pub(crate) enum Target<'a> {
@@ -36,11 +49,11 @@ pub(crate) enum Target<'a> {
 
 impl Target<'_> {
     /// Whether this record is one of the ones asked for.
-    fn wants(&self, record: &RunRecord) -> bool {
+    fn wants(&self, record: Subject<'_>) -> bool {
         match self {
             Self::Everything => true,
-            Self::Action(id) => record.address.as_ref() == Some(*id),
-            Self::Group(group) => record.group_address.as_ref() == Some(*group),
+            Self::Action(id) => record.address == Some(*id),
+            Self::Group(group) => record.group_address == Some(*group),
         }
     }
 
@@ -56,18 +69,23 @@ impl Target<'_> {
         }
     }
 
-    /// The error for a target that matched no record in `run_list`; `None` for
-    /// [`Everything`](Self::Everything). A target into an inclusion the run did
-    /// not read names that inclusion and why, since its manifest might have
+    /// The error for a target that matched no record; `None` for
+    /// [`Everything`](Self::Everything). `unread` is each inclusion whose
+    /// manifest the run did not read, by `id`, and why. A target into one of
+    /// them names that inclusion and why, since its manifest might have
     /// answered.
-    fn unresolved(&self, manifest: PathBuf, run_list: &RunList) -> Option<Error> {
+    fn unresolved<'b>(
+        &self,
+        manifest: PathBuf,
+        unread: impl IntoIterator<Item = (&'b ItemId, Unread<'b>)>,
+    ) -> Option<Error> {
         let (noun, address) = match self {
             Self::Everything => return None,
             Self::Action(id) => ("action", *id),
             Self::Group(group) => ("group", *group),
         };
-        let unread = run_list
-            .unread_inclusions()
+        let unread = unread
+            .into_iter()
             .filter(|(id, _)| address.qualified_by(id))
             .find_map(|(inclusion, unread)| {
                 let (address, inclusion) = (address.clone(), inclusion.clone());
@@ -273,7 +291,7 @@ impl<'a> Selection<'a> {
     }
 
     /// Whether the target asks for `record`.
-    pub fn wants(&self, record: &RunRecord) -> bool {
+    pub fn wants(&self, record: Subject<'_>) -> bool {
         self.target.wants(record)
     }
 
@@ -283,8 +301,12 @@ impl<'a> Selection<'a> {
     }
 
     /// See [`Target::unresolved`].
-    pub fn unresolved(&self, manifest: PathBuf, run_list: &RunList) -> Option<Error> {
-        self.target.unresolved(manifest, run_list)
+    pub fn unresolved<'b>(
+        &self,
+        manifest: PathBuf,
+        unread: impl IntoIterator<Item = (&'b ItemId, Unread<'b>)>,
+    ) -> Option<Error> {
+        self.target.unresolved(manifest, unread)
     }
 
     /// The error for a target naming a record the command cannot run, or
@@ -300,30 +322,21 @@ impl<'a> Selection<'a> {
         }
     }
 
-    /// Warn about every run-only skip that names nothing in the assembled list,
-    /// which includes contributed records. Skips into an unread inclusion are
-    /// not warned about.
-    pub fn warn_unmatched(&self, run_list: &RunList, reporter: &Reporter) {
-        let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
-            run_list
-                .records()
-                .filter_map(|it| of(it).as_ref())
-                .collect()
-        };
-        let unread_inclusions: Vec<&ItemId> =
-            run_list.unread_inclusions().map(|(id, _)| id).collect();
-        self.actions.warn_unmatched(
-            &names(|it| &it.address),
-            &unread_inclusions,
-            "action",
-            reporter,
-        );
-        self.groups.warn_unmatched(
-            &names(|it| &it.group_address),
-            &unread_inclusions,
-            "group",
-            reporter,
-        );
+    /// Warn about every run-only skip that names nothing the run listed.
+    /// `addresses` and `group_addresses` are every listed record's, contributed
+    /// ones included. Skips qualified by an `unread_inclusions` ID are not
+    /// warned about: nothing read could answer them.
+    pub fn warn_unmatched(
+        &self,
+        addresses: &[&ItemAddress],
+        group_addresses: &[&ItemAddress],
+        unread_inclusions: &[&ItemId],
+        reporter: &Reporter,
+    ) {
+        self.actions
+            .warn_unmatched(addresses, unread_inclusions, "action", reporter);
+        self.groups
+            .warn_unmatched(group_addresses, unread_inclusions, "group", reporter);
     }
 
     /// Why this run passes the record over, or `None` if it runs.
@@ -332,7 +345,7 @@ impl<'a> Selection<'a> {
     /// only when nothing else excludes it, so an undecidable condition affects
     /// only runs that would execute the record; there it excludes the record
     /// like any other exclusion, reported at every verbosity.
-    pub fn exclusion(&self, record: &RunRecord, bindings: &Bindings<'_>) -> Option<Exclusion> {
+    pub fn exclusion(&self, record: Subject<'_>, bindings: &Bindings<'_>) -> Option<Exclusion> {
         self.decide(record, bindings, Waivers::Target)
     }
 
@@ -342,7 +355,7 @@ impl<'a> Selection<'a> {
     /// reaches into without naming.
     pub fn unwaived_exclusion(
         &self,
-        record: &RunRecord,
+        record: Subject<'_>,
         bindings: &Bindings<'_>,
     ) -> Option<Exclusion> {
         self.decide(record, bindings, Waivers::None)
@@ -350,7 +363,7 @@ impl<'a> Selection<'a> {
 
     fn decide(
         &self,
-        record: &RunRecord,
+        record: Subject<'_>,
         bindings: &Bindings<'_>,
         waivers: Waivers,
     ) -> Option<Exclusion> {
@@ -359,8 +372,7 @@ impl<'a> Selection<'a> {
         }
         // Waived exactly where an exclusion naming the action is.
         let gate = record
-            .action
-            .gate()
+            .gate
             .filter(|_| waivers.honors_action_exclusions(&self.target))?;
         gate.exclusion(bindings, Some(NOT_INSTALLED))
     }
@@ -369,14 +381,12 @@ impl<'a> Selection<'a> {
     /// Persistent disables precede run-only skips; action exclusions precede
     /// group exclusions within each source. `waivers` determines which
     /// exclusions are honored.
-    fn listed_reason<'b>(&self, record: &'b RunRecord, waivers: Waivers) -> Option<SkipReason<'b>> {
+    fn listed_reason<'b>(&self, record: Subject<'b>, waivers: Waivers) -> Option<SkipReason<'b>> {
         let address = record
             .address
-            .as_ref()
             .filter(|_| waivers.honors_action_exclusions(&self.target));
         let group_address = record
             .group_address
-            .as_ref()
             .filter(|_| waivers.honors_group_exclusions(&self.target));
 
         let listed = |list: &BTreeSet<ItemAddress>, item: &ItemAddress| list.contains(item);
@@ -411,7 +421,8 @@ mod tests {
 
     use super::*;
     use crate::condition::HostNamespaces;
-    use crate::execute::inclusion::Inclusion;
+    use crate::execute::record::RunRecord;
+    use crate::inclusion::Inclusion;
     use crate::output::Verbosity;
     use crate::var::VarName;
     use crate::var_set::VarSet;
@@ -531,7 +542,7 @@ mod tests {
         let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
         let host = HostNamespaces::capture(&empty);
         let bindings = Bindings::new(&variables, &host);
-        selection.decide(record, &bindings, waivers)
+        selection.decide(record.subject(), &bindings, waivers)
     }
 
     /// The reason for an [`Expected`](Exclusion::Expected) exclusion; panics on
@@ -917,8 +928,8 @@ mod tests {
             &[],
             Disabled::default(),
         );
-        assert!(by_action.wants(&contributed));
-        assert!(!by_action.wants(&leaf));
+        assert!(by_action.wants(contributed.subject()));
+        assert!(!by_action.wants(leaf.subject()));
 
         let qualified = address("core.shell");
         let by_group = filter(
@@ -928,8 +939,8 @@ mod tests {
             &[],
             Disabled::default(),
         );
-        assert!(by_group.wants(&contributed));
-        assert!(!by_group.wants(&leaf));
+        assert!(by_group.wants(contributed.subject()));
+        assert!(!by_group.wants(leaf.subject()));
     }
 
     #[test]

@@ -122,14 +122,10 @@ impl<'a> RunContext<'a> {
         destination(&self.home, dest)
     }
 
-    /// Where a declared remote is materialized: `remotes/<id>` inside the leaf
-    /// repository. The ID is a validated path segment, so the result stays in
-    /// the tree.
+    /// Where a declared remote is materialized in this run's repository; see
+    /// [`remotes::materialization`].
     pub fn materialization(&self, id: &ItemId) -> PathBuf {
-        self.repository
-            .path()
-            .join(remotes::DIRECTORY)
-            .join(id.as_str())
+        remotes::materialization(self.repository.path(), id)
     }
 
     /// The repository an action installs from, for the one question that needs

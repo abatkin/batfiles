@@ -616,7 +616,7 @@ mod tests {
 
     // What one inclusion does to the set.
 
-    /// An inclusion label, as [`Inclusion::at`](crate::execute::inclusion::Inclusion::at)
+    /// An inclusion label, as [`Inclusion::at`](crate::inclusion::Inclusion::at)
     /// spells one.
     const CORP: &str = "include-remote `corp`";
 

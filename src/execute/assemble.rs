@@ -4,12 +4,13 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use super::inclusion::{IncludedAction, Inclusion, InclusionContents};
+use super::inclusion::{IncludedAction, InclusionContents, compose, not_selected};
 use super::record::{Disposition, Node, Opened, RunList, RunRecord};
 use crate::action::RunContext;
 use crate::condition::{Bindings, HostNamespaces};
 use crate::dynamic::{DynamicVarResolver, ManifestSource};
 use crate::error::Error;
+use crate::inclusion::{self, Inclusion};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
 use crate::selection::Selection;
@@ -68,21 +69,33 @@ pub(super) fn assemble(
         // naming the inclusion, and so without waiving its exclusions.
         let should_open_inclusion = target_names_record || selection.reaches_into(inclusion.id());
         if should_open_inclusion {
-            record.disposition = match inclusion.exclusion(&record, selection, &bindings, context) {
+            let remote_exclusion = context.excluded_remote(inclusion.remote());
+            let exclusion =
+                inclusion.exclusion(record.subject(), selection, &bindings, remote_exclusion);
+            record.disposition = match exclusion {
                 Some(exclusion) => Disposition::Excluded(exclusion),
                 None => Disposition::Run,
             };
         }
         // Unread when not requested, excluded, or not materialized.
-        let contents = match record.disposition {
-            Disposition::Run => inclusion.read(context)?,
+        let included = match record.disposition {
+            Disposition::Run => {
+                let included = inclusion.manifest(context.repository().path())?;
+                if included.is_none() {
+                    // An action sourcing from an absent materialization is
+                    // refused; a missing inclusion only warns, and the run
+                    // continues with a partial plan.
+                    inclusion::warn_not_materialized(
+                        inclusion.remote(),
+                        &context.materialization(inclusion.remote()),
+                        context.reporter(),
+                    );
+                }
+                included
+            }
             _ => None,
         };
-        let Some(InclusionContents {
-            vars: remote_vars,
-            actions: included_actions,
-        }) = contents
-        else {
+        let Some(included) = included else {
             run_list.nodes.push(Node::Inclusion {
                 record,
                 inclusion,
@@ -90,6 +103,10 @@ pub(super) fn assemble(
             });
             continue;
         };
+        let InclusionContents {
+            vars: remote_vars,
+            actions: included_actions,
+        } = compose(&inclusion, declaration, included, context.reporter());
         // Resolved only for an opened inclusion, once its gates have been
         // decided in the leaf's scope.
         let tree = context.materialization(inclusion.remote());
@@ -127,7 +144,7 @@ pub(super) fn assemble(
                 contributed.disposition = if included_by_filter {
                     disposition(&contributed, selection, &scoped)
                 } else {
-                    Disposition::Excluded(inclusion.not_selected())
+                    Disposition::Excluded(not_selected(&inclusion))
                 };
             }
             records.push(contributed);
@@ -149,7 +166,7 @@ fn match_and_record_target(
     record: &RunRecord,
     selection: &Selection<'_>,
 ) -> bool {
-    let named = selection.wants(record);
+    let named = selection.wants(record.subject());
     run_list.target_found |= named;
     named
 }
@@ -160,7 +177,7 @@ fn disposition(
     selection: &Selection<'_>,
     bindings: &Bindings<'_>,
 ) -> Disposition {
-    match selection.exclusion(record, bindings) {
+    match selection.exclusion(record.subject(), bindings) {
         Some(exclusion) => Disposition::Excluded(exclusion),
         None => Disposition::Run,
     }
