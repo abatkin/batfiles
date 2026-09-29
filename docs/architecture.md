@@ -75,7 +75,10 @@ operation. Report paths that cannot be safely replaced.
 Resolve existing targets relative to their link's directory for classification.
 Keep repository source resolution in `RunContext` and filesystem classification
 in `paths.rs`. Use the documented distinction between lexical path construction
-and filesystem target resolution.
+and filesystem target resolution. Separate inspecting a node from deciding
+whether to replace it: a caller that needs only what is at a path uses
+`paths::node_at`, which never reads a symlink's target; only a caller that may
+replace a symlink uses `Occupancy::at`.
 
 **15. Install complete content.** Build seeds in staging and publish after
 completion. Create staging nodes privately and apply final permissions only

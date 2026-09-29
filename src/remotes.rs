@@ -20,7 +20,7 @@ use crate::install;
 use crate::item::ItemId;
 use crate::manifest::remote::{ArchiveRemote, FileRemote, Remote};
 use crate::output::Verb;
-use crate::paths::{ExistingNode, Occupancy};
+use crate::paths;
 use crate::tomlfile;
 
 /// The tool-owned directory inside the leaf repository that every
@@ -114,7 +114,7 @@ fn fetch(
     context: &RunContext<'_>,
 ) -> Result<(), Error> {
     let stamp = stamp_path(dest);
-    let found = Found::at(dest, context)?;
+    let found = Found::at(dest)?;
     let recorded = read_stamp(&stamp)?;
     let (mode, reporter) = (context.mode(), context.reporter());
 
@@ -258,17 +258,21 @@ pub(crate) enum Found {
 }
 
 impl Found {
-    /// Inspect `dest` without following a final symlink.
-    fn at(dest: &Path, context: &RunContext<'_>) -> Result<Option<Self>, Error> {
-        Ok(match Occupancy::at(dest, context.repository())? {
-            Occupancy::Vacant => None,
-            Occupancy::Replaceable { .. } | Occupancy::Unmanaged(ExistingNode::Link { .. }) => {
-                Some(Self::Symlink)
+    /// Inspect `dest` without following a final symlink. Only the kind of node
+    /// matters, since the stamp decides whose it is, so where a symlink points
+    /// is never read.
+    fn at(dest: &Path) -> Result<Option<Self>, Error> {
+        Ok(paths::node_at(dest)?.map(|node| {
+            if node.is_symlink() {
+                Self::Symlink
+            } else if node.is_file() {
+                Self::File
+            } else if node.is_dir() {
+                Self::Directory
+            } else {
+                Self::Other
             }
-            Occupancy::Unmanaged(ExistingNode::File) => Some(Self::File),
-            Occupancy::Unmanaged(ExistingNode::Directory) => Some(Self::Directory),
-            Occupancy::Unmanaged(ExistingNode::Other) => Some(Self::Other),
-        })
+        }))
     }
 }
 

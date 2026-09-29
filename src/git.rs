@@ -511,15 +511,13 @@ enum GitDirectory {
 }
 
 fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
-    let path = dest.join(".git");
-    match fs::symlink_metadata(&path) {
-        // `symlink_metadata` does not follow, so `is_dir` is false for a
-        // symlink however it resolves. That is the whole check.
-        Ok(found) if found.is_dir() => Ok(GitDirectory::Own),
-        Ok(_) => Ok(GitDirectory::Indirect),
-        Err(error) if paths::reaches_nothing(&error) => Ok(GitDirectory::Missing),
-        Err(source) => Err(Error::Read { path, source }),
-    }
+    // `node_at` does not follow, so `is_dir` is false for a symlink however it
+    // resolves. That is the whole check.
+    Ok(match paths::node_at(&dest.join(".git"))? {
+        None => GitDirectory::Missing,
+        Some(found) if found.is_dir() => GitDirectory::Own,
+        Some(_) => GitDirectory::Indirect,
+    })
 }
 
 /// Decode a Git path, removing one line terminator. Preserve trailing spaces

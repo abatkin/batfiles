@@ -380,6 +380,43 @@ fn what_batfiles_did_not_fetch_is_refused_and_left_alone() {
 }
 
 #[test]
+fn a_symlink_is_refused_whatever_the_stamp_beside_it_says() {
+    // Where a link points decides nothing here: one into the repository reaching
+    // the very content declared, and one reaching nothing, are both not what
+    // batfiles fetched, even beside the stamp its own fetch wrote.
+    for (reaching, target) in [
+        ("the declared content", "../vendored.vim"),
+        ("nothing", "../nowhere"),
+    ] {
+        for args in [&["sync"][..], &["sync", "--dry-run"]] {
+            let case = format!("a link reaching {reaching}, under `{}`", args.join(" "));
+            let server = server();
+            let tree = Tree::new();
+            tree.write_manifest(&linking_a_file(&server, "/pathogen.vim", ""));
+            tree.batfiles().arg("sync").assert().success();
+            tree.repo_file("vendored.vim", PATHOGEN);
+            let link = materialization(&tree, "pathogen");
+            fs::remove_file(&link).expect("the fetched file");
+            std::os::unix::fs::symlink(target, &link).expect("the link");
+            let before = snapshot(&tree.path("repo"));
+
+            let assertion = tree.batfiles().args(args).assert().failure().code(1);
+            let stderr = stderr_of(&assertion);
+
+            assert!(
+                stderr.contains(&format!(
+                    "{} is a symlink that batfiles did not fetch",
+                    display(&link)
+                )),
+                "{case} was not refused:\n{stderr}"
+            );
+            assert_eq!(snapshot(&tree.path("repo")), before, "{case} was changed");
+            assert_eq!(server.requests(), 1, "{case} was fetched over");
+        }
+    }
+}
+
+#[test]
 fn a_dry_run_says_what_it_would_fetch_and_fetches_nothing() {
     let server = server();
     let tree = Tree::new();

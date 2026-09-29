@@ -62,26 +62,22 @@ pub(crate) enum Occupancy {
 impl Occupancy {
     /// Inspect one destination.
     pub fn at(dest: &Path, repository: &RepositoryRoot) -> Result<Self, Error> {
-        match fs::symlink_metadata(dest) {
-            Ok(existing) if existing.is_symlink() => {
-                let written = fs::read_link(dest).map_err(|source| Error::Read {
-                    path: dest.to_path_buf(),
-                    source,
-                })?;
-                let points_at = target_of(dest, &written);
-                Ok(if repository.contains(&points_at) || is_broken(dest) {
-                    Self::Replaceable { written, points_at }
-                } else {
-                    Self::Unmanaged(ExistingNode::Link { written, points_at })
-                })
-            }
-            Ok(existing) => Ok(Self::Unmanaged(ExistingNode::of(&existing))),
-            Err(error) if reaches_nothing(&error) => Ok(Self::Vacant),
-            Err(error) => Err(Error::Read {
-                path: dest.to_path_buf(),
-                source: error,
-            }),
+        let Some(existing) = node_at(dest)? else {
+            return Ok(Self::Vacant);
+        };
+        if !existing.is_symlink() {
+            return Ok(Self::Unmanaged(ExistingNode::of(&existing)));
         }
+        let written = fs::read_link(dest).map_err(|source| Error::Read {
+            path: dest.to_path_buf(),
+            source,
+        })?;
+        let points_at = target_of(dest, &written);
+        Ok(if repository.contains(&points_at) || is_broken(dest) {
+            Self::Replaceable { written, points_at }
+        } else {
+            Self::Unmanaged(ExistingNode::Link { written, points_at })
+        })
     }
 }
 
@@ -148,19 +144,26 @@ impl fmt::Display for ExistingNode {
     }
 }
 
-/// Test node presence without following a final symlink.
-/// NotFound and NotADirectory mean vacant; other inspection errors propagate.
-pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
+/// The node at `path` itself, where one is. A final symlink is the link, and
+/// where it points is not read; earlier components resolve as usual.
+/// NotFound and NotADirectory mean nothing is there; other inspection errors
+/// propagate.
+pub(crate) fn node_at(path: &Path) -> Result<Option<fs::Metadata>, Error> {
     match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        // Both ways of reaching nothing, as in [`Occupancy::at`]: nothing is at a
-        // path under a component that is not a directory either.
-        Err(error) if reaches_nothing(&error) => Ok(false),
-        Err(error) => Err(Error::Read {
+        Ok(node) => Ok(Some(node)),
+        // Nothing is at a path under a component that is not a directory
+        // either.
+        Err(error) if reaches_nothing(&error) => Ok(None),
+        Err(source) => Err(Error::Read {
             path: path.to_path_buf(),
-            source: error,
+            source,
         }),
     }
+}
+
+/// Whether anything is at `path`, as [`node_at`] judges it.
+pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
+    Ok(node_at(path)?.is_some())
 }
 
 /// Whether a path reaches a directory, following a final symlink.
@@ -312,5 +315,31 @@ mod tests {
             target_of(link, Path::new("/repo/../outside")),
             PathBuf::from("/outside")
         );
+    }
+
+    /// The node at `path`, where inspecting it is expected to succeed.
+    fn node(path: &Path) -> Option<fs::Metadata> {
+        node_at(path).expect("an inspectable path")
+    }
+
+    #[test]
+    fn nothing_is_at_a_missing_path_or_one_under_a_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("file");
+        fs::write(&file, "").expect("a file");
+
+        assert!(node(&dir.path().join("missing")).is_none());
+        assert!(node(&file.join("below")).is_none());
+        assert!(node(&file).is_some_and(|found| found.is_file()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_broken_final_symlink_is_a_node_of_its_own() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), &link).expect("a broken link");
+
+        assert!(node(&link).is_some_and(|found| found.is_symlink()));
     }
 }
