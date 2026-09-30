@@ -33,14 +33,30 @@ tool-owned `remotes/` tree. It never installs remote content by itself.
 Composition is explicit, scoped, and limited to one level: included remotes do
 not (on their own) recursively pull in their own remotes or included action sets.
 
-The stable bootstrap experience, *intended*, has three pieces:
+A standalone `batfiles` binary performs planning and installation, and
+plain-file repositories contain the actual dotfiles and declarative
+`batfiles.toml` configuration.
 
-1. A small `install.sh` checked into the leaf repository uses a `batfiles`
-   binary found on `PATH`, or downloads one to `~/.local/bin`, and invokes
-   synchronization.
-2. A standalone `batfiles` binary performs planning and installation.
-3. Plain-file repositories contain the actual dotfiles and declarative
-   `batfiles.toml` configuration.
+Getting that binary onto a machine is *intended*, and specified in
+[distribution](future/distribution.md):
+
+1. **One command bootstraps a new machine.** A hosted installer, piped into a
+   shell, uses a `batfiles` it finds or downloads a verified one to
+   `~/.local/bin`, then runs `clone` against the user's repository.
+2. **A checkout can install itself.** A small stub that `init` writes into the
+   leaf repository finds or fetches `batfiles` the same way and synchronizes
+   its own checkout. It is frozen, so a repository never has to maintain it.
+3. **Nothing depends on one site.** Releases follow a static layout that any
+   host can serve, so a user can install from a site they control with the same
+   one-liner. A fork's releases point at the fork without configuration.
+4. **Upgrading is the user's choice.** `batfiles update` replaces the binary
+   when the user runs it, and nothing runs it for them. A repository may pin a
+   minimum release in its stub.
+5. **The machine stays the user's.** Installers write only to their install
+   directory and never edit shell startup files, which are the dotfiles the
+   first synchronization installs.
+
+Windows gets an equivalent installer and stub.
 
 ## Core Goals
 

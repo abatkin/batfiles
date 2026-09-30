@@ -43,8 +43,9 @@ through.
 
 ## Bootstrap use of `PATH`
 
-A generated `install.sh` uses a `batfiles` binary found on `PATH`. The product
-goals describe the remaining [bootstrap model](../goals.md#product-model).
+A generated `install.sh` uses a `batfiles` binary found on `PATH`, and the
+binary reads `BATFILES_BASE` for `init` and `update`. Both are specified in
+[distribution](distribution.md#resolving-a-binary).
 
 ## Deliberate exclusions
 

@@ -24,14 +24,27 @@ Complete.
 
 Begin after slice 8 is in real use.
 
-- **10.1** Release binaries at stable URLs with checksums and platform detection.
-- **10.2** Add the `install.sh` installer template, locating batfiles on PATH or
-  downloading it into `~/.local/bin`. Add it to the skeleton
-  [`init`](../cmdline.md#init) lays down, which omits the script until there is
-  one worth writing.
-- **10.3** Test installation end to end against a local release server, by
-  extending the [pristine-machine
-  acceptance](../architecture.md#the-pristine-machine).
+[Distribution](distribution.md) specifies all of it.
+
+- **10.1** The [release tree](distribution.md#release-tree): targets, assets,
+  the [release base parameter](distribution.md#the-release-base-parameter)
+  compiled into the binary, the `dist:binary` and `dist:assemble` tasks, and the
+  tag-triggered workflow. Accepted when a tagged release publishes a complete,
+  verifiable asset set. Its installers may be unstamped sentinels until 10.2.
+- **10.2** The POSIX [hosted installer](distribution.md#hosted-installer), its
+  GitHub Pages copy, and [`dist:mirror`](distribution.md#self-hosting), with
+  `shellcheck` in `task lint`. Accepted by extending the [pristine-machine
+  acceptance](../architecture.md#the-pristine-machine) against a local release
+  tree built by `dist:assemble`: the `clone` one-liner on a machine with no
+  batfiles, an existing binary used without a download, and a checksum mismatch
+  refused.
+- **10.3** The [leaf stub](distribution.md#leaf-stub), added to the skeleton
+  [`init`](../cmdline.md#init) lays down. Accepted in the same container: the
+  stub with no binary, with one present and the base unreachable, piped with no
+  checkout, and a pin passing over an older binary.
+- **10.4** [`batfiles update`](distribution.md#batfiles-update), tested against
+  a loopback release tree.
+- **10.5** The [Windows](distribution.md#windows) installer and stub.
 
 ## Enhancements
 
