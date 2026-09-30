@@ -4,7 +4,7 @@ The parts of the command-line interface that run today: the set of commands, the
 options every command accepts, where output goes, and what the exit status
 means.
 
-Unimplemented options and additional address forms are described in
+Additional address forms are described in
 [`future/cmdline.md`](future/cmdline.md).
 
 ## What runs today
@@ -12,9 +12,9 @@ Unimplemented options and additional address forms are described in
 The whole surface parses. Every command and option listed below is accepted, and
 an invalid invocation is rejected as a usage error before anything else happens.
 
-**Every command does its work.** What is not built yet is options, which are
-[refused](#unimplemented-options) rather than ignored, and the behavior
-[`future/cmdline.md`](future/cmdline.md) describes.
+**Every command does its work, and every option it accepts is honored.** What
+is not built yet is the behavior [`future/cmdline.md`](future/cmdline.md)
+describes.
 
 [`init`](#init) lays the conventional layout into the current directory and puts
 a Git repository around it. It resolves no roots at all, and what it creates is
@@ -58,7 +58,7 @@ set](environment.md#variable-precedence), and `-vv` prints what that came to.
 that reads a variable. [`vars refresh`](#vars-refresh) runs the dynamic
 variables' commands ahead of a run, whatever the cache holds.
 
-An option any command accepts but does not honor yet fails rather than being
+An option a command accepted but did not honor yet would fail rather than be
 ignored, ahead of everything else the command would do — see
 [unimplemented options](#unimplemented-options).
 
@@ -134,13 +134,15 @@ run a command with `-v` to see what it selected.
 
 These options are accepted by every command that executes actions: `sync`,
 `apply-action`, `apply-group`, and `clone`, which forwards them to its follow-up
-synchronization. Two of them are honored so far; the rest are
-[refused for now](#unimplemented-options).
+synchronization.
 
 | Option              | Purpose                                                                         |
 |---------------------|---------------------------------------------------------------------------------|
 | `--var <key=value>` | Set a one-shot variable. Repeatable; the last value for a key wins.             |
 | `--refresh-vars`    | Run every dynamic variable's command, even where its cached value is fresh.     |
+| `--refresh-content` | Install copies and fetched seeds again over what is at their destinations.     |
+| `--no-overwrite`    | Skip anything in a destination's way instead of backing it up and replacing it. |
+| `--interactive`     | Ask at each destination in the way: back up and replace, overwrite, or skip.    |
 
 A `--var` key must be a valid [user-variable name](repoformat.md#names-and-ids).
 An invalid one fails the command as a usage error, before the location roots are
@@ -162,6 +164,24 @@ variables](repoformat.md#dynamic-variables) run, not which are evaluated: the
 leaf's, and each opened inclusion's whose remote [allows](repoformat.md#git)
 them, run whatever the [cache](state.md#freshness-and-refresh-behavior) holds,
 and what they capture is written back.
+
+**Something already in a destination's way is backed up and replaced**, unless
+`--no-overwrite` or `--interactive` says otherwise. [Conflicts and
+backups](safety.md#conflicts-and-backups) specifies what counts as in the way,
+where a backup goes, and how each choice is reported; `--no-overwrite` and
+`--interactive` cannot be combined, and `--interactive` cannot be combined with
+`--dry-run`. A backup is reported before the line for what replaced it:
+
+```text
+backed up /home/you/.gitconfig to /home/you/.gitconfig.batfiles-backup-20260929T142233Z
+linked /home/you/.gitconfig -> /home/you/dotfiles/git/gitconfig
+```
+
+`--refresh-content` [refreshes seeds](safety.md#refreshing-seeds): `copy`,
+`copy-dir`, `fetch-file`, and `fetch-archive` build their content again, leave
+it alone where it already matches, and otherwise settle what is there as a
+conflict and report `refreshed <dest> from <origin>`. It leaves every other
+action as it is.
 
 ## Output Streams
 
@@ -296,8 +316,7 @@ are created with it.
 | `--enable-group <group>`  | Start it with one group switched on. Repeatable.               |
 
 `--var` reaches the synchronization the same way, as do the rest of the [shared
-action-execution options](#shared-action-execution-options) once they are
-honored. `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all,
+action-execution options](#shared-action-execution-options). `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all,
 rather than refusing them for now: a machine with no repository has no plan to
 describe, and a fresh clone materializes its remotes during the synchronization
 that follows. Use `sync --dry-run` afterwards to inspect later plans.
@@ -452,8 +471,8 @@ over, and a `remotes/<id>` no stamp claims is still refused. Git remotes are
 unaffected, since every `sync` updates them already. It cannot be combined with
 `--dry-run`, which materializes nothing and so has nothing to refresh.
 
-Every other option `sync` accepts is [refused for now](#unimplemented-options);
-that list shrinking to empty is how you know `sync` is finished.
+`sync` also takes the [shared action execution
+options](#shared-action-execution-options).
 
 ### `apply-action`
 
@@ -538,7 +557,8 @@ itself.
 | `--skip-action <id>`   | Leave one action of that group out of this run. Repeatable.           |
 | `--dry-run`            | Report what it would do — see [dry-run behavior](#dry-run-behavior).  |
 
-Every other option they accept is [refused for now](#unimplemented-options).
+Both also take the [shared action execution
+options](#shared-action-execution-options).
 
 ### `vars set`
 
@@ -1189,10 +1209,11 @@ whichever mixture a list happens to be in. A declared `ref` is reported as the
 list writes it, since nothing resolved it.
 
 What is *at* a destination is a filesystem question, so it is answered the same
-in both modes: a dry run refuses a `dest` holding a regular file or a symlink
-out of the repository exactly as a real run does. What it gives up is one
-distinction — telling a clone from a plain directory takes git, so a dry run
-says it would update either, and the real run is where the second is refused.
+in both modes: a dry run settles a `dest` holding a regular file or a symlink
+out of the repository exactly as a real run does, and says it would back it up.
+What it gives up is one distinction — telling a clone from a plain directory
+takes git, so a dry run says it would update either, and the real run is where
+the second is found to be a conflict.
 That is the same "intent, not success" boundary the fetching actions sit on.
 
 The alternative — a dry run that fetched, so its report could say what an update
@@ -1220,8 +1241,12 @@ fails in either mode, before the destination is considered — including where t
 destination is occupied and a real run would have kept it. A manifest naming a
 source that is not there is a repository error, and reporting it only on the day
 the destination happens to be empty would be the less useful behavior. A
-destination batfiles will not install over is refused in either mode too, for
-the same reason: the refusal is a decision, and inspection is what decides it.
+destination in the way is settled in either mode too, for the same reason: the
+decision is inspection's, so a dry run names each backup it would make, under
+the name this run would give it. It asks nothing, which is why `--interactive`
+is refused beside it. Under `--refresh-content` it builds and fetches nothing,
+so it cannot tell a seed that already matches from one that differs, and
+reports the refresh a difference would make.
 
 A source inside a remote is that rule applied to a whole tree. What a dry run
 reads is the materialization already on this machine, which is as current as the
@@ -1283,30 +1308,10 @@ fetch nothing, which is where a missing materialization shows up.
 
 ## Unimplemented Options
 
-An option that parses but is not honored yet is **refused, never ignored**:
-the run exits 2 naming the option and the step that makes it live, before any
-root is resolved or any file is opened.
-
-The refusal comes ahead of everything the command would otherwise do, so
-`batfiles clone <url> --interactive` reports `--interactive` and clones
-nothing. The option is the part of the
-invocation that is wrong, and a run batfiles cannot finish as asked is not one
-to start.
-
-| Command                       | Options refused for now                                                                                                                    |
-|-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `sync`                        | `--refresh-content`, `--no-overwrite`, `--interactive`                                                                     |
-| `clone`                       | `--refresh-content`, `--no-overwrite`, `--interactive`. Neither `--dry-run` nor `--refresh-remotes` is accepted at all     |
-| `apply-action`, `apply-group` | `--refresh-content`, `--no-overwrite`, `--interactive`                                                                     |
-| everything else               | none                                                                                                                       |
-
-An option that arrives together with the command that takes it is never listed.
-Until the command lands, its own not-implemented message covers the whole
-invocation; afterwards there is nothing to withhold. `init`'s `--no-git-init`
-was such an option and is now simply live. Neither is an option that is live
-elsewhere and is waiting only on the command: `clone --skip-group gui` was never
-listed, because `--skip-group` was not the part of that invocation batfiles
-could not do yet — and now it does the whole of it.
+An option that parses but is not honored yet is **refused, never ignored**: the
+run exits 2 naming the option and the step that makes it live, before any root
+is resolved or any file is opened. Every option any command accepts is honored
+today, so nothing is refused this way.
 
 ## Execution failures
 
@@ -1316,17 +1321,20 @@ at the first failed child, preserving work already completed for earlier childre
 
 ### Clone-list entry failures
 
-`git-clone-list` processes entries independently. It warns and continues after:
+`git-clone-list` processes entries independently. An entry's destination that
+something is in the way of, including a directory that is not a clone, an
+indirect checkout, or an incomplete clone, is a
+[conflict](safety.md#conflicts-and-backups) settled for that entry alone. It
+warns and continues after:
 
-- an occupied destination that cannot be used, including a directory that is
-  not a clone, an indirect checkout, or an incomplete clone;
 - a Git subprocess that ran but failed, including clone, fetch, or update;
 - a declared ref that cannot be resolved.
 
 The warning names the repository source, list file, line number, and entry ID
-when present. Warnings remain visible under `--quiet`. Failure to launch Git,
-filesystem read/write failures, and failure to create the destination container
-stop the run. These are conservative error categories, not a claim that every
+when present, and, where the entry's failure came after its destination was
+backed up and the backup could not be put back, where the backup is. Warnings remain visible under `--quiet`. Failure to launch Git,
+filesystem read/write failures, failure to create the destination container,
+and an `--interactive` question left unanswered stop the run. These are conservative error categories, not a claim that every
 remaining entry would fail in the same way.
 
 Recoverable entry failures do not make the command fail: status 0 can therefore
@@ -1345,16 +1353,17 @@ defines the action warning format.
 |--------|---------------------------------------------------------------------------|
 | `0`    | The command did what was asked. `--help` and `--version` exit here too.   |
 | `1`    | The command ran and failed.                                               |
-| `2`    | The command did not run: the invocation was wrong or is not supported yet.|
+| `2`    | The command did not run: the invocation was wrong.                        |
 
 The distinction that matters is between 1 and 2. A status of 1 means batfiles
 started doing the work and something went wrong partway, so the filesystem may
-have been touched. A status of 2 means nothing was attempted — a usage error, or
-an option batfiles does not implement yet — so nothing was read or written and
-the invocation can be corrected and retried freely.
+have been touched. A status of 2 means nothing was attempted — a usage error —
+so nothing was read or written and the invocation can be corrected and retried
+freely.
 
 Status 2 is what clap already uses for the usage errors it renders, and an
-unimplemented option joins it rather than reporting a failure it never had.
+[unimplemented option](#unimplemented-options) would join it rather than
+report a failure it never had.
 
 Status 1 covers a command that needs a home directory and cannot determine one,
 a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
@@ -1364,8 +1373,9 @@ whose command failed, an argument that is not a well-formed address or variable 
 [`init`](#init) that refused the directory it was run in or could not put a Git
 repository around it, and an
 action that could not be carried out — a source the repository does not contain,
-a destination holding something batfiles will not replace, or a write the
-operating system refused. In each case the invocation was well-formed and
+a remote's materialization holding something batfiles will not replace, an
+`--interactive` question standard input closed on, or a write the operating
+system refused. In each case the invocation was well-formed and
 something outside it did not hold up.
 
 Failures before action execution leave installation destinations untouched;

@@ -13,6 +13,9 @@ use crate::var::VarName;
 
 /// Controls accepted by every command that executes actions.
 ///
+/// `--interactive` is refused beside `--dry-run`, which each command that has
+/// one declares, since a dry run has nothing to ask about.
+///
 /// `clone` accepts them because it forwards them to its follow-up
 /// synchronization.
 #[derive(Debug, Args)]
@@ -30,15 +33,17 @@ pub(crate) struct ActionOptions {
     #[arg(long)]
     pub refresh_vars: bool,
 
-    /// Refresh existing seed content
+    /// Copy and fetch seeds again over what is already at their destinations
     #[arg(long)]
     pub refresh_content: bool,
 
-    /// Skip unmanaged destination conflicts instead of backing them up
+    /// Skip whatever is in a destination's way instead of backing it up and
+    /// replacing it
     #[arg(long, conflicts_with = "interactive")]
     pub no_overwrite: bool,
 
-    /// Choose backup-and-replace, overwrite, or skip at each conflict
+    /// Ask at each destination in the way: back up and replace, overwrite, or
+    /// skip
     #[arg(long)]
     pub interactive: bool,
 }

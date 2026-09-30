@@ -68,22 +68,26 @@ fn a_create_dir_action_run_twice_changes_nothing() {
 }
 
 #[test]
-fn a_create_dir_action_over_a_file_is_refused() {
-    // Rule 13: someone's data is in the way, and until there is a backup policy
-    // there is nothing to do with it but name it.
+fn a_create_dir_action_over_a_file_backs_the_file_up() {
+    // Rule 13: someone's data is in the way, so it is kept beside the directory
+    // made in its place.
     let tree = Tree::new();
     fs::write(tree.home(".config"), "mine\n").expect("an existing file");
     tree.write_manifest(&one_create_dir("~/.config"));
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree.batfiles().arg("sync").assert().success();
     let stderr = stderr_of(&assertion);
-    for expected in [display(&tree.home(".config")), "a regular file".to_owned()] {
-        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
-    }
+    assert!(tree.home(".config").is_dir(), "no directory was made");
     assert_eq!(
-        fs::read_to_string(tree.home(".config")).expect("the file"),
+        fs::read_to_string(backup_of(&tree.home(".config"))).expect("the backup"),
         "mine\n"
     );
+    for expected in [
+        format!("backed up {}", display(&tree.home(".config"))),
+        format!("created {}", display(&tree.home(".config"))),
+    ] {
+        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+    }
 }
 
 /// A destination that is already a directory by another route. Gated only
@@ -92,7 +96,7 @@ fn a_create_dir_action_over_a_file_is_refused() {
 #[cfg(unix)]
 #[test]
 fn a_create_dir_destination_symlinked_elsewhere_is_satisfied_by_what_it_reaches() {
-    // `create-dir` replaces nothing, so its destination is a container like
+    // `create-dir` follows what it can, so its destination is a container like
     // `symlink-dir`'s `dest-dir` rather than a node to judge: someone whose
     // `~/.config` lives on another volume put that link there deliberately, and
     // the directory they asked for is already at the far end of it.

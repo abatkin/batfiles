@@ -19,12 +19,11 @@ pub(super) fn fetch_archive(
             verb: Verb::Extract,
             origin: action.source.clone(),
             // A download has nothing on this machine for a destination to be
-            // inside of.
-            source_directory: None,
+            // inside of, or to be inside one.
+            source: None,
         },
         &dest,
-        context.mode(),
-        context.reporter(),
+        context,
         |staging| {
             install::with_scratch(&dest, context.reporter(), |scratch| {
                 let at = scratch.path().to_path_buf();

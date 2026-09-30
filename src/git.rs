@@ -15,6 +15,7 @@ use crate::error::Error;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, ExistingNode, Occupancy, RepositoryRoot};
+use crate::replace::{Resolution, Resolver};
 
 /// What can go wrong reaching a clone, as one enum a caller can match on.
 #[derive(Debug, ThisError)]
@@ -70,7 +71,27 @@ pub(crate) enum Failure {
     RefUnresolvable { path: PathBuf, git_ref: String },
 }
 
+impl Failure {
+    /// What a directory that cannot be updated as a clone is, completing
+    /// "`dest` is …", for a conflict to be settled over. `None` for a failure
+    /// that says nothing about what is at the destination.
+    fn unusable_clone(&self) -> Option<String> {
+        match self {
+            Self::NotAClone { .. } => Some("a directory, and not a git clone".to_owned()),
+            Self::CloneElsewhere { .. } => {
+                Some("a directory whose .git belongs to a checkout somewhere else".to_owned())
+            }
+            Self::CloneIncomplete { message, .. } => {
+                Some(format!("an incomplete or damaged clone ({message})"))
+            }
+            Self::Unavailable { .. } | Self::Failed { .. } | Self::RefUnresolvable { .. } => None,
+        }
+    }
+}
+
 /// Clone into a vacant or replaceable destination; update an existing clone.
+/// Anything else in the way — including a directory that is not a usable
+/// clone — is settled under `resolver`'s policy, whose refusal names it.
 /// Dry runs inspect occupancy and report intent without invoking Git.
 /// Existing clones retain their configured remotes, regardless of `url`.
 pub(crate) fn clone_or_update(
@@ -78,23 +99,40 @@ pub(crate) fn clone_or_update(
     dest: &Path,
     git_ref: Option<&str>,
     repository: &RepositoryRoot,
-    mode: RunMode,
-    reporter: &Reporter,
+    resolver: &Resolver<'_>,
 ) -> Result<(), Error> {
+    let (mode, reporter) = (resolver.mode(), resolver.reporter());
+    let clone_here = || clone(url, dest, git_ref, resolver);
     match Occupancy::at(dest, repository)? {
         // The only thing that can be a clone. Whether it *is* one takes `git`,
         // so a dry run does not find out.
         Occupancy::Unmanaged(ExistingNode::Directory) => {
-            if mode.writes() {
-                return update(dest, git_ref, reporter);
+            if !mode.writes() {
+                reporter.info(&format!("{} {}", Verb::Update.say(mode), dest.display()));
+                return Ok(());
             }
-            reporter.info(&format!("{} {}", Verb::Update.say(mode), dest.display()));
-            Ok(())
+            let failure = match validate_clone(dest) {
+                Ok(()) => return update(dest, git_ref, reporter),
+                Err(Error::Git(failure)) => failure,
+                Err(error) => return Err(error),
+            };
+            let Some(found) = failure.unusable_clone() else {
+                return Err(failure.into());
+            };
+            match resolver.resolve(dest, &found)? {
+                Resolution::Refuse => Err(failure.into()),
+                Resolution::Skip => Ok(()),
+                Resolution::Replace(keep) => resolver.replace(dest, keep, clone_here),
+            }
         }
-        Occupancy::Unmanaged(found) => Err(Error::DestinationExists {
-            path: dest.to_path_buf(),
-            found,
-        }),
+        Occupancy::Unmanaged(found) => match resolver.resolve(dest, &found)? {
+            Resolution::Refuse => Err(Error::DestinationExists {
+                path: dest.to_path_buf(),
+                found,
+            }),
+            Resolution::Skip => Ok(()),
+            Resolution::Replace(keep) => resolver.replace(dest, keep, clone_here),
+        },
         Occupancy::Replaceable { written, .. } => {
             if mode.writes() {
                 remove(dest)?;
@@ -105,9 +143,9 @@ pub(crate) fn clone_or_update(
                 dest.display(),
                 written.display()
             ));
-            clone(url, dest, git_ref, mode, reporter)
+            clone_here()
         }
-        Occupancy::Vacant => clone(url, dest, git_ref, mode, reporter),
+        Occupancy::Vacant => clone_here(),
     }
 }
 
@@ -117,10 +155,12 @@ fn clone(
     url: &str,
     dest: &Path,
     git_ref: Option<&str>,
-    mode: RunMode,
-    reporter: &Reporter,
+    resolver: &Resolver<'_>,
 ) -> Result<(), Error> {
-    directory::create_parents(dest, mode)?.report_removals(mode, reporter);
+    let (mode, reporter) = (resolver.mode(), resolver.reporter());
+    if !directory::create_parents(dest, resolver)? {
+        return Ok(());
+    }
     if mode.writes() {
         clone_repository(url, dest)?;
         if let Some(git_ref) = git_ref {
@@ -162,11 +202,9 @@ fn at(git_ref: Option<&str>) -> String {
     git_ref.map(|it| format!(" at {it}")).unwrap_or_default()
 }
 
-/// Validate the clone and leave dirty worktrees unchanged with a warning.
-/// Follow the declared ref, or update the current branch from its upstream.
+/// Leave a validated clone's dirty worktree unchanged with a warning. Follow
+/// the declared ref, or update the current branch from its upstream.
 fn update(dest: &Path, git_ref: Option<&str>, reporter: &Reporter) -> Result<(), Error> {
-    validate_clone(dest)?;
-
     if is_dirty(dest)? {
         warn_skipped_update(reporter, dest, "it has uncommitted changes");
         return Ok(());
@@ -467,9 +505,18 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
             }
             .into());
         }
+        GitDirectory::Damaged => {
+            return Err(Failure::CloneIncomplete {
+                path: dest.to_path_buf(),
+                message: "git does not read its .git as a repository".to_owned(),
+            }
+            .into());
+        }
         GitDirectory::Own => {}
     }
 
+    // Git has read the layout as a repository, so a failure from here on is
+    // git's, not the checkout's.
     let toplevel = run(
         Some(dest),
         "rev-parse",
@@ -505,19 +552,66 @@ enum GitDirectory {
     Missing,
     /// A real directory, which is what `git clone` makes.
     Own,
+    /// A real directory git does not read as a repository.
+    Damaged,
     /// A symlink or a file standing in for one, either of which can put git's
     /// refs somewhere batfiles did not install.
     Indirect,
 }
 
 fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
+    let git_dir = dest.join(".git");
     // `node_at` does not follow, so `is_dir` is false for a symlink however it
-    // resolves. That is the whole check.
-    Ok(match paths::node_at(&dest.join(".git"))? {
+    // resolves.
+    Ok(match paths::node_at(&git_dir)? {
         None => GitDirectory::Missing,
-        Some(found) if found.is_dir() => GitDirectory::Own,
+        Some(found) if found.is_dir() => {
+            if is_repository_directory(&git_dir, dest)? {
+                GitDirectory::Own
+            } else {
+                GitDirectory::Damaged
+            }
+        }
         Some(_) => GitDirectory::Indirect,
     })
+}
+
+/// Whether git reads `git_dir` as a repository directory — its `HEAD`, object
+/// store, refs, and any `commondir`, links followed as git follows them.
+///
+/// Asked with the global and system configuration set aside and in the C
+/// locale, so the one answer meaning "not a repository" is told apart from
+/// any other failure, which is an error: a git that cannot run properly says
+/// nothing about the directory.
+fn is_repository_directory(git_dir: &Path, dest: &Path) -> Result<bool, Error> {
+    let mut probe = command(
+        Some(dest),
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--resolve-git-dir"),
+            git_dir.as_os_str(),
+        ],
+    );
+    probe
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("LC_ALL", "C")
+        .env_remove("LANGUAGE");
+    let output = capture(probe)?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let said = String::from_utf8_lossy(&output.stderr);
+    if output.status.code() == Some(128) && said.trim_start().starts_with("fatal: not a gitdir") {
+        return Ok(false);
+    }
+    Err(Failure::Failed {
+        command: "rev-parse",
+        path: dest.to_path_buf(),
+        message: complaint(&output),
+    }
+    .into())
 }
 
 /// Decode a Git path, removing one line terminator. Preserve trailing spaces
@@ -718,6 +812,12 @@ fn git<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Error>
 /// [`git`], returning the subsystem failure for callers that report a launch
 /// failure themselves.
 fn launch<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Failure> {
+    capture(command(dir, args))
+}
+
+/// A `git` command with the [`REDIRECTS`] cleared, run in `dir` where one is
+/// given.
+fn command<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Command {
     let mut command = Command::new("git");
     command.args(args);
     for redirect in REDIRECTS {
@@ -726,6 +826,11 @@ fn launch<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Fai
     if let Some(dir) = dir {
         command.current_dir(dir);
     }
+    command
+}
+
+/// Run a `git` command, capturing both of its streams.
+fn capture(mut command: Command) -> Result<Output, Failure> {
     command
         .output()
         .map_err(|source| Failure::Unavailable { source })

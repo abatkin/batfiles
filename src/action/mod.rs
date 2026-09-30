@@ -10,7 +10,7 @@ mod git_clone;
 mod git_clone_list;
 mod symlink;
 
-pub(crate) use context::RunContext;
+pub(crate) use context::{Replacement, RunContext};
 
 use crate::clone_list::PreparedList;
 use crate::error::Error;
@@ -82,8 +82,14 @@ mod tests {
             },
         };
         let reporter = Reporter::new(false);
-        let context = RunContext::new(&roots, RunMode::Perform, Default::default(), &reporter)
-            .expect("the roots resolve");
+        let context = RunContext::new(
+            &roots,
+            RunMode::Perform,
+            Default::default(),
+            Replacement::default(),
+            &reporter,
+        )
+        .expect("the roots resolve");
         let action = toml::from_str(declaration).expect("the declaration parses");
 
         let _ = run(&Executable::Declared(&action), None, &context);

@@ -13,7 +13,8 @@ ownership](../AGENTS.md#documentation) defines promotion and placement.
 - [Repository format](repoformat.md): manifest schema, action fields, static
   and dynamic variables, clone lists.
 - [Installation safety](safety.md): path resolution, destination handling,
-  staging, permissions, archive validation, and Git updates.
+  conflicts, backups, refresh, staging, permissions, archive validation, and Git
+  updates.
 - [Local state](state.md): state schemas, lifecycle, and atomic replacement.
 - [Architecture](architecture.md): the rules the implementation is written to,
   source organization, and test environments.

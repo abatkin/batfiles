@@ -31,7 +31,7 @@ pub(crate) struct CloneArgs {
 #[derive(Debug, Args)]
 pub(crate) struct SyncArgs {
     /// Report the action plan without executing it
-    #[arg(long, conflicts_with = "refresh_remotes")]
+    #[arg(long, conflicts_with_all = ["refresh_remotes", "interactive"])]
     pub dry_run: bool,
 
     /// Re-fetch file and archive remotes, replacing their materializations
@@ -52,7 +52,7 @@ pub(crate) struct ApplyActionArgs {
     pub id: String,
 
     /// Report the application plan without executing it
-    #[arg(long)]
+    #[arg(long, conflicts_with = "interactive")]
     pub dry_run: bool,
 
     #[command(flatten)]
@@ -67,7 +67,7 @@ pub(crate) struct ApplyGroupArgs {
     pub group: String,
 
     /// Report the group application plan without executing it
-    #[arg(long)]
+    #[arg(long, conflicts_with = "interactive")]
     pub dry_run: bool,
 
     #[command(flatten)]
@@ -97,6 +97,31 @@ mod tests {
             error_kind(&["batfiles", "sync", "--no-overwrite", "--interactive"]),
             ErrorKind::ArgumentConflict
         );
+    }
+
+    #[test]
+    fn dry_run_and_interactive_are_mutually_exclusive() {
+        for args in [
+            &["batfiles", "sync", "--dry-run", "--interactive"][..],
+            &[
+                "batfiles",
+                "apply-action",
+                "--id",
+                "a",
+                "--dry-run",
+                "--interactive",
+            ],
+            &[
+                "batfiles",
+                "apply-group",
+                "--group",
+                "g",
+                "--dry-run",
+                "--interactive",
+            ],
+        ] {
+            assert_eq!(error_kind(args), ErrorKind::ArgumentConflict, "{args:?}");
+        }
     }
 
     #[test]

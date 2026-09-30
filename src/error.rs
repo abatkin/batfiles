@@ -193,6 +193,15 @@ pub(crate) enum Error {
     )]
     DestinationInsideSource { installed: PathBuf, dest: PathBuf },
 
+    /// A destination in the way that holds the source installed over it, so
+    /// setting it aside would take the source too.
+    #[error(
+        "cannot replace {}: {} is inside it, and setting it aside would take the source with it",
+        .dest.display(),
+        .installed.display()
+    )]
+    SourceInsideDestination { installed: PathBuf, dest: PathBuf },
+
     /// Something is at a path an install would be built on — the staging node, or the
     /// scratch file an archive is downloaded to.
     #[error(
@@ -216,13 +225,33 @@ pub(crate) enum Error {
     )]
     DotPrefixOnDotfile { child: String },
 
-    /// A destination holding something batfiles did not create and cannot safely
-    /// replace (`architecture.md`, rule 13).
+    /// A tool-owned destination holding something batfiles did not create and
+    /// will not replace (`architecture.md`, rule 13).
     #[error(
         "{} already exists and is {found}; move it aside and run sync again",
         .path.display()
     )]
     DestinationExists { path: PathBuf, found: ExistingNode },
+
+    /// An install that failed after the node it replaces was renamed aside,
+    /// where the node could not be put back.
+    #[error("{source}; what was at {} is now at {}", .path.display(), .aside.display())]
+    SetAside {
+        path: PathBuf,
+        aside: PathBuf,
+        source: Box<Error>,
+    },
+
+    /// A question about a conflict that standard input closed on.
+    #[error(
+        "no answer about {}: standard input ended; nothing was done there",
+        .path.display()
+    )]
+    NoAnswer { path: PathBuf },
+
+    /// A question about a conflict whose answer could not be read.
+    #[error("could not read an answer about {}: {source}", .path.display())]
+    Prompt { path: PathBuf, source: io::Error },
 
     /// An action type this build of batfiles cannot carry out on this platform.
     #[error("`{action_type}` actions are not supported on this platform")]

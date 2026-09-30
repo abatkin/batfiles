@@ -47,6 +47,31 @@ pub(crate) fn entries(dir: &Path) -> Vec<String> {
     found
 }
 
+/// The backups batfiles has made of `path`, beside it, sorted by name.
+pub(crate) fn backups_of(path: &Path) -> Vec<PathBuf> {
+    let parent = path.parent().expect("a path with a parent");
+    let prefix = format!(
+        "{}.batfiles-backup-",
+        path.file_name()
+            .expect("a path with a name")
+            .to_string_lossy()
+    );
+    entries(parent)
+        .into_iter()
+        .filter(|name| name.starts_with(&prefix))
+        .map(|name| parent.join(name))
+        .collect()
+}
+
+/// The one backup batfiles has made of `path`.
+pub(crate) fn backup_of(path: &Path) -> PathBuf {
+    let found = backups_of(path);
+    let [backup] = &found[..] else {
+        panic!("expected one backup of {}, found {found:?}", path.display());
+    };
+    backup.clone()
+}
+
 /// Everything under a directory: names, types, symlink targets as written, and
 /// file contents, sorted.
 pub(crate) fn snapshot(root: &Path) -> Vec<String> {

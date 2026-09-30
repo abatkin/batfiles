@@ -77,9 +77,10 @@ against the `Action` enum by `tests/hygiene.rs`.
 Normal synchronization is convergence-oriented but intentionally asymmetric:
 symlinks are repaired and Git clones are advanced under the conservative
 [update policy](safety.md#git-updates), while copied files, fetched content, and
-created directories are left alone once they exist. Refreshing those is
-*intended*. Explicit action or group application uses the same behavior as
-synchronization.
+created directories are left alone once they exist unless a run explicitly
+[refreshes](safety.md#refreshing-seeds) the copies and fetched content.
+Something in a destination's way is kept as a backup rather than lost. Explicit
+action or group application uses the same behavior as synchronization.
 
 ### Produce one predictable plan
 
@@ -120,8 +121,8 @@ synchronization.
 The [safety model](safety.md) separately defines destination resolution, symlink
 traversal, archive handling, replacement behavior, Git updates, and failure
 recovery. Keeping those rules in one place prevents individual action
-specifications from developing inconsistent safety guarantees. Backups, refresh,
-and the trust rules remote content will need are
+specifications from developing inconsistent safety guarantees. Safety against
+concurrent writers and the trust rules remote content will need are
 [*intended*](future/safety.md).
 
 ### Stay automation-friendly

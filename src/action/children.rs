@@ -24,7 +24,9 @@ pub(super) fn for_each_child(
     install: &ChildInstall,
     install_one: impl Fn(&Path, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    context.ensure_directory(install.dest_dir)?;
+    if !context.ensure_directory(install.dest_dir)? {
+        return Ok(());
+    }
 
     let children = paths::children_of(install.source_dir)?;
     if children.is_empty() {

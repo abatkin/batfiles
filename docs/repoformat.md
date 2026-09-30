@@ -281,9 +281,11 @@ the record rather than the URL. Because the ID is a directory name,
 **A Git remote's materialization is a clone like any other.** It follows `ref`
 where one is written and the branch it is on where none is, and later runs update
 it under the [Git update policy](safety.md#git-updates) — fast-forward only, and
-left alone with a warning where that is not possible. A `remotes/<id>` holding
-something that is not a clone is refused the same way a `git-clone` destination
-is, and [clone validation](safety.md#clone-validation) applies unchanged.
+left alone with a warning where that is not possible. [Clone
+validation](safety.md#clone-validation) applies unchanged, but a `remotes/<id>`
+holding something that is not a usable clone is refused under every policy
+rather than backed up: `remotes/` is batfiles' own, and what it does not
+recognize there is a mistake to report.
 
 **A file or archive remote is fetched when it is missing or its declaration has
 changed.** Once one is in place, batfiles writes a stamp beside it,
@@ -516,7 +518,9 @@ it back relative to the link's own directory: a target left relative to the
 working directory would point somewhere other than where it was meant to.
 
 Missing links are created, correct links are kept, and replaceable links are
-repaired. Other occupied destinations are refused. The safety reference owns
+repaired. Anything else in the way is a
+[conflict](safety.md#conflicts-and-backups): backed up and replaced by default.
+The safety reference owns
 the [destination policy](safety.md#replacing-what-is-already-there) and the
 [source-containment check](safety.md#installing-into-what-you-install-from),
 including its exception for an already-correct link.
@@ -621,7 +625,7 @@ would otherwise have no way to ask for.
 `dest` follows [Sources and destinations](#sources-and-destinations). Missing
 directories and parents are created; existing directory contents are preserved.
 The [directory-container policy](safety.md#directory-containers) specifies
-symlink handling and occupied-path refusals.
+symlink handling and what happens to a non-directory in the way.
 
 Every platform batfiles builds for creates directories, so unlike the two
 symlink actions there is no platform on which this one is refused by name.
@@ -651,8 +655,10 @@ to supply — a machine-local override, a template to fill in.
 
 `source` and `dest` follow [Sources and destinations](#sources-and-destinations).
 The [seed policy](safety.md#seeds-do-not-replace-and-so-do-not-refuse) installs
-only at a vacant destination. A directory source is installed whole; an existing
-directory is not merged. Use [`copy-dir`](#copy-dir) to seed missing direct children.
+only at a vacant destination, unless `--refresh-content` asks for it to be
+[installed again](safety.md#refreshing-seeds). A directory source is installed
+whole; an existing directory is not merged, even by a refresh, which replaces it
+whole. Use [`copy-dir`](#copy-dir) to seed missing direct children.
 
 Copies preserve source permissions under the shared [permission and staging
 rules](safety.md#installed-permissions). A destination inside the source
@@ -731,7 +737,8 @@ dest = "~/.vim/autoload/pathogen.vim"
 rather than from the repository: the destination decides, missing parents are
 created, and what lands is the user's from then on. Anything at all at `dest`
 means the action is done — and the check comes first, so a destination that is
-occupied costs no transfer.
+occupied costs no transfer. `--refresh-content` fetches it
+[again](safety.md#refreshing-seeds).
 
 `source` is a URL and is never resolved against a filesystem root. `dest` follows
 [source and destination syntax](#sources-and-destinations). Fetched files use the
@@ -772,7 +779,8 @@ differs is only what is done with the body.
 single thing, exactly the way [`copy`](#copy) installs a directory, so anything
 at all at `dest` means the action is done and no request is made — including a
 directory an earlier `create-dir` left there. A manifest declaring both is
-asking for the directory twice.
+asking for the directory twice. `--refresh-content` fetches and unpacks it
+[again](safety.md#refreshing-seeds), replacing the tree whole.
 
 **Gzipped tar and plain tar, decided by reading the archive.** The format comes
 from the archive's own leading bytes rather than from what the URL appears to end
@@ -900,7 +908,9 @@ A `ref` that resolves to nothing at all fails, naming what was asked for.
 [Git updates](safety.md#git-updates) specifies dirty-worktree checks,
 fast-forwarding, local-file protection, and failure handling.
 [Clone validation](safety.md#clone-validation) specifies which existing
-checkouts can be updated. Existing clones retain their configured remotes.
+checkouts can be updated; anything else at `dest` is a
+[conflict](safety.md#conflicts-and-backups). Existing clones retain their
+configured remotes.
 
 ### `git-clone-list`
 

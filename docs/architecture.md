@@ -65,11 +65,14 @@ configuration are requirements for batfiles to support.
 `src/cli/unsupported.rs`, checked at dispatch before root resolution. Diagnostics
 name the option and implementation step. The hygiene test rejects references to
 undefined or completed steps. Stubbed values may remain strings until their
-validation has a caller.
+validation has a caller. Remove the module when its list empties, and restore it
+with the next option to be withheld.
 
 **13. Preserve existing user content.** Apply the destination policy in
-[safety.md](safety.md). Cleanup removes only paths created by the current
-operation. Report paths that cannot be safely replaced.
+[safety.md](safety.md). Settle an unmanaged node through `replace.rs`, which
+owns the conflict policy, backups, and putting a node back; refuse one at a
+tool-owned destination. Cleanup removes only paths created by the current
+operation.
 
 **14. Centralize path resolution.** Anchor roots before storing symlink targets.
 Resolve existing targets relative to their link's directory for classification.
@@ -81,7 +84,8 @@ whether to replace it: a caller that needs only what is at a path uses
 replace a symlink uses `Occupancy::at`.
 
 **15. Install complete content.** Build seeds in staging and publish after
-completion. Create staging nodes privately and apply final permissions only
+completion; a refresh builds and compares complete content before it sets
+anything aside. Create staging nodes privately and apply final permissions only
 when content is complete. Cleanup must not be required for correctness after
 interruption. Git clones use destination validation to reject incomplete
 checkouts on subsequent runs. State documents use their own atomic replacement

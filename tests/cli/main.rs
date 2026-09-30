@@ -24,11 +24,14 @@ mod inclusion_vars;
 mod init;
 mod locations;
 mod manifest;
+mod refreshing;
 mod remotes;
 mod selection;
 mod surface;
 mod vars;
 
+#[cfg(unix)]
+mod conflicts;
 #[cfg(unix)]
 mod dry_run;
 #[cfg(unix)]

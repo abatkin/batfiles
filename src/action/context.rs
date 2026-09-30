@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::condition::Exclusion;
 use crate::directory::{self, DirectoryOutcome};
@@ -12,10 +13,29 @@ use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, RepositoryRoot};
 use crate::remotes;
+use crate::replace::{self, Conflicts, Policy, Resolver};
 use crate::repo_path::RepoPath;
 
-/// Anchored repository and home roots, execution mode, excluded remotes, and
-/// reporter for one run.
+/// How a run treats what is already at its destinations.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Replacement {
+    /// What to do with an unmanaged node in the way.
+    pub policy: Policy,
+    /// Whether seeds are installed again over what is already there.
+    pub refresh_content: bool,
+}
+
+impl Default for Replacement {
+    fn default() -> Self {
+        Self {
+            policy: Policy::Backup,
+            refresh_content: false,
+        }
+    }
+}
+
+/// Anchored repository and home roots, execution mode, excluded remotes,
+/// conflict policy, and reporter for one run.
 ///
 /// Everything here is settled before the first action and read by every one of
 /// them. Nothing an action does changes it.
@@ -26,6 +46,8 @@ pub(crate) struct RunContext<'a> {
     /// The declared remotes this machine's conditions close, and why, settled
     /// once for the run before any action asks.
     excluded_remotes: BTreeMap<ItemId, Exclusion>,
+    conflicts: Conflicts,
+    refresh_content: bool,
     reporter: &'a Reporter,
 }
 
@@ -35,6 +57,7 @@ impl<'a> RunContext<'a> {
         roots: &Roots,
         mode: RunMode,
         excluded_remotes: BTreeMap<ItemId, Exclusion>,
+        replacement: Replacement,
         reporter: &'a Reporter,
     ) -> Result<Self, Error> {
         Ok(Self {
@@ -42,6 +65,8 @@ impl<'a> RunContext<'a> {
             home: paths::anchor(&roots.home)?,
             mode,
             excluded_remotes,
+            conflicts: Conflicts::new(replacement.policy, SystemTime::now()),
+            refresh_content: replacement.refresh_content,
             reporter,
         })
     }
@@ -143,9 +168,29 @@ impl<'a> RunContext<'a> {
         self.mode
     }
 
-    /// Ensure a destination directory exists and report creation or link removal.
-    pub fn ensure_directory(&self, dir: &Path) -> Result<(), Error> {
-        let outcome = directory::ensure_directory(dir, self.mode)?;
+    /// The run's conflict policy, for a destination an action installs to.
+    pub fn resolver(&self) -> Resolver<'_> {
+        Resolver::new(&self.conflicts, self.mode, self.reporter)
+    }
+
+    /// The policy for a destination batfiles owns, such as a remote's
+    /// materialization: an unmanaged node there is refused, whatever the run
+    /// was asked to do with the user's.
+    pub fn tool_owned(&self) -> Resolver<'_> {
+        Resolver::new(&replace::REFUSING, self.mode, self.reporter)
+    }
+
+    /// Whether `--refresh-content` asks seeds to be installed again over what
+    /// is already there.
+    pub fn refresh_content(&self) -> bool {
+        self.refresh_content
+    }
+
+    /// Ensure a destination directory exists and report creation or link
+    /// removal. Returns false where a conflict along the path was skipped, and
+    /// nothing is there to install into.
+    pub fn ensure_directory(&self, dir: &Path) -> Result<bool, Error> {
+        let outcome = directory::ensure_directory(dir, &self.resolver())?;
         outcome.report_removals(self.mode, self.reporter);
         match outcome {
             DirectoryOutcome::Created { .. } => self.reporter.info(&format!(
@@ -156,8 +201,9 @@ impl<'a> RunContext<'a> {
             DirectoryOutcome::AlreadyThere => self
                 .reporter
                 .detail(1, &format!("unchanged {}", dir.display())),
+            DirectoryOutcome::Skipped => return Ok(false),
         }
-        Ok(())
+        Ok(true)
     }
 }
 

@@ -28,6 +28,7 @@ mod mode;
 mod output;
 mod paths;
 mod remotes;
+mod replace;
 mod repo_path;
 mod selection;
 mod tomlfile;

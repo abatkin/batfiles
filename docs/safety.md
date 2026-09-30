@@ -1,6 +1,6 @@
 # Installation safety
 
-These rules describe implemented behavior. Backup and refresh proposals are in
+These rules describe implemented behavior. Remaining proposals are in
 [future/safety.md](future/safety.md).
 
 ## What is not sandboxed
@@ -32,10 +32,20 @@ Local installation actions refuse destinations that resolve inside their source
 directory. Missing destination components are resolved through their nearest
 existing ancestor. Directory-wide actions check before creating their container.
 A single symlink checks before creating or replacing its destination, including
-before removing a replaceable link, but leaves an already-correct link unchanged.
-A seed checks containment only when its individual destination is vacant;
-a directory-wide copy also checks its container
-before enumerating children.
+before removing a replaceable link or setting aside an unmanaged node, but leaves
+an already-correct link unchanged. A seed checks containment when its individual
+destination is vacant or is being [refreshed](#refreshing-seeds); a
+directory-wide copy also checks its container before enumerating children.
+
+The reverse is refused too wherever a destination would be set aside: a
+symlink or copy whose source is at or inside the node in its way. Setting that
+node aside would take the source with it, so the action fails naming both
+before anything is asked or moved. The source counts as inside when resolving
+its path, one component at a time and following each link as the operating
+system does, passes through the destination node — located by its resolved
+parent and its own name, so a destination that is a link is that link. That
+covers a source reached through a repository alias as well as one written
+under the destination.
 
 ## Replacing what is already there
 
@@ -47,18 +57,67 @@ Inspect an installation destination without following its final symlink:
 | Link already pointing at the requested source | Leave unchanged | Apply link classification below |
 | Link resolving inside the batfiles repository | Replace the link | Remove the link and clone |
 | Broken link | Replace the link | Remove the link and clone |
-| Directory | Refuse | Validate and update as a clone |
-| Other node, including a link reaching content outside the repository | Refuse | Refuse |
+| Directory | [Conflict](#conflicts-and-backups) | Validate and update as a clone; a directory that is [not a usable clone](#clone-validation) is a conflict |
+| Other node, including a link reaching content outside the repository | Conflict | Conflict |
 
 Broken means resolution ends with NotFound or NotADirectory, including a target
 such as `<regular-file>/child`. Unresolvable link loops are refused. A requested
 symlink already pointing at its source is unchanged even if that source is itself
 a broken link.
 
-Refusals name the destination and the kind of node found. Symlink diagnostics
-include the written target and its resolved form when different. There is no
-replacement override yet; move conflicting content aside before rerunning.
-Removals are reported at normal verbosity; unchanged nodes at `-v`.
+Conflicts name the destination and the kind of node found. Symlink diagnostics
+include the written target and its resolved form when different. Removals are
+reported at normal verbosity; unchanged nodes at `-v`.
+
+### Conflicts and backups
+
+An unmanaged node in a destination's way — one the table above calls a
+conflict, a non-directory where a [container](#directory-containers) must be,
+or a seed being [refreshed](#refreshing-seeds) to different content — is settled
+by the run's conflict policy:
+
+| Policy | Selected by | What happens at each conflict |
+| --- | --- | --- |
+| Back up and replace | Default | The node is renamed to a backup beside it, then the action installs |
+| Skip | `--no-overwrite` | The node is left, nothing is installed there, and the run goes on |
+| Ask | `--interactive` | The user chooses back up and replace (the default answer), overwrite, or skip |
+
+A backup is the node itself, renamed to
+`<name>.batfiles-backup-<YYYYMMDDTHHMMSSZ>` in the same directory. The stamp is
+the run's start in UTC, shared by every backup the run makes; where that name is
+taken, `-2`, `-3`, and so on are appended, so a backup never replaces an earlier
+one. Renaming keeps the node's type, contents, permissions, and ownership, and
+makes nothing more readable than it was. A directory is backed up whole.
+Batfiles never removes a backup.
+
+Overwriting, which only `--interactive` offers, is a waiver for that one
+conflict: the node is renamed to `<name>.batfiles-old`, which must be vacant,
+and removed once the replacement is in place. A removal that fails warns and
+leaves the path.
+
+Setting a node aside is reported at normal verbosity, before the action
+installs: `backed up <dest> to <backup>`, or `discarded <dest>`. If the install
+then fails and nothing is at the destination, the node is renamed back and
+`restored <dest>` is reported before the error. Where it cannot be renamed back,
+the error names where it is. A skip is reported as `skipped <dest>: it is <what
+is there>`, at normal verbosity, and the run exits 0.
+
+An interactive question is written to standard error, even under `--quiet`,
+and one line is read from standard input for each, which need not be a terminal:
+`b` or an empty line backs up, `o` overwrites, `s` skips, and anything else asks
+again. Standard input ending before an answer fails the run with nothing done at
+that destination. `--interactive` cannot be combined with `--dry-run`, and
+`--no-overwrite` cannot be combined with `--interactive`.
+
+A dry run settles each conflict as the default would, or skips it under
+`--no-overwrite`, and reports the rename it would make, naming the backup path
+this run would use.
+
+Tool-owned destinations are not conflicts: an unrecognized node where a
+[remote is materialized](#replacing-a-materialization), including one in the way
+of the `remotes/` directory, is refused under every policy, and the refusal says
+to move it aside. Staging, download, and `.batfiles-old` paths that are already
+taken are refused too.
 
 ### Directory containers
 
@@ -66,27 +125,53 @@ Removals are reported at normal verbosity; unchanged nodes at `-v`.
 existing directories and their contents. They follow symlinks to directories.
 Missing parents are created; broken links along the required directory path are
 removed and replaced with directories. A non-directory at any required component
-fails with that path named. Batfiles does not create the target of a broken link.
+is a [conflict](#conflicts-and-backups) at that path, followed if it is a link:
+backing it up renames the node itself and makes the directory in its place, and
+skipping it skips the action, or for a missing parent of one destination, that
+destination. Batfiles does not create the target of a broken link.
 
 ### Seeds do not replace, and so do not refuse
 
 `copy`, `copy-dir`, `fetch-file`, and `fetch-archive` install only at vacant
-individual destinations. Any existing node, including a broken symlink, is kept
-and reported at `-v`. They do not inspect or merge existing directory contents.
-`copy-dir` applies this rule separately to each direct child.
+individual destinations, unless the run [refreshes content](#refreshing-seeds).
+Any existing node, including a broken symlink, is kept and reported at `-v`.
+They do not inspect or merge existing directory contents. `copy-dir` applies
+this rule separately to each direct child.
 
 Local source validation still happens before destination occupancy is checked.
 The directory container and containment rules also apply, so an occupied child
 does not waive errors in its source or parent setup.
 
 A fetched archive is one seed directory. Declaring `create-dir` for that same
-path makes it occupied and prevents extraction. Re-seeding existing content is
-an unbuilt [refresh proposal](future/safety.md#seed-actions-and-deletion).
+path makes it occupied and prevents extraction.
+
+### Refreshing seeds
+
+`--refresh-content` installs every seed again over what is at its destination.
+The complete content is built at the staging path first, exactly as a new seed
+is, and compared with what is there:
+
+- Content that matches — the same node types, bytes, permissions, and link
+  targets, and for a directory the same children throughout — is left alone
+  and reported `unchanged` at `-v`. Refreshing twice makes one backup, not two.
+- A symlink that holds no content of its own, as the table above classifies
+  one, is replaced without a backup.
+- Anything else is a [conflict](#conflicts-and-backups), asked about only once
+  the new content is complete, and replaced by renaming the staged content in.
+
+A directory seed is replaced whole: files only the destination held go with the
+backup rather than staying in the refreshed tree. Refresh is not a merge.
+
+A dry run builds and fetches nothing, so it cannot compare; it reports the
+replacement a difference would make. Under `--no-overwrite` an occupied seed is
+kept without being built, since nothing there could be replaced.
 
 ## Staging and publication
 
 Seeds and fetched [remote materializations](repoformat.md#materialization) are
 built at `<destination>.batfiles-incomplete`, beside their destination.
+[Backups](#conflicts-and-backups) and nodes waiting to be discarded sit beside
+it too.
 Archive downloads first use `<destination>.batfiles-download`; verification
 finishes before extraction into the staging directory. Downloads and extraction
 use the same open archive file.
@@ -135,8 +220,9 @@ Batfiles does not lock installation destinations or guarantee safety against a
 concurrent writer. The check and rename fallback are separate operations; another
 process can create a node between them. Symlink replacement also has separate
 inspection, removal, and creation operations, and so does replacing a
-materialization. Do not run simultaneous installs
-against the same destinations.
+materialization. Setting a node aside checks that the backup or `.batfiles-old`
+path is vacant and then renames, and a refresh compares content before it
+replaces it. Do not run simultaneous installs against the same destinations.
 
 Git clones write directly to their destination. Subsequent runs reject incomplete
 or damaged checkouts; see [Git updates](#git-updates). State documents follow the
@@ -144,7 +230,8 @@ separate [atomic rewrite policy](state.md#writing).
 
 ## Installed permissions
 
-- Copies preserve source permissions, including executable bits. Directory modes
+- Copies preserve source permissions, including executable bits, and so does a
+  refreshed copy; its backup keeps the old node's own. Directory modes
   are applied after their children are copied. Symlinks nested inside copied
   trees are refused. Ownership belongs to the user running batfiles. Parents
   created to reach a destination use platform defaults subject to the umask.
@@ -223,13 +310,24 @@ clone-list entries, and materializations alike.
 
 ### Clone validation
 
-An existing destination must be a directory with:
+An existing destination must be a directory with the following, or it is a
+[conflict](#conflicts-and-backups) for an action and refused for a remote's
+materialization:
 
-1. A real `.git` directory. A `.git` file or symlink is refused, including linked
-   worktrees and submodules.
+1. A real `.git` directory Git reads as a repository, as
+   `git rev-parse --resolve-git-dir` judges one: its `HEAD`, object store, refs,
+   and any `commondir`, following links inside it as Git does. A `.git` file or
+   symlink does not qualify, including linked worktrees and submodules, and a
+   directory Git answers "not a gitdir" for is a damaged clone. Any other
+   failure of that check — Git cannot run, or fails for a reason of its own —
+   fails the run rather than calling the checkout damaged.
 2. A worktree root that Git resolves to the destination itself. A directory
-   inside another checkout or configured with another worktree is refused.
-3. A resolvable HEAD. Incomplete or damaged clones are refused with diagnostics.
+   inside another checkout or configured with another worktree does not.
+3. A resolvable HEAD. An incomplete or damaged clone is named with Git's
+   diagnostics.
+
+Such a directory is never updated: backing it up renames it whole and clones
+afresh in its place.
 
 Destination symlinks use the replacement rules above and are never followed to
 update another checkout. Git inherits configuration and credentials subject to

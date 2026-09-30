@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::unsupported::{self, Unsupported};
+use crate::action::Replacement;
 use crate::cli::{ActionOptions, Cli, Command, GlobalOptions, VarsCommand, color};
 use crate::clone;
 use crate::disabled::{self, Change, DisabledList};
@@ -23,14 +23,11 @@ use crate::location::{
 use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
+use crate::replace::Policy;
 use crate::var_set;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
-
-/// A command that did not run: clap's usage-error status, also used for an
-/// option batfiles does not implement yet.
-const EXIT_UNIMPLEMENTED: u8 = 2;
 
 pub(crate) fn run() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
@@ -71,10 +68,6 @@ pub(crate) fn run() -> ExitCode {
 
 /// Run the parsed command.
 fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCode, Error> {
-    if let Some(found) = unsupported::first(&cli.command) {
-        return Ok(not_yet(reporter, &found));
-    }
-
     match &cli.command {
         // Rendered through clap so `version` and `--version` cannot drift.
         Command::Version => {
@@ -221,6 +214,16 @@ fn invocation<'a>(
         mode: RunMode::new(dry_run),
         vars: &action.vars,
         refresh_vars: action.refresh_vars,
+        replacement: Replacement {
+            policy: if action.no_overwrite {
+                Policy::Skip
+            } else if action.interactive {
+                Policy::Ask
+            } else {
+                Policy::Backup
+            },
+            refresh_content: action.refresh_content,
+        },
         env,
         reporter,
     }
@@ -310,15 +313,6 @@ fn report_state_roots(reporter: &Reporter, state: &StateRoots) {
     for (label, path) in [("config:", &state.config_dir), ("cache:", &state.cache_dir)] {
         reporter.detail(1, &format!("{label:<12}{}", path.display()));
     }
-}
-
-/// An option that parsed but does nothing yet (`architecture.md`, rule 12).
-fn not_yet(reporter: &Reporter, found: &Unsupported) -> ExitCode {
-    reporter.error(&format!(
-        "`{}` is not implemented yet; it arrives at step {}",
-        found.option, found.step
-    ));
-    ExitCode::from(EXIT_UNIMPLEMENTED)
 }
 
 /// Parse without exiting the process, so the caller controls presentation.

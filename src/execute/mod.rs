@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use self::assemble::assemble;
 use self::record::{Disposition, Node, RunList, RunRecord};
-use crate::action::{self, Executable, RunContext};
+use crate::action::{self, Executable, Replacement, RunContext};
 use crate::bootstrap::Bootstrap;
 use crate::clone_list::PreparedList;
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
@@ -36,6 +36,9 @@ pub(crate) struct Invocation<'a> {
     /// Whether `--refresh-vars` asks for every dynamic command to run, fresh
     /// cache or not.
     pub refresh_vars: bool,
+    /// What `--refresh-content`, `--no-overwrite`, and `--interactive` ask of
+    /// what is already at a destination.
+    pub replacement: Replacement,
     pub env: &'a Environment,
     pub reporter: &'a Reporter,
 }
@@ -384,6 +387,7 @@ fn run(
         invocation.roots,
         invocation.mode,
         excluded_remotes,
+        invocation.replacement,
         reporter,
     )?;
 

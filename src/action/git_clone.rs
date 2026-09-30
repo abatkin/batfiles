@@ -14,7 +14,6 @@ pub(super) fn git_clone(action: &GitCloneAction, context: &RunContext) -> Result
         &dest,
         action.git_ref.as_deref(),
         context.repository(),
-        context.mode(),
-        context.reporter(),
+        &context.resolver(),
     )
 }

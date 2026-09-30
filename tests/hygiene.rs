@@ -14,7 +14,8 @@ use thiserror::Error;
 /// The step list a `CARRY` marker or a withheld option is cleared by.
 const STEPS: &str = "docs/future/roadmap.md";
 
-/// Rule 12's list, and the only file whose step literals are checked.
+/// Rule 12's list, and the only file whose step literals are checked. Absent
+/// while no option is withheld.
 const UNSUPPORTED: &str = "src/cli/unsupported.rs";
 
 /// The enum that decides which action types a manifest may declare.
@@ -79,7 +80,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 12] = [
+const FILESYSTEM_OWNERS: [Owner; 13] = [
     Owner {
         path: "src/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -113,7 +114,12 @@ const FILESYSTEM_OWNERS: [Owner; 12] = [
     Owner {
         path: "src/install.rs",
         kind: Kind::ModeReader,
-        reason: "creates, publishes, and cleans up seed staging nodes, and swaps rebuilt remote materializations into place",
+        reason: "creates, publishes, compares, and cleans up seed staging nodes, and swaps rebuilt remote materializations into place",
+    },
+    Owner {
+        path: "src/replace.rs",
+        kind: Kind::ModeReader,
+        reason: "renames a node in a destination's way to a backup or aside, and puts it back or removes it",
     },
     Owner {
         path: "src/git.rs",
@@ -900,8 +906,12 @@ fn carry_markers_name_a_step_that_is_still_open() {
 
 #[test]
 fn withheld_options_name_steps_that_are_still_open() {
-    let source = fs::read_to_string(crate_dir().join(UNSUPPORTED))
-        .unwrap_or_else(|error| panic!("{UNSUPPORTED} holds rule 12's list: {error}"));
+    let source = match fs::read_to_string(crate_dir().join(UNSUPPORTED)) {
+        Ok(source) => source,
+        // No option is withheld, so there is no list to check.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => panic!("{UNSUPPORTED} holds rule 12's list: {error}"),
+    };
     let steps = recorded_steps();
     let failures: Vec<String> = step_literals(&source)
         .into_iter()

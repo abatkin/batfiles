@@ -6,12 +6,11 @@ according to the [documentation ownership](../../AGENTS.md#documentation) rules.
 
 - [Repository format](repoformat.md): entry filters, and addresses for single
   clone-list entries.
-- [Command-line surface](cmdline.md): unimplemented options, and additional
-  address forms.
+- [Command-line surface](cmdline.md): additional address forms, and the rest of
+  what they reach.
 - [Environment](environment.md): what remains of input precedence.
 - [Local state](state.md): the rest of `disabled.toml`.
-- [Safety](safety.md): trust for remote inclusion, backups, refresh, extraction
-  budgets, and recovery.
+- [Safety](safety.md): trust for remote inclusion, and extraction budgets.
 - [Roadmap](roadmap.md): the numbered work that builds the above, and the
   unscheduled enhancements beside it.
 

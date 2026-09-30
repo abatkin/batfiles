@@ -14,6 +14,7 @@ use crate::item::ItemId;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
 use crate::output::Verb;
 use crate::paths::{self, Occupancy};
+use crate::replace::Resolution;
 
 #[cfg(not(unix))]
 fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
@@ -67,10 +68,12 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
     }
 }
 
-/// Create one symlink, repair it, or leave it alone.
+/// Create one symlink, repair it, or leave it alone; settle an unmanaged node
+/// in the way under the run's conflict policy.
 fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
     let reporter = context.reporter();
     let mode = context.mode();
+    let resolver = context.resolver();
     match Occupancy::at(dest, context.repository())? {
         Occupancy::Replaceable { points_at, .. }
             if points_at == paths::canonicalize_or_normalize(target) =>
@@ -79,6 +82,7 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
         }
         Occupancy::Replaceable { written, .. } => {
             paths::refuse_destination_inside_source(target, dest)?;
+            paths::refuse_setting_aside_a_source(target, dest)?;
             if mode.writes() {
                 remove(dest)?;
                 create(target, dest)?;
@@ -94,25 +98,49 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
         Occupancy::Vacant => {
             paths::refuse_destination_inside_source(target, dest)?;
             // After that, so a doomed action makes no directories on its way.
-            directory::create_parents(dest, mode)?.report_removals(mode, reporter);
+            if !directory::create_parents(dest, &resolver)? {
+                return Ok(());
+            }
             if mode.writes() {
                 create(target, dest)?;
             }
-            reporter.info(&format!(
-                "{} {} -> {}",
-                Verb::Link.say(mode),
-                dest.display(),
-                target.display()
-            ));
+            report_link(target, dest, context);
         }
         Occupancy::Unmanaged(found) => {
-            return Err(Error::DestinationExists {
-                path: dest.to_path_buf(),
-                found,
-            });
+            paths::refuse_destination_inside_source(target, dest)?;
+            paths::refuse_setting_aside_a_source(target, dest)?;
+            match resolver.resolve(dest, &found)? {
+                Resolution::Refuse => {
+                    return Err(Error::DestinationExists {
+                        path: dest.to_path_buf(),
+                        found,
+                    });
+                }
+                Resolution::Skip => {}
+                Resolution::Replace(keep) => {
+                    resolver.replace(dest, keep, || {
+                        if mode.writes() {
+                            create(target, dest)?;
+                        }
+                        Ok(())
+                    })?;
+                    report_link(target, dest, context);
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Say that a link was made where nothing was, or where something was set
+/// aside.
+fn report_link(target: &Path, dest: &Path, context: &RunContext) {
+    context.reporter().info(&format!(
+        "{} {} -> {}",
+        Verb::Link.say(context.mode()),
+        dest.display(),
+        target.display()
+    ));
 }
 
 fn create(target: &Path, dest: &Path) -> Result<(), Error> {

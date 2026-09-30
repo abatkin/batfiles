@@ -156,7 +156,7 @@ fn a_relative_link_into_the_repository_is_recognized() {
 }
 
 #[test]
-fn a_link_that_only_looks_like_it_points_into_the_repository_is_refused() {
+fn a_link_that_only_looks_like_it_points_into_the_repository_is_not_ours() {
     // `<repo>/../outside` starts with the repository when compared as text and
     // leaves it when resolved. Reading the spelling rather than the destination
     // would delete a link batfiles never made.
@@ -168,7 +168,7 @@ fn a_link_that_only_looks_like_it_points_into_the_repository_is_refused() {
     fs::write(tree.path("outside"), "someone else's\n").expect("the target");
     std::os::unix::fs::symlink(&escaping, tree.home(".zshrc")).expect("an escaping link");
 
-    let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
+    let stderr = skipped(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
     assert!(
         stderr.contains(&display(&tree.home(".zshrc"))),
         "the destination was not named:\n{stderr}"
@@ -363,7 +363,7 @@ fn a_file_in_the_way_of_a_parent_is_named_for_what_it_is() {
     tree.repo_file("shell/zshrc", "# zsh\n");
     fs::write(tree.home(".config"), "not a directory\n").expect("a file in the way");
 
-    let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.config/zsh/zshrc"));
+    let stderr = skipped(&tree, &one_symlink("shell/zshrc", "~/.config/zsh/zshrc"));
     for expected in [display(&tree.home(".config")), "a regular file".to_owned()] {
         assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
     }
@@ -406,13 +406,26 @@ fn refused(tree: &Tree, manifest: &str) -> String {
     stderr_of(&assertion)
 }
 
+/// Run `sync --no-overwrite` against a manifest whose destination something
+/// is in the way of, and return the diagnostic, which names what was skipped.
+/// The run succeeds: a skip is what it was asked for.
+fn skipped(tree: &Tree, manifest: &str) -> String {
+    tree.write_manifest(manifest);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
+    stderr_of(&assertion)
+}
+
 #[test]
-fn a_destination_holding_a_file_is_refused_and_the_file_is_left() {
+fn a_destination_holding_a_file_is_named_and_left_when_skipped() {
     let tree = Tree::new();
     tree.repo_file("shell/zshrc", "# zsh\n");
     fs::write(tree.home(".zshrc"), "mine\n").expect("an existing file");
 
-    let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
+    let stderr = skipped(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
     for expected in [display(&tree.home(".zshrc")), "a regular file".to_owned()] {
         assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
     }
@@ -423,13 +436,13 @@ fn a_destination_holding_a_file_is_refused_and_the_file_is_left() {
 }
 
 #[test]
-fn a_destination_holding_a_directory_is_refused_and_the_directory_is_left() {
+fn a_destination_holding_a_directory_is_named_and_left_when_skipped() {
     let tree = Tree::new();
     tree.repo_file("nvim/init.lua", "-- nvim\n");
     fs::create_dir(tree.home(".config")).expect("an existing directory");
     fs::write(tree.home(".config/theirs"), "mine\n").expect("a file inside it");
 
-    let stderr = refused(&tree, &one_symlink("nvim/init.lua", "~/.config"));
+    let stderr = skipped(&tree, &one_symlink("nvim/init.lua", "~/.config"));
     for expected in [display(&tree.home(".config")), "a directory".to_owned()] {
         assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
     }
@@ -455,7 +468,7 @@ fn mkfifo(path: &Path) {
 }
 
 #[test]
-fn a_destination_that_is_neither_file_directory_nor_link_is_refused() {
+fn a_destination_that_is_neither_file_directory_nor_link_is_named_when_skipped() {
     // Whatever this is, batfiles has no way to give it back, which is the
     // whole of rule 13's reasoning.
     let tree = Tree::new();
@@ -463,7 +476,7 @@ fn a_destination_that_is_neither_file_directory_nor_link_is_refused() {
     let fifo = tree.home(".zshrc");
     mkfifo(&fifo);
 
-    let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
+    let stderr = skipped(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
     assert!(
         stderr.contains("neither a regular file"),
         "the node found there was not described:\n{stderr}"
@@ -472,7 +485,7 @@ fn a_destination_that_is_neither_file_directory_nor_link_is_refused() {
 }
 
 #[test]
-fn a_destination_holding_a_link_out_of_the_repository_is_refused() {
+fn a_destination_holding_a_link_out_of_the_repository_is_not_ours() {
     // Someone else made this link, and where it points is not batfiles' to
     // decide.
     let tree = Tree::new();
@@ -483,7 +496,7 @@ fn a_destination_holding_a_link_out_of_the_repository_is_refused() {
     fs::write(&elsewhere, "someone else's\n").expect("the target");
     std::os::unix::fs::symlink(&elsewhere, tree.home(".zshrc")).expect("an unmanaged link");
 
-    let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
+    let stderr = skipped(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
     // An absolute target resolves to itself, so it is named once and not
     // reported as though two paths were involved.
     let expected = format!(
@@ -497,7 +510,7 @@ fn a_destination_holding_a_link_out_of_the_repository_is_refused() {
 }
 
 #[test]
-fn a_refused_link_is_named_as_written_and_as_it_resolves() {
+fn a_link_in_the_way_is_named_as_written_and_as_it_resolves() {
     // The spelling is what the user will see from `ls`; the resolved path is
     // what the refusal was decided on. A relative target is where the two
     // differ, and neither alone explains the other.
@@ -508,7 +521,7 @@ fn a_refused_link_is_named_as_written_and_as_it_resolves() {
     fs::write(tree.path("elsewhere"), "someone else's\n").expect("the target");
     std::os::unix::fs::symlink("../elsewhere", tree.home(".zshrc")).expect("an unmanaged link");
 
-    let stderr = refused(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
+    let stderr = skipped(&tree, &one_symlink("shell/zshrc", "~/.zshrc"));
     for expected in ["../elsewhere".to_owned(), display(&tree.path("elsewhere"))] {
         assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
     }
@@ -762,12 +775,12 @@ fn a_source_directory_the_repository_does_not_have_is_refused() {
 }
 
 #[test]
-fn a_destination_directory_holding_a_file_is_refused() {
+fn a_destination_directory_holding_a_file_is_named_when_skipped() {
     let tree = Tree::new();
     with_children(&tree);
     fs::write(tree.home("bin"), "mine\n").expect("an existing file");
 
-    let stderr = refused(&tree, &one_symlink_dir("files", "~/bin", false));
+    let stderr = skipped(&tree, &one_symlink_dir("files", "~/bin", false));
     for expected in [display(&tree.home("bin")), "a regular file".to_owned()] {
         assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
     }
@@ -876,30 +889,29 @@ fn a_link_reaching_nothing_through_a_file_is_replaceable_too() {
 }
 
 #[test]
-fn an_occupied_child_destination_stops_the_action_where_it_stands() {
-    // Rule 13 inside one action. Partial application within a
-    // `symlink-dir` is the same story as partial application across a
-    // manifest: earlier children stay, later ones are not attempted.
+fn a_skipped_child_destination_leaves_the_rest_of_the_action_to_run() {
+    // A conflict skipped inside one action is that child's, and the children
+    // either side of it are installed as if it were not there.
     let tree = Tree::new();
     with_children(&tree);
-    // `config` sorts between `ackrc` and `zshrc`, so one child is installed
-    // before the refusal and one is never reached.
+    // `config` sorts between `ackrc` and `zshrc`.
     fs::create_dir(tree.home("installed")).expect("the destination directory");
     fs::write(tree.home("installed/config"), "mine\n").expect("an occupied child");
 
-    let stderr = refused(&tree, &one_symlink_dir("files", "~/installed", false));
+    let stderr = skipped(&tree, &one_symlink_dir("files", "~/installed", false));
     assert!(
-        stderr.contains(&display(&tree.home("installed/config"))),
+        stderr.contains(&format!(
+            "skipped {}: it is a regular file",
+            display(&tree.home("installed/config"))
+        )),
         "the child was not named:\n{stderr}"
     );
-    assert!(
-        tree.home("installed/ackrc").is_symlink(),
-        "the child before the refusal was rolled back"
-    );
-    assert!(
-        fs::symlink_metadata(tree.home("installed/zshrc")).is_err(),
-        "a child after the refusal was installed"
-    );
+    for child in ["ackrc", "zshrc"] {
+        assert!(
+            tree.home("installed").join(child).is_symlink(),
+            "`{child}` was not installed"
+        );
+    }
     assert_eq!(
         fs::read_to_string(tree.home("installed/config")).expect("the file"),
         "mine\n"
@@ -964,10 +976,18 @@ fn through_an_aliased_parent(tree: &Tree, existing: &str) -> (String, PathBuf) {
     (display(&repo), link)
 }
 
-/// `sync` against a repository that is not the tree's default one.
+/// `sync --no-overwrite` against a repository that is not the tree's default
+/// one, so a link that is not ours is named and left.
 fn sync_against(tree: &Tree, repo: &str) -> assert_cmd::assert::Assert {
     tree.batfiles()
-        .args(["--color", "never", "--batfiles-dir", repo, "sync"])
+        .args([
+            "--color",
+            "never",
+            "--batfiles-dir",
+            repo,
+            "sync",
+            "--no-overwrite",
+        ])
         .assert()
 }
 
@@ -981,11 +1001,11 @@ fn a_link_reached_through_an_aliased_parent_is_not_called_ours() {
     let tree = Tree::new();
     let (repo, link) = through_an_aliased_parent(&tree, "../dotfiles/bin/tool");
 
-    let assertion = sync_against(&tree, &repo).failure().code(1);
+    let assertion = sync_against(&tree, &repo).success();
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&display(&tree.home(".local/dotfiles/bin/tool"))),
-        "the refusal did not say where the link really points:\n{stderr}"
+        "the skip did not say where the link really points:\n{stderr}"
     );
     assert_eq!(
         link_target(&link),
@@ -1002,11 +1022,11 @@ fn a_link_reached_through_an_aliased_parent_is_not_deleted_as_ours() {
     let tree = Tree::new();
     let (repo, link) = through_an_aliased_parent(&tree, "../dotfiles/bin/other");
 
-    let assertion = sync_against(&tree, &repo).failure().code(1);
+    let assertion = sync_against(&tree, &repo).success();
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&display(&tree.home(".local/dotfiles/bin/other"))),
-        "the refusal did not say where the link really points:\n{stderr}"
+        "the skip did not say where the link really points:\n{stderr}"
     );
     assert_eq!(
         link_target(&link),
@@ -1247,49 +1267,29 @@ fn a_composed_repository_converges_on_a_second_sync() {
 }
 
 #[test]
-fn an_occupied_destination_stops_the_run_where_it_stands() {
+fn an_occupied_destination_is_backed_up_and_the_run_goes_on() {
     // Rule 13 at repository scale. What one action's worth of it cannot
-    // show is what happens to the rest of the list: the run stops, so the
-    // actions after the refusal are not attempted. The other half of the
-    // guarantee — which of two actions runs first, where one depends on the
-    // other — is `actions::the_first_of_two_seeds_naming_one_destination_is_
-    // the_one_that_lands`.
+    // show is what happens to the rest of the list: a destination in the way
+    // is backed up beside itself, replaced, and every action after it runs.
     let tree = Tree::fixture("leaf");
     let occupied = "[user]\n\temail = mine\n";
     fs::write(tree.home(".gitconfig"), occupied).expect("an existing file");
-    // Found rather than counted, so an action added to the fixture ahead of
-    // this one does not silently move the two halves of the assertion.
-    let refused = LEAF_LINKS
-        .iter()
-        .position(|(_, dest)| *dest == ".gitconfig")
-        .expect("the occupied destination is one the fixture declares");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree.batfiles().arg("sync").assert().success();
     let stderr = stderr_of(&assertion);
-    for expected in [
-        display(&tree.home(".gitconfig")),
-        "a regular file".to_owned(),
-    ] {
-        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
-    }
-    assert_eq!(
-        fs::read_to_string(tree.home(".gitconfig")).expect("the file"),
-        occupied
+    let backup = backup_of(&tree.home(".gitconfig"));
+    assert_eq!(fs::read_to_string(&backup).expect("the backup"), occupied);
+    assert!(
+        stderr.contains(&format!(
+            "backed up {} to {}",
+            display(&tree.home(".gitconfig")),
+            display(&backup)
+        )),
+        "the backup was not reported:\n{stderr}"
     );
 
-    // Everything ahead of the refusal, links and seeds alike: the whole
-    // portable half is declared before the first link, so it is all of it
-    // before this one.
     assert_leaf_portable_actions(&tree);
-    for (_, dest) in &LEAF_LINKS[..refused] {
+    for (_, dest) in &LEAF_LINKS {
         assert!(tree.home(dest).is_symlink(), "`{dest}` was not installed");
-    }
-    for (_, dest) in &LEAF_LINKS[refused + 1..] {
-        // Not `exists`, which follows the link and would call a dangling
-        // one absent.
-        assert!(
-            fs::symlink_metadata(tree.home(dest)).is_err(),
-            "`{dest}` was installed after the refusal"
-        );
     }
 }

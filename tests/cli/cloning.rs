@@ -221,14 +221,18 @@ fn a_clone_holding_local_commits_is_warned_about_rather_than_reset() {
 }
 
 #[test]
-fn a_destination_holding_something_that_is_not_a_clone_is_refused() {
+fn a_destination_holding_something_that_is_not_a_clone_is_named_when_skipped() {
     let origin = BareRepo::new();
     let tree = one_clone(&origin, "~/.oh-my-zsh");
     let dest = tree.home(".oh-my-zsh");
     fs::create_dir_all(dest.join("custom")).expect("a directory in the way");
     fs::write(dest.join("custom/mine.zsh"), "echo mine\n").expect("someone's file");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert!(
         fs::read_to_string(dest.join("custom/mine.zsh")).is_ok(),
@@ -243,12 +247,12 @@ fn a_destination_holding_something_that_is_not_a_clone_is_refused() {
 
 #[cfg(unix)]
 #[test]
-fn a_symlink_to_a_checkout_elsewhere_is_refused_rather_than_fetched_into() {
+fn a_symlink_to_a_checkout_elsewhere_is_never_fetched_into() {
     // The invariant this action is most able to break. A symlink at the
     // destination resolves to a real checkout, so following it would put
     // `current_dir` inside somebody else's repository and fast-forward that —
     // a repository batfiles never installed and has no business moving. Rule 13
-    // classifies the link rather than what it reaches, and refuses.
+    // classifies the link rather than what it reaches, and settles the link.
     use std::os::unix::fs::symlink;
 
     let origin = BareRepo::new();
@@ -264,7 +268,11 @@ fn a_symlink_to_a_checkout_elsewhere_is_refused_rather_than_fetched_into() {
     origin.publish("plugin.zsh", "echo hello\n", "second");
     symlink(&theirs, tree.home(".oh-my-zsh")).expect("a link to their checkout");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert_eq!(head(&theirs), before, "their checkout was fast-forwarded");
     assert!(
@@ -276,7 +284,7 @@ fn a_symlink_to_a_checkout_elsewhere_is_refused_rather_than_fetched_into() {
         "the link itself was disturbed"
     );
     assert!(
-        stderr_of(&assertion).contains("already exists and is a symlink"),
+        stderr_of(&assertion).contains("it is a symlink to"),
         "{}",
         stderr_of(&assertion)
     );
@@ -325,7 +333,7 @@ fn a_checkout_elsewhere(tree: &Tree, origin: &BareRepo) -> (std::path::PathBuf, 
 
 #[cfg(unix)]
 #[test]
-fn a_git_directory_that_is_a_symlink_is_refused() {
+fn a_git_directory_that_is_a_symlink_is_not_this_clones_own() {
     // The nastiest shape, and neither half of the check finds it alone. A `.git`
     // symlinked to another checkout's git directory leaves git using *that*
     // repository's refs while treating this destination as the worktree -- so
@@ -341,7 +349,11 @@ fn a_git_directory_that_is_a_symlink_is_refused() {
     fs::create_dir(&dest).expect("the destination");
     symlink(theirs.join(".git"), dest.join(".git")).expect("a borrowed git directory");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert_eq!(head(&theirs), before, "their checkout was fast-forwarded");
     assert!(
@@ -352,7 +364,7 @@ fn a_git_directory_that_is_a_symlink_is_refused() {
 }
 
 #[test]
-fn a_clone_whose_worktree_is_configured_elsewhere_is_refused() {
+fn a_clone_whose_worktree_is_configured_elsewhere_is_not_this_clones_own() {
     // The other half, which no filesystem check can see: a real `.git`
     // directory whose config points every git command at a different worktree.
     // This is the one `rev-parse --show-toplevel` catches.
@@ -366,7 +378,11 @@ fn a_clone_whose_worktree_is_configured_elsewhere_is_refused() {
     );
     git(&dest, &["config", "core.worktree", &display(&theirs)]);
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert_eq!(head(&theirs), before, "their checkout was fast-forwarded");
     assert!(
@@ -468,7 +484,7 @@ fn a_branch_with_no_upstream_configured_is_a_skip_and_not_a_failure() {
 }
 
 #[test]
-fn an_interrupted_clone_is_refused_rather_than_treated_as_finished() {
+fn an_interrupted_clone_is_not_treated_as_finished() {
     // A clone writes straight into its destination, so this is the state rule
     // 15 is really about: a `.git` with nothing checked out. A tool that read
     // "something is there" as "already installed" would report success over it
@@ -479,7 +495,11 @@ fn an_interrupted_clone_is_refused_rather_than_treated_as_finished() {
     fs::create_dir(&dest).expect("the destination");
     git(&dest, &["init", "-b", "main"]);
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert!(
         stderr_of(&assertion).contains("incomplete or damaged clone"),
@@ -531,7 +551,11 @@ fn a_directory_inside_a_repository_is_not_mistaken_for_a_clone_of_its_own() {
     git(&tree.path("home"), &["init", "-b", "main", "notes"]);
     fs::create_dir(tree.home("notes/plugins")).expect("a plain directory");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert!(
         stderr_of(&assertion).contains("it is a directory, and not a git clone"),

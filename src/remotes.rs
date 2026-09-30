@@ -85,8 +85,7 @@ pub(crate) fn materialize(
                     &dest,
                     remote.git_ref.as_deref(),
                     context.repository(),
-                    context.mode(),
-                    context.reporter(),
+                    &context.tool_owned(),
                 )?;
                 // What is there now is a clone, so a stamp an earlier
                 // declaration of another type left claims nothing.
@@ -136,14 +135,16 @@ fn fetch(
 
     let url = wanted.url();
     match &wanted {
-        Stamp::File { sha256, .. } => install::rebuild_file(dest, mode, reporter, |file, at| {
-            fetch::download_file(url, sha256.as_deref(), file, at)
-        })?,
+        Stamp::File { sha256, .. } => {
+            install::rebuild_file(dest, &context.tool_owned(), |file, at| {
+                fetch::download_file(url, sha256.as_deref(), file, at)
+            })?
+        }
         Stamp::Archive {
             sha256,
             archive_root,
             ..
-        } => install::rebuild_directory(dest, mode, reporter, |staging| {
+        } => install::rebuild_directory(dest, &context.tool_owned(), |staging| {
             install::with_scratch(dest, reporter, |scratch| {
                 let at = scratch.path().to_path_buf();
                 fetch::download(url, sha256.as_deref(), scratch, &at)?;

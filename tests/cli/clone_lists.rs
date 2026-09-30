@@ -235,18 +235,16 @@ fn an_entry_whose_condition_cannot_be_decided_costs_that_entry_and_not_the_list(
 #[test]
 fn an_entry_that_fails_costs_that_entry_and_not_the_run() {
     // The decision a list has to make and one repository never did. The middle
-    // entry's directory is occupied by something batfiles did not put there, so
-    // it cannot be cloned into -- and the entry after it is a different
-    // repository, which can.
+    // entry names a repository that is not there, so it cannot be cloned --
+    // and the entry after it is a different repository, which can.
     let origin = BareRepo::new();
     let tree = one_list(&format!(
         "{origin} dest-name=first\n\
-         {origin} dest-name=taken\n\
+         {missing} dest-name=gone\n\
          {origin} dest-name=last\n",
-        origin = display(&origin.origin())
+        origin = display(&origin.origin()),
+        missing = display(&missing_repository(&origin)),
     ));
-    fs::create_dir_all(tree.home(".plugins/taken")).expect("a directory in the way");
-    fs::write(tree.home(".plugins/taken/mine.zsh"), "echo mine\n").expect("someone's file");
 
     let assertion = tree.batfiles().arg("sync").assert().success();
 
@@ -255,23 +253,19 @@ fn an_entry_that_fails_costs_that_entry_and_not_the_run() {
         tree.home(".plugins/last/README.md").is_file(),
         "an entry after a failing one was stranded"
     );
-    assert_eq!(
-        fs::read_to_string(tree.home(".plugins/taken/mine.zsh")).expect("the file in the way"),
-        "echo mine\n",
-        "the occupied destination was disturbed"
-    );
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&format!(
-            "not cloning {} (plugins.txt line 2): ",
-            display(&origin.origin())
+            "not cloning {} (plugins.txt line 2): git clone failed",
+            display(&missing_repository(&origin))
         )),
         "{stderr}"
     );
-    assert!(
-        stderr.contains("it is a directory, and not a git clone"),
-        "{stderr}"
-    );
+}
+
+/// A repository path beside `origin` that nothing is at, so cloning it fails.
+fn missing_repository(origin: &BareRepo) -> std::path::PathBuf {
+    origin.origin().with_file_name("missing.git")
 }
 
 #[test]
@@ -279,10 +273,9 @@ fn a_failing_entry_names_its_id_where_it_has_one() {
     // The name the entry answers to, beside the line a reader has to edit.
     let origin = BareRepo::new();
     let tree = one_list(&format!(
-        "{} id=p10k dest-name=taken\n",
-        display(&origin.origin())
+        "{} id=p10k dest-name=gone\n",
+        display(&missing_repository(&origin))
     ));
-    fs::create_dir_all(tree.home(".plugins/taken")).expect("a directory in the way");
 
     let assertion = tree.batfiles().arg("sync").assert().success();
 
@@ -366,16 +359,20 @@ fn a_dest_dir_somebody_else_keeps_is_installed_into_and_left_alone() {
 }
 
 #[test]
-fn a_dest_dir_that_is_not_a_directory_stops_the_run_before_any_entry() {
-    // The other half of the container rule, and the row of the failure table
-    // that is not survivable: a `dest-dir` that could not be made is not about
-    // one repository, so no entry is attempted rather than every one of them
-    // failing the same way.
+fn a_skipped_dest_dir_skips_every_entry() {
+    // The other half of the container rule: a `dest-dir` something else is in
+    // the way of is not about one repository, so where that conflict is
+    // skipped no entry is attempted rather than every one of them failing the
+    // same way.
     let origin = BareRepo::new();
     let tree = one_list(&format!("{}\n", display(&origin.origin())));
     fs::write(tree.home(".plugins"), "not a directory\n").expect("a file in the way");
 
-    let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--no-overwrite"])
+        .assert()
+        .success();
 
     assert_eq!(
         fs::read_to_string(tree.home(".plugins")).expect("the file in the way"),
@@ -385,14 +382,14 @@ fn a_dest_dir_that_is_not_a_directory_stops_the_run_before_any_entry() {
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&format!(
-            "{} already exists and is a regular file",
+            "skipped {}: it is a regular file",
             display(&tree.home(".plugins"))
         )),
         "{stderr}"
     );
     assert!(
-        !stderr.contains("not cloning"),
-        "an entry was attempted under a dest-dir that could not be made: {stderr}"
+        !stderr.contains("clon"),
+        "an entry was attempted under a dest-dir that was skipped: {stderr}"
     );
 }
 
@@ -457,8 +454,10 @@ fn what_was_not_cloned_is_said_at_a_volume_quiet_does_not_hide() {
     // did not do. This is the one line standing between a successful `sync` and
     // a user believing every plugin is installed.
     let origin = BareRepo::new();
-    let tree = one_list(&format!("{} dest-name=taken\n", display(&origin.origin())));
-    fs::create_dir_all(tree.home(".plugins/taken")).expect("a directory in the way");
+    let tree = one_list(&format!(
+        "{} dest-name=gone\n",
+        display(&missing_repository(&origin))
+    ));
 
     let assertion = tree.batfiles().args(["sync", "--quiet"]).assert().success();
 

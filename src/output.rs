@@ -17,6 +17,11 @@ pub(crate) enum Verb {
     Create,
     Remove,
     Keep,
+    Refresh,
+    BackUp,
+    Discard,
+    Restore,
+    Skip,
 }
 
 impl Verb {
@@ -36,6 +41,11 @@ impl Verb {
             Self::Create => "create",
             Self::Remove => "remove",
             Self::Keep => "keep",
+            Self::Refresh => "refresh",
+            Self::BackUp => "back up",
+            Self::Discard => "discard",
+            Self::Restore => "restore",
+            Self::Skip => "skip",
         }
     }
 
@@ -61,6 +71,11 @@ impl Verb {
             Self::Create => "created",
             Self::Remove => "removed",
             Self::Keep => "kept",
+            Self::Refresh => "refreshed",
+            Self::BackUp => "backed up",
+            Self::Discard => "discarded",
+            Self::Restore => "restored",
+            Self::Skip => "skipped",
         }
     }
 }
@@ -154,6 +169,13 @@ impl Reporter {
         if self.verbosity.shows_info() {
             eprintln!("{message}");
         }
+    }
+
+    /// A question for the user, left open on its line for the answer. Printed
+    /// whatever the verbosity: a run waiting on an answer nobody can see
+    /// would only hang.
+    pub fn prompt(&self, question: &str) {
+        eprint!("{question} ");
     }
 
     /// Data the user asked for. Printed to standard output, unlabeled and

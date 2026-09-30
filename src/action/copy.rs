@@ -53,17 +53,13 @@ fn seed(source: &Path, kind: SeedKind, dest: &Path, context: &RunContext) -> Res
     let what = install::Seed {
         verb: Verb::Copy,
         origin: source.display().to_string(),
-        // Only a directory can be descended into, so only a directory source is
-        // a place a destination must not be.
-        source_directory: matches!(kind, SeedKind::Directory).then_some(source),
+        source: Some(source),
     };
-    let mode = context.mode();
-    let reporter = context.reporter();
     match kind {
-        SeedKind::File => install::seed_file(what, dest, mode, reporter, |into, staging| {
+        SeedKind::File => install::seed_file(what, dest, context, |into, staging| {
             copy_file(source, into, staging)
         }),
-        SeedKind::Directory => install::seed_directory(what, dest, mode, reporter, |staging| {
+        SeedKind::Directory => install::seed_directory(what, dest, context, |staging| {
             copy_children(source, staging)
         }),
     }

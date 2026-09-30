@@ -43,9 +43,14 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   links; `copy` and `copy-dir` seed editable copies; `create-dir` creates a
   container. See the [action reference](docs/repoformat.md#actions) and
   [destination policy](docs/safety.md#replacing-what-is-already-there).
+- **Keep what is in the way.** Something already at a destination is renamed to
+  a timestamped backup beside it before it is replaced; `--no-overwrite` skips it
+  instead, and `--interactive` asks each time. `--refresh-content` installs
+  copies and fetched content again, backing up what changed. See
+  [conflicts and backups](docs/safety.md#conflicts-and-backups).
 - **Download files and archives.** `fetch-file` downloads a file and
   `fetch-archive` unpacks a plain or gzipped tarball, from an `http://`,
-  `https://`, or `file://` URL, optionally checking a SHA-256 digest. Both install only at vacant destinations using
+  `https://`, or `file://` URL, optionally checking a SHA-256 digest. Both install only at vacant destinations, unless refreshed, using
   [staging and publication](docs/safety.md#staging-and-publication).
   Archives follow the [extraction safety rules](docs/safety.md#archive-extraction).
 - **Manage Git repositories and plugin lists.** `git-clone` clones or updates a
@@ -106,8 +111,7 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   type. Directory, copy, fetching, and Git actions have Windows implementations.
   CI checks Windows compilation, but does not run Windows tests.
 
-Every command works. An option that parses and is not built yet is
-[refused](docs/cmdline.md#unimplemented-options) with exit status 2.
+Every command works, and every option it accepts is honored.
 
 ## Example
 
@@ -233,16 +237,16 @@ $ batfiles apply-action --id nvim
 linked /home/you/.config/nvim -> /home/you/dotfiles/editor/nvim
 ```
 
-And where something is already in the way:
+And where something is already in the way, it is kept beside what replaces it:
 
 ```console
 $ batfiles sync
-error: /home/you/.gitconfig already exists and is a regular file; move it aside and run sync again
+backed up /home/you/.gitconfig to /home/you/.gitconfig.batfiles-backup-20260929T142233Z
+linked /home/you/.gitconfig -> /home/you/dotfiles/git/gitconfig
 ```
 
 An exit status of `0` means the command did what was asked, `1` that it ran and
-failed partway, and `2` that it did not run at all — a usage error, or a
-command or option that is not built yet.
+failed partway, and `2` that it did not run at all — a usage error.
 
 ## Building
 
@@ -260,7 +264,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 9     | `--refresh-content`, backups, and conflict handling                 |
+| 9     | Concurrent-writer safety and dry-run reporting refinements          |
 | 10    | Released binaries and an `install.sh` one-liner                     |
 
 ## Documentation

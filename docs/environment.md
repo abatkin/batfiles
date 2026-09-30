@@ -493,6 +493,12 @@ GIT_NAMESPACE  GIT_CONFIG  GIT_CONFIG_COUNT
 ```
 
 Repository discovery and command-local configuration overrides are cleared along
-with repository, index, and object-store redirects. `GIT_CONFIG_COUNT` overrides
+with repository, index, and object-store redirects. The one command that checks
+whether an existing `.git` is a repository directory at all, before any other
+runs there, also sets `GIT_CONFIG_NOSYSTEM=1`, points `GIT_CONFIG_GLOBAL` and
+`GIT_CONFIG_SYSTEM` at `/dev/null`, sets `LC_ALL=C`, and removes `LANGUAGE`, so
+its answer is about the directory rather than your configuration, and its one
+meaningful failure can be recognized. Every later command sees your
+configuration as usual. `GIT_CONFIG_COUNT` overrides
 are not supported; use your Git configuration files for proxy or header settings.
 This is protection against accidental inherited state, not a security boundary.

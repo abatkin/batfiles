@@ -9,7 +9,9 @@ boundary: a repository selected by the user can name destinations outside the
 home directory, included repositories can contribute installation actions, and
 allowed dynamic variables can execute arbitrary commands as the current user.
 
-These are unbuilt proposals. Implemented safety behavior is specified in
+These are unbuilt proposals. Implemented safety behavior, including
+[conflicts and backups](../safety.md#conflicts-and-backups) and
+[refreshing seeds](../safety.md#refreshing-seeds), is specified in
 [installation safety](../safety.md).
 
 ## Trust model
@@ -39,59 +41,6 @@ Current [path and destination safety](../safety.md) applies to new action types.
 Remote source resolution is implemented. New remote types must follow the
 current [source syntax](../repoformat.md#sources-and-destinations) and
 [path safety rules](../safety.md#path-resolution).
-
-## Replacement and backups
-
-The current [replacement rules](../safety.md#replacing-what-is-already-there)
-refuse unmanaged destinations. Step 9.4 adds backups and conflict options.
-Preserve an unmanaged node in a recoverable backup before replacing it.
-
-The backup is placed next to the node it replaces and uses a collision-resistant
-name that never overwrites an earlier backup. Successful output tells the user
-where recovery content was placed. Batfiles should not report a replacement as
-successful until the backup has completed. A failure after the backup but
-before installation may leave the destination absent; the error must identify
-the backup rather than hiding that partial outcome.
-
-A backup should preserve the original node type, contents, and access
-permissions to the extent supported by the platform. Creating a backup must
-not make private content more broadly readable. Renaming the existing node is
-preferable to copying it when both recovery semantics and filesystem layout
-allow that.
-
-At each unmanaged conflict, interactive mode offers three choices: back up and
-replace, replace without a backup, or skip. Back up and replace is the default.
-The overwrite choice is an explicit waiver for that one conflict; selecting
-interactive mode by itself does not weaken the backup guarantee. Non-interactive
-operation remains predictable and backup-first by default, while
-`--no-overwrite` skips unmanaged conflicts.
-
-Temporary files and disposable caches may be replaced without user-content
-backups, as [remote materializations](../safety.md#replacing-a-materialization)
-already are. Machine-local configuration such as
-`vars.toml` and `disabled.toml` is not disposable and follows the atomic write
-rules in [`docs/state.md`](../state.md#writing).
-
-## Installed permissions
-
-A refreshed replacement follows its source permissions; its adjacent backup
-preserves the old destination's permissions. Do not elevate privileges to
-reproduce another owner. Current [installed permissions](../safety.md#installed-permissions)
-remain the default for newly created content.
-
-## Seed actions and deletion
-
-Extend the current [seed policy](../safety.md#seeds-do-not-replace-and-so-do-not-refuse)
-with explicit refresh and backups at 9.4.
-
-Seed actions do not modify an existing entry merely because the source has
-changed. The user must pass `--refresh-content` to force seed actions to run
-again, following the replacement and backup rules above.
-
-Batfiles does not implicitly mirror or prune destination trees. Files present
-only at the destination remain there unless an explicitly documented operation
-requires their replacement. This reduces the chance that changing an include
-filter or upstream archive unexpectedly deletes local content.
 
 ## Git repositories
 
@@ -127,41 +76,3 @@ Expand included actions in place before capturing selection and preparing clone
 lists. Preserve the current [execution order](../cmdline.md#sync): each action
 inspects the filesystem left by earlier successful actions. Inclusion does not
 add cross-action destination conflict detection.
-
-## Planning, errors, and recovery
-
-Refresh and backup operations must report completed changes and recovery paths
-when they fail. They do not make the entire action list transactional. Apply
-refresh overlays in deterministic order and retain adjacent backups for every
-replaced destination node.
-
-Batfiles never deletes a backup in response to a later error. It may clean up
-its own incomplete download or staging files when the destination was not yet
-modified and they are not needed for recovery.
-
-## Refreshing directory trees
-
-Refreshing a whole directory is the most potentially destructive case. It uses
-a recursive overlay based on the node at each selected relative path:
-
-- If neither node exists at the destination, create the source node.
-- If both nodes are directories, merge their selected children and retain
-  destination-only children.
-- If both are file-like nodes, leave identical content alone; otherwise back
-  up and replace the destination node.
-- If the node types differ, back up the entire conflicting destination node,
-  then create the source node in its place.
-- Treat a symlink encountered as a tree entry as a symlink, not as a directory
-  to recursively merge through. Parent symlinks explicitly present in the
-  configured destination path still receive ordinary OS path resolution.
-
-This avoids making a backup copy of an entire matching destination directory,
-which may be enormous and contain unrelated user data, while retaining the
-core backup-before-replacement guarantee at each actual collision. It also
-means content refresh is an overlay, not an exact synchronization: stale and
-unrelated destination entries are not removed.
-
-Exact backup filename formatting and behavior for local source special files
-remain implementation details. When it cannot classify or safely copy a local
-source node, batfiles refuses that node rather than guessing or recursively
-overwriting destination content.

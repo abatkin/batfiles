@@ -15,12 +15,11 @@ pub(super) fn fetch_file(action: &FetchFileAction, context: &RunContext) -> Resu
             verb: Verb::Fetch,
             origin: action.source.clone(),
             // A download has nothing on this machine for a destination to be
-            // inside of.
-            source_directory: None,
+            // inside of, or to be inside one.
+            source: None,
         },
         &dest,
-        context.mode(),
-        context.reporter(),
+        context,
         |file, staging| {
             fetch::download_file(&action.source, action.sha256.as_deref(), file, staging)
         },

@@ -1,30 +1,11 @@
 # Batfiles Command-Line Surface
 
-A compact inventory of the command-line interface that is not built yet. Global
-and shared options are defined once rather than repeated under every command.
+A compact inventory of the command-line interface that is not built yet.
 
-The command overview, the global options, the output streams, and the exit
-statuses are built, and are specified in
+The command overview, the global and shared options, the output streams, and
+the exit statuses are built, and are specified in
 [`docs/cmdline.md`](../cmdline.md). Everything below is intended behavior and
 binds nothing.
-
-## Shared Action Execution Options
-
-These controls are accepted by every command that executes actions. `clone`
-accepts them because it forwards them to its follow-up synchronization. The
-section and its two built options, `--var` and `--refresh-vars`, are specified
-in [`docs/cmdline.md`](../cmdline.md#shared-action-execution-options); the rest
-are proposed here.
-
-| Option                | Purpose                                                                                          |
-|-----------------------|--------------------------------------------------------------------------------------------------|
-| `--refresh-content`   | Refresh existing [seed content](safety.md#seed-actions-and-deletion).                            |
-| `--no-overwrite`      | Skip unmanaged destination conflicts instead of backing them up and replacing them.             |
-| `--interactive`       | At each unmanaged destination conflict, choose backup-and-replace (default), overwrite, or skip. |
-
-`--no-overwrite` and `--interactive` are mutually exclusive. Without either,
-batfiles backs up conflicting unmanaged destinations and proceeds. Interactive
-overwrite is an explicit waiver of the backup for that conflict only.
 
 ## Shared Selection Options
 
@@ -70,10 +51,9 @@ too.
 
 ### `clone`
 
-[`clone`](../cmdline.md#clone) is built, bootstrap adoption and its four enable
-and disable options included, and is specified in
-[`docs/cmdline.md`](../cmdline.md#clone). What it still refuses are the shared
-action-execution options above, which are nothing to do with the bootstrap.
+[`clone`](../cmdline.md#clone) is built, bootstrap adoption, its four enable
+and disable options, and the shared action-execution options it forwards
+included, and is specified in [`docs/cmdline.md`](../cmdline.md#clone).
 
 ### The `init` skeleton
 

@@ -9,7 +9,9 @@ use crate::git::{self, Failure};
 /// was read during preparation; an empty one declares no repositories.
 pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> Result<(), Error> {
     let dest_dir = context.destination(list.dest_dir());
-    context.ensure_directory(&dest_dir)?;
+    if !context.ensure_directory(&dest_dir)? {
+        return Ok(());
+    }
 
     // How the list is named in every line below.
     let name = list.name();
@@ -40,8 +42,7 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
             &dest,
             declared.git_ref.as_deref(),
             context.repository(),
-            context.mode(),
-            context.reporter(),
+            &context.resolver(),
         ) {
             Ok(()) => {}
             Err(failure) if is_recoverable_entry_error(&failure) => {
@@ -64,6 +65,10 @@ fn is_recoverable_entry_error(error: &Error) -> bool {
         // A destination this entry may not have: something is at it that
         // batfiles did not put there and will not replace.
         Error::DestinationExists { .. } => true,
+        // A failure after the node in the way was set aside, and could not go
+        // back: recoverable as the failure is, and reported naming where the
+        // node is.
+        Error::SetAside { source, .. } => is_recoverable_entry_error(source),
         Error::Git(failure) => match failure {
             // Something wrong with one repository, or with one `git` that ran
             // and failed. The next entry is a different repository.

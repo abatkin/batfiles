@@ -1,16 +1,18 @@
-//! Stage and publish seed content, and rebuild tool-owned content, without
-//! exposing partial installations. Temporary paths are created exclusively and
-//! cleanup only removes owned paths.
+//! Stage and publish seed content, refresh it, and rebuild tool-owned content,
+//! without exposing partial installations. Temporary paths are created
+//! exclusively and cleanup only removes owned paths.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use crate::action::RunContext;
 use crate::directory;
 use crate::error::Error;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
-use crate::paths;
+use crate::paths::{self, ExistingNode, Occupancy};
+use crate::replace::{self, Keep, Resolution, Resolver};
 
 /// The kind of node a seed installs, for a caller that settles it at runtime
 /// and then picks the entry point it answers to.
@@ -30,9 +32,10 @@ pub(crate) struct Seed<'a> {
     /// path or a URL.
     pub origin: String,
 
-    /// A source directory the destination must not be inside of, checked once
-    /// the destination is known to be free.
-    pub source_directory: Option<&'a Path>,
+    /// The local node the content is reproduced from, if any. A directory
+    /// source is a place the destination must not be inside of, and no
+    /// source may be inside a destination a refresh sets aside.
+    pub source: Option<&'a Path>,
 }
 
 /// Seed one file: `fill` is handed the staging file, opened for writing and
@@ -43,16 +46,14 @@ pub(crate) struct Seed<'a> {
 pub(crate) fn seed_file(
     what: Seed<'_>,
     dest: &Path,
-    mode: RunMode,
-    reporter: &Reporter,
+    context: &RunContext,
     fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
     seed(
         what,
         SeedKind::File,
         dest,
-        mode,
-        reporter,
+        context,
         create_private_file,
         fill,
     )
@@ -66,24 +67,23 @@ pub(crate) fn seed_file(
 pub(crate) fn seed_directory(
     what: Seed<'_>,
     dest: &Path,
-    mode: RunMode,
-    reporter: &Reporter,
+    context: &RunContext,
     fill: impl FnOnce(&Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
     seed(
         what,
         SeedKind::Directory,
         dest,
-        mode,
-        reporter,
+        context,
         create_private_directory,
         |(), staging| fill(staging),
     )
 }
 
-/// Keep an occupied destination, or build and publish a complete seed.
-/// Checks directory containment and creates missing parents before staging.
-/// Dry runs report intent without creating parents, staging files, or content.
+/// Build and publish a complete seed at a vacant destination. Keep an occupied
+/// one, unless the run refreshes content: then [`refresh`] it. Checks directory
+/// containment and creates missing parents before staging. Dry runs report
+/// intent without creating parents, staging files, or content.
 ///
 /// Shared by both entry points: `make` creates the staging node and `fill`
 /// fills it.
@@ -91,36 +91,203 @@ fn seed<T>(
     what: Seed<'_>,
     kind: SeedKind,
     dest: &Path,
-    mode: RunMode,
-    reporter: &Reporter,
+    context: &RunContext,
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let installed = if paths::occupied(dest)? {
-        false
-    } else {
-        if let Some(source) = what.source_directory {
-            paths::refuse_destination_inside_source(source, dest)?;
+    let resolver = context.resolver();
+    let (mode, reporter) = (context.mode(), context.reporter());
+    // Where every conflict is skipped, nothing occupied could be replaced, so
+    // there is nothing to build it for.
+    let refreshing = context.refresh_content() && !resolver.conflicts().skips();
+    let found = match Occupancy::at(dest, context.repository())? {
+        Occupancy::Vacant => None,
+        _ if !refreshing => {
+            report_kept(dest, mode, reporter);
+            return Ok(());
         }
-        directory::create_parents(dest, mode)?.report_removals(mode, reporter);
-        if mode.writes() {
-            build_and_publish(kind, dest, reporter, make, fill)?
-        } else {
-            true
+        Occupancy::Replaceable { .. } => Some(Existing::Replaceable),
+        Occupancy::Unmanaged(found) => Some(Existing::Unmanaged(found)),
+    };
+    if let (Some(source), SeedKind::Directory) = (what.source, kind) {
+        paths::refuse_destination_inside_source(source, dest)?;
+    }
+    let verb = match found {
+        Some(existing) => {
+            if let Some(source) = what.source {
+                paths::refuse_setting_aside_a_source(source, dest)?;
+            }
+            if !refresh(kind, dest, existing, &resolver, make, fill)? {
+                return Ok(());
+            }
+            Verb::Refresh
+        }
+        None => {
+            if !directory::create_parents(dest, &resolver)? {
+                return Ok(());
+            }
+            if mode.writes() && !build_and_publish(kind, dest, reporter, make, fill)? {
+                report_kept(dest, mode, reporter);
+                return Ok(());
+            }
+            what.verb
         }
     };
-
-    if installed {
-        reporter.info(&format!(
-            "{} {} from {}",
-            what.verb.say(mode),
-            dest.display(),
-            what.origin
-        ));
-    } else {
-        reporter.detail(1, &format!("{} {}", Verb::Keep.say(mode), dest.display()));
-    }
+    reporter.info(&format!(
+        "{} {} from {}",
+        verb.say(mode),
+        dest.display(),
+        what.origin
+    ));
     Ok(())
+}
+
+/// What a refresh finds at an occupied seed destination.
+enum Existing {
+    /// A symlink holding no content of its own, replaced without a backup.
+    Replaceable,
+    /// Anything else, settled under the run's conflict policy.
+    Unmanaged(ExistingNode),
+}
+
+fn report_kept(dest: &Path, mode: RunMode, reporter: &Reporter) {
+    reporter.detail(1, &format!("{} {}", Verb::Keep.say(mode), dest.display()));
+}
+
+/// Build the seed again and put it in place of what is at `dest`, answering
+/// whether it did. Content identical to what is there is left alone, and said
+/// so at `-v`; anything else unmanaged is settled under `resolver`'s policy
+/// once the new content is complete. A dry run builds nothing, so it cannot
+/// compare, and reports the replacement a difference would make.
+fn refresh<T>(
+    kind: SeedKind,
+    dest: &Path,
+    existing: Existing,
+    resolver: &Resolver<'_>,
+    make: impl FnOnce(&Path) -> io::Result<T>,
+    fill: impl FnOnce(T, &Path) -> Result<(), Error>,
+) -> Result<bool, Error> {
+    let (mode, reporter) = (resolver.mode(), resolver.reporter());
+    if !mode.writes() {
+        return settle(dest, existing, resolver, || Ok(()));
+    }
+    let staging = staging_path(dest);
+    let node = create_staging(&staging, make)?;
+    let refreshed = fill(node, &staging).and_then(|()| {
+        if let Existing::Unmanaged(_) = existing
+            && same_content(&staging, dest)?
+        {
+            reporter.detail(1, &format!("unchanged {}", dest.display()));
+            return Ok(false);
+        }
+        settle(dest, existing, resolver, || {
+            publish_vacated(&staging, kind, dest)
+        })
+    });
+    discard(&staging, kind, reporter);
+    refreshed
+}
+
+/// Settle what is at `dest` and, unless that was skipped, `install` in its
+/// place. Answers whether it was installed.
+fn settle(
+    dest: &Path,
+    existing: Existing,
+    resolver: &Resolver<'_>,
+    install: impl FnOnce() -> Result<(), Error>,
+) -> Result<bool, Error> {
+    let keep = match existing {
+        Existing::Replaceable => Keep::Discard,
+        Existing::Unmanaged(found) => match resolver.resolve(dest, &found)? {
+            Resolution::Refuse => {
+                return Err(Error::DestinationExists {
+                    path: dest.to_path_buf(),
+                    found,
+                });
+            }
+            Resolution::Skip => return Ok(false),
+            Resolution::Replace(keep) => keep,
+        },
+    };
+    resolver.replace(dest, keep, install)?;
+    Ok(true)
+}
+
+/// Whether the node at `built` and the node at `existing` hold the same
+/// content: the same kind, the same permissions, the same bytes or link
+/// target, and for a directory the same children holding the same content.
+/// Follows no symlink.
+fn same_content(built: &Path, existing: &Path) -> Result<bool, Error> {
+    let inspect = |path: &Path| {
+        fs::symlink_metadata(path).map_err(|source| Error::Read {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    let (ours, theirs) = (inspect(built)?, inspect(existing)?);
+    if ours.file_type() != theirs.file_type() {
+        return Ok(false);
+    }
+    if ours.is_symlink() {
+        let target = |path: &Path| {
+            fs::read_link(path).map_err(|source| Error::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+        };
+        return Ok(target(built)? == target(existing)?);
+    }
+    if ours.permissions() != theirs.permissions() {
+        return Ok(false);
+    }
+    if ours.is_file() {
+        return Ok(ours.len() == theirs.len() && same_bytes(built, existing)?);
+    }
+    if ours.is_dir() {
+        let children = paths::children_of(built)?;
+        if children != paths::children_of(existing)? {
+            return Ok(false);
+        }
+        for child in children {
+            if !same_content(&built.join(&child), &existing.join(&child))? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Whether two files of the same length hold the same bytes.
+fn same_bytes(built: &Path, existing: &Path) -> Result<bool, Error> {
+    let open = |path: &Path| {
+        fs::File::open(path)
+            .map(io::BufReader::new)
+            .map_err(|source| Error::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+    };
+    let (mut ours, mut theirs) = (open(built)?, open(existing)?);
+    let mut buffers = ([0_u8; 8192], [0_u8; 8192]);
+    loop {
+        let read = ours.read(&mut buffers.0).map_err(|source| Error::Read {
+            path: built.to_path_buf(),
+            source,
+        })?;
+        if read == 0 {
+            return Ok(true);
+        }
+        theirs
+            .read_exact(&mut buffers.1[..read])
+            .map_err(|source| Error::Read {
+                path: existing.to_path_buf(),
+                source,
+            })?;
+        if buffers.0[..read] != buffers.1[..read] {
+            return Ok(false);
+        }
+    }
 }
 
 /// Build tool-owned content beside `dest` and put it there, replacing without a
@@ -128,37 +295,28 @@ fn seed<T>(
 /// is an earlier build of its own. `fill` is handed the staging file, opened for
 /// writing and reachable by nobody else, and the path it is at.
 ///
-/// Creates missing parents. Reports nothing; the caller words the result. Dry
-/// runs create nothing and never call `fill`.
+/// Creates missing parents under `resolver`, which should refuse. Reports
+/// nothing else; the caller words the result. Dry runs create nothing and
+/// never call `fill`.
 pub(crate) fn rebuild_file(
     dest: &Path,
-    mode: RunMode,
-    reporter: &Reporter,
+    resolver: &Resolver<'_>,
     fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    rebuild(
-        SeedKind::File,
-        dest,
-        mode,
-        reporter,
-        create_private_file,
-        fill,
-    )
+    rebuild(SeedKind::File, dest, resolver, create_private_file, fill)
 }
 
 /// [`rebuild_file`] for a directory: `fill` is handed the staging directory's
 /// path, created private to this run.
 pub(crate) fn rebuild_directory(
     dest: &Path,
-    mode: RunMode,
-    reporter: &Reporter,
+    resolver: &Resolver<'_>,
     fill: impl FnOnce(&Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
     rebuild(
         SeedKind::Directory,
         dest,
-        mode,
-        reporter,
+        resolver,
         create_private_directory,
         |(), staging| fill(staging),
     )
@@ -170,14 +328,14 @@ pub(crate) fn rebuild_directory(
 fn rebuild<T>(
     kind: SeedKind,
     dest: &Path,
-    mode: RunMode,
-    reporter: &Reporter,
+    resolver: &Resolver<'_>,
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
+    let (mode, reporter) = (resolver.mode(), resolver.reporter());
     let replacing = paths::occupied(dest)?;
-    if !replacing {
-        directory::create_parents(dest, mode)?.report_removals(mode, reporter);
+    if !replacing && !directory::create_parents(dest, resolver)? {
+        return Ok(());
     }
     if !mode.writes() {
         return Ok(());
@@ -186,16 +344,9 @@ fn rebuild<T>(
     let node = create_staging(&staging, make)?;
     let built = fill(node, &staging).and_then(|()| {
         if replacing {
-            swap(&staging, dest, reporter)
-        } else if publish(&staging, kind, dest)? {
-            Ok(())
+            swap(&staging, kind, dest, reporter)
         } else {
-            // Something arrived at `dest` while the content was being built,
-            // and it is nobody's to replace.
-            Err(Error::Write {
-                path: dest.to_path_buf(),
-                source: io::ErrorKind::AlreadyExists.into(),
-            })
+            publish_vacated(&staging, kind, dest)
         }
     });
     discard(&staging, kind, reporter);
@@ -203,37 +354,36 @@ fn rebuild<T>(
 }
 
 /// Put complete staged content at `dest` in place of the node there: move that
-/// node aside, rename the staged content in, then remove what was moved aside.
-/// If the rename fails, the earlier node is moved back.
+/// node aside, publish the staged content, then remove what was moved aside.
+/// If publication fails, the earlier node is moved back.
 ///
 /// The aside path is `<dest>.batfiles-old`; an occupied one fails before
 /// anything moves, as an occupied staging path does.
-fn swap(staging: &Path, dest: &Path, reporter: &Reporter) -> Result<(), Error> {
-    let aside = beside(dest, ".batfiles-old");
+fn swap(staging: &Path, kind: SeedKind, dest: &Path, reporter: &Reporter) -> Result<(), Error> {
+    let aside = paths::beside(dest, ".batfiles-old");
     if paths::occupied(&aside)? {
         return Err(Error::StagingPathTaken { path: aside });
     }
-    let failed = |source| Error::Write {
-        path: dest.to_path_buf(),
-        source,
-    };
-    fs::rename(dest, &aside).map_err(failed)?;
-    if let Err(error) = fs::rename(staging, dest) {
-        let _ = fs::rename(&aside, dest);
-        return Err(failed(error));
+    replace::set_aside(dest, &aside)?;
+    if let Err(error) = publish_vacated(staging, kind, dest) {
+        return Err(replace::put_back(dest, &aside, error).0);
     }
-    let removed = match fs::symlink_metadata(&aside) {
-        Ok(found) if found.is_dir() => fs::remove_dir_all(&aside),
-        Ok(_) => fs::remove_file(&aside),
-        Err(error) => Err(error),
-    };
-    if let Err(error) = removed {
-        reporter.warn(&format!(
-            "could not remove the replaced content at {}: {error}",
-            aside.display()
-        ));
-    }
+    replace::remove_aside(&aside, reporter);
     Ok(())
+}
+
+/// Publish complete staged content at a destination the caller has found or
+/// made vacant, failing if something arrived there while it was being built:
+/// that is nobody's to replace.
+fn publish_vacated(staging: &Path, kind: SeedKind, dest: &Path) -> Result<(), Error> {
+    if publish(staging, kind, dest)? {
+        Ok(())
+    } else {
+        Err(Error::Write {
+            path: dest.to_path_buf(),
+            source: io::ErrorKind::AlreadyExists.into(),
+        })
+    }
 }
 
 /// Build content beside its destination and publish it when complete.
@@ -405,17 +555,10 @@ impl io::Write for Scratch {
 
 /// Where a copy is built while it is still incomplete.
 fn staging_path(dest: &Path) -> PathBuf {
-    beside(dest, ".batfiles-incomplete")
+    paths::beside(dest, ".batfiles-incomplete")
 }
 
 /// Where content that has to arrive whole is downloaded to.
 fn scratch_path(dest: &Path) -> PathBuf {
-    beside(dest, ".batfiles-download")
-}
-
-/// Append a suffix to the destination filename to name a sibling.
-fn beside(dest: &Path, suffix: &str) -> PathBuf {
-    let mut name = dest.file_name().unwrap_or_default().to_os_string();
-    name.push(suffix);
-    dest.with_file_name(name)
+    paths::beside(dest, ".batfiles-download")
 }
