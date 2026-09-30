@@ -1,9 +1,6 @@
-//! Checks over this repository's own sources, documents, and fixtures:
-//! dead-code annotations, scheduled markers, filesystem-owner imports, and
-//! action inventories. The Rust and Markdown ones are textual scans, and the
-//! fixture inventory parses TOML. None of them parses Rust or proves read-only
-//! access, mode gating, call reachability, or behavioral coverage. Review those
-//! properties in code and exercise them through CLI tests.
+//! Repository checks for dead-code annotations, carry markers, filesystem ownership, and action
+//! inventories. Text scans and TOML parsing check declared structure, not Rust semantics or
+//! behavioral coverage.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -11,49 +8,40 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-/// The step list a `CARRY` marker or a withheld option is cleared by.
+/// Roadmap defining valid step numbers and completion status.
 const STEPS: &str = "docs/future/roadmap.md";
 
-/// Rule 12's list, and the only file whose step literals are checked. Absent
-/// while no option is withheld.
+/// Unsupported-option declarations whose step literals are checked. Absent when all parsed
+/// options are implemented.
 const UNSUPPORTED: &str = "src/cli/unsupported.rs";
 
 /// The enum that decides which action types a manifest may declare.
 const ACTIONS: &str = "src/manifest/action.rs";
 
-/// The document that answers "what can `sync` actually do", on a line beginning
-/// [`IMPLEMENTED`]. Goals state intended scope and deliberately keep no
-/// inventory.
+/// Documents listing implemented action types on an [`IMPLEMENTED`] line.
 const ACTION_TYPE_DOCS: [&str; 1] = ["README.md"];
 
 /// What that line starts with.
 const IMPLEMENTED: &str = "Implemented so far:";
 
-/// The fixture repositories the CLI tests drive whole. Between them they
-/// declare every action type, which is what makes "the suite covers them all"
-/// true rather than apparent.
+/// Fixture repositories checked for complete action-type coverage.
 const FIXTURES: &str = "tests/fixtures";
 
-/// This file, which the marker scan skips: its fixtures spell out the forms the
-/// check rejects, so scanning it would report its own examples.
+/// This checker file, excluded from marker scans because it contains invalid-marker fixtures.
 const CHECKER: &str = "tests/hygiene.rs";
 
 /// Declared filesystem role for review. The scanner does not verify the role.
 #[derive(Debug, Clone, Copy)]
 enum Kind {
-    /// Inspects and never writes, so there is no work for a mode to withhold.
+    /// Inspects the filesystem without writing.
     ReadOnly,
-    /// Performs part of an action's work, and therefore consults `RunMode` itself.
+    /// Checks `RunMode` before performing action writes.
     ModeReader,
-    /// Produces content that only ever lands inside something a mode reader
-    /// created, so it never sees `RunMode` and does not need to.
+    /// Writes content only within nodes created by a mode-checking caller.
     Downstream,
-    /// Batfiles' own bookkeeping, which runs in both modes: a state file is not
-    /// part of the plan an action carries out.
+    /// Maintains state or resolves inputs in both run modes.
     Bookkeeping,
-    /// A command that is not the action plan at all, and so has no `RunMode` to
-    /// consult. What it writes, it writes because it was asked to and for no
-    /// other reason.
+    /// Performs writes for a standalone command without a dry-run mode.
     Standalone,
 }
 
@@ -69,7 +57,7 @@ impl Kind {
     }
 }
 
-/// A module allowed to name the filesystem, and why.
+/// A module registered for filesystem access, with its declared role.
 #[derive(Debug)]
 struct Owner {
     path: &'static str,
@@ -202,9 +190,7 @@ impl DeadCode {
     }
 }
 
-/// How far the scan looks either side of a `dead_code` for the attribute it
-/// sits in. rustfmt's broken-up form puts the token on the line after the `#[`
-/// and the reason on the line after that, so this is generous.
+/// Maximum line distance searched around `dead_code` to find its enclosing attribute.
 const ATTRIBUTE_LINES: usize = 6;
 
 /// Every `dead_code` annotation in `source`.
@@ -215,12 +201,10 @@ fn dead_code_mentions(source: &str) -> Vec<DeadCode> {
         if !text.contains("dead_code") {
             continue;
         }
-        // A `dead_code` outside an attribute is prose about one, not one.
+        // Ignore mentions outside attributes.
         let Some(attribute) = attribute_around(&lines, index) else {
             continue;
         };
-        // Whitespace is stripped so the check does not depend on how the
-        // attribute happens to be spaced, or on where rustfmt broke it.
         let packed: String = attribute.chars().filter(|c| !c.is_whitespace()).collect();
         let line = index + 1;
         if packed.contains("allow(dead_code") {
@@ -255,8 +239,7 @@ fn attribute_around(lines: &[&str], anchor: usize) -> Option<String> {
             break;
         }
     }
-    // The attribute has to be the one the token is in, and not one that closed
-    // a few lines above prose mentioning it.
+    // Do not count an attribute that closed before the token.
     (anchor <= end).then_some(joined)
 }
 
@@ -283,7 +266,7 @@ fn reason_steps(reason: &str) -> Vec<String> {
         .collect()
 }
 
-/// Why a `dead_code` annotation is not one rule 1 permits, if it is not.
+/// Return the rule violation for a dead-code annotation, or `None` if valid.
 fn dead_code_reason(mention: &DeadCode, steps: &BTreeMap<String, bool>) -> Option<String> {
     match mention {
         DeadCode::Allowed { .. } => Some(
@@ -313,8 +296,6 @@ fn dead_code_reason(mention: &DeadCode, steps: &BTreeMap<String, bool>) -> Optio
                     undefined.join(" and ")
                 ));
             }
-            // Every step named is defined, so the annotation is live while any
-            // one of them is still open to read the item.
             named
                 .iter()
                 .all(|step| step_state(step, steps).is_some())
@@ -329,7 +310,7 @@ fn dead_code_reason(mention: &DeadCode, steps: &BTreeMap<String, bool>) -> Optio
     }
 }
 
-/// Every way a line names the filesystem, with what it named.
+/// Return recognized filesystem/process references with their line numbers.
 fn filesystem_mentions(source: &str) -> Vec<(usize, &'static str)> {
     let mut found = Vec::new();
     for (index, line) in source.lines().enumerate() {
@@ -337,16 +318,14 @@ fn filesystem_mentions(source: &str) -> Vec<(usize, &'static str)> {
         if packed.contains("std::fs") {
             found.push((index + 1, "std::fs"));
         }
-        // Narrower than rejecting `std::os::` whole, so a future need for
-        // `std::os::unix::ffi` is not caught by a filesystem check.
+        // Allow platform-specific modules that do not access the filesystem.
         if packed
             .split_once("std::os::")
             .is_some_and(|(_, rest)| rest.contains("::fs"))
         {
             found.push((index + 1, "a platform `fs` module"));
         }
-        // A single line also catches the braced spelling, `process::{Child,
-        // Command}`, as long as the group is written on one line.
+        // Also recognize single-line braced imports.
         let braced = packed.split_once("process::{").is_some_and(|(_, rest)| {
             rest.split('}')
                 .next()
@@ -368,8 +347,7 @@ fn owner_of(path: &Path) -> Option<&'static Owner> {
         .find(|owner| path.ends_with(Path::new(owner.path)))
 }
 
-/// The allowlist as a failure message renders it, so a violation is read
-/// alongside what the permitted entries look like.
+/// Format the registered filesystem owners for a failure diagnostic.
 fn owners_as_written() -> String {
     FILESYSTEM_OWNERS
         .iter()
@@ -390,8 +368,7 @@ fn owners_as_written() -> String {
 enum Mention {
     /// A well-formed `// CARRY(1.3): note`.
     Marker { line: usize, step: String },
-    /// A `CARRY` written some other way, so a typo cannot outlive its step
-    /// unnoticed.
+    /// A malformed `CARRY` marker.
     Malformed { line: usize },
 }
 
@@ -453,16 +430,16 @@ fn step_status(steps: &str) -> BTreeMap<String, bool> {
         .collect()
 }
 
-/// Why a step named by an annotation can no longer clear it.
+/// Why a referenced step cannot own outstanding work.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Spent {
-    /// [`STEPS`] defines no such step, so nothing will ever clear the note.
+    /// The roadmap defines no such step.
     Undefined,
-    /// The step is marked ✅, so whatever it was going to do, it did.
+    /// The step is marked complete.
     Done,
 }
 
-/// Why `step` is no longer an open step in [`STEPS`], if it is not.
+/// Return whether a step is undefined or complete, or `None` if still open.
 fn step_state(step: &str, steps: &BTreeMap<String, bool>) -> Option<Spent> {
     match steps.get(step) {
         None => Some(Spent::Undefined),
@@ -471,7 +448,7 @@ fn step_state(step: &str, steps: &BTreeMap<String, bool>) -> Option<Spent> {
     }
 }
 
-/// Why `mention` is not a live carry-forward note, if it is not one.
+/// Return the carry-marker violation, or `None` for a valid marker naming an open step.
 fn spent_reason(mention: &Mention, steps: &BTreeMap<String, bool>) -> Option<String> {
     match mention {
         Mention::Malformed { .. } => Some(
@@ -494,8 +471,7 @@ fn step_literals(source: &str) -> Vec<(usize, String)> {
         .lines()
         .enumerate()
         .flat_map(|(index, line)| {
-            // Between the first and second quote, the third and fourth, and so
-            // on: the contents of each string literal on the line.
+            // Read the contents of each quoted string.
             line.split('"')
                 .skip(1)
                 .step_by(2)
@@ -505,8 +481,7 @@ fn step_literals(source: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// Why a step named by [`UNSUPPORTED`] is no longer one to withhold an option
-/// for, if it is not.
+/// Return a diagnostic if an unsupported option names an undefined or completed step.
 fn live_step_reason(step: &str, steps: &BTreeMap<String, bool>) -> Option<String> {
     match step_state(step, steps)? {
         Spent::Undefined => Some(format!("`{step}` names no step in {STEPS}")),
@@ -563,7 +538,7 @@ fn documented_action_types(document: &str) -> Option<Vec<String>> {
     let (_, named) = document
         .lines()
         .find_map(|line| line.split_once(IMPLEMENTED))?;
-    // Between the first and second backtick, the third and fourth, and so on.
+    // Extract names between backticks.
     let mut types: Vec<String> = named
         .split('`')
         .skip(1)
@@ -574,17 +549,9 @@ fn documented_action_types(document: &str) -> Option<Vec<String>> {
     Some(types)
 }
 
-/// The action types a manifest declares, sorted and without repeats.
-///
-/// Only the top-level `actions` array contributes. A `type` written anywhere
-/// else belongs to whatever declared it — `[remotes]` has one, and so may a
-/// table an action owns — and the document is parsed rather than scanned so
-/// that which table a key sits in is TOML's answer and not this check's.
-///
-/// A manifest declaring no actions contributes nothing and is not a fault. Every
-/// other shape is one: this check reads the fixtures to say what the CLI tests
-/// cover, so a document it cannot read must fail rather than quietly shrink the
-/// inventory. The caller names the manifest the error came from.
+/// Parse the distinct action types in the top-level `actions` array, sorted by name. Missing
+/// actions yield an empty list; malformed TOML, non-array actions, and entries without string
+/// types fail.
 fn declared_action_types(manifest: &str) -> Result<Vec<String>, NotAnInventory> {
     let document: toml::Value = toml::from_str(manifest)?;
     let Some(actions) = document.get("actions") else {
@@ -606,27 +573,23 @@ fn declared_action_types(manifest: &str) -> Result<Vec<String>, NotAnInventory> 
     Ok(types)
 }
 
-/// What a manifest can be that stops it naming the action types it declares.
+/// Failures while reading a fixture's action-type inventory.
 #[derive(Debug, Error)]
 enum NotAnInventory {
-    /// Not a TOML document at all. What follows is the parser's own message,
-    /// which names the line and what it expected there.
+    /// Invalid TOML, with the parser's diagnostic.
     #[error("is not TOML: {0}")]
     Toml(#[from] toml::de::Error),
 
-    /// An `actions` that is present and is not an array, which is the one shape
-    /// a manifest's action list takes.
+    /// The `actions` value is not an array.
     #[error("writes an `actions` that is not an array of actions")]
     NotAList,
 
-    /// An entry of that array with no string `type`: a table omitting it, one
-    /// writing something other than a string for it, and an entry that is no
-    /// table at all are the same fault to a reader counting action types.
+    /// An action entry is not a table with a string `type` field.
     #[error("writes an action at position {position} with no string `type`")]
     Untyped { position: usize },
 }
 
-/// [`STEPS`] as the step-to-done map both checks are cleared by.
+/// Read the roadmap as a map from step numbers to completion status.
 fn recorded_steps() -> BTreeMap<String, bool> {
     let steps = fs::read_to_string(crate_dir().join(STEPS))
         .unwrap_or_else(|error| panic!("{STEPS} is what clears these notes: {error}"));
@@ -643,8 +606,7 @@ fn src_dead_code_annotations_follow_rule_one() {
         }
     }
 
-    // With no annotations there is no step to judge, which is also what lets
-    // this check outlive the step list it reads.
+    // Without annotations, the check does not need a roadmap.
     if found.is_empty() {
         return;
     }
@@ -726,8 +688,6 @@ fn an_expectation_is_live_while_the_step_that_reads_the_item_is_open() {
 
 #[test]
 fn an_expectation_whose_step_is_done_is_rejected() {
-    // The gap the by-the-end-of-the-slice reading opens: the compiler deletes
-    // the note when the caller lands and says nothing when it never does.
     let stale = r#"#[expect(dead_code, reason = "read at 0.13, which the fixture marks done")]"#;
     let mentions = dead_code_mentions(stale);
     assert!(
@@ -766,14 +726,12 @@ fn an_expectation_naming_two_steps_is_live_while_either_is_open() {
         matches!(&mentions[..], [DeadCode::Expected { named, .. }] if *named == ["0.13", "1.3"]),
         "{mentions:?}"
     );
-    // 1.3 is still open, so a step is still coming that reads the item.
     assert_eq!(dead_code_reason(&mentions[0], &fixture_steps()), None);
 }
 
 #[test]
 fn a_step_is_found_in_a_reason_however_it_is_punctuated() {
-    // The form in the tree today, a step ending a sentence, and a version
-    // number, which is not step-shaped.
+    // Recognize step references with punctuation, but ignore version numbers.
     assert_eq!(
         reason_steps("adopted at 8.3, by the bootstrap that reads it"),
         ["8.3"]
@@ -784,13 +742,10 @@ fn a_step_is_found_in_a_reason_however_it_is_punctuated() {
 
 #[test]
 fn a_dead_code_outside_an_attribute_is_not_an_annotation() {
-    // Rule 1 is discussed in prose in the modules it governs, and a doc comment
-    // saying `dead_code` is not one.
     let prose = "//! The text `allow(dead_code)` in prose is not an annotation.\n";
     assert!(dead_code_mentions(prose).is_empty(), "{prose}");
 
-    // The same prose below an annotation that has already closed, which the
-    // backward search would otherwise reach and count twice.
+    // Prose below a closed attribute must not count as a second annotation.
     let below = "#[expect(dead_code, reason = \"read at 1.3\")]\n\
                  pub struct Entry;\n\
                  /// Not to be confused with allow(dead_code).\n";
@@ -824,7 +779,7 @@ fn only_the_modules_that_own_filesystem_access_name_it() {
 
 #[test]
 fn every_module_that_owns_filesystem_access_still_exists() {
-    // A renamed owner would otherwise leave an entry permitting nothing.
+    // Catch inventory entries left behind after a file is renamed.
     for owner in &FILESYSTEM_OWNERS {
         let path = crate_dir().join(owner.path);
         assert!(
@@ -863,7 +818,6 @@ fn supported_filesystem_import_spellings_are_detected() {
 #[test]
 fn a_name_that_is_not_the_filesystem_is_left_alone() {
     for source in [
-        // The exit status every command returns, which `app.rs` needs.
         "use std::process::ExitCode;",
         "use std::process::{Child, ExitStatus};",
         // Platform-specific and not the filesystem.
@@ -887,8 +841,7 @@ fn carry_markers_name_a_step_that_is_still_open() {
         }
     }
 
-    // With no markers there is nothing to clear, which is also what lets this
-    // check outlive the step list it reads.
+    // Without carry markers, the check does not need a roadmap.
     if found.is_empty() {
         return;
     }
@@ -908,7 +861,7 @@ fn carry_markers_name_a_step_that_is_still_open() {
 fn withheld_options_name_steps_that_are_still_open() {
     let source = match fs::read_to_string(crate_dir().join(UNSUPPORTED)) {
         Ok(source) => source,
-        // No option is withheld, so there is no list to check.
+        // A missing unsupported-options file means no options are withheld.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
         Err(error) => panic!("{UNSUPPORTED} holds rule 12's list: {error}"),
     };
@@ -1022,9 +975,6 @@ type = "symlink"
 
 #[test]
 fn one_action_list_reads_the_same_however_its_toml_is_written() {
-    // The quote a value carries, the spacing around `=`, a comment beside a
-    // line, and whether the array is written as tables or inline are all the
-    // same document to TOML, and so must be the same inventory here.
     for spelling in [
         "[[actions]]\ntype = \"symlink\"\n\n[[actions]]\ntype = \"copy\"\n",
         "[[actions]]\ntype = 'symlink'\n\n[[actions]]\ntype = 'copy'\n",
@@ -1046,8 +996,6 @@ fn one_action_list_reads_the_same_however_its_toml_is_written() {
 
 #[test]
 fn a_type_outside_the_action_list_is_not_an_action_type() {
-    // `[remotes]` declares a type of its own, and a table an action owns may
-    // too. Both belong to whatever declared them.
     let manifest = r#"[remotes.corporate]
 type = "git"
 url = "https://example.invalid/corp.git"
@@ -1068,8 +1016,6 @@ type = "still-not-an-action"
 
 #[test]
 fn a_manifest_declaring_no_actions_declares_no_action_types() {
-    // Not every manifest a fixture repository keeps has to declare an action,
-    // and one that declares none is contributing nothing rather than failing.
     assert!(inventory("[vars]\nwork = \"false\"\n").is_empty());
     assert!(inventory("").is_empty());
     assert!(inventory("actions = []\n").is_empty());
@@ -1077,9 +1023,6 @@ fn a_manifest_declaring_no_actions_declares_no_action_types() {
 
 #[test]
 fn a_manifest_this_check_cannot_read_fails_rather_than_reading_nothing() {
-    // The fault this guards against: a document the reader cannot make sense of
-    // quietly contributing an empty inventory, which looks exactly like a
-    // fixture that stopped declaring an action type.
     for (manifest, expected) in [
         ("[[actions]\ntype = \"symlink\"\n", "is not TOML"),
         ("actions = \"symlink\"\n", "not an array"),
@@ -1098,10 +1041,7 @@ fn a_manifest_this_check_cannot_read_fails_rather_than_reading_nothing() {
     }
 }
 
-/// Stands in for [`ACTIONS`]: an enum shaped like the real one, with the
-/// comment and attribute lines it carries. Deliberately not a copy of it —
-/// what is under test is the reading, so a fixture that tracked the real
-/// variants would only prove they equal themselves.
+/// Return a sample action enum with comments and attributes for scanner tests.
 fn fixture_actions() -> &'static str {
     "#[derive(Debug, Deserialize)]\n\
      #[serde(tag = \"type\", rename_all = \"kebab-case\")]\n\
@@ -1124,7 +1064,6 @@ fn an_action_type_is_named_the_way_a_manifest_writes_it() {
 #[test]
 fn a_document_that_has_fallen_behind_the_enum_is_caught() {
     let built = implemented_action_types(fixture_actions());
-    // Compare an incomplete inventory with a complete one.
     let behind = "**Implemented so far: `symlink`.**\n";
     let current = "Implemented so far: `symlink`, `create-dir`, and `copy`.\n";
     assert_ne!(documented_action_types(behind).as_ref(), Some(&built));

@@ -1,14 +1,5 @@
-//! `include-remote`: the actions another repository declares, taken into this
-//! one at the position the inclusion is written.
-//!
-//! Three questions separate the cases: which tree the manifest came from, which
-//! makes a description knowingly stale; whether there was one at all, which
-//! makes a plan partial; and what a contributed record is called, which is what
-//! makes it reachable.
-//!
-//! The leaf is the `inclusion` fixture and the remote is the `corporate` one,
-//! committed into a local bare repository as the remotes tests commit it
-//! (`architecture.md`, "Test environments").
+//! CLI tests for remote inclusion order, missing or stale materializations, and contributed
+//! record names. Use the leaf `inclusion` and remote `corporate` fixtures.
 
 use std::fs;
 
@@ -72,15 +63,12 @@ fn a_materialized_inclusion_contributes_its_actions_to_the_run() {
     }
     assert_included_ran(&tree);
 
-    // The source of a contributed action is read from the remote's own tree,
-    // which is the whole of what the inclusion changes about resolving one.
     assert_eq!(
         fs::read_link(tree.home(".zshrc.corporate")).expect("the link the inclusion installed"),
         tree.path("repo").join("remotes/corporate/files/zshrc"),
         "the included source was not read from the materialization"
     );
 
-    // The leaf's own actions are untouched by any of it.
     assert!(
         tree.home(".cache/zsh").is_dir(),
         "the leaf's own action did not run"
@@ -89,8 +77,6 @@ fn a_materialized_inclusion_contributes_its_actions_to_the_run() {
 
 #[test]
 fn an_inclusion_contributes_at_its_position_in_the_list() {
-    // Declaration order is the whole point of the record: what it brings in
-    // belongs where it is written, not before or after the list.
     let (_origin, tree) = including();
 
     let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
@@ -116,9 +102,6 @@ fn an_inclusion_contributes_at_its_position_in_the_list() {
 
 #[test]
 fn a_dry_run_describes_the_materialization_it_finds_however_stale() {
-    // The cost of reading a tree rather than fetching one, stated as a
-    // difference this test can see: the remote publishes a third action, and the
-    // dry run still describes the two the last `sync` left behind.
     let (origin, tree) = including();
     tree.batfiles().arg("sync").assert().success();
 
@@ -155,8 +138,6 @@ dest = "~/.c"
         !stderr.contains("create-dir corp.a"),
         "the dry run fetched the remote after all:\n{stderr}"
     );
-    // Knowingly stale is still complete: the tree was there and was read, so
-    // there is nothing for the run to warn about.
     assert!(
         !stderr.contains("warning"),
         "a plan read from a stale tree is still a whole one:\n{stderr}"
@@ -165,10 +146,6 @@ dest = "~/.c"
 
 #[test]
 fn an_inclusion_with_no_materialization_warns_rather_than_failing() {
-    // The one case where an absent tree is not a refusal. A leaf action reaching
-    // one is refused, because the rest of the plan can do without that action's
-    // content; a list of actions is not something the plan can do without. The
-    // warning is what marks the plan partial, and it is the whole of the mark.
     let (_origin, tree) = including();
 
     let assertion = tree
@@ -182,18 +159,14 @@ fn an_inclusion_with_no_materialization_warns_rather_than_failing() {
         stderr.contains("warning: remote `corporate` is not materialized"),
         "the reason was not reported:\n{stderr}"
     );
-    // The remedy, which is the half of the line a reader acts on.
     assert!(
         stderr.contains("batfiles sync"),
         "the warning did not say how to see the rest:\n{stderr}"
     );
-    // A dry run materializes nothing, including for its own benefit.
     assert!(
         !tree.path("repo").join("remotes").exists(),
         "the dry run created a remotes tree"
     );
-    // Partial is a caveat on the description, not a failure: the run still
-    // reports the rest of the plan, and exits 0 above.
     assert!(
         stderr.contains("would create"),
         "the leaf's own action was not described:\n{stderr}"
@@ -202,8 +175,6 @@ fn an_inclusion_with_no_materialization_warns_rather_than_failing() {
 
 #[test]
 fn an_apply_command_with_no_materialization_says_the_same_thing() {
-    // The apply commands materialize nothing either, so they are in the dry
-    // run's position without being one, and they report it the same way.
     let (_origin, tree) = including();
 
     let assertion = tree
@@ -225,9 +196,6 @@ fn an_apply_command_with_no_materialization_says_the_same_thing() {
 
 #[test]
 fn an_inclusion_the_run_never_reaches_is_never_read() {
-    // A record the command did not ask for is not one the run has an opinion
-    // about: applying the leaf's own action leaves the inclusion unread, so an
-    // absent materialization goes unmentioned rather than warned about.
     let (_origin, tree) = including();
 
     let assertion = tree
@@ -245,8 +213,6 @@ fn an_inclusion_the_run_never_reaches_is_never_read() {
 
 #[test]
 fn a_remote_this_machine_excludes_includes_nothing_and_leaves_the_plan_whole() {
-    // The manifest declining the inclusion, which is not the same as the run
-    // being unable to describe it: nothing was left unanswered.
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::fixture("inclusion");
     tree.point_at_origin(&origin);
@@ -263,8 +229,6 @@ fn a_remote_this_machine_excludes_includes_nothing_and_leaves_the_plan_whole() {
         .success();
     let stderr = stderr_of(&assertion);
 
-    // Reported as an exclusion on the record, in the form every other excluded
-    // record uses, and saying which of the two conditions closed it.
     assert!(
         stderr.contains(
             "include-remote corp (group work) - skipped: \
@@ -272,8 +236,6 @@ fn a_remote_this_machine_excludes_includes_nothing_and_leaves_the_plan_whole() {
         ),
         "the inclusion did not say why it brought nothing in:\n{stderr}"
     );
-    // A plan is partial where something warned that it could not be listed, and
-    // an exclusion is not that: the manifest was read and answered.
     assert!(
         !stderr.contains("warning"),
         "an ordinary exclusion was reported as an incomplete plan:\n{stderr}"
@@ -283,10 +245,6 @@ fn a_remote_this_machine_excludes_includes_nothing_and_leaves_the_plan_whole() {
 
 #[test]
 fn a_materialization_with_no_manifest_is_refused_by_name() {
-    // A remote's manifest is optional, because a remote an action only installs
-    // *from* has no use for one. An inclusion is what asks for one, so this is
-    // the leaf asking for something that is not there rather than a tree
-    // batfiles has yet to fetch.
     let origin = BareRepo::new();
     let tree = Tree::new();
     tree.write_manifest(&format!(
@@ -318,9 +276,6 @@ remote = "core"
 
 #[test]
 fn an_unreadable_inclusion_fails_before_the_first_action_runs() {
-    // What expanding the list ahead of the run buys: a leaf whose inclusion
-    // cannot be read installs nothing at all, rather than half a home and then a
-    // failure. The same rule a malformed clone list follows.
     let origin = BareRepo::new();
     let tree = Tree::new();
     tree.write_manifest(&format!(
@@ -350,9 +305,6 @@ remote = "core"
 
 #[test]
 fn an_included_clone_list_is_read_from_the_materialization() {
-    // The one source a handler does not resolve: a list is read while the run's
-    // lists are prepared, so an included one is where the tree a record came
-    // from has to reach preparation rather than execution.
     let origin = BareRepo::from_fixture("corporate");
     let plugin = origin.another("zsh-z");
     origin.publish(
@@ -380,8 +332,6 @@ dest-dir = "~/.plugins"
         tree.home(".plugins/zsh-z").is_dir(),
         "the list the remote holds was not read and cloned from:\n{stderr}"
     );
-    // The list is named as the manifest that declared it wrote it; which tree
-    // that is, the heading above it says.
     assert!(
         stderr.contains("git-clone-list corp.plugins"),
         "the contributed list did not report under its address:\n{stderr}"
@@ -390,8 +340,6 @@ dest-dir = "~/.plugins"
 
 #[test]
 fn an_included_action_may_not_source_from_a_remote() {
-    // The rule that keeps inclusion one level deep, enforced as the included
-    // manifest is read: remote references belong to the leaf repository.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
@@ -412,8 +360,8 @@ dest = "~/.vimrc"
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
     let stderr = stderr_of(&assertion);
 
-    // Refused for naming a remote at all, rather than for naming one the
-    // included manifest happens not to declare -- it declares this one.
+    // The remote is declared, so this checks the ban on remote references rather than an
+    // unknown remote.
     assert!(
         stderr.contains("names a remote"),
         "the rule that was broken was not stated:\n{stderr}"
@@ -430,10 +378,6 @@ dest = "~/.vimrc"
 
 #[test]
 fn an_included_inclusion_is_dropped_rather_than_followed() {
-    // The half of the one-level rule about what an included manifest may hold
-    // rather than what one of its actions may write. The nested record names a
-    // remote that does not resolve, since it is left out whichever one it names
-    // -- the `[remotes]` it would resolve against is itself ignored.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
@@ -463,12 +407,10 @@ remote = "shared"
         stderr.contains("does not reach further repositories"),
         "the rule behind it was not stated:\n{stderr}"
     );
-    // Only the nested record is dropped; the one beside it is contributed.
     assert!(
         tree.home(".cache/corp").is_dir(),
         "the included action beside the nested inclusion did not run"
     );
-    // Nothing went looking for the remote the nested record names.
     assert!(
         !tree.path("repo").join("remotes/shared").exists(),
         "a nested inclusion's remote was materialized"
@@ -477,10 +419,6 @@ remote = "shared"
 
 #[test]
 fn dropping_a_nested_inclusion_does_not_renumber_what_follows_it() {
-    // A record with no `id` is named by the position it was written at, so the
-    // gap a dropped record leaves has to stay a gap. Both records below would
-    // otherwise be `action 1`, and a reader told to go and look at action 1
-    // would find the wrong one.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
@@ -517,10 +455,6 @@ dest = "~/.cache/corp"
 
 #[test]
 fn a_leafs_inclusion_names_a_remote_the_leaf_declares() {
-    // The half of that rule which still holds: a leaf's `include-remote` is
-    // carried out, so what it names has to resolve, and it is refused as the
-    // manifest is read rather than partway through the list. Only a nested one
-    // is excused, and only because it is dropped.
     let tree = Tree::new();
     tree.write_manifest(
         r#"[[actions]]
@@ -545,10 +479,8 @@ remote = "corporate"
 
 #[test]
 fn an_included_manifests_remotes_are_ignored_and_reported_once() {
-    // The last of the one-level rules, and the one about a section rather than a
-    // record. Ignored means unchecked as well as unused, which is what `vendor`
-    // is here for: its digest is one a leaf is refused for declaring, and this
-    // is someone else's declaration.
+    // Invalid digests expose accidental validation of the included manifest's remote
+    // declarations.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
@@ -574,14 +506,10 @@ dest = "~/.cache/corp"
     let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
     let stderr = stderr_of(&assertion);
 
-    // What the map does not stop: the actions beside it are contributed as
-    // usual, and the run succeeds.
     assert!(
         tree.home(".cache/corp").is_dir(),
         "the included action beside the ignored remotes did not run:\n{stderr}"
     );
-    // One line for the map, not one for each record in it, naming the inclusion
-    // that opened the manifest and every remote passed over.
     assert_eq!(
         stderr.matches("ignoring the remotes").count(),
         1,
@@ -597,8 +525,6 @@ dest = "~/.cache/corp"
         stderr.contains("does not reach further repositories"),
         "the rule behind it was not stated:\n{stderr}"
     );
-    // Ignored means ignored: neither remote is materialized, and neither is
-    // looked for.
     for id in ["shared", "vendor"] {
         assert!(
             !tree.path("repo").join("remotes").join(id).exists(),
@@ -609,8 +535,6 @@ dest = "~/.cache/corp"
 
 #[test]
 fn an_inclusion_cannot_be_applied_on_its_own() {
-    // The address reaches a position in the list rather than something to carry
-    // out, so it named the wrong thing rather than nothing.
     let (_origin, tree) = including();
     tree.batfiles().arg("sync").assert().success();
 
@@ -634,11 +558,6 @@ fn an_inclusion_cannot_be_applied_on_its_own() {
 
 #[test]
 fn two_inclusions_of_one_remote_written_without_ids_are_told_apart() {
-    // The label's whole purpose. Neither record has an `id`, so neither has an
-    // address and neither qualifies anything it contributed: what separates them
-    // in a report is where each was written. Every line that names an inclusion
-    // is here, because a label that came apart in one of them would leave a
-    // reader unable to tell which record to go and edit.
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(
@@ -669,18 +588,16 @@ vars = { profile = "second" }
     let first = "include-remote action 1 of remote `corporate`";
     let second = "include-remote action 2 of remote `corporate`";
     for expected in [
-        // The heading of a record each one contributed, which is where a line
-        // about a record says which manifest it was read from.
+        // Contributed record headings.
         format!("symlink zshrc (group shell, from {first})"),
         format!("symlink p10k (group prompt, from {second})"),
-        // A skip line, said about the one record neither group filter can name:
-        // once per inclusion, each naming the inclusion that passed it over.
+        // Filtered record skips.
         format!("copy-dir seeds (from {first}) - skipped: not selected by {first}"),
         format!("copy-dir seeds (from {second}) - skipped: not selected by {second}"),
-        // A filter warning, said about a name the remote does not declare.
+        // Unmatched filter warnings.
         format!("{first}: exclude-actions `nowhere` matched no action"),
         format!("{second}: exclude-actions `absent` matched no action"),
-        // And the heading of each inclusion's own variable block.
+        // Variable block headings.
         format!("{first} variables:"),
         format!("{second} variables:"),
     ] {
@@ -689,7 +606,6 @@ vars = { profile = "second" }
             "`{expected}` was not reported:\n{stderr}"
         );
     }
-    // Both ran, each taking the group it asked for and nothing else.
     for dest in [".zshrc.corporate", ".p10k.zsh"] {
         assert!(
             tree.home(dest).is_symlink(),

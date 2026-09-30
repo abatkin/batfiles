@@ -17,8 +17,7 @@ use crate::error::Error;
 /// The first bytes of a gzip stream.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
-/// How much of the file has to be read to tell one format from another: one tar
-/// header block, which carries its own checksum.
+/// Number of bytes in a tar header block.
 const HEADER_BYTES: usize = 512;
 
 /// Where a tar header keeps the checksum of the block it is in.
@@ -36,18 +35,15 @@ const KEPT_BITS: u32 = 0o777;
 #[cfg(unix)]
 const BUILDING_MODE: u32 = 0o600;
 
-/// The mode a directory lands with where the archive does not say: the unpacked
-/// tree when no entry describes the root being stripped, and any directory whose
-/// header mode does not read.
+/// Fallback Unix permissions for directories with no readable archive mode.
 #[cfg(unix)]
 const UNSTATED_DIRECTORY_MODE: u32 = 0o755;
 
-/// The same, for an entry that is not a directory.
+/// Fallback Unix permissions for files with no readable archive mode.
 #[cfg(unix)]
 const UNSTATED_FILE_MODE: u32 = 0o644;
 
-/// Where a mode means something other than it does on unix, nothing is applied
-/// and the value is never read.
+/// Placeholder mode on platforms where Unix permissions are not applied.
 #[cfg(not(unix))]
 const UNSTATED_DIRECTORY_MODE: u32 = 0;
 
@@ -56,42 +52,33 @@ fn symlink(_target: &Path, _at: &Path) -> io::Result<()> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
-/// One entry of the archive, as the reader hands it over. The reader is boxed so
-/// that both formats reach one loop.
+/// A tar entry backed by a plain or decompressed reader.
 type ArchiveEntry<'a> = tar::Entry<'a, Box<dyn io::Read>>;
 
-/// What an archive can be that stops it being unpacked.
+/// Failures that prevent archive extraction.
 #[derive(Debug, Error)]
-pub(crate) enum Invalid {
-    /// Bytes that are not an archive batfiles unpacks, named by what they look
-    /// like where that is recognizable.
+pub(crate) enum ArchiveError {
+    /// An unsupported archive format, identified when possible.
     #[error("is {saw}, and `fetch-archive` unpacks tar archives, gzipped or plain")]
     Format { saw: &'static str },
 
-    /// An archive of the right format that does not read as one.
+    /// A recognized archive format whose contents cannot be read.
     #[error("could not be read: {source}")]
     Unreadable { source: io::Error },
 
-    /// An entry naming a path outside the tree being unpacked: an absolute path,
-    /// one climbing out with `..`, or a link whose target does either. The whole
-    /// extraction stops, because an archive carrying one of these is not one to
-    /// install part of.
+    /// An entry path or link target that escapes the extraction directory.
     #[error("has an entry that would be written outside it: `{entry}`")]
     EscapingEntry { entry: String },
 
-    /// An entry that is not a file, a directory, or a link. Skipping a device
-    /// node or a fifo would publish an incomplete tree as a finished one.
+    /// An entry that is neither a file, a directory, nor a link.
     #[error("has an entry that is neither a file, a directory, nor a link: `{entry}`")]
     UnsupportedEntry { entry: String },
 
-    /// A symlink entry on a platform where batfiles does not make symlinks. The
-    /// archive is valid; this machine cannot install it.
+    /// A symlink entry on a platform where symlink creation is unsupported.
     #[error("holds the symlink `{entry}`, and symlinks are not supported on this platform")]
     SymlinkEntry { entry: String },
 
-    /// `archive-root = "*"` over an archive with no single top-level directory
-    /// to strip. Which ones it has, because that is what the author writes in
-    /// place of the `*`.
+    /// Automatic root detection failed because the archive has no single top-level directory.
     #[error(
         "has no single top-level directory for `archive-root = \"{DETECT_ROOT}\"` to strip; \
          it has {}. Name one of them instead",
@@ -99,12 +86,11 @@ pub(crate) enum Invalid {
     )]
     AmbiguousRoot { found: Vec<String> },
 
-    /// An `archive-root` over an archive holding nothing under it.
+    /// No archive entries exist under the requested `archive-root`.
     #[error("has nothing under `{root}`")]
     EmptyRoot { root: String },
 
-    /// An archive with no entries at all, which no `archive-root` is to blame
-    /// for.
+    /// An archive with no entries.
     #[error("is empty")]
     Empty,
 
@@ -127,11 +113,9 @@ pub(crate) fn extract(
     unpack(&tarball, &records, into)
 }
 
-/// The archive being unpacked: its open bytes, how they are wrapped, and what to
-/// call it when something is wrong with it.
+/// An open archive, its detected format, and its URL for diagnostics.
 struct Tarball<'a> {
-    /// The downloaded, hashed file, held open. Never reopened by path: the path
-    /// is a scratch name that may since hold something else.
+    /// The complete, verified download. Read through this handle, not its scratch path.
     file: &'a fs::File,
     format: Format,
     /// Carried for the diagnostics alone.
@@ -139,11 +123,11 @@ struct Tarball<'a> {
 }
 
 impl<'a> Tarball<'a> {
-    /// Read enough of the file to say what it is, or refuse it by name.
+    /// Identify the file's archive format, or return an error naming its URL.
     fn identify(file: &'a fs::File, url: &'a str) -> Result<Self, Error> {
         let head = head_of(file).map_err(|source| Error::Archive {
             url: url.to_owned(),
-            source: Invalid::Unreadable { source },
+            source: ArchiveError::Unreadable { source },
         })?;
         let format = if head.starts_with(&GZIP_MAGIC) {
             Format::Gzip
@@ -152,7 +136,7 @@ impl<'a> Tarball<'a> {
         } else {
             return Err(Error::Archive {
                 url: url.to_owned(),
-                source: Invalid::Format {
+                source: ArchiveError::Format {
                     saw: looks_like(&head),
                 },
             });
@@ -160,8 +144,8 @@ impl<'a> Tarball<'a> {
         Ok(Self { file, format, url })
     }
 
-    /// Name this archive, by URL, as the reason something failed.
-    fn fault(&self, invalid: Invalid) -> Error {
+    /// Attach the archive URL to an extraction error.
+    fn fault(&self, invalid: ArchiveError) -> Error {
         Error::Archive {
             url: self.url.to_owned(),
             source: invalid,
@@ -170,19 +154,18 @@ impl<'a> Tarball<'a> {
 
     /// An entry that would be written outside the tree.
     fn escaping(&self, entry: &Path) -> Error {
-        self.fault(Invalid::EscapingEntry {
+        self.fault(ArchiveError::EscapingEntry {
             entry: display(entry),
         })
     }
 
-    /// An archive of the right format that does not read as one.
+    /// Wrap a read failure with the archive URL.
     fn unreadable(&self, source: io::Error) -> Error {
-        self.fault(Invalid::Unreadable { source })
+        self.fault(ArchiveError::Unreadable { source })
     }
 }
 
-/// How the archive's bytes are wrapped, decided by reading them rather than from
-/// the URL, which redirects and is named by whoever published it.
+/// Archive format detected from the file contents.
 #[derive(Debug, Clone, Copy)]
 enum Format {
     Gzip,
@@ -190,26 +173,22 @@ enum Format {
 }
 
 /// One entry, as [`plan`] left it.
-struct Record {
-    /// Where the archive says it is, with `.` components dropped — the form
-    /// everything below matches against, and the one a diagnostic names it by. A
-    /// [`Kind::Metadata`] entry keeps the raw spelling, since nothing is matched
-    /// against it and nothing is installed at it.
+struct EntryPlan {
+    /// Archive path with `.` components removed; metadata headers retain their original paths.
     archive_path: PathBuf,
     /// Where it goes, once the root has been stripped.
     placement: Placement,
     /// What it is, and where a link points.
-    kind: Kind,
+    kind: EntryKind,
 }
 
 /// Where an entry ends up in the tree being built.
 enum Placement {
     /// At this path under the tree.
     At(PathBuf),
-    /// The tree itself: the archive's own root entry, or the directory
-    /// `archive-root` stripped. It is already there, so the only thing it has
-    /// left to say is what mode it should carry.
-    TheTreeItself,
+    /// The extraction root, including a stripped `archive-root` entry. Only its mode is
+    /// applied.
+    Root,
     /// Outside a named `archive-root`, and therefore not installed at all.
     NotInstalled,
 }
@@ -218,24 +197,20 @@ impl Placement {
     fn path(&self) -> Option<&Path> {
         match self {
             Self::At(path) => Some(path),
-            Self::TheTreeItself | Self::NotInstalled => None,
+            Self::Root | Self::NotInstalled => None,
         }
     }
 }
 
 /// What an entry is, and what a link entry resolves to.
-enum Kind {
+enum EntryKind {
     File,
     Directory,
-    /// The target exactly as the archive writes it, since that is what a symlink
-    /// stores.
+    /// The symlink target exactly as stored in the archive.
     Symlink(PathBuf),
-    /// The target's place in the tree being built, root already stripped: a tar
-    /// hardlink names a path within the archive rather than one relative to the
-    /// entry, so it is stripped the way an entry path is.
+    /// The hardlink target relative to the extraction root, after stripping `archive-root`.
     Hardlink(PathBuf),
-    /// A pax or GNU extension header, which describes the next entry. A kind of
-    /// its own so both passes skip the same entries.
+    /// A pax or GNU extension header, skipped during extraction.
     Metadata,
 }
 
@@ -260,12 +235,11 @@ fn is_tar_header(head: &[u8]) -> bool {
                 };
                 (unsigned + u32::from(byte), signed + i32::from(byte as i8))
             });
-    // Two answers because implementations disagreed about whether a byte is
-    // signed. Either one is the archive agreeing with itself.
+    // Accept both signed-byte and unsigned-byte tar checksums.
     declared == unsigned || i64::from(declared) == i64::from(signed)
 }
 
-/// A tar header's octal number field, which is digits, then padding.
+/// Parse a padded octal tar-header field; return `None` if invalid.
 fn octal(field: &[u8]) -> Option<u32> {
     let mut value: u32 = 0;
     let mut digits = 0;
@@ -316,18 +290,15 @@ fn rewound(file: &fs::File) -> io::Result<fs::File> {
     Ok(own)
 }
 
-/// Read every entry, check what will be written, and settle what the root
-/// strips.
-fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error> {
-    let mut declared: Vec<(PathBuf, Kind)> = Vec::new();
+/// Validate archive entries and compute their destinations after stripping the selected root.
+fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<EntryPlan>, Error> {
+    let mut declared: Vec<(PathBuf, EntryKind)> = Vec::new();
     for_each_entry(tarball, |entry| {
         let as_written = path_of(entry, tarball)?;
         let kind = kind_of(entry, tarball)?;
-        let archive_path = if matches!(kind, Kind::Metadata) {
+        let archive_path = if matches!(kind, EntryKind::Metadata) {
             as_written
         } else {
-            // Named in the diagnostic as the archive writes it, since the
-            // spelling is what is wrong with it.
             entry_path(&as_written).ok_or_else(|| tarball.escaping(&as_written))?
         };
         declared.push((archive_path, kind));
@@ -335,16 +306,14 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error>
     })?;
 
     let strip = root_prefix(&declared, root, tarball)?;
-    let mut records: Vec<Record> = declared
+    let mut records: Vec<EntryPlan> = declared
         .into_iter()
         .map(|(archive_path, kind)| {
             let placement = match kind {
-                // Describes the entry after it rather than being one, so it is
-                // installed nowhere and no root has anything to strip off it.
-                Kind::Metadata => Placement::NotInstalled,
+                EntryKind::Metadata => Placement::NotInstalled,
                 _ => place(&archive_path, strip.as_deref()),
             };
-            Record {
+            EntryPlan {
                 archive_path,
                 placement,
                 kind,
@@ -352,11 +321,10 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error>
         })
         .collect();
 
-    // Every symlink that will exist in the finished tree, which is what decides
-    // whether a `..` elsewhere can be trusted.
+    // Collect all symlinks before validating paths; later entries can change how `..` resolves.
     let links: BTreeSet<PathBuf> = records
         .iter()
-        .filter(|record| matches!(record.kind, Kind::Symlink(_)))
+        .filter(|record| matches!(record.kind, EntryKind::Symlink(_)))
         .filter_map(|record| record.placement.path().map(Path::to_path_buf))
         .collect();
 
@@ -369,10 +337,10 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error>
         .any(|record| matches!(record.placement, Placement::At(_)))
     {
         return Err(tarball.fault(match strip {
-            Some(root) => Invalid::EmptyRoot {
+            Some(root) => ArchiveError::EmptyRoot {
                 root: display(&root),
             },
-            None => Invalid::Empty,
+            None => ArchiveError::Empty,
         }));
     }
     Ok(records)
@@ -380,7 +348,7 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<Record>, Error>
 
 /// Check an entry that is going to be installed, and settle where a link points.
 fn check_and_resolve(
-    record: &mut Record,
+    record: &mut EntryPlan,
     strip: Option<&Path>,
     links: &BTreeSet<PathBuf>,
     tarball: &Tarball<'_>,
@@ -392,10 +360,10 @@ fn check_and_resolve(
         return Err(tarball.escaping(&record.archive_path));
     }
     match &mut record.kind {
-        Kind::File | Kind::Directory | Kind::Metadata => Ok(()),
-        Kind::Symlink(target) => {
+        EntryKind::File | EntryKind::Directory | EntryKind::Metadata => Ok(()),
+        EntryKind::Symlink(target) => {
             if cfg!(not(unix)) {
-                return Err(tarball.fault(Invalid::SymlinkEntry {
+                return Err(tarball.fault(ArchiveError::SymlinkEntry {
                     entry: display(&record.archive_path),
                 }));
             }
@@ -406,7 +374,7 @@ fn check_and_resolve(
                 Err(tarball.escaping(&record.archive_path))
             }
         }
-        Kind::Hardlink(target) => {
+        EntryKind::Hardlink(target) => {
             *target = entry_path(target)
                 .map(|named| place(&named, strip))
                 .and_then(|placement| placement.path().map(Path::to_path_buf))
@@ -417,10 +385,9 @@ fn check_and_resolve(
     }
 }
 
-/// The prefix every entry is written without, resolved from what the manifest
-/// asked for.
+/// Resolve the `archive-root` prefix from the declared entry paths.
 fn root_prefix(
-    declared: &[(PathBuf, Kind)],
+    declared: &[(PathBuf, EntryKind)],
     root: Option<&str>,
     tarball: &Tarball<'_>,
 ) -> Result<Option<PathBuf>, Error> {
@@ -434,14 +401,14 @@ fn root_prefix(
     }
     let tops: BTreeSet<String> = declared
         .iter()
-        .filter(|(_, kind)| !matches!(kind, Kind::Metadata))
+        .filter(|(_, kind)| !matches!(kind, EntryKind::Metadata))
         .filter_map(|(path, _)| path.components().next())
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect();
     match tops.len() {
-        0 => Err(tarball.fault(Invalid::Empty)),
+        0 => Err(tarball.fault(ArchiveError::Empty)),
         1 => Ok(tops.into_iter().next().map(PathBuf::from)),
-        _ => Err(tarball.fault(Invalid::AmbiguousRoot {
+        _ => Err(tarball.fault(ArchiveError::AmbiguousRoot {
             found: tops.into_iter().collect(),
         })),
     }
@@ -458,7 +425,7 @@ fn place(path: &Path, strip: Option<&Path>) -> Placement {
     };
     match remainder.components().next() {
         Some(_) => Placement::At(remainder.to_path_buf()),
-        None => Placement::TheTreeItself,
+        None => Placement::Root,
     }
 }
 
@@ -504,19 +471,19 @@ fn stays_inside(path: &Path, links: &BTreeSet<PathBuf>) -> bool {
 }
 
 /// Write the records into the tree being built.
-fn unpack(tarball: &Tarball<'_>, records: &[Record], into: &Path) -> Result<(), Error> {
+fn unpack(tarball: &Tarball<'_>, records: &[EntryPlan], into: &Path) -> Result<(), Error> {
     let mut root_mode = UNSTATED_DIRECTORY_MODE;
     let mut directories: Vec<(PathBuf, u32)> = Vec::new();
     let mut planned = records.iter();
 
     for_each_entry(tarball, |entry| {
         let Some(record) = planned.next() else {
-            return Err(tarball.fault(Invalid::Changed));
+            return Err(tarball.fault(ArchiveError::Changed));
         };
         let built_at = match &record.placement {
             Placement::At(inside) => into.join(inside),
-            Placement::TheTreeItself => {
-                if matches!(record.kind, Kind::Directory) {
+            Placement::Root => {
+                if matches!(record.kind, EntryKind::Directory) {
                     root_mode = mode_of(entry, &record.kind);
                 }
                 return Ok(());
@@ -525,52 +492,47 @@ fn unpack(tarball: &Tarball<'_>, records: &[Record], into: &Path) -> Result<(), 
         };
 
         match &record.kind {
-            Kind::Directory => {
+            EntryKind::Directory => {
                 create_directory(&built_at)?;
                 directories.push((built_at, mode_of(entry, &record.kind)));
             }
-            Kind::File => {
+            EntryKind::File => {
                 create_parents(&built_at)?;
                 let mut file = create_private_file(&built_at)?;
                 io::copy(entry, &mut file).map_err(|source| Error::Write {
                     path: built_at.clone(),
                     source,
                 })?;
-                // Last, so an interrupted run leaves nothing readable behind.
+                // Keep the file private until its contents are complete.
                 set_mode(&built_at, mode_of(entry, &record.kind))?;
             }
-            Kind::Symlink(target) => {
+            EntryKind::Symlink(target) => {
                 create_parents(&built_at)?;
                 symlink(target, &built_at).map_err(|source| Error::Write {
                     path: built_at,
                     source,
                 })?;
             }
-            // The target is already the path within the tree, resolved when the
-            // root was known.
-            Kind::Hardlink(target) => {
+            EntryKind::Hardlink(target) => {
                 create_parents(&built_at)?;
                 fs::hard_link(into.join(target), &built_at).map_err(|source| Error::Write {
                     path: built_at,
                     source,
                 })?;
             }
-            Kind::Metadata => {}
+            EntryKind::Metadata => {}
         }
         Ok(())
     })?;
     if planned.next().is_some() {
-        return Err(tarball.fault(Invalid::Changed));
+        return Err(tarball.fault(ArchiveError::Changed));
     }
 
-    // Deepest first, so a directory the archive marks unwritable takes that mode
-    // only once nothing more is going into it.
+    // Apply descendant modes before ancestors that may become unwritable.
     directories.sort_by(|(left, _), (right, _)| right.cmp(left));
     for (path, mode) in directories {
         set_mode(&path, mode)?;
     }
-    // The tree itself last of all, for the same reason: everything under it is
-    // finished, and it is what the caller publishes.
     set_mode(into, root_mode)
 }
 
@@ -604,23 +566,23 @@ fn path_of(entry: &ArchiveEntry<'_>, tarball: &Tarball<'_>) -> Result<PathBuf, E
 }
 
 /// Which kind an entry is, refusing the ones batfiles has no way to install.
-fn kind_of(entry: &ArchiveEntry<'_>, tarball: &Tarball<'_>) -> Result<Kind, Error> {
+fn kind_of(entry: &ArchiveEntry<'_>, tarball: &Tarball<'_>) -> Result<EntryKind, Error> {
     let entry_type = entry.header().entry_type();
     if entry_type.is_pax_global_extensions()
         || entry_type.is_pax_local_extensions()
         || entry_type.is_gnu_longname()
         || entry_type.is_gnu_longlink()
     {
-        return Ok(Kind::Metadata);
+        return Ok(EntryKind::Metadata);
     }
     if entry_type.is_dir() {
-        return Ok(Kind::Directory);
+        return Ok(EntryKind::Directory);
     }
     if entry_type.is_file() {
-        return Ok(Kind::File);
+        return Ok(EntryKind::File);
     }
     let unsupported = || {
-        tarball.fault(Invalid::UnsupportedEntry {
+        tarball.fault(ArchiveError::UnsupportedEntry {
             entry: entry
                 .path()
                 .map_or_else(|_| String::from("?"), |path| display(&path)),
@@ -630,17 +592,15 @@ fn kind_of(entry: &ArchiveEntry<'_>, tarball: &Tarball<'_>) -> Result<Kind, Erro
         return Err(unsupported());
     };
     if entry_type.is_symlink() {
-        Ok(Kind::Symlink(target.into_owned()))
+        Ok(EntryKind::Symlink(target.into_owned()))
     } else if entry_type.is_hard_link() {
-        Ok(Kind::Hardlink(target.into_owned()))
+        Ok(EntryKind::Hardlink(target.into_owned()))
     } else {
         Err(unsupported())
     }
 }
 
-/// Create a directory of the tree, and every directory above it the archive did
-/// not name. All of it is under the staging root, which is closed, so the modes
-/// these take in the meantime are reachable by nobody.
+/// Create a directory and any missing parents under the private staging root.
 fn create_directory(at: &Path) -> Result<(), Error> {
     fs::create_dir_all(at).map_err(|source| Error::Write {
         path: at.to_path_buf(),
@@ -648,8 +608,7 @@ fn create_directory(at: &Path) -> Result<(), Error> {
     })
 }
 
-/// Create the directories an entry sits under, for an archive that names a file
-/// without naming the directory holding it.
+/// Create any missing parent directories for an entry.
 fn create_parents(at: &Path) -> Result<(), Error> {
     match at.parent() {
         Some(parent) => create_directory(parent),
@@ -657,9 +616,7 @@ fn create_parents(at: &Path) -> Result<(), Error> {
     }
 }
 
-/// Create a private file of the tree, failing rather than truncating if the path
-/// is taken: inside a staging node this run just made, a name already taken is an
-/// archive naming one entry twice.
+/// Create a file with private permissions; fail if the path already exists.
 #[cfg(unix)]
 fn create_private_file(at: &Path) -> Result<fs::File, Error> {
     use std::os::unix::fs::OpenOptionsExt as _;
@@ -675,9 +632,7 @@ fn create_private_file(at: &Path) -> Result<fs::File, Error> {
         })
 }
 
-/// Where a mode means something other than it does on unix, this is ordinary
-/// exclusive creation: the permissions batfiles carries across are the unix
-/// ones, and there is nothing here to narrow.
+/// Create a file exclusively, without applying Unix permissions.
 #[cfg(not(unix))]
 fn create_private_file(at: &Path) -> Result<fs::File, Error> {
     fs::OpenOptions::new()
@@ -693,18 +648,17 @@ fn create_private_file(at: &Path) -> Result<fs::File, Error> {
 /// The permission bits an entry asks for, with the ones batfiles will not grant
 /// removed.
 #[cfg(unix)]
-fn mode_of(entry: &ArchiveEntry<'_>, kind: &Kind) -> u32 {
+fn mode_of(entry: &ArchiveEntry<'_>, kind: &EntryKind) -> u32 {
     let unstated = match kind {
-        Kind::Directory => UNSTATED_DIRECTORY_MODE,
+        EntryKind::Directory => UNSTATED_DIRECTORY_MODE,
         _ => UNSTATED_FILE_MODE,
     };
     entry.header().mode().unwrap_or(unstated) & KEPT_BITS
 }
 
-/// Where a mode means something other than it does on unix, an entry's bits are
-/// not carried across, so there is nothing to read and nothing to apply.
+/// Return a placeholder mode on platforms where Unix permissions are not applied.
 #[cfg(not(unix))]
-fn mode_of(_entry: &ArchiveEntry<'_>, _kind: &Kind) -> u32 {
+fn mode_of(_entry: &ArchiveEntry<'_>, _kind: &EntryKind) -> u32 {
     0
 }
 
@@ -740,8 +694,7 @@ mod tests {
         assert_eq!(entry_path(Path::new("a/b")), Some(PathBuf::from("a/b")));
         assert_eq!(entry_path(Path::new("./a/b")), Some(PathBuf::from("a/b")));
         assert_eq!(entry_path(Path::new("a/./b")), Some(PathBuf::from("a/b")));
-        // What `tar czf x.tgz .` writes for the archive's own root, which names
-        // the tree rather than anything in it.
+        // Tar uses `./` for the archive root.
         assert_eq!(entry_path(Path::new("./")), Some(PathBuf::new()));
         assert_eq!(entry_path(Path::new("")), Some(PathBuf::new()));
     }
@@ -758,33 +711,24 @@ mod tests {
         let strip = Some(Path::new("tool-1.0"));
         let at = |path: &str| match place(Path::new(path), strip) {
             Placement::At(inside) => Some(inside),
-            Placement::TheTreeItself | Placement::NotInstalled => None,
+            Placement::Root | Placement::NotInstalled => None,
         };
         assert_eq!(at("tool-1.0/bin/tool"), Some(PathBuf::from("bin/tool")));
-        // Outside the prefix, so not installed. A sibling whose name merely
-        // starts with the prefix is not under it.
         assert_eq!(at("other/x"), None);
         assert_eq!(at("tool-1.0-docs/x"), None);
-        // The root's own entry is the tree, told apart from the entries that are
-        // not installed at all because it still has a mode to give.
         assert!(matches!(
             place(Path::new("tool-1.0"), strip),
-            Placement::TheTreeItself
+            Placement::Root
         ));
         assert!(matches!(
             place(Path::new("other/x"), strip),
             Placement::NotInstalled
         ));
-        // With no root, every entry keeps the path it was written with, and the
-        // archive's own root is still the tree.
         assert!(matches!(
             place(Path::new("bin/tool"), None),
             Placement::At(_)
         ));
-        assert!(matches!(
-            place(Path::new(""), None),
-            Placement::TheTreeItself
-        ));
+        assert!(matches!(place(Path::new(""), None), Placement::Root));
     }
 
     #[test]
@@ -806,7 +750,6 @@ mod tests {
         assert!(!stays_inside(Path::new("a/b/../../outside"), &links));
         // One `..` past the link is already wrong, before it leaves the tree.
         assert!(!stays_inside(Path::new("a/b/../c"), &links));
-        // And the ordinary ways out.
         for refused in ["/etc/shadow", "../../outside", ".."] {
             assert!(!stays_inside(Path::new(refused), &links), "`{refused}`");
         }
@@ -820,8 +763,6 @@ mod tests {
             looks_like(b"<!DOCTYPE html>"),
             "not an archive batfiles recognizes"
         );
-        // An empty body is not an archive either, and asking about its first
-        // bytes must not panic.
         assert_eq!(looks_like(b""), "not an archive batfiles recognizes");
     }
 
@@ -842,8 +783,7 @@ mod tests {
 
     #[test]
     fn a_tar_is_recognized_by_its_checksum_rather_than_by_its_format() {
-        // POSIX, GNU, and V7 — the last of which carries no magic at all, and is
-        // the one a check for `ustar` at offset 257 would refuse.
+        // V7 headers lack the `ustar` magic; their checksum still identifies them as tar.
         for magic in [&b"ustar\0"[..], b"ustar  \0", b""] {
             assert!(is_tar_header(&header(magic)), "{magic:?}");
         }
@@ -851,12 +791,9 @@ mod tests {
 
     #[test]
     fn something_that_is_not_a_tar_header_is_not_taken_for_one() {
-        // A block that is the right length and says the wrong thing about
-        // itself, which is what the checksum is for.
         let mut wrong = header(b"ustar\0");
         wrong[0] = b'z';
         assert!(!is_tar_header(&wrong));
-        // Too short to hold a header, all zeroes, and ordinary text.
         assert!(!is_tar_header(b"ustar"));
         assert!(!is_tar_header(&[0u8; HEADER_BYTES]));
         assert!(!is_tar_header(&[b'x'; HEADER_BYTES]));

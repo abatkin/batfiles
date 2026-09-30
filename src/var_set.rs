@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::dynamic::{CachePolicy, DynamicVarResolver, ManifestSource, ResolvedDynamicVar};
 use crate::env::Environment;
-use crate::env_vars;
+use crate::env_overrides;
 use crate::error::Error;
 use crate::location::{Roots, StateRoots};
 use crate::machine_vars::MachineVars;
@@ -16,8 +16,7 @@ use crate::manifest::vars::VarSpec;
 use crate::output::{Reporter, quoted_value};
 use crate::var::VarName;
 
-/// Reported at `-vv`: variables are a run's inputs, while `-v` reports what it
-/// did.
+/// Verbosity level for variable-value reports (`-vv`).
 const DETAIL: u8 = 2;
 
 /// How a report names a manifest's `[vars]`. An included manifest's also names
@@ -32,10 +31,10 @@ pub(crate) enum Origin {
     /// that inclusion's records. Labeled by the inclusion. At most one per set.
     IncludedManifest(String),
     /// The leaf repository's `[vars]`.
-    Manifest,
+    LeafManifest,
     /// An `include-remote`'s `vars` overrides, applying only to that
     /// inclusion's records. Labeled by the inclusion. At most one per set.
-    Inclusion(String),
+    InclusionOverrides(String),
     /// The machine-local `vars.toml`.
     Machine,
     /// A `BATFILES_VAR_*` variable in this run's environment.
@@ -49,20 +48,18 @@ impl Origin {
     fn label(&self) -> Cow<'_, str> {
         match self {
             Self::IncludedManifest(label) => Cow::Owned(format!("{MANIFEST_LABEL} of {label}")),
-            Self::Manifest => Cow::Borrowed(MANIFEST_LABEL),
-            Self::Inclusion(label) => Cow::Borrowed(label),
+            Self::LeafManifest => Cow::Borrowed(MANIFEST_LABEL),
+            Self::InclusionOverrides(label) => Cow::Borrowed(label),
             Self::Machine => Cow::Borrowed("vars.toml"),
             Self::Environment => Cow::Borrowed("BATFILES_VAR_*"),
             Self::CommandLine => Cow::Borrowed("--var"),
         }
     }
 
-    /// The label of the inclusion this layer was
-    /// [derived](VarSet::with_inclusion) for, or `None` for a run layer. Unlike
-    /// [`Self::label`], unrendered: it heads the inclusion's `-vv` block.
+    /// Return the inclusion's unformatted label, or `None` for a run-level origin.
     fn inclusion(&self) -> Option<&str> {
         match self {
-            Self::IncludedManifest(label) | Self::Inclusion(label) => Some(label),
+            Self::IncludedManifest(label) | Self::InclusionOverrides(label) => Some(label),
             _ => None,
         }
     }
@@ -104,7 +101,7 @@ impl VarValue {
     fn state(&self) -> Option<String> {
         match self {
             Self::Static(_) => None,
-            Self::Dynamic(resolved) => Some(resolved.refresh.describe()),
+            Self::Dynamic(resolved) => Some(resolved.state.describe()),
         }
     }
 }
@@ -129,7 +126,7 @@ impl VarSet {
     /// (`cli`, in written order). `dynamic` resolves the leaf's declarations.
     ///
     /// An unreadable or malformed `vars.toml` or dynamic-variable cache fails;
-    /// [`env_vars`] warns about and drops unusable environment names.
+    /// [`env_overrides`] warns about and drops unusable environment names.
     pub fn resolve(
         manifest: &BTreeMap<VarName, VarSpec>,
         repository: &std::path::Path,
@@ -139,8 +136,8 @@ impl VarSet {
         dynamic: &mut DynamicVarResolver<'_>,
         reporter: &Reporter,
     ) -> Result<Self, Error> {
-        let machine = MachineVars::load(&roots.machine_vars())?;
-        let environment = env_vars::overrides(env, reporter);
+        let machine = MachineVars::load(&roots.machine_vars_path())?;
+        let environment = env_overrides::overrides(env, reporter);
         let source = ManifestSource {
             remote: None,
             root: repository,
@@ -159,7 +156,7 @@ impl VarSet {
         Self {
             layers: vec![
                 Layer {
-                    origin: Origin::Manifest,
+                    origin: Origin::LeafManifest,
                     values: manifest,
                 },
                 Layer {
@@ -178,14 +175,11 @@ impl VarSet {
         }
     }
 
-    /// The scope for one inclusion's records: these layers plus the included
-    /// remote's `[vars]` as the lowest layer and the inclusion's `vars`
-    /// overrides directly above the leaf's `[vars]`, as
-    /// [`docs/environment.md`](../docs/environment.md#variable-precedence)
-    /// orders them. `label` names the inclusion on both layers.
+    /// Derive an inclusion scope with remote variables below the leaf layer and inclusion
+    /// overrides directly above it. `label` identifies both added layers.
     ///
-    /// `self` must be the run's own set, not a derived one: a set holds at most
-    /// one layer of each kind. Derive one scope per opened inclusion.
+    /// Call on the run's base set, not a derived scope; each scope contains at most one layer
+    /// of each kind.
     pub fn with_inclusion(
         &self,
         remote: &BTreeMap<VarName, VarValue>,
@@ -197,13 +191,13 @@ impl VarSet {
             values: remote.clone(),
         }];
         for layer in self.base_layers() {
-            let leaf = matches!(layer.origin, Origin::Manifest);
+            let leaf = matches!(layer.origin, Origin::LeafManifest);
             layers.push(layer.clone());
             // `stack` always writes a leaf layer, so the overrides are added
             // exactly once.
             if leaf {
                 layers.push(Layer {
-                    origin: Origin::Inclusion(label.to_owned()),
+                    origin: Origin::InclusionOverrides(label.to_owned()),
                     values: statics(overrides.clone()),
                 });
             }
@@ -225,10 +219,9 @@ impl VarSet {
             .filter(|layer| layer.origin.inclusion().is_none())
     }
 
-    /// The highest-precedence value, or `None` if no layer declares the name.
-    /// A declared empty string is a value, and so is a dynamic declaration that
-    /// produced none, which reads as empty. The result borrows only from the
-    /// set.
+    /// Return the highest-priority value, or `None` for an undeclared name. A dynamic
+    /// declaration with no captured value returns an empty string and still overrides lower
+    /// layers.
     pub fn get<'a>(&'a self, name: &str) -> Option<&'a str> {
         self.declaring(name).next().map(|(_, value)| value.text())
     }
@@ -272,7 +265,7 @@ impl VarSet {
         let mut inclusion = None;
         let mut names = BTreeSet::new();
         for layer in self.derived_layers() {
-            // Both layers carry the same label.
+            // Both inclusion layers use the same label.
             inclusion = layer.origin.inclusion();
             names.extend(layer.values.keys());
         }
@@ -335,10 +328,8 @@ impl VarSet {
             .collect()
     }
 
-    /// The line for one name: the value in force, its layer and how a dynamic
-    /// declaration arrived at it, and the layers it overrode; `None` if no
-    /// layer declares the name. Values are untrusted text, so they go through
-    /// [`quoted_value`].
+    /// Format a variable's effective value, origin, dynamic state, and shadowed origins. Quote
+    /// values for single-line output. Return `None` if no layer declares the name.
     fn line(&self, name: &VarName, width: usize) -> Option<String> {
         let name = name.as_str();
         let mut declaring = self.declaring(name);
@@ -358,21 +349,20 @@ impl VarSet {
     }
 }
 
-/// List variables for the selected leaf repository, without CLI overrides.
-///
-/// Resolves the leaf's dynamic declarations under `policy`, leaving unrun any
-/// a machine-local value shadows, and writes what it captured to the cache.
+/// List leaf-repository variables without CLI overrides. Resolve dynamic declarations using
+/// `policy`, skip those shadowed by machine-local values, and save captured values to the
+/// cache.
 pub(crate) fn list(
     roots: &Roots,
     env: &Environment,
     policy: CachePolicy,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    let manifest = Manifest::load(&roots.manifest())?;
-    let mut dynamic = DynamicVarResolver::lazy(&roots.state, policy, reporter);
+    let manifest = Manifest::load(&roots.manifest_path())?;
+    let mut dynamic = DynamicVarResolver::for_listing(&roots.state, policy, reporter);
     let set = VarSet::resolve(
         &manifest.vars,
-        &roots.batfiles_dir,
+        &roots.batfiles_repo,
         &roots.state,
         env,
         &[],
@@ -386,7 +376,7 @@ pub(crate) fn list(
 
 /// List only persisted machine variables; do not read the repository or environment.
 pub(crate) fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
-    let machine = MachineVars::load(&state.machine_vars())?;
+    let machine = MachineVars::load(&state.machine_vars_path())?;
     VarSet::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
     Ok(())
 }
@@ -475,7 +465,10 @@ mod tests {
             ("environment".to_owned(), Origin::Environment)
         );
         assert_eq!(winner(&set, "b"), ("machine".to_owned(), Origin::Machine));
-        assert_eq!(winner(&set, "c"), ("manifest".to_owned(), Origin::Manifest));
+        assert_eq!(
+            winner(&set, "c"),
+            ("manifest".to_owned(), Origin::LeafManifest)
+        );
     }
 
     #[test]
@@ -520,7 +513,6 @@ mod tests {
 
     #[test]
     fn get_answers_with_the_value_in_force() {
-        // Conditions read `get`; `-vv` lines walk the same layers.
         let set = stacked(
             [("a", "manifest"), ("b", "manifest")],
             [("a", "machine")],
@@ -533,8 +525,6 @@ mod tests {
 
     #[test]
     fn get_tells_a_declared_empty_value_from_an_undeclared_name() {
-        // A bare identifier reads `""` as false and `None` as an undeclared
-        // error.
         let set = stacked([], [], [], [("empty", "")]);
         assert_eq!(set.get("empty"), Some(""));
         assert_eq!(set.get("missing"), None);
@@ -553,7 +543,6 @@ mod tests {
 
     #[test]
     fn get_accepts_text_that_is_not_a_valid_name() {
-        // A condition can index `vars` with any text.
         let set = stacked([("a", "1")], [], [], []);
         assert_eq!(set.get("has-dash"), None);
         assert_eq!(set.get(""), None);
@@ -561,7 +550,6 @@ mod tests {
 
     #[test]
     fn an_empty_value_overrides_like_any_other() {
-        // `--var profile=` declares `profile` as the empty string.
         let set = stacked([("profile", "personal")], [], [], [("profile", "")]);
         assert_eq!(
             winner(&set, "profile"),
@@ -584,7 +572,7 @@ mod tests {
         let set = stacked([("p", "manifest")], [], [], [("p", "first"), ("p", "last")]);
         assert_eq!(
             shadowed(&set, "p"),
-            [Origin::Manifest],
+            [Origin::LeafManifest],
             "a repeated `--var` should not shadow itself"
         );
     }
@@ -599,7 +587,7 @@ mod tests {
         );
         assert_eq!(
             shadowed(&set, "a"),
-            [Origin::Environment, Origin::Machine, Origin::Manifest],
+            [Origin::Environment, Origin::Machine, Origin::LeafManifest],
             "the layers should be listed highest first"
         );
     }
@@ -609,12 +597,10 @@ mod tests {
         let set = stacked([("editor", "nvim")], [("EDITOR", "vi")], [], []);
         assert_eq!(
             winner(&set, "editor"),
-            ("nvim".to_owned(), Origin::Manifest)
+            ("nvim".to_owned(), Origin::LeafManifest)
         );
         assert_eq!(winner(&set, "EDITOR"), ("vi".to_owned(), Origin::Machine));
     }
-
-    // What one inclusion does to the set.
 
     /// An inclusion label, as [`Inclusion::at`](crate::inclusion::Inclusion::at)
     /// spells one.
@@ -665,8 +651,8 @@ mod tests {
             origins(&set),
             [
                 Origin::IncludedManifest(CORP.to_owned()),
-                Origin::Manifest,
-                Origin::Inclusion(CORP.to_owned()),
+                Origin::LeafManifest,
+                Origin::InclusionOverrides(CORP.to_owned()),
                 Origin::Machine,
                 Origin::Environment,
                 Origin::CommandLine,
@@ -678,7 +664,6 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "derived from the run's own set")]
     fn a_scope_is_not_derived_from_another_scope() {
-        // Deriving from a scope would stack two inclusions' layers into one.
         let corp = derived(&stacked([], [], [], []), [("profile", "work")]);
         let _ = derived(&corp, [("profile", "lab")]);
     }
@@ -697,7 +682,10 @@ mod tests {
         );
         assert_eq!(
             winner(&set, "a"),
-            ("corp".to_owned(), Origin::Inclusion(CORP.to_owned()))
+            (
+                "corp".to_owned(),
+                Origin::InclusionOverrides(CORP.to_owned())
+            )
         );
         assert_eq!(winner(&set, "b"), ("machine".to_owned(), Origin::Machine));
         assert_eq!(
@@ -726,7 +714,6 @@ mod tests {
 
     #[test]
     fn an_override_block_lists_the_names_the_inclusion_declared() {
-        // Only those; the rest of the set is in the run's own block.
         let base = stacked([("editor", "vi"), ("profile", "personal")], [], [], []);
         let set = derived(&base, [("profile", "work")]);
         assert_eq!(
@@ -757,8 +744,6 @@ mod tests {
         assert_eq!(set.get("a"), Some("1"));
     }
 
-    // What the included remote's own `[vars]` does to the set.
-
     #[test]
     fn an_included_remotes_vars_lose_to_every_other_layer() {
         let base = stacked(
@@ -780,9 +765,12 @@ mod tests {
         );
         assert_eq!(
             winner(&set, "a"),
-            ("corp".to_owned(), Origin::Inclusion(CORP.to_owned()))
+            (
+                "corp".to_owned(),
+                Origin::InclusionOverrides(CORP.to_owned())
+            )
         );
-        assert_eq!(winner(&set, "b"), ("leaf".to_owned(), Origin::Manifest));
+        assert_eq!(winner(&set, "b"), ("leaf".to_owned(), Origin::LeafManifest));
         assert_eq!(winner(&set, "c"), ("machine".to_owned(), Origin::Machine));
         assert_eq!(
             winner(&set, "d"),
@@ -813,7 +801,6 @@ mod tests {
 
     #[test]
     fn a_remotes_declaration_is_listed_under_the_inclusion_that_opened_it() {
-        // Every repository's manifest is a `batfiles.toml`.
         let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
         assert_eq!(
             override_lines(&set),
@@ -836,7 +823,6 @@ mod tests {
 
     #[test]
     fn the_block_is_headed_by_the_inclusion_and_not_by_either_document() {
-        // Not `batfiles.toml of include-remote `corp``.
         let set = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
         assert_eq!(block_heading(&set), Some(format!("{CORP} variables:")));
         assert_eq!(block_heading(&stacked([("a", "1")], [], [], [])), None);
@@ -848,8 +834,6 @@ mod tests {
         assert_eq!(set.derived_layers().count(), 2);
         assert!(!override_lines(&set).is_empty());
     }
-
-    // What `-vv` shows.
 
     #[test]
     fn a_line_gives_the_value_its_layer_and_what_it_overrode() {
@@ -870,7 +854,6 @@ mod tests {
 
     #[test]
     fn an_empty_value_is_visible_in_a_line() {
-        // Quoted, so it does not read as a missing value.
         let set = stacked([], [], [], [("profile", "")]);
         assert_eq!(set.lines(), ["profile = \"\" (--var)"]);
     }

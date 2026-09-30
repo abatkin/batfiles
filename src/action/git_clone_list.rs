@@ -3,7 +3,7 @@
 use super::RunContext;
 use crate::clone_list::PreparedList;
 use crate::error::Error;
-use crate::git::{self, Failure};
+use crate::git::{self, GitError};
 
 /// Create the destination directory and process entries in list order. `list`
 /// was read during preparation; an empty one declares no repositories.
@@ -13,7 +13,6 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
         return Ok(());
     }
 
-    // How the list is named in every line below.
     let name = list.name();
 
     if list.is_empty() {
@@ -23,8 +22,6 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
     }
     for entry in list.entries() {
         let declared = &entry.declared;
-        // Reported here, under the action's heading, worded like the failure
-        // warning below.
         if let Some(exclusion) = &entry.exclusion {
             let line = format!(
                 "not cloning {} ({}): {}",
@@ -58,30 +55,22 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
     Ok(())
 }
 
-/// Return whether a failed entry may be skipped while processing the remaining list.
-/// Git launch and filesystem failures stop the run. The Git match is exhaustive.
+/// Return whether an entry failure allows processing to continue. Git launch and filesystem
+/// failures stop the run.
 fn is_recoverable_entry_error(error: &Error) -> bool {
     match error {
-        // A destination this entry may not have: something is at it that
-        // batfiles did not put there and will not replace.
         Error::DestinationExists { .. } => true,
-        // A failure after the node in the way was set aside, and could not go
-        // back: recoverable as the failure is, and reported naming where the
-        // node is.
+        // Preserve the original failure's recoverability even if restoring the old node failed.
         Error::SetAside { source, .. } => is_recoverable_entry_error(source),
         Error::Git(failure) => match failure {
-            // Something wrong with one repository, or with one `git` that ran
-            // and failed. The next entry is a different repository.
-            Failure::Failed { .. }
-            | Failure::NotAClone { .. }
-            | Failure::CloneElsewhere { .. }
-            | Failure::CloneIncomplete { .. }
-            | Failure::RefUnresolvable { .. } => true,
-            // No `git` at all, so no entry after this one could clone either.
-            Failure::Unavailable { .. } => false,
+            GitError::Failed { .. }
+            | GitError::NotAClone { .. }
+            | GitError::CloneElsewhere { .. }
+            | GitError::CloneIncomplete { .. }
+            | GitError::RefUnresolvable { .. } => true,
+            // A Git launch failure also prevents later entries from running.
+            GitError::Unavailable { .. } => false,
         },
-        // Reading or writing the machine, and anything else that is not about
-        // this repository.
         _ => false,
     }
 }

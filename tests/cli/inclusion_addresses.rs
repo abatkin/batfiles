@@ -1,18 +1,9 @@
-//! Naming what an inclusion contributed.
-//!
-//! Two rules, read from both sides: an included record answers to its qualified
-//! address and to no unqualified one, and the inclusion is itself a record in
-//! the list rather than a phase beside it.
-//!
-//! The leaf is the `inclusion` fixture, whose `corp` inclusion sits in the leaf
-//! group `work` and contributes `zshrc` (in the included group `shell`), `p10k`
-//! (in `prompt`), and `seeds` (in no group). Which of those an inclusion takes
-//! is `inclusion_filters.rs`; this one is about what they are called.
+//! CLI tests for qualified action/group addresses and inclusion selection. Use the `corporate`
+//! fixture included as `corp` in leaf group `work`.
 
 use crate::support::*;
 
-/// The leaf with nothing brought down yet, for the cases about a group whose
-/// only member is an inclusion the run cannot read.
+/// Create the inclusion fixture with an unmaterialized corporate remote.
 fn including_unmaterialized() -> (BareRepo, Tree) {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::fixture("inclusion");
@@ -20,16 +11,14 @@ fn including_unmaterialized() -> (BareRepo, Tree) {
     (origin, tree)
 }
 
-/// The same leaf with the remote already materialized, so that every case below
-/// is about naming rather than about fetching.
+/// Create and synchronize the inclusion fixture.
 fn synchronized() -> (BareRepo, Tree) {
     let (origin, tree) = including_unmaterialized();
     tree.batfiles().arg("sync").assert().success();
     (origin, tree)
 }
 
-/// The same again with the contributed actions uninstalled, for the cases about
-/// what a later run does or does not do.
+/// Create the synchronized fixture, then remove its installed corporate content.
 fn ready() -> (BareRepo, Tree) {
     let (origin, tree) = synchronized();
     for CorporateAction { dest, .. } in CORPORATE_ACTIONS {
@@ -43,9 +32,7 @@ fn ready() -> (BareRepo, Tree) {
     (origin, tree)
 }
 
-/// Whether `zshrc` and `seeds` are installed: the two records every address
-/// below either reaches or does not, `zshrc` being the one in a group and
-/// `seeds` the one in none.
+/// Return whether the included `zshrc` and `seeds` actions are installed.
 fn installed(tree: &Tree) -> (bool, bool) {
     let installed = installed_corporate(tree);
     (installed.contains(&"zshrc"), installed.contains(&"seeds"))
@@ -85,8 +72,6 @@ fn a_qualified_group_applies_what_the_inclusion_declared_under_it() {
 
 #[test]
 fn asking_for_the_inclusion_asks_for_everything_it_contributed() {
-    // The inclusion is in the leaf group `work`, and what it brings in comes
-    // with it: naming the record is naming its contents.
     let (_origin, tree) = ready();
 
     tree.batfiles()
@@ -103,8 +88,6 @@ fn asking_for_the_inclusion_asks_for_everything_it_contributed() {
 
 #[test]
 fn an_unqualified_name_reaches_the_leaf_repository_alone() {
-    // The included manifest declares `zshrc` in group `shell`, and so could the
-    // leaf. Neither spelling crosses over.
     let (_origin, tree) = ready();
 
     for (option, name) in [("--id", "zshrc"), ("--group", "shell")] {
@@ -162,9 +145,6 @@ fn a_qualified_skip_leaves_out_one_contributed_action() {
 
 #[test]
 fn a_qualified_disable_leaves_out_one_contributed_action() {
-    // The persistent half of the same rule, and the reason `ItemAddress` keeps
-    // an address that resolves to nothing: one written before the inclusion
-    // existed starts matching when it does.
     let (_origin, tree) = ready();
 
     tree.batfiles()
@@ -182,8 +162,6 @@ fn a_qualified_disable_leaves_out_one_contributed_action() {
 
 #[test]
 fn excluding_the_inclusion_leaves_its_manifest_unread() {
-    // Coarser than any address into it: the record is passed over, so nothing it
-    // would have contributed is in the run's list to be named at all.
     let (_origin, tree) = ready();
 
     let assertion = tree
@@ -206,14 +184,11 @@ fn excluding_the_inclusion_leaves_its_manifest_unread() {
         (false, false),
         "a skipped inclusion contributed actions anyway"
     );
-    // The leaf's own record is untouched by the skip.
     assert!(tree.home(".cache/zsh").is_dir(), "the leaf's action ran");
 }
 
 #[test]
 fn a_skip_qualified_by_an_unopened_inclusion_is_not_reported_as_matching_nothing() {
-    // The run never read the list that would have answered it, so it is neither
-    // matched nor unmatched, and saying either would be an invention.
     let (_origin, tree) = ready();
 
     let assertion = tree
@@ -235,8 +210,6 @@ fn a_skip_qualified_by_an_unopened_inclusion_is_not_reported_as_matching_nothing
         !stderr.contains("`corp.zshrc` matched no action"),
         "a name an unopened inclusion might have answered was reported as matching nothing:\n{stderr}"
     );
-    // A name nothing could ever answer is still reported, so the silence above
-    // is about the inclusion rather than about the warning being gone.
     assert!(
         stderr.contains("`nowhere` matched no action"),
         "a name nothing answers was not reported:\n{stderr}"
@@ -245,21 +218,15 @@ fn a_skip_qualified_by_an_unopened_inclusion_is_not_reported_as_matching_nothing
 
 #[test]
 fn a_skip_qualified_by_an_inclusion_with_nothing_to_read_is_treated_the_same_way() {
-    // An inclusion the run opened and could not read is in the same position as
-    // one it never opened: the list that would have answered the name was never
-    // read either way. Both an absent materialization and a remote this machine
-    // excludes leave it there.
     let origin = BareRepo::from_fixture("corporate");
 
     for (args, tree) in [
         (vec!["sync", "--dry-run"], {
-            // Nothing materialized, and a dry run fetches nothing.
             let tree = Tree::fixture("inclusion");
             tree.point_at_origin(&origin);
             tree
         }),
         (vec!["sync", "--var", "work=false"], {
-            // Materialized, and then closed by the remote's own condition.
             let (_, tree) = synchronized();
             let manifest = std::fs::read_to_string(tree.manifest()).expect("the fixture manifest");
             tree.write_manifest(&manifest.replace(
@@ -290,8 +257,6 @@ fn a_skip_qualified_by_an_inclusion_with_nothing_to_read_is_treated_the_same_way
 
 #[test]
 fn a_skip_qualified_by_an_inclusion_that_was_read_and_holds_nothing_is_reported() {
-    // Unlike the two cases above, the list that would answer the name was read:
-    // the manifest is there and declares no actions, so nothing answers it.
     let origin = BareRepo::new();
     origin.publish("batfiles.toml", "", "a remote with no actions");
     let tree = Tree::fixture("inclusion");
@@ -312,9 +277,6 @@ fn a_skip_qualified_by_an_inclusion_that_was_read_and_holds_nothing_is_reported(
 
 #[test]
 fn an_inclusion_opened_to_reach_a_group_is_not_an_applied_action() {
-    // `apply-group` says so when it applies nothing, and an inclusion installs
-    // nothing: the run opened `corp` only to reach the group named inside it, so
-    // it cannot stand in for the one action that group holds.
     let (_origin, tree) = ready();
 
     let assertion = tree
@@ -339,9 +301,6 @@ fn an_inclusion_opened_to_reach_a_group_is_not_an_applied_action() {
 
 #[test]
 fn a_group_whose_inclusion_brought_nothing_in_says_so_without_blaming_a_skip() {
-    // The other side of the same count, and why the line names one more reason
-    // than it used to: the group holds one record, the inclusion was carried
-    // out, and nothing in it was disabled, skipped, or excluded.
     let (_origin, tree) = including_unmaterialized();
 
     let assertion = tree
@@ -460,9 +419,6 @@ const EXCLUDING_CORP: [Excluding; 4] = [
 
 #[test]
 fn naming_an_included_action_does_not_waive_its_inclusions_exclusions() {
-    // `apply-action`'s waiver covers the record it names. The inclusion it
-    // reaches through is decided as a `sync` would decide it, so what this
-    // machine keeps out stays out, and the target fails naming why.
     for Excluding {
         case,
         exclude,
@@ -490,8 +446,6 @@ fn naming_an_included_action_does_not_waive_its_inclusions_exclusions() {
 
 #[test]
 fn naming_an_included_group_does_not_waive_its_inclusions_exclusions() {
-    // `apply-group` waives group exclusions for what it names; `corp` is in the
-    // disabled group `work`, and naming `corp.shell` does not name it.
     let (_origin, tree) = ready();
     tree.batfiles()
         .args(["disable-group", "work"])
@@ -518,8 +472,6 @@ fn naming_an_included_group_does_not_waive_its_inclusions_exclusions() {
 
 #[test]
 fn naming_the_inclusions_own_group_still_waives_it() {
-    // The inclusion is what `apply-group --group work` names, so the group's
-    // disable is waived for it as for any member.
     let (_origin, tree) = ready();
     tree.batfiles()
         .args(["disable-group", "work"])
@@ -536,8 +488,6 @@ fn naming_the_inclusions_own_group_still_waives_it() {
 
 #[test]
 fn naming_an_action_in_an_unmaterialized_inclusion_says_to_synchronize() {
-    // Its manifest might have answered, so the failure names the inclusion and
-    // the remedy rather than reporting an address nothing carries.
     let (_origin, tree) = including_unmaterialized();
 
     let assertion = tree
@@ -560,9 +510,6 @@ fn naming_an_action_in_an_unmaterialized_inclusion_says_to_synchronize() {
 
 #[test]
 fn two_inclusions_of_one_remote_are_two_sets_of_records() {
-    // One remote, one materialization, and two inclusions of it. Each gets its
-    // own copy of what the manifest declares, under its own `id`, so a name that
-    // reaches one reaches neither the other nor both.
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(&format!(
@@ -590,8 +537,6 @@ remote = "corporate"
         .success();
     let stderr = stderr_of(&assertion);
 
-    // Both read the one materialization its ID owns, and both contribute: the
-    // remote declares `seeds`, and each inclusion has a copy of it.
     assert!(
         stderr.contains("copy-dir first.seeds") && stderr.contains("copy-dir second.seeds"),
         "the two inclusions did not each contribute what the remote declares:\n{stderr}"
@@ -605,8 +550,6 @@ remote = "corporate"
             && !stderr.contains("symlink second.zshrc (group second.shell) - skipped"),
         "a name qualified by one inclusion reached the other:\n{stderr}"
     );
-    // The second inclusion still installed it, so skipping one copy of a record
-    // is not skipping the other.
     assert_eq!(
         installed(&tree),
         (true, true),
@@ -616,10 +559,6 @@ remote = "corporate"
 
 #[test]
 fn an_inclusion_written_without_an_id_runs_and_answers_to_nothing() {
-    // Contributed actions still install, because running is not the same as
-    // being addressable. Nothing can name them: not the qualified spelling,
-    // which has no first segment to match, and not the unqualified one, which
-    // means the leaf.
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(&format!(
@@ -646,10 +585,6 @@ remote = "corporate"
         (true, true),
         "an inclusion with no `id` did not contribute its actions"
     );
-    // Named as the manifest that declared it names it, since no address reaches
-    // it, with the inclusion it came from said in words: that is the whole of
-    // what tells it from the leaf's own `zshrc` and from a second inclusion of
-    // the same remote.
     assert!(
         stderr.contains(
             "symlink zshrc (group shell, from include-remote action 1 of remote `corporate`)"

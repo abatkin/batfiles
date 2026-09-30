@@ -1,32 +1,22 @@
-//! The machine-local variable commands, and the set a run merges out of the
-//! four layers that can declare a variable.
-//!
-//! What the command tests pin down is the document, the account of the edit,
-//! and which stream a value comes back on. The merge tests use `-vv` to check
-//! which layer wins; condition evaluation is covered in `conditions.rs`.
+//! CLI tests for machine-variable commands, output streams, and precedence across manifest,
+//! machine, environment, and CLI layers.
 
 use crate::support::*;
 use std::fs;
 
-/// A tree holding a `vars.toml` written by hand rather than by batfiles. The
-/// single quotes are the point: the document is valid and is not what the
-/// serializer would produce, so a command that rewrote it would say so.
+/// Create a tree with `vars.toml` containing the supplied text verbatim.
 fn with_document(document: &str) -> Tree {
     let tree = Tree::new();
     tree.write_machine_vars(document);
     tree
 }
 
-/// A `vars.toml` under a config directory that does not exist yet.
-///
-/// The one case that cannot use [`Tree`]'s config root, which is created up
-/// front: what is under test is that a command creates neither the document nor
-/// its directory when it changed nothing.
+/// Build a command using an absent config directory and return its expected variable-state
+/// path.
 fn in_absent_config(tree: &Tree) -> (assert_cmd::Command, std::path::PathBuf) {
     let absent = tree.path("config/nested");
     let mut command = batfiles();
     command.arg("--config-dir").arg(&absent);
-    // The other roots still have to resolve; only the config one is missing.
     command
         .env("BATFILES_HOME", tree.path("home"))
         .env("BATFILES_DIR", tree.path("repo"))
@@ -67,8 +57,6 @@ fn the_written_document_is_sorted_whatever_order_the_keys_arrived_in() {
 
 #[test]
 fn no_line_about_a_mutation_echoes_the_value() {
-    // A value may be a token or a path that identifies a machine, and an
-    // informational line would put it in scrollback and in a caller's logs.
     let tree = Tree::new();
     for arguments in [
         ["vars", "set", "token", "s3cr3t"],
@@ -138,8 +126,6 @@ fn getting_a_value_prints_it_alone_on_standard_output() {
 
 #[test]
 fn requested_data_survives_quiet_and_color() {
-    // `--quiet` suppresses what a command did, not what it was asked for, and
-    // nothing on standard output is ever labeled or colored.
     let tree = Tree::new();
     tree.batfiles()
         .args(["vars", "set", "editor", "nvim"])
@@ -177,8 +163,6 @@ fn a_key_with_no_value_fails_and_prints_nothing() {
 
 #[test]
 fn an_empty_value_is_stored_and_stays_distinct_from_no_value() {
-    // The reason `vars get` fails on an absent key rather than printing an
-    // empty line: these two cases have to stay apart.
     let tree = Tree::new();
     tree.batfiles()
         .args(["vars", "set", "editor", ""])
@@ -265,8 +249,7 @@ fn unsetting_an_absent_key_does_not_rewrite_an_existing_document() {
 
 #[test]
 fn an_invalid_name_is_refused_before_the_document_is_touched() {
-    // A malformed document would be fatal if it were read, so a run that fails
-    // on the name alone is proof that nothing opened the file.
+    // A malformed document makes an accidental read detectable.
     let tree = with_document("editor = \n");
     for (key, expected) in [
         ("1up", "must start with a letter or underscore"),
@@ -342,12 +325,9 @@ fn a_hand_written_key_that_is_not_a_variable_name_fails_the_document() {
     );
 }
 
-// What these commands do not touch.
-
 #[test]
 fn the_repository_and_the_disabled_lists_are_left_alone_by_the_commands() {
-    // These commands resolve roots and open one file. A malformed manifest is
-    // the check that costs nothing to make and would catch a stray read.
+    // A malformed manifest makes an accidental read detectable.
     let tree = Tree::new();
     fs::write(tree.manifest(), "[[actions]\n").expect("a malformed manifest");
 
@@ -358,8 +338,6 @@ fn the_repository_and_the_disabled_lists_are_left_alone_by_the_commands() {
 
     assert!(!tree.disabled().exists());
 }
-
-// The set a run merges.
 
 /// A tree whose manifest declares `[vars]` and whose `vars.toml` overrides part
 /// of it: the two documents, ready for the environment and the command line to
@@ -439,8 +417,6 @@ fn an_empty_value_still_overrides_the_layers_below_it() {
 
 #[test]
 fn every_command_that_executes_actions_resolves_the_same_set() {
-    // Including a dry run, which resolves variables like any other: the set
-    // describes the run rather than changing the home directory.
     let tree = with_two_documents();
     for args in [
         &["-vv", "sync"][..],
@@ -471,8 +447,6 @@ fn the_set_is_shown_at_the_second_verbose_level_and_not_before() {
 
 #[test]
 fn a_run_with_no_variables_anywhere_shows_nothing() {
-    // The heading is not printed over an empty list, so `-vv` on a repository
-    // that declares no variables says nothing about them at all.
     let tree = Tree::new();
     let assertion = tree.batfiles().args(["-vv", "sync"]).assert().success();
     assert!(
@@ -483,8 +457,6 @@ fn a_run_with_no_variables_anywhere_shows_nothing() {
 
 #[test]
 fn an_unusable_environment_name_is_warned_about_and_the_run_goes_on() {
-    // The environment is ambient and may predate any interest in batfiles, so
-    // one bad name in it drops that variable rather than stopping the run.
     let tree = with_two_documents();
     let assertion = tree
         .batfiles()
@@ -500,7 +472,6 @@ fn an_unusable_environment_name_is_warned_about_and_the_run_goes_on() {
         "ignoring \"BATFILES_VAR_1up\"",
         "ignoring \"BATFILES_VAR_env\"",
         "reserved",
-        // The usable one in the same environment still lands.
         "  rank    = \"9\" (BATFILES_VAR_*; over batfiles.toml)",
     ] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
@@ -527,9 +498,6 @@ fn a_warning_about_an_environment_name_never_echoes_its_value() {
 
 #[test]
 fn a_value_cannot_forge_a_line_of_batfiles_own() {
-    // A value is whatever a repository, a hand-edited state file, or the
-    // environment put there. Printed raw, one holding a newline would end the
-    // line it sits on and start one that reads like a batfiles diagnostic.
     let tree = Tree::new();
     tree.write_manifest("[vars]\nmischief = \"ok\\nerror: forged\"\n");
 
@@ -559,8 +527,6 @@ fn a_value_cannot_forge_a_line_of_batfiles_own() {
 
 #[test]
 fn a_rejected_environment_name_cannot_forge_one_either() {
-    // The same rule for the other half: a warning names a suffix that failed
-    // the name check, so it is arbitrary text off the environment.
     let tree = Tree::new();
     let assertion = tree
         .batfiles()
@@ -582,8 +548,6 @@ fn a_rejected_environment_name_cannot_forge_one_either() {
 
 #[test]
 fn a_malformed_machine_document_fails_a_run_that_merges_it() {
-    // `vars.toml` is read by every command that executes actions now, so a
-    // document that cannot be parsed stops one the way a bad manifest does.
     let tree = with_document("editor = \n");
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
 
@@ -595,8 +559,6 @@ fn a_malformed_machine_document_fails_a_run_that_merges_it() {
 
 #[test]
 fn a_listing_shows_every_layer_with_the_value_in_force_first() {
-    // The same account `-vv` gives a run, asked for on its own: the value, the
-    // layer that decided it, and the layers it overrode.
     let tree = with_two_documents();
     let assertion = tree
         .batfiles()
@@ -616,8 +578,6 @@ rank    = "9" (BATFILES_VAR_*; over batfiles.toml)
 
 #[test]
 fn a_listing_is_data_and_goes_to_standard_output_alone() {
-    // `--quiet` suppresses what a command did, never what it was asked for, so
-    // the listing survives it while everything else on standard error does not.
     let tree = with_two_documents();
     let assertion = tree
         .batfiles()
@@ -631,8 +591,6 @@ fn a_listing_is_data_and_goes_to_standard_output_alone() {
 
 #[test]
 fn a_listing_never_shows_the_command_line_layer() {
-    // `vars list` does not take `--var`: the set it reports describes the
-    // machine, and one an invocation invented would describe the invocation.
     let tree = with_two_documents();
     let assertion = tree
         .batfiles()
@@ -650,8 +608,6 @@ fn a_listing_never_shows_the_command_line_layer() {
 
 #[test]
 fn machine_only_lists_the_persisted_document_and_nothing_else() {
-    // Both other layers declare `editor`, and neither reaches the listing: what
-    // comes back is what this machine stored and could unset.
     let tree = with_two_documents();
     let assertion = tree
         .batfiles()
@@ -669,9 +625,6 @@ fn machine_only_lists_the_persisted_document_and_nothing_else() {
 
 #[test]
 fn machine_only_reads_no_repository_and_a_normal_listing_needs_one() {
-    // The pair is the point of separating the two resolutions: one command has
-    // a repository to read and the other has no use for one, so a missing
-    // manifest stops only the first.
     let tree = Tree::roots();
     tree.write_machine_vars("editor = 'nvim'\n");
 
@@ -692,8 +645,6 @@ fn machine_only_reads_no_repository_and_a_normal_listing_needs_one() {
 
 #[test]
 fn a_listing_with_nothing_to_show_writes_no_data() {
-    // Standard output carries data, and an empty set is not data; the account
-    // of that is a line about what the command did, on standard error.
     let tree = Tree::new();
     let assertion = tree.batfiles().args(["vars", "list"]).assert().success();
 

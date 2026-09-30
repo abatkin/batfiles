@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::disabled::Disabled;
+use crate::disabled::DisabledItems;
 use crate::dynamic::DynamicVarCache;
 use crate::env::Environment;
 use crate::error::Error;
@@ -19,11 +19,7 @@ pub(crate) struct LocationInputs {
     pub cache_dir: Option<PathBuf>,
 }
 
-/// Where batfiles keeps its own bookkeeping: the roots a command needs when it
-/// reads or edits machine-local state and installs nothing.
-///
-/// Holds no repository or destination home, so a command given only these
-/// cannot reach either.
+/// Config and cache roots for machine-local state.
 #[derive(Debug)]
 pub(crate) struct StateRoots {
     /// The directory holding `vars.toml` and `disabled.toml`.
@@ -32,44 +28,38 @@ pub(crate) struct StateRoots {
     pub cache_dir: PathBuf,
 }
 
-/// The roots a command needs when it works from the leaf repository: the
-/// repository itself, the home its destinations are relative to, and the state
-/// roots every command has.
+/// Repository, destination home, config, and cache roots for repository commands.
 #[derive(Debug)]
 pub(crate) struct Roots {
     /// The destination home: the base for home-relative destinations.
     pub home: PathBuf,
     /// The leaf repository.
-    pub batfiles_dir: PathBuf,
+    pub batfiles_repo: PathBuf,
     /// Batfiles' own bookkeeping, which a repository command reads as well.
     pub state: StateRoots,
 }
 
 impl StateRoots {
-    /// The machine-local disabled lists. Under the config root rather than the
-    /// repository, so selecting a different home does not move them.
-    pub fn disabled(&self) -> PathBuf {
-        self.config_dir.join(Disabled::FILE_NAME)
+    /// Path to machine-local `disabled.toml` under the config root.
+    pub fn disabled_path(&self) -> PathBuf {
+        self.config_dir.join(DisabledItems::FILE_NAME)
     }
 
-    /// The machine-local variable values, alongside the disabled lists and for
-    /// the same reason: they describe this machine rather than this repository.
-    pub fn machine_vars(&self) -> PathBuf {
+    /// Path to machine-local `vars.toml` under the config root.
+    pub fn machine_vars_path(&self) -> PathBuf {
         self.config_dir.join(MachineVars::FILE_NAME)
     }
 
-    /// The disposable dynamic-variable cache. Under the cache root, apart from
-    /// the configuration a user wrote.
-    pub fn dynamic_vars(&self) -> PathBuf {
+    /// Path to `dynamic-vars.toml` under the cache root.
+    pub fn dynamic_vars_cache_path(&self) -> PathBuf {
         self.cache_dir.join(DynamicVarCache::FILE_NAME)
     }
 }
 
 impl Roots {
-    /// The leaf repository's manifest. A remote's manifest is not here: it lives
-    /// in that remote's materialization rather than under a resolved root.
-    pub fn manifest(&self) -> PathBuf {
-        self.batfiles_dir.join(Manifest::FILE_NAME)
+    /// Path to the leaf repository's manifest.
+    pub fn manifest_path(&self) -> PathBuf {
+        self.batfiles_repo.join(Manifest::FILE_NAME)
     }
 }
 
@@ -84,12 +74,8 @@ pub(crate) fn discover_working_repository() -> Result<Option<PathBuf>, Error> {
     Ok(paths::occupied(&directory.join(Manifest::FILE_NAME))?.then_some(directory))
 }
 
-/// Resolve the state roots alone, for a command that installs nothing and reads
-/// no repository.
-///
-/// Neither the destination home nor the leaf repository is resolved, so no
-/// working-directory discovery runs and a machine with no discoverable home can
-/// still edit its own state, provided the `$XDG_*` bases cover both roots.
+/// Resolve config and cache roots without repository discovery. Consult the OS home only if an
+/// unresolved root needs its fallback.
 pub(crate) fn resolve_state_roots(
     cli: &LocationInputs,
     env: &Environment,
@@ -112,16 +98,14 @@ pub(crate) fn resolve_roots(
     working_repository: impl FnOnce() -> Result<Option<PathBuf>, Error>,
     os_home: impl FnOnce() -> Result<PathBuf, Error>,
 ) -> Result<Roots, Error> {
-    // What the options, BATFILES_* variables, and XDG bases supply directly,
-    // before the home-based last resort.
     let home = cli
         .home_dir
         .clone()
-        .or_else(|| env.location("BATFILES_HOME"));
-    let batfiles_dir = match cli
+        .or_else(|| env.path_var("BATFILES_HOME"));
+    let batfiles_repo = match cli
         .batfiles_dir
         .clone()
-        .or_else(|| env.location("BATFILES_DIR"))
+        .or_else(|| env.path_var("BATFILES_DIR"))
     {
         Some(path) => Some(path),
         None => working_repository()?,
@@ -135,34 +119,28 @@ pub(crate) fn resolve_roots(
         None
     };
 
-    // The selected home anchors the leaf-repository default. It reads `os_home`
-    // only where its own value was `None`, which is exactly when `os_home` was
-    // resolved above.
+    // The repository default follows the selected home.
     let home = home.unwrap_or_else(|| os_home.as_ref().expect(RESOLVED).clone());
-    let batfiles_dir = batfiles_dir.unwrap_or_else(|| home.join("dotfiles"));
+    let batfiles_repo = batfiles_repo.unwrap_or_else(|| home.join("dotfiles"));
 
     Ok(Roots {
         home,
-        batfiles_dir,
+        batfiles_repo,
         state: state_roots(config_dir, cache_dir, os_home.as_ref()),
     })
 }
 
-/// Why an unresolved OS home cannot be reached below.
+/// Assertion message for a missing home required by a fallback.
 const RESOLVED: &str = "the OS home is resolved whenever a root needs it";
 
-/// Apply the home-based last resort to whatever the options, `BATFILES_*`
-/// variables, and XDG bases did not supply.
-///
-/// `os_home` must be `Some` wherever a root is `None`, which each caller
-/// establishes before calling.
+/// Fill unresolved config and cache roots from OS-home defaults. `os_home` must be `Some` if
+/// either root is `None`.
 fn state_roots(
     config_dir: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
     os_home: Option<&PathBuf>,
 ) -> StateRoots {
-    // Config and cache are batfiles' own bookkeeping, so their home fallbacks use
-    // the OS home, never the selected home.
+    // State defaults use the OS home, not the selected destination home.
     StateRoots {
         config_dir: config_dir
             .unwrap_or_else(|| os_home.expect(RESOLVED).join(".config").join("batfiles")),
@@ -175,7 +153,7 @@ fn state_roots(
 fn config_option(cli: &LocationInputs, env: &Environment) -> Option<PathBuf> {
     cli.config_dir
         .clone()
-        .or_else(|| env.location("BATFILES_CONFIG_DIR"))
+        .or_else(|| env.path_var("BATFILES_CONFIG_DIR"))
         .or_else(|| xdg_base(env, "XDG_CONFIG_HOME"))
 }
 
@@ -183,7 +161,7 @@ fn config_option(cli: &LocationInputs, env: &Environment) -> Option<PathBuf> {
 fn cache_option(cli: &LocationInputs, env: &Environment) -> Option<PathBuf> {
     cli.cache_dir
         .clone()
-        .or_else(|| env.location("BATFILES_CACHE_DIR"))
+        .or_else(|| env.path_var("BATFILES_CACHE_DIR"))
         .or_else(|| xdg_base(env, "XDG_CACHE_HOME"))
 }
 
@@ -191,21 +169,19 @@ fn cache_option(cli: &LocationInputs, env: &Environment) -> Option<PathBuf> {
 /// is absent or empty. Whitespace is significant, as it is for the location
 /// variables.
 fn xdg_base(env: &Environment, key: &str) -> Option<PathBuf> {
-    env.location(key).map(|base| base.join("batfiles"))
+    env.path_var(key).map(|base| base.join("batfiles"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A stand-in OS home, so a test that reaches the last-resort fallback has a
-    /// deterministic value to assert.
+    /// Return a fixed OS home for fallback tests.
     fn os_home() -> Result<PathBuf, Error> {
         Ok(PathBuf::from("/os-home"))
     }
 
-    /// Stand in for a home-less environment: any attempt to resolve the OS home
-    /// fails, so a test that reaches this has wrongly required the fallback.
+    /// Return a home-resolution error.
     fn unavailable() -> Result<PathBuf, Error> {
         Err(Error::HomeUnavailable)
     }
@@ -222,7 +198,7 @@ mod tests {
     fn defaults_come_from_the_os_home() {
         let roots = resolve(LocationInputs::default(), &empty_env());
         assert_eq!(roots.home, PathBuf::from("/os-home"));
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/os-home/dotfiles"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/os-home/dotfiles"));
         assert_eq!(
             roots.state.config_dir,
             PathBuf::from("/os-home/.config/batfiles")
@@ -243,7 +219,7 @@ mod tests {
         ]);
         let roots = resolve(LocationInputs::default(), &env);
         assert_eq!(roots.home, PathBuf::from("/env-home"));
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/env-repo"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/env-repo"));
         assert_eq!(roots.state.config_dir, PathBuf::from("/env-config"));
         assert_eq!(roots.state.cache_dir, PathBuf::from("/env-cache"));
     }
@@ -261,7 +237,7 @@ mod tests {
         };
         let roots = resolve(cli, &env);
         assert_eq!(roots.home, PathBuf::from("/opt-home"));
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/opt-repo"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/opt-repo"));
     }
 
     #[test]
@@ -271,7 +247,7 @@ mod tests {
             ..LocationInputs::default()
         };
         let roots = resolve(cli, &empty_env());
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/alt-home/dotfiles"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/alt-home/dotfiles"));
     }
 
     #[test]
@@ -284,7 +260,7 @@ mod tests {
         )
         .expect("resolution should succeed");
 
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/working-repo"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/working-repo"));
     }
 
     #[test]
@@ -299,7 +275,7 @@ mod tests {
         )
         .expect("resolution should succeed");
 
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/env-repo"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/env-repo"));
     }
 
     #[test]
@@ -317,11 +293,8 @@ mod tests {
         )
         .expect("resolution should succeed");
 
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/option-repo"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/option-repo"));
     }
-
-    // The state roots alone. State-only resolution takes no discovery closure
-    // and returns no repository, so neither needs a test.
 
     #[test]
     fn state_roots_resolve_the_way_the_full_set_resolves_them() {
@@ -351,8 +324,6 @@ mod tests {
 
     #[test]
     fn covered_state_roots_never_need_a_home_at_all() {
-        // A machine batfiles cannot find a home on can still edit its own state,
-        // because no state root is anchored to the home a destination would use.
         let env = Environment::from_pairs([
             ("XDG_CONFIG_HOME", "/xdg/config"),
             ("XDG_CACHE_HOME", "/xdg/cache"),
@@ -375,8 +346,6 @@ mod tests {
 
     #[test]
     fn selecting_a_home_does_not_move_config_or_cache() {
-        // The whole point of the OS-home split: `--home-dir` relocates the leaf
-        // repository but leaves batfiles' own state on the OS home.
         let cli = LocationInputs {
             home_dir: Some(PathBuf::from("/alt-home")),
             ..LocationInputs::default()
@@ -395,8 +364,6 @@ mod tests {
 
     #[test]
     fn xdg_bases_default_config_and_cache() {
-        // `$XDG_*` bases outrank the `~/.config`/`~/.cache` fallbacks and gain a
-        // `batfiles` leaf.
         let env = Environment::from_pairs([
             ("XDG_CONFIG_HOME", "/xdg/config"),
             ("XDG_CACHE_HOME", "/xdg/cache"),
@@ -413,13 +380,11 @@ mod tests {
     fn an_empty_location_variable_falls_through_to_the_default() {
         let env = Environment::from_pairs([("BATFILES_DIR", "")]);
         let roots = resolve(LocationInputs::default(), &env);
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/os-home/dotfiles"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/os-home/dotfiles"));
     }
 
     #[test]
     fn supplying_every_root_never_resolves_the_os_home() {
-        // Explicit roots make the OS home irrelevant, so resolution must succeed
-        // even where no home can be found.
         let cli = LocationInputs {
             batfiles_dir: Some(PathBuf::from("/repo")),
             home_dir: Some(PathBuf::from("/home")),
@@ -434,8 +399,6 @@ mod tests {
 
     #[test]
     fn xdg_bases_remove_the_need_for_an_os_home() {
-        // `--home-dir` plus both `$XDG_*` bases cover every root, so no OS home
-        // is needed even though config and cache were not set explicitly.
         let cli = LocationInputs {
             home_dir: Some(PathBuf::from("/home")),
             ..LocationInputs::default()
@@ -447,7 +410,7 @@ mod tests {
         let roots = resolve_roots(&cli, &env, || Ok(None), unavailable)
             .expect("XDG bases should remove the need for an OS home");
         assert_eq!(roots.home, PathBuf::from("/home"));
-        assert_eq!(roots.batfiles_dir, PathBuf::from("/home/dotfiles"));
+        assert_eq!(roots.batfiles_repo, PathBuf::from("/home/dotfiles"));
         assert_eq!(
             roots.state.config_dir,
             PathBuf::from("/xdg/config/batfiles")
@@ -457,8 +420,7 @@ mod tests {
 
     #[test]
     fn a_base_left_uncovered_still_requires_the_os_home() {
-        // Config is covered by XDG, but cache has neither an override nor an XDG
-        // base, so the OS home is still needed and its failure is fatal.
+        // Only the cache root still needs the unavailable OS home.
         let cli = LocationInputs {
             home_dir: Some(PathBuf::from("/home")),
             batfiles_dir: Some(PathBuf::from("/repo")),

@@ -1,8 +1,5 @@
-//! Dynamic variables: a `[vars]` table whose value a command produces, cached
-//! in `dynamic-vars.toml` under the cache root.
-//!
-//! Every command here appends to a `runs` file in its working directory, which
-//! is how a case tells a cache hit from a run.
+//! CLI tests for dynamic variables and their cache. Command marker files distinguish execution
+//! from cache reuse.
 
 use std::fs;
 
@@ -138,7 +135,6 @@ fn a_failed_refresh_keeps_the_cached_value_and_says_so() {
 
 #[test]
 fn a_failure_with_nothing_cached_reads_as_empty() {
-    // It still overrides what is beneath it, and a condition reads `""`.
     let tree = Tree::new();
     tree.write_manifest(
         r#"[vars]
@@ -322,7 +318,6 @@ fn a_listing_leaves_unrun_what_a_machine_local_value_shadows() {
     assert_eq!(runs(&tree), 0);
     assert!(!cache(&tree).exists());
 
-    // A command that executes actions evaluates it anyway.
     sync(&tree, &[]);
     assert_eq!(runs(&tree), 1);
 }

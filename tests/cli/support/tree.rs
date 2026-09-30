@@ -8,31 +8,27 @@ use std::path::Path;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-/// A throwaway tree standing in for the four location roots, with an empty leaf
-/// manifest in place.
+/// Temporary repository, home, config, and cache roots for CLI tests.
 pub(crate) struct Tree {
     dir: TempDir,
 }
 
 impl Tree {
-    /// The four roots as sibling directories, with `repo/batfiles.toml` empty
-    /// but present, which is what a command needs to get past reading it.
+    /// Create sibling roots with an empty leaf manifest.
     pub(crate) fn new() -> Self {
         let tree = Self::roots();
         tree.repository("repo");
         tree
     }
 
-    /// The same roots, with the leaf repository copied from
-    /// `tests/fixtures/<name>` rather than holding a manifest written inline.
+    /// Create roots and copy `tests/fixtures/<name>` into the leaf repository.
     pub(crate) fn fixture(name: &str) -> Self {
         let tree = Self::roots();
         copy_tree(&fixture_tree(name), &tree.path("repo"));
         tree
     }
 
-    /// The three roots that are directories in their own right, with nothing in
-    /// the repository yet.
+    /// Create home, config, and cache directories, leaving the repository path absent.
     pub(crate) fn roots() -> Self {
         let dir = tempfile::tempdir().expect("a temporary directory");
         for name in ["home", "config", "cache"] {
@@ -73,29 +69,22 @@ impl Tree {
         self.fill_in("server", server.address());
     }
 
-    /// The same, for a fixture whose sources are repositories rather than URLs:
-    /// a bare repository lands in a temporary directory no fixture can name.
+    /// Replace `{origin}` placeholders in the manifest with the bare repository path.
     pub(crate) fn point_at_origin(&self, origin: &BareRepo) {
         self.fill_in("origin", &display(&origin.origin()));
     }
 
-    /// The same, for a fixture naming more than one repository: a leaf composing
-    /// two remotes writes a placeholder per remote, since one `{origin}` cannot
-    /// say which is which.
+    /// Replace a named manifest placeholder with the bare repository path.
     pub(crate) fn point_remote_at(&self, placeholder: &str, origin: &BareRepo) {
         self.fill_in(placeholder, &display(&origin.origin()));
     }
 
-    /// The same, for a placeholder in a repository file that is not the
-    /// manifest: a clone list names its repositories itself, so that is where
-    /// its `{origin}`s are written.
+    /// Replace a named placeholder in a repository file.
     pub(crate) fn point_file_at(&self, relative: &str, placeholder: &str, value: &str) {
         self.fill_in_file(relative, placeholder, value);
     }
 
-    /// Replace every `{placeholder}` in the leaf manifest, insisting there was
-    /// one: a fixture that stopped carrying it would otherwise be driven against
-    /// a source the test never set.
+    /// Replace every `{placeholder}` in the leaf manifest; panic if none exists.
     fn fill_in(&self, placeholder: &str, value: &str) {
         self.fill_in_file("batfiles.toml", placeholder, value);
     }

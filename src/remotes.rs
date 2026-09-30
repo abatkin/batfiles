@@ -1,8 +1,6 @@
-//! Evaluate remote conditions and materialize declared remotes: clone or update
-//! a Git repository, and fetch a file or unpack an archive where the manifest
-//! declares one that is not already there as declared.
-//! Sync materializes all non-excluded declarations, including unreferenced ones.
-//! Apply commands read existing materializations through `RunContext`.
+//! Evaluate remote conditions and materialize Git repositories, files, and archives. Sync
+//! processes all admitted remotes, including unreferenced ones; apply commands use existing
+//! materializations.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,17 +25,13 @@ use crate::tomlfile;
 /// materialization sits under.
 pub(crate) const DIRECTORY: &str = "remotes";
 
-/// What the warning for an undecidable remote condition says the run did about
-/// it: the remote is not brought onto the machine, and nothing reads the tree
-/// where an earlier run left one.
+/// Warning suffix for a remote whose condition cannot be evaluated.
 const NOT_MATERIALIZED: &str = "it is not materialized";
 
 /// The suffix naming a fetched materialization's stamp, beside it.
 const STAMP_SUFFIX: &str = ".batfiles-source";
 
-/// Where the declared remote `id` is materialized: `remotes/<id>` inside the
-/// leaf repository at the anchored path `repository`. The ID is a validated
-/// path segment, so the result stays in the tree.
+/// Return `remotes/<id>` under the anchored leaf root `repository`.
 pub(crate) fn materialization(repository: &Path, id: &ItemId) -> PathBuf {
     repository.join(DIRECTORY).join(id.as_str())
 }
@@ -58,13 +52,11 @@ pub(crate) fn excluded(
         .collect()
 }
 
-/// Materialize non-excluded remotes in ID order: clone or update a Git remote
-/// under the Git update policy, and fetch a file or archive remote whose
-/// materialization is missing or was fetched from another declaration, or
-/// that `refresh` asks for regardless.
-/// Report excluded remotes without touching their existing trees.
-/// Dry runs report intent without launching Git or fetching. A failure stops
-/// the run.
+/// Materialize admitted remotes in ID order. Update Git clones; fetch missing or changed
+/// file/archive declarations, or all of them when `refresh` is set.
+///
+/// Report exclusions without reading their trees. Dry runs report intent without Git or
+/// downloads. Stop on the first failure.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
     context: &RunContext<'_>,
@@ -87,8 +79,7 @@ pub(crate) fn materialize(
                     context.repository(),
                     &context.tool_owned(),
                 )?;
-                // What is there now is a clone, so a stamp an earlier
-                // declaration of another type left claims nothing.
+                // A successful Git materialization invalidates any earlier file/archive stamp.
                 if context.mode().writes() {
                     tomlfile::remove(&stamp_path(&dest))?;
                 }
@@ -102,9 +93,8 @@ pub(crate) fn materialize(
     Ok(())
 }
 
-/// Bring a file or archive remote to `dest` unless the stamp beside it says it
-/// is already there as `wanted` and `refresh` does not ask for it anyway, and
-/// refuse a node there that no stamp claims.
+/// Fetch a file or archive unless its stamp matches `wanted` and `refresh` is false. Refuse
+/// occupied destinations without a matching ownership stamp.
 fn fetch(
     id: &ItemId,
     wanted: Stamp,
@@ -113,7 +103,7 @@ fn fetch(
     context: &RunContext<'_>,
 ) -> Result<(), Error> {
     let stamp = stamp_path(dest);
-    let found = Found::at(dest)?;
+    let found = FilesystemEntryKind::at(dest)?;
     let recorded = read_stamp(&stamp)?;
     let (mode, reporter) = (context.mode(), context.reporter());
 
@@ -165,12 +155,15 @@ fn fetch(
         (Stamp::File { .. }, false) => Verb::Fetch,
         (Stamp::Archive { .. }, false) => Verb::Extract,
     };
-    reporter.info(&format!("{} {} from {url}", verb.say(mode), dest.display()));
+    reporter.info(&format!(
+        "{} {} from {url}",
+        verb.for_mode(mode),
+        dest.display()
+    ));
     Ok(())
 }
 
-/// Where the stamp for the materialization at `dest` is kept: beside it, under
-/// a name no remote ID can take, since an ID holds no `.`.
+/// Return the stamp path beside a materialization.
 fn stamp_path(dest: &Path) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
     name.push(STAMP_SUFFIX);
@@ -211,8 +204,7 @@ enum Stamp {
 }
 
 impl Stamp {
-    /// What a materialization fetched for a file remote records. A digest is
-    /// recorded in lowercase, so rewriting one in capitals refetches nothing.
+    /// Create a file-remote stamp with a lowercase digest.
     fn file(remote: &FileRemote) -> Self {
         Self::File {
             url: remote.url.clone(),
@@ -220,7 +212,7 @@ impl Stamp {
         }
     }
 
-    /// What one fetched for an archive remote records, on the same terms.
+    /// Create an archive-remote stamp with a lowercase digest.
     fn archive(remote: &ArchiveRemote) -> Self {
         Self::Archive {
             url: remote.url.clone(),
@@ -236,10 +228,11 @@ impl Stamp {
     }
 
     /// Whether `found` is the kind of node a materialization of this type is.
-    fn describes(&self, found: &Found) -> bool {
+    fn describes(&self, found: &FilesystemEntryKind) -> bool {
         matches!(
             (self, found),
-            (Self::File { .. }, Found::File) | (Self::Archive { .. }, Found::Directory)
+            (Self::File { .. }, FilesystemEntryKind::File)
+                | (Self::Archive { .. }, FilesystemEntryKind::Directory)
         )
     }
 }
@@ -251,19 +244,17 @@ fn digest(sha256: Option<&str>) -> Option<String> {
 
 /// What is at a materialization's path, where something is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Found {
+pub(crate) enum FilesystemEntryKind {
     File,
     Directory,
     Symlink,
     Other,
 }
 
-impl Found {
-    /// Inspect `dest` without following a final symlink. Only the kind of node
-    /// matters, since the stamp decides whose it is, so where a symlink points
-    /// is never read.
+impl FilesystemEntryKind {
+    /// Inspect the node kind at `dest` without following its final symlink.
     fn at(dest: &Path) -> Result<Option<Self>, Error> {
-        Ok(paths::node_at(dest)?.map(|node| {
+        Ok(paths::symlink_metadata_if_present(dest)?.map(|node| {
             if node.is_symlink() {
                 Self::Symlink
             } else if node.is_file() {
@@ -277,7 +268,7 @@ impl Found {
     }
 }
 
-impl fmt::Display for Found {
+impl fmt::Display for FilesystemEntryKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::File => "a regular file",
@@ -298,13 +289,18 @@ enum Plan {
     /// An earlier fetch of another declaration: fetch again and replace it.
     Replace,
     /// Something no stamp claims, which is not batfiles' to replace.
-    Refuse(Found),
+    Refuse(FilesystemEntryKind),
 }
 
 /// Decide from what is at the materialization's path and the stamp beside it.
 /// Only a node of the kind its stamp records is batfiles' own, and `refresh`
 /// replaces one that is current.
-fn decide(found: Option<&Found>, recorded: Option<&Stamp>, wanted: &Stamp, refresh: bool) -> Plan {
+fn decide(
+    found: Option<&FilesystemEntryKind>,
+    recorded: Option<&Stamp>,
+    wanted: &Stamp,
+    refresh: bool,
+) -> Plan {
     let Some(found) = found else {
         return Plan::Fetch;
     };
@@ -353,12 +349,17 @@ mod tests {
     fn a_stamped_materialization_is_current_or_replaced() {
         let wanted = file("https://e.example/a");
         assert_eq!(
-            decide(Some(&Found::File), Some(&wanted), &wanted, false),
+            decide(
+                Some(&FilesystemEntryKind::File),
+                Some(&wanted),
+                &wanted,
+                false
+            ),
             Plan::Unchanged
         );
         assert_eq!(
             decide(
-                Some(&Found::File),
+                Some(&FilesystemEntryKind::File),
                 Some(&file("https://e.example/old")),
                 &wanted,
                 false
@@ -367,7 +368,12 @@ mod tests {
         );
         // An archive fetched under the same ID before the record became a file.
         assert_eq!(
-            decide(Some(&Found::Directory), Some(&archive("x")), &wanted, false),
+            decide(
+                Some(&FilesystemEntryKind::Directory),
+                Some(&archive("x")),
+                &wanted,
+                false
+            ),
             Plan::Replace
         );
     }
@@ -376,13 +382,18 @@ mod tests {
     fn a_refresh_replaces_a_current_materialization_and_nothing_else() {
         let wanted = file("https://e.example/a");
         assert_eq!(
-            decide(Some(&Found::File), Some(&wanted), &wanted, true),
+            decide(
+                Some(&FilesystemEntryKind::File),
+                Some(&wanted),
+                &wanted,
+                true
+            ),
             Plan::Replace
         );
         assert_eq!(decide(None, None, &wanted, true), Plan::Fetch);
         assert_eq!(
-            decide(Some(&Found::File), None, &wanted, true),
-            Plan::Refuse(Found::File),
+            decide(Some(&FilesystemEntryKind::File), None, &wanted, true),
+            Plan::Refuse(FilesystemEntryKind::File),
             "a refresh is no licence to replace what batfiles did not fetch"
         );
     }
@@ -392,17 +403,27 @@ mod tests {
         let wanted = archive("https://e.example/a.tar.gz");
         // A clone left by a Git remote declared under the same ID.
         assert_eq!(
-            decide(Some(&Found::Directory), None, &wanted, false),
-            Plan::Refuse(Found::Directory)
+            decide(Some(&FilesystemEntryKind::Directory), None, &wanted, false),
+            Plan::Refuse(FilesystemEntryKind::Directory)
         );
         // A stamp beside a node of the other kind claims nothing either.
         assert_eq!(
-            decide(Some(&Found::Directory), Some(&file("x")), &wanted, false),
-            Plan::Refuse(Found::Directory)
+            decide(
+                Some(&FilesystemEntryKind::Directory),
+                Some(&file("x")),
+                &wanted,
+                false
+            ),
+            Plan::Refuse(FilesystemEntryKind::Directory)
         );
         assert_eq!(
-            decide(Some(&Found::Symlink), Some(&wanted), &wanted, false),
-            Plan::Refuse(Found::Symlink)
+            decide(
+                Some(&FilesystemEntryKind::Symlink),
+                Some(&wanted),
+                &wanted,
+                false
+            ),
+            Plan::Refuse(FilesystemEntryKind::Symlink)
         );
     }
 

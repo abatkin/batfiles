@@ -1,10 +1,6 @@
-//! `include-remote`, as far as every command that meets one needs it: which
-//! inclusion it is, whether this machine opens it, and the manifest it reads
-//! from this machine's materialization of its remote, however stale.
-//!
-//! What an opened inclusion contributes to a run is
-//! [`execute::inclusion`](crate::execute::inclusion)'s; which remotes are in
-//! play for `vars refresh` is [`dynamic::refresh`](crate::dynamic::refresh)'s.
+//! Identify inclusions, evaluate admission, and read manifests from existing remote
+//! materializations. `execute::inclusion` composes records;
+//! [`crate::dynamic::refresh`] selects remotes for variable refresh.
 
 use std::path::Path;
 
@@ -18,8 +14,7 @@ use crate::paths;
 use crate::remotes;
 use crate::selection::{Selection, Subject};
 
-/// One `include-remote` of the leaf manifest: its identity, whether or not its
-/// manifest is read.
+/// A leaf `include-remote` declaration's identity, independent of manifest loading.
 pub(crate) struct Inclusion {
     /// The written `id`, which qualifies its records' addresses. `None`: its
     /// records have no address, and [`label`](Self::label) names it.
@@ -31,10 +26,8 @@ pub(crate) struct Inclusion {
 }
 
 impl Inclusion {
-    /// Identify the inclusion the record at one-based position `number` writes.
-    ///
-    /// Reports name it by `id`, or by its position and remote if unnamed.
-    /// `number` must be its position in the validated leaf manifest.
+    /// Build an inclusion identity from its declaration and one-based position in the validated
+    /// leaf manifest. Unnamed inclusions use their position and remote in diagnostics.
     pub fn at(action: &IncludeRemoteAction, number: usize) -> Self {
         let label = match &action.id {
             Some(id) => format!("include-remote `{id}`"),
@@ -73,17 +66,11 @@ impl Inclusion {
         }
     }
 
-    /// Why this machine would not open this inclusion, or `None` if it would.
-    /// Reads nothing and reports nothing.
+    /// Return the first exclusion from record selection or the remote condition, or `None` if
+    /// admitted. Perform no I/O or reporting.
     ///
-    /// `record` is the inclusion's leaf record as selection reads it. The first
-    /// exclusion `selection` finds for it, decided in the leaf scope
-    /// `bindings`: an inclusion's `vars` apply only to the records it
-    /// contributes, not to its own condition. What the target waives is waived
-    /// only where it names the record; a target reaching into the inclusion
-    /// without naming it waives nothing. Failing that, `remote_exclusion`, the
-    /// remote's condition as the command decided it, restated for this
-    /// inclusion.
+    /// Evaluate `record` using leaf-scope `bindings`; inclusion variables do not affect its own
+    /// condition. Apply target exemptions only when the target directly names this record.
     pub fn exclusion(
         &self,
         record: Subject<'_>,
@@ -94,36 +81,30 @@ impl Inclusion {
         let exclusion = if selection.wants(record) {
             selection.exclusion(record, bindings)
         } else {
-            selection.unwaived_exclusion(record, bindings)
+            selection.exclusion_without_waivers(record, bindings)
         };
-        exclusion.or_else(|| remote_exclusion.map(|it| self.closed_by_remote(it)))
+        exclusion.or_else(|| remote_exclusion.map(|it| self.restate_remote_exclusion(it)))
     }
 
     /// A remote's exclusion, restated for this inclusion with the same severity.
-    fn closed_by_remote(&self, exclusion: &Exclusion) -> Exclusion {
+    fn restate_remote_exclusion(&self, exclusion: &Exclusion) -> Exclusion {
         let reason = format!(
             "remote `{}` is excluded here: {}",
             self.remote,
             exclusion.reason()
         );
         match exclusion {
-            Exclusion::Expected(_) => Exclusion::Expected(reason),
+            Exclusion::Deliberate(_) => Exclusion::Deliberate(reason),
             Exclusion::EvaluationFailed(_) => Exclusion::EvaluationFailed(reason),
         }
     }
 
-    /// The included remote's manifest, validated whole, read from its
-    /// materialization in the leaf repository at the anchored path
-    /// `repository`; `None` where there is none. Reports nothing: a caller that
-    /// passes over an absent one warns with [`warn_not_materialized`].
+    /// Read and validate the included manifest from `repository`, the anchored leaf root. Call
+    /// only after [`exclusion`](Self::exclusion) admits the inclusion.
     ///
-    /// Fails when the materialization cannot be inspected or its manifest is
-    /// missing, unreadable, or invalid. A materialized tree without a manifest
-    /// is an error: a remote's manifest is optional, so it is absent rather than
-    /// not yet fetched.
-    ///
-    /// Only an inclusion [`exclusion`](Self::exclusion) admitted may be read:
-    /// an excluded remote's tree is not read, whatever an earlier run left.
+    /// Return `None` if the remote materialization is absent. Inspection failures and missing,
+    /// unreadable, or invalid manifests are errors. Report nothing; callers may use
+    /// [`warn_not_materialized`] for an absent materialization.
     pub fn manifest(&self, repository: &Path) -> Result<Option<Manifest>, Error> {
         let tree = remotes::materialization(repository, &self.remote);
         if !paths::occupied(&tree)? {
@@ -175,8 +156,6 @@ mod tests {
             labelled("id = \"corp\"\nremote = \"corporate\"\n", 3),
             "include-remote `corp`"
         );
-        // Two inclusions of one remote, neither written with an `id`: the
-        // position is the whole of what tells the labels apart.
         let unnamed = "remote = \"corporate\"\n";
         assert_eq!(
             labelled(unnamed, 2),

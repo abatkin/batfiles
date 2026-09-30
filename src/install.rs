@@ -12,46 +12,40 @@ use crate::error::Error;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, ExistingNode, Occupancy};
-use crate::replace::{self, Keep, Resolution, Resolver};
+use crate::replace::{self, ConflictDecision, ConflictResolver, ExistingContent};
 
-/// The kind of node a seed installs, for a caller that settles it at runtime
-/// and then picks the entry point it answers to.
+/// Whether seed content is a file or directory.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum SeedKind {
+pub(crate) enum ContentKind {
     File,
     Directory,
 }
 
 /// A seed's reporting fields and optional source-containment constraint.
-pub(crate) struct Seed<'a> {
-    /// How the report names what happened: `Verb::Copy` for a copy,
-    /// `Verb::Fetch` for a download.
+pub(crate) struct SeedDescription<'a> {
+    /// Verb used to report the installation.
     pub verb: Verb,
 
     /// Where the content comes from, as the report writes it — a repository
     /// path or a URL.
     pub origin: String,
 
-    /// The local node the content is reproduced from, if any. A directory
-    /// source is a place the destination must not be inside of, and no
-    /// source may be inside a destination a refresh sets aside.
+    /// Optional local source. A directory source must not contain the destination, and no
+    /// source may be inside a destination that refresh replaces.
     pub source: Option<&'a Path>,
 }
 
-/// Seed one file: `fill` is handed the staging file, opened for writing and
-/// reachable by nobody else, and the path it is at for diagnostics.
-///
-/// `fill` runs only in perform mode. An error prevents publication and triggers
-/// best-effort cleanup.
+/// Seed a file using `fill`, which receives the open staging file and its path for diagnostics.
+/// Call `fill` only in perform mode. On error, do not publish and attempt staging cleanup.
 pub(crate) fn seed_file(
-    what: Seed<'_>,
+    seed: SeedDescription<'_>,
     dest: &Path,
     context: &RunContext,
     fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    seed(
-        what,
-        SeedKind::File,
+    seed_content(
+        seed,
+        ContentKind::File,
         dest,
         context,
         create_private_file,
@@ -59,20 +53,17 @@ pub(crate) fn seed_file(
     )
 }
 
-/// Seed one directory: `fill` is handed the staging directory's path, created
-/// private to this run, and fills it with the content that belongs there.
-///
-/// `fill` runs only in perform mode. An error prevents publication and triggers
-/// best-effort cleanup.
+/// Seed a directory using `fill`, which receives the staging directory path. Call `fill` only
+/// in perform mode. On error, do not publish and attempt staging cleanup.
 pub(crate) fn seed_directory(
-    what: Seed<'_>,
+    seed: SeedDescription<'_>,
     dest: &Path,
     context: &RunContext,
     fill: impl FnOnce(&Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    seed(
-        what,
-        SeedKind::Directory,
+    seed_content(
+        seed,
+        ContentKind::Directory,
         dest,
         context,
         create_private_directory,
@@ -80,16 +71,13 @@ pub(crate) fn seed_directory(
     )
 }
 
-/// Build and publish a complete seed at a vacant destination. Keep an occupied
-/// one, unless the run refreshes content: then [`refresh`] it. Checks directory
-/// containment and creates missing parents before staging. Dry runs report
-/// intent without creating parents, staging files, or content.
-///
-/// Shared by both entry points: `make` creates the staging node and `fill`
-/// fills it.
-fn seed<T>(
-    what: Seed<'_>,
-    kind: SeedKind,
+/// Build and publish a seed, keeping occupied destinations unless content refresh is enabled.
+/// Check source containment and create missing parents before staging. `make` creates the
+/// staging node and `fill` populates it. Dry runs report intent without creating content or
+/// parents.
+fn seed_content<T>(
+    seed: SeedDescription<'_>,
+    kind: ContentKind,
     dest: &Path,
     context: &RunContext,
     make: impl FnOnce(&Path) -> io::Result<T>,
@@ -97,8 +85,7 @@ fn seed<T>(
 ) -> Result<(), Error> {
     let resolver = context.resolver();
     let (mode, reporter) = (context.mode(), context.reporter());
-    // Where every conflict is skipped, nothing occupied could be replaced, so
-    // there is nothing to build it for.
+    // Skip rebuilding occupied seeds under `--no-overwrite`.
     let refreshing = context.refresh_content() && !resolver.conflicts().skips();
     let found = match Occupancy::at(dest, context.repository())? {
         Occupancy::Vacant => None,
@@ -106,15 +93,15 @@ fn seed<T>(
             report_kept(dest, mode, reporter);
             return Ok(());
         }
-        Occupancy::Replaceable { .. } => Some(Existing::Replaceable),
-        Occupancy::Unmanaged(found) => Some(Existing::Unmanaged(found)),
+        Occupancy::Replaceable { .. } => Some(OccupiedDestination::Replaceable),
+        Occupancy::Unmanaged(found) => Some(OccupiedDestination::Unmanaged(found)),
     };
-    if let (Some(source), SeedKind::Directory) = (what.source, kind) {
+    if let (Some(source), ContentKind::Directory) = (seed.source, kind) {
         paths::refuse_destination_inside_source(source, dest)?;
     }
     let verb = match found {
         Some(existing) => {
-            if let Some(source) = what.source {
+            if let Some(source) = seed.source {
                 paths::refuse_setting_aside_a_source(source, dest)?;
             }
             if !refresh(kind, dest, existing, &resolver, make, fill)? {
@@ -130,20 +117,20 @@ fn seed<T>(
                 report_kept(dest, mode, reporter);
                 return Ok(());
             }
-            what.verb
+            seed.verb
         }
     };
     reporter.info(&format!(
         "{} {} from {}",
-        verb.say(mode),
+        verb.for_mode(mode),
         dest.display(),
-        what.origin
+        seed.origin
     ));
     Ok(())
 }
 
 /// What a refresh finds at an occupied seed destination.
-enum Existing {
+enum OccupiedDestination {
     /// A symlink holding no content of its own, replaced without a backup.
     Replaceable,
     /// Anything else, settled under the run's conflict policy.
@@ -151,19 +138,20 @@ enum Existing {
 }
 
 fn report_kept(dest: &Path, mode: RunMode, reporter: &Reporter) {
-    reporter.detail(1, &format!("{} {}", Verb::Keep.say(mode), dest.display()));
+    reporter.detail(
+        1,
+        &format!("{} {}", Verb::Keep.for_mode(mode), dest.display()),
+    );
 }
 
-/// Build the seed again and put it in place of what is at `dest`, answering
-/// whether it did. Content identical to what is there is left alone, and said
-/// so at `-v`; anything else unmanaged is settled under `resolver`'s policy
-/// once the new content is complete. A dry run builds nothing, so it cannot
-/// compare, and reports the replacement a difference would make.
+/// Rebuild content and replace `dest` if it differs, returning whether replacement occurred.
+/// Resolve conflicts only after the new content is complete. Dry runs build nothing and report
+/// a possible replacement without comparing content.
 fn refresh<T>(
-    kind: SeedKind,
+    kind: ContentKind,
     dest: &Path,
-    existing: Existing,
-    resolver: &Resolver<'_>,
+    existing: OccupiedDestination,
+    resolver: &ConflictResolver<'_>,
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<bool, Error> {
@@ -174,7 +162,7 @@ fn refresh<T>(
     let staging = staging_path(dest);
     let node = create_staging(&staging, make)?;
     let refreshed = fill(node, &staging).and_then(|()| {
-        if let Existing::Unmanaged(_) = existing
+        if let OccupiedDestination::Unmanaged(_) = existing
             && same_content(&staging, dest)?
         {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
@@ -192,21 +180,21 @@ fn refresh<T>(
 /// place. Answers whether it was installed.
 fn settle(
     dest: &Path,
-    existing: Existing,
-    resolver: &Resolver<'_>,
+    existing: OccupiedDestination,
+    resolver: &ConflictResolver<'_>,
     install: impl FnOnce() -> Result<(), Error>,
 ) -> Result<bool, Error> {
     let keep = match existing {
-        Existing::Replaceable => Keep::Discard,
-        Existing::Unmanaged(found) => match resolver.resolve(dest, &found)? {
-            Resolution::Refuse => {
+        OccupiedDestination::Replaceable => ExistingContent::Discard,
+        OccupiedDestination::Unmanaged(found) => match resolver.resolve(dest, &found)? {
+            ConflictDecision::Refuse => {
                 return Err(Error::DestinationExists {
                     path: dest.to_path_buf(),
                     found,
                 });
             }
-            Resolution::Skip => return Ok(false),
-            Resolution::Replace(keep) => keep,
+            ConflictDecision::Skip => return Ok(false),
+            ConflictDecision::Replace(keep) => keep,
         },
     };
     resolver.replace(dest, keep, install)?;
@@ -290,31 +278,28 @@ fn same_bytes(built: &Path, existing: &Path) -> Result<bool, Error> {
     }
 }
 
-/// Build tool-owned content beside `dest` and put it there, replacing without a
-/// backup whatever is there already: the caller must have established that it
-/// is an earlier build of its own. `fill` is handed the staging file, opened for
-/// writing and reachable by nobody else, and the path it is at.
+/// Stage and replace a tool-owned file without a backup. The caller must establish ownership of
+/// any existing destination. `fill` receives the private, open staging file and its path.
 ///
-/// Creates missing parents under `resolver`, which should refuse. Reports
-/// nothing else; the caller words the result. Dry runs create nothing and
-/// never call `fill`.
+/// Create missing parents using `resolver`, which should refuse conflicts. Report only
+/// parent-directory changes. Dry runs create nothing and never call `fill`.
 pub(crate) fn rebuild_file(
     dest: &Path,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
     fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    rebuild(SeedKind::File, dest, resolver, create_private_file, fill)
+    rebuild(ContentKind::File, dest, resolver, create_private_file, fill)
 }
 
 /// [`rebuild_file`] for a directory: `fill` is handed the staging directory's
 /// path, created private to this run.
 pub(crate) fn rebuild_directory(
     dest: &Path,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
     fill: impl FnOnce(&Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
     rebuild(
-        SeedKind::Directory,
+        ContentKind::Directory,
         dest,
         resolver,
         create_private_directory,
@@ -323,12 +308,12 @@ pub(crate) fn rebuild_directory(
 }
 
 /// Build complete content at the staging path, then publish it at a vacant
-/// `dest` or [swap](swap) it for the node there. A failure before the swap
+/// `dest` or [swap] it for the node there. A failure before the swap
 /// leaves `dest` as it was.
 fn rebuild<T>(
-    kind: SeedKind,
+    kind: ContentKind,
     dest: &Path,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
@@ -353,13 +338,10 @@ fn rebuild<T>(
     built
 }
 
-/// Put complete staged content at `dest` in place of the node there: move that
-/// node aside, publish the staged content, then remove what was moved aside.
-/// If publication fails, the earlier node is moved back.
-///
-/// The aside path is `<dest>.batfiles-old`; an occupied one fails before
-/// anything moves, as an occupied staging path does.
-fn swap(staging: &Path, kind: SeedKind, dest: &Path, reporter: &Reporter) -> Result<(), Error> {
+/// Replace `dest` with staged content, moving the existing node to `<dest>.batfiles-old` first.
+/// That path must be vacant. Remove the old node after success; attempt to restore it if
+/// publication fails.
+fn swap(staging: &Path, kind: ContentKind, dest: &Path, reporter: &Reporter) -> Result<(), Error> {
     let aside = paths::beside(dest, ".batfiles-old");
     if paths::occupied(&aside)? {
         return Err(Error::StagingPathTaken { path: aside });
@@ -372,10 +354,9 @@ fn swap(staging: &Path, kind: SeedKind, dest: &Path, reporter: &Reporter) -> Res
     Ok(())
 }
 
-/// Publish complete staged content at a destination the caller has found or
-/// made vacant, failing if something arrived there while it was being built:
-/// that is nobody's to replace.
-fn publish_vacated(staging: &Path, kind: SeedKind, dest: &Path) -> Result<(), Error> {
+/// Publish staged content at a destination the caller found or made vacant. Fail if the
+/// pre-publication occupancy check finds a node there.
+fn publish_vacated(staging: &Path, kind: ContentKind, dest: &Path) -> Result<(), Error> {
     if publish(staging, kind, dest)? {
         Ok(())
     } else {
@@ -386,15 +367,11 @@ fn publish_vacated(staging: &Path, kind: SeedKind, dest: &Path) -> Result<(), Er
     }
 }
 
-/// Build content beside its destination and publish it when complete.
-/// Returns false if publication finds the destination occupied. Cleanup is
-/// best-effort and restricted to the staging node created by this call.
-///
-/// The node is created before any cleanup can run: a path already taken fails
-/// creation and is left untouched, so cleanup removes only what this call
-/// created.
+/// Build content beside its destination and publish it when complete. Return `false` if
+/// publication finds the destination occupied. Cleanup is best-effort and removes only staging
+/// content created by this call.
 fn build_and_publish<T>(
-    kind: SeedKind,
+    kind: ContentKind,
     dest: &Path,
     reporter: &Reporter,
     make: impl FnOnce(&Path) -> io::Result<T>,
@@ -409,9 +386,7 @@ fn build_and_publish<T>(
     installed
 }
 
-/// Exclusively create a private staging node, `make` deciding which kind. An
-/// occupied path is an error, since the node it would build in is not this
-/// run's to fill.
+/// Create a private staging node using `make`. Fail if the path is already occupied.
 fn create_staging<T>(
     staging: &Path,
     make: impl FnOnce(&Path) -> io::Result<T>,
@@ -451,9 +426,7 @@ fn create_private_directory(staging: &Path) -> io::Result<()> {
     fs::DirBuilder::new().mode(0o700).create(staging)
 }
 
-/// Where a mode means something other than it does on unix, this is ordinary
-/// exclusive creation: the permissions batfiles carries across are the unix
-/// ones, and there is nothing here to narrow.
+/// Create a staging file exclusively, using platform-default permissions.
 #[cfg(not(unix))]
 fn create_private_file(staging: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
@@ -463,7 +436,7 @@ fn create_private_file(staging: &Path) -> io::Result<fs::File> {
         .open(staging)
 }
 
-/// The same, for a directory: exclusive creation and nothing to narrow.
+/// Create a staging directory exclusively, using platform-default permissions.
 #[cfg(not(unix))]
 fn create_private_directory(staging: &Path) -> io::Result<()> {
     fs::create_dir(staging)
@@ -472,13 +445,12 @@ fn create_private_directory(staging: &Path) -> io::Result<()> {
 /// Publish complete staged content; return false if the destination is occupied.
 /// Files use a hard link where supported. The rename fallback and directory
 /// publication have a race between the occupancy check and rename.
-fn publish(staging: &Path, kind: SeedKind, dest: &Path) -> Result<bool, Error> {
-    if let SeedKind::File = kind {
+fn publish(staging: &Path, kind: ContentKind, dest: &Path) -> Result<bool, Error> {
+    if let ContentKind::File = kind {
         match fs::hard_link(staging, dest) {
             Ok(()) => return Ok(true),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
-            // Not every filesystem has links. Where there are none, the rename
-            // below is what is left.
+            // Fall back to rename on filesystems without hard-link support.
             Err(_) => {}
         }
     }
@@ -493,10 +465,10 @@ fn publish(staging: &Path, kind: SeedKind, dest: &Path) -> Result<bool, Error> {
 }
 
 /// Remove a staging node this run created, saying so if it cannot.
-fn discard(staging: &Path, kind: SeedKind, reporter: &Reporter) {
+fn discard(staging: &Path, kind: ContentKind, reporter: &Reporter) {
     let removed = match kind {
-        SeedKind::File => fs::remove_file(staging),
-        SeedKind::Directory => fs::remove_dir_all(staging),
+        ContentKind::File => fs::remove_file(staging),
+        ContentKind::Directory => fs::remove_dir_all(staging),
     };
     match removed {
         Ok(()) => {}
@@ -521,7 +493,7 @@ pub(crate) fn with_scratch<T>(
         path,
     };
     let done = work(&mut scratch);
-    discard(&scratch.path, SeedKind::File, reporter);
+    discard(&scratch.path, ContentKind::File, reporter);
     done
 }
 

@@ -45,24 +45,21 @@ impl RepositoryRoot {
 pub(crate) enum Occupancy {
     /// Nothing is there. The action may create what it was asked to.
     Vacant,
-    /// A symlink holding no content of its own, so replacing it destroys
-    /// nothing: it resolves inside the repository, or it is broken.
+    /// A broken symlink or one resolving inside the repository, replaceable without a backup.
     Replaceable {
         /// The target as written, for saying what a repair replaced.
         written: PathBuf,
-        /// Where it resolves, for deciding whether it is already right. A
-        /// broken link has no such place, so this is where it *would* land.
+        /// Resolved target path, or its lexical fallback for a broken link.
         points_at: PathBuf,
     },
-    /// Someone's data, whatever kind: a conflict for the run's policy to
-    /// settle, or a refusal where the destination is tool-owned.
+    /// An unmanaged node requiring conflict resolution.
     Unmanaged(ExistingNode),
 }
 
 impl Occupancy {
     /// Inspect one destination.
     pub fn at(dest: &Path, repository: &RepositoryRoot) -> Result<Self, Error> {
-        let Some(existing) = node_at(dest)? else {
+        let Some(existing) = symlink_metadata_if_present(dest)? else {
             return Ok(Self::Vacant);
         };
         if !existing.is_symlink() {
@@ -94,21 +91,17 @@ pub(crate) fn reaches_nothing(error: &io::Error) -> bool {
     )
 }
 
-/// What a destination in the way turned out to hold: the data half of
-/// [`Error::DestinationExists`], and what a conflict names.
+/// Filesystem node details used in conflict diagnostics.
 #[derive(Debug)]
 pub(crate) enum ExistingNode {
     File,
     Directory,
-    /// A symlink that leaves the repository and reaches something, named both
-    /// as it is written and as it resolves: a relative target is read from the
-    /// link's own directory, so the spelling alone does not say where it goes.
+    /// An external symlink with its stored target and resolved path.
     Link {
         written: PathBuf,
         points_at: PathBuf,
     },
-    /// A socket, a fifo, a device — something batfiles has no idea how to give
-    /// back, which is exactly why it will not take it.
+    /// An unsupported node kind, such as a socket, FIFO, or device.
     Other,
 }
 
@@ -132,8 +125,7 @@ impl fmt::Display for ExistingNode {
             Self::Directory => write!(f, "a directory"),
             Self::Link { written, points_at } => {
                 write!(f, "a symlink to {}", written.display())?;
-                // An absolute target resolves to itself, and printing it twice
-                // reads as though two paths were involved.
+                // Show the resolved path only when it differs from the stored target.
                 if written != points_at {
                     write!(f, " ({})", points_at.display())?;
                 }
@@ -144,15 +136,11 @@ impl fmt::Display for ExistingNode {
     }
 }
 
-/// The node at `path` itself, where one is. A final symlink is the link, and
-/// where it points is not read; earlier components resolve as usual.
-/// NotFound and NotADirectory mean nothing is there; other inspection errors
-/// propagate.
-pub(crate) fn node_at(path: &Path) -> Result<Option<fs::Metadata>, Error> {
+/// Inspect `path` without following its final symlink; earlier components resolve normally.
+/// Return `None` for NotFound or NotADirectory, and propagate other errors.
+pub(crate) fn symlink_metadata_if_present(path: &Path) -> Result<Option<fs::Metadata>, Error> {
     match fs::symlink_metadata(path) {
         Ok(node) => Ok(Some(node)),
-        // Nothing is at a path under a component that is not a directory
-        // either.
         Err(error) if reaches_nothing(&error) => Ok(None),
         Err(source) => Err(Error::Read {
             path: path.to_path_buf(),
@@ -161,9 +149,9 @@ pub(crate) fn node_at(path: &Path) -> Result<Option<fs::Metadata>, Error> {
     }
 }
 
-/// Whether anything is at `path`, as [`node_at`] judges it.
+/// Whether anything is at `path`, as [`symlink_metadata_if_present`] judges it.
 pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
-    Ok(node_at(path)?.is_some())
+    Ok(symlink_metadata_if_present(path)?.is_some())
 }
 
 /// Whether a path reaches a directory, following a final symlink.
@@ -188,9 +176,7 @@ pub(crate) fn refuse_destination_inside_source(source: &Path, dest: &Path) -> Re
     Ok(())
 }
 
-/// Refuse to set `dest` aside where resolving `source` passes through it,
-/// which would take the source with it: `source` is at or inside `dest`, or
-/// reaches its target by a link `dest` is, or is inside.
+/// Reject moving `dest` aside if resolving `source` visits it, including through symlinks.
 pub(crate) fn refuse_setting_aside_a_source(source: &Path, dest: &Path) -> Result<(), Error> {
     if passes_through(source, &located(dest))? {
         return Err(Error::SourceInsideDestination {
@@ -212,15 +198,11 @@ fn located(path: &Path) -> PathBuf {
     }
 }
 
-/// How many symlinks a walk follows before it gives up, as the operating
-/// system does for a loop.
+/// Maximum number of symlinks followed during a path walk.
 const MAX_LINKS: usize = 40;
 
-/// Whether resolving `path` component by component, following each symlink
-/// the way the operating system does, visits the node physically at `node`,
-/// as [`located`] names one. A loop, or a component nothing is at, ends the
-/// walk with what it visited so far; a node that cannot be inspected or a
-/// link that cannot be read is an error.
+/// Return whether resolving `path` visits `node`, which must use [`located`] form. Stop at
+/// missing components or the symlink limit; propagate inspection and link-read errors.
 fn passes_through(path: &Path, node: &Path) -> Result<bool, Error> {
     let mut pending: Vec<PathBuf> = path
         .components()
@@ -252,8 +234,7 @@ fn passes_through(path: &Path, node: &Path) -> Result<bool, Error> {
                 if candidate == node {
                     return Ok(true);
                 }
-                let Some(found) = node_at(&candidate)? else {
-                    // Nothing is here, so nothing further along is either.
+                let Some(found) = symlink_metadata_if_present(&candidate)? else {
                     return Ok(false);
                 };
                 if !found.is_symlink() {
@@ -282,12 +263,9 @@ fn passes_through(path: &Path, node: &Path) -> Result<bool, Error> {
     Ok(false)
 }
 
-/// Where a path that does not exist yet would land: the nearest existing
-/// ancestor canonicalized, with the missing components appended.
-///
-/// Best effort: where no ancestor canonicalizes, the answer is lexical, which a
-/// symlink along the path can make wrong. Use it to predict what a run will do,
-/// never to report where something is.
+/// Predict a path's target by canonicalizing its nearest existing ancestor and appending
+/// missing components. Fall back to lexical normalization if no ancestor resolves; the result
+/// is only an estimate.
 pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     let mut trailing = Vec::new();
     let mut ancestor = path;
@@ -297,8 +275,6 @@ pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
             result.extend(trailing.iter().rev());
             return result;
         }
-        // Nothing on this path exists, so there is nothing to resolve against
-        // and the lexical answer is the only one available.
         let (Some(parent), Some(name)) = (ancestor.parent(), ancestor.file_name()) else {
             return normalize_lexically(path);
         };
@@ -307,12 +283,8 @@ pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     }
 }
 
-/// The path as the filesystem reads it, or its lexical form where it cannot be
-/// canonicalized — a path that is not there, or one whose links cannot be read.
-///
-/// The result does not say which form it is, and the lexical form resolves
-/// `..` textually, unlike the filesystem through a symlink. Sound for comparing
-/// two existing paths; best effort otherwise.
+/// Canonicalize a path, falling back to lexical normalization on failure. The fallback resolves
+/// `..` textually and may differ from filesystem resolution through symlinks.
 pub(crate) fn canonicalize_or_normalize(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| normalize_lexically(path))
 }
@@ -356,8 +328,7 @@ pub(crate) fn children_of(dir: &Path) -> Result<Vec<OsString>, Error> {
     Ok(names)
 }
 
-/// Make a path absolute and lexically clean, so that what is compared,
-/// reported, and written into a link does not depend on the working directory.
+/// Make a path absolute against the current directory and normalize it lexically.
 pub(crate) fn anchor(path: &Path) -> Result<PathBuf, Error> {
     let absolute =
         std::path::absolute(path).map_err(|source| Error::WorkingDirectory { source })?;
@@ -371,8 +342,7 @@ pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {}
             Component::ParentDir => match result.components().next_back() {
-                // Only a named component can be cancelled. Above a root there is
-                // nowhere to go, and after another `..` the pair is meaningful.
+                // Cancel only named components; preserve leading `..` in relative paths.
                 Some(Component::Normal(_)) => {
                     result.pop();
                 }
@@ -395,8 +365,6 @@ mod tests {
             normalize_lexically(Path::new("/a/./b/../c")),
             PathBuf::from("/a/c")
         );
-        // Nothing to cancel: the root has no parent, and a leading `..` in a
-        // relative path is part of where it points.
         assert_eq!(normalize_lexically(Path::new("/..")), PathBuf::from("/"));
         assert_eq!(
             normalize_lexically(Path::new("../../a")),
@@ -411,7 +379,6 @@ mod tests {
             target_of(link, Path::new("../dotfiles/zshrc")),
             PathBuf::from("/home/dotfiles/zshrc")
         );
-        // Textually inside `/repo`, and nowhere near it once resolved.
         assert_eq!(
             target_of(link, Path::new("/repo/../outside")),
             PathBuf::from("/outside")
@@ -420,7 +387,7 @@ mod tests {
 
     /// The node at `path`, where inspecting it is expected to succeed.
     fn node(path: &Path) -> Option<fs::Metadata> {
-        node_at(path).expect("an inspectable path")
+        symlink_metadata_if_present(path).expect("an inspectable path")
     }
 
     #[test]
@@ -450,10 +417,8 @@ mod tests {
             )
         };
 
-        // As written: through the directory, or through the link.
         assert!(set_aside(&real.join("source"), &real));
         assert!(set_aside(&alias.join("source"), &alias));
-        // As resolved: the directory holds it whatever spelling reached it.
         assert!(set_aside(&alias.join("source"), &real));
         // Moving the link aside leaves what it reached where it is.
         assert!(!set_aside(&real.join("source"), &alias));
@@ -466,7 +431,6 @@ mod tests {
             &alias.join("nested/source"),
             &real.join("nested")
         ));
-        // A loop ends the walk rather than the process.
         std::os::unix::fs::symlink("loop", root.join("loop")).expect("a loop");
         assert!(!set_aside(&root.join("loop/source"), &real));
     }
@@ -481,7 +445,7 @@ mod tests {
         let locked = root.join("locked");
         fs::create_dir(&locked).expect("a directory");
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("locked");
-        // Someone the mode does not bind, such as root, can inspect it anyway.
+        // Skip the refusal assertion if this process can bypass permissions.
         let binds = fs::symlink_metadata(locked.join("source"))
             .is_err_and(|error| error.kind() == io::ErrorKind::PermissionDenied);
 

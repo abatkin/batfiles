@@ -4,29 +4,26 @@
 
 use clap::Args;
 
-use super::options::{ActionOptions, BootstrapOptions, SelectionOptions, SkipActionOptions};
+use super::options::{BootstrapOptions, ExecutionOptions, SkipActionOptions, SkipOptions};
 
-/// `clone` intentionally accepts neither `--dry-run` nor `--refresh-remotes`: a
-/// fresh clone materializes its remotes during the follow-up sync.
+/// Arguments for `clone`; neither `--dry-run` nor `--refresh-remotes` is accepted.
 #[derive(Debug, Args)]
 pub(crate) struct CloneArgs {
     /// Repository URL to clone into the selected batfiles directory
     pub url: String,
 
     #[command(flatten)]
-    pub action: ActionOptions,
+    pub action: ExecutionOptions,
 
     #[command(flatten)]
-    pub selection: SelectionOptions,
+    pub selection: SkipOptions,
 
     #[command(flatten)]
     pub bootstrap: BootstrapOptions,
 }
 
-// A command's own options are declared before the flattened groups: each group
-// carries a `next_help_heading`, and clap applies a heading to every argument
-// declared after it, so anything trailing a flattened group is filed under that
-// group's heading in `--help`.
+// Declare command options before flattened groups: clap's `next_help_heading` also affects
+// subsequent arguments.
 
 #[derive(Debug, Args)]
 pub(crate) struct SyncArgs {
@@ -39,10 +36,10 @@ pub(crate) struct SyncArgs {
     pub refresh_remotes: bool,
 
     #[command(flatten)]
-    pub action: ActionOptions,
+    pub action: ExecutionOptions,
 
     #[command(flatten)]
-    pub selection: SelectionOptions,
+    pub selection: SkipOptions,
 }
 
 #[derive(Debug, Args)]
@@ -56,10 +53,10 @@ pub(crate) struct ApplyActionArgs {
     pub dry_run: bool,
 
     #[command(flatten)]
-    pub action: ActionOptions,
+    pub action: ExecutionOptions,
 }
 
-/// Takes the action half of the run-only selectors and not the group half.
+/// Arguments for `apply-group`, including action skips.
 #[derive(Debug, Args)]
 pub(crate) struct ApplyGroupArgs {
     /// Leaf or qualified included group address
@@ -71,7 +68,7 @@ pub(crate) struct ApplyGroupArgs {
     pub dry_run: bool,
 
     #[command(flatten)]
-    pub action: ActionOptions,
+    pub action: ExecutionOptions,
 
     #[command(flatten)]
     pub selection: SkipActionOptions,
@@ -138,8 +135,6 @@ mod tests {
 
     #[test]
     fn apply_action_rejects_both_run_only_selectors() {
-        // One action is named exactly, so neither namespace has anything left
-        // to select over.
         for selector in ["--skip-action", "--skip-group"] {
             assert_eq!(
                 error_kind(&["batfiles", "apply-action", "--id", "a", selector, "b"]),
@@ -202,8 +197,6 @@ mod tests {
         let Command::Sync(args) = cli.command else {
             panic!("expected sync");
         };
-        // Both survive, in the order they were written: the last-value-wins
-        // rule belongs to the merge, which needs to see them all to apply it.
         assert_eq!(
             args.action
                 .vars

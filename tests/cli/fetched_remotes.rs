@@ -1,10 +1,5 @@
-//! `file` and `archive` remotes: what `sync` fetches into `remotes/`, when it
-//! fetches again, what it refuses to replace, and how an action names the
-//! content.
-//!
-//! Every fetch answers from a local server (`architecture.md`, "Test
-//! environments"), and several tests count its requests, because "nothing was
-//! fetched" and "nothing changed" are different claims.
+//! CLI tests for file/archive remote fetching, refresh, ownership, and source references.
+//! Local-server request counts verify skipped downloads.
 
 use std::fs;
 use std::path::PathBuf;
@@ -233,7 +228,6 @@ fn refresh_remotes_fetches_every_file_and_archive_remote_again() {
     ));
     tree.batfiles().arg("sync").assert().success();
     assert_eq!(server.requests(), 2);
-    // Something that is not what was fetched, which a refresh puts right.
     fs::write(materialization(&tree, "pathogen"), "edited by hand\n").expect("an edit");
 
     let assertion = tree
@@ -287,7 +281,6 @@ fn refresh_remotes_still_refuses_what_batfiles_did_not_fetch() {
 
 #[test]
 fn refresh_remotes_and_dry_run_do_not_go_together() {
-    // A dry run materializes nothing, so there would be nothing to refresh.
     let assertion = Tree::new()
         .batfiles()
         .args(["sync", "--dry-run", "--refresh-remotes"])
@@ -303,7 +296,6 @@ fn refresh_remotes_and_dry_run_do_not_go_together() {
 
 #[test]
 fn a_remote_that_changes_type_replaces_what_batfiles_fetched_for_it() {
-    // The stamp is what makes it batfiles' own, whichever kind of node it was.
     let server = server();
     let tree = Tree::new();
     tree.write_manifest(&format!(
@@ -353,8 +345,6 @@ fn a_failed_refetch_leaves_the_earlier_materialization_in_place() {
 
 #[test]
 fn what_batfiles_did_not_fetch_is_refused_and_left_alone() {
-    // A clone left by a Git remote once declared under the same ID looks like
-    // this: a directory with nothing beside it saying batfiles fetched it.
     let server = server();
     let tree = Tree::new();
     tree.write_manifest(&linking_an_archive(&server));
@@ -381,9 +371,6 @@ fn what_batfiles_did_not_fetch_is_refused_and_left_alone() {
 
 #[test]
 fn a_symlink_is_refused_whatever_the_stamp_beside_it_says() {
-    // Where a link points decides nothing here: one into the repository reaching
-    // the very content declared, and one reaching nothing, are both not what
-    // batfiles fetched, even beside the stamp its own fetch wrote.
     for (reaching, target) in [
         ("the declared content", "../vendored.vim"),
         ("nothing", "../nowhere"),
@@ -438,8 +425,6 @@ fn a_dry_run_says_what_it_would_fetch_and_fetches_nothing() {
         )),
         "{stderr}"
     );
-    // A dry run materializes nothing, so the action reading the remote is in
-    // the position an apply command is in.
     assert!(
         stderr.contains("remote `pathogen` is not materialized"),
         "{stderr}"
@@ -560,8 +545,6 @@ remote = "fzf"
 
 #[test]
 fn an_archive_remote_has_no_entry_filters() {
-    // Not built for `fetch-archive` either, and refused rather than unpacking
-    // more of the archive than the manifest asked for.
     let stderr = rejected(
         r#"[remotes.fzf]
 type = "archive"

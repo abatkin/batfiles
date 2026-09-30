@@ -1,6 +1,5 @@
-//! Settle an unmanaged node at a destination — back it up, discard it, skip
-//! it, or refuse it — and put new content in its place without losing the old
-//! node on the way.
+//! Resolve unmanaged destination conflicts by backing up, discarding, skipping, or refusing
+//! existing nodes. Restore a moved node after installation failure when possible.
 
 use std::fmt;
 use std::fs;
@@ -15,7 +14,7 @@ use crate::paths;
 
 /// What a run does with an unmanaged node where it installs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Policy {
+pub(crate) enum ConflictPolicy {
     /// Back it up beside itself and replace it: the default.
     Backup,
     /// Leave it and install nothing there: `--no-overwrite`.
@@ -29,64 +28,63 @@ pub(crate) enum Policy {
 /// A run's conflict policy, and the timestamp every backup it makes is named
 /// with.
 #[derive(Debug)]
-pub(crate) struct Conflicts {
-    policy: Policy,
+pub(crate) struct ConflictSettings {
+    policy: ConflictPolicy,
     stamp: String,
 }
 
-impl Conflicts {
+impl ConflictSettings {
     /// The policy for destinations an action installs to, stamping backups
     /// with `now`.
-    pub fn new(policy: Policy, now: SystemTime) -> Self {
+    pub fn new(policy: ConflictPolicy, now: SystemTime) -> Self {
         Self {
             policy,
             stamp: utc_stamp(now),
         }
     }
 
-    /// Whether every conflict is skipped, so work whose only use is to replace
-    /// an occupied destination need not be done.
+    /// Return whether the policy skips every occupied destination.
     pub fn skips(&self) -> bool {
-        self.policy == Policy::Skip
+        self.policy == ConflictPolicy::Skip
     }
 }
 
 /// The policy for tool-owned destinations, which makes no backups.
-pub(crate) static REFUSING: Conflicts = Conflicts {
-    policy: Policy::Refuse,
+pub(crate) static REFUSE_CONFLICTS: ConflictSettings = ConflictSettings {
+    policy: ConflictPolicy::Refuse,
     stamp: String::new(),
 };
 
 /// What to do about one conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Resolution {
+pub(crate) enum ConflictDecision {
     /// Fail; the caller words the refusal.
     Refuse,
     /// Leave the node and install nothing. Already reported.
     Skip,
     /// Replace the node, keeping it as a backup or discarding it.
-    Replace(Keep),
+    Replace(ExistingContent),
 }
 
 /// Whether a replaced node survives the replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Keep {
+pub(crate) enum ExistingContent {
     /// Renamed to a backup beside the destination, and left there.
-    Backup,
+    BackUp,
     /// Renamed aside and removed once its replacement is in place.
     Discard,
 }
 
 /// A conflict policy with the mode and reporter that carry it out.
 #[derive(Clone, Copy)]
-pub(crate) struct Resolver<'a> {
-    conflicts: &'a Conflicts,
+pub(crate) struct ConflictResolver<'a> {
+    conflicts: &'a ConflictSettings,
     mode: RunMode,
     reporter: &'a Reporter,
 }
 
-impl<'a> Resolver<'a> {
-    pub fn new(conflicts: &'a Conflicts, mode: RunMode, reporter: &'a Reporter) -> Self {
+impl<'a> ConflictResolver<'a> {
+    pub fn new(conflicts: &'a ConflictSettings, mode: RunMode, reporter: &'a Reporter) -> Self {
         Self {
             conflicts,
             mode,
@@ -102,34 +100,39 @@ impl<'a> Resolver<'a> {
         self.reporter
     }
 
-    pub fn conflicts(&self) -> &'a Conflicts {
+    pub fn conflicts(&self) -> &'a ConflictSettings {
         self.conflicts
     }
 
-    /// Decide what to do about `dest`, which is `found` — a phrase completing
-    /// "`dest` is …". A skip is reported here. Asking reads one line from
-    /// standard input per question; a dry run never asks, and answers as the
-    /// default would.
-    pub fn resolve(&self, dest: &Path, found: &dyn fmt::Display) -> Result<Resolution, Error> {
+    /// Resolve a conflict at `dest`. `found` describes its occupant, completing "`dest` is
+    /// ...". Report skipped conflicts. Interactive mode reads stdin; dry runs use the default
+    /// backup decision without prompting.
+    pub fn resolve(
+        &self,
+        dest: &Path,
+        found: &dyn fmt::Display,
+    ) -> Result<ConflictDecision, Error> {
         let resolution = match self.conflicts.policy {
-            Policy::Refuse => Resolution::Refuse,
-            Policy::Backup => Resolution::Replace(Keep::Backup),
-            Policy::Skip => Resolution::Skip,
-            Policy::Ask if !self.mode.writes() => Resolution::Replace(Keep::Backup),
-            Policy::Ask => self.ask(dest, found)?,
+            ConflictPolicy::Refuse => ConflictDecision::Refuse,
+            ConflictPolicy::Backup => ConflictDecision::Replace(ExistingContent::BackUp),
+            ConflictPolicy::Skip => ConflictDecision::Skip,
+            ConflictPolicy::Ask if !self.mode.writes() => {
+                ConflictDecision::Replace(ExistingContent::BackUp)
+            }
+            ConflictPolicy::Ask => self.ask(dest, found)?,
         };
-        if resolution == Resolution::Skip {
+        if resolution == ConflictDecision::Skip {
             self.reporter.info(&format!(
                 "{} {}: it is {found}",
-                Verb::Skip.say(self.mode),
+                Verb::Skip.for_mode(self.mode),
                 dest.display()
             ));
         }
         Ok(resolution)
     }
 
-    /// Put one question about `dest` until it has an answer.
-    fn ask(&self, dest: &Path, found: &dyn fmt::Display) -> Result<Resolution, Error> {
+    /// Prompt for a conflict decision until a valid answer is read.
+    fn ask(&self, dest: &Path, found: &dyn fmt::Display) -> Result<ConflictDecision, Error> {
         let stdin = io::stdin();
         let mut input = stdin.lock();
         let mut again = "";
@@ -146,16 +149,16 @@ impl<'a> Resolver<'a> {
                     source,
                 })?;
             if read == 0 {
-                // The question is still open on its line.
+                // End the prompt line before printing the error.
                 eprintln!();
                 return Err(Error::NoAnswer {
                     path: dest.to_path_buf(),
                 });
             }
             match answer.trim().to_ascii_lowercase().as_str() {
-                "" | "b" => return Ok(Resolution::Replace(Keep::Backup)),
-                "o" => return Ok(Resolution::Replace(Keep::Discard)),
-                "s" => return Ok(Resolution::Skip),
+                "" | "b" => return Ok(ConflictDecision::Replace(ExistingContent::BackUp)),
+                "o" => return Ok(ConflictDecision::Replace(ExistingContent::Discard)),
+                "s" => return Ok(ConflictDecision::Skip),
                 _ => again = "answer b, o, or s: ",
             }
         }
@@ -176,26 +179,30 @@ impl<'a> Resolver<'a> {
     pub fn replace(
         &self,
         dest: &Path,
-        keep: Keep,
+        keep: ExistingContent,
         install: impl FnOnce() -> Result<(), Error>,
     ) -> Result<(), Error> {
         let aside = match keep {
-            Keep::Backup => self.backup_path(dest)?,
-            Keep::Discard => discard_path(dest)?,
+            ExistingContent::BackUp => self.backup_path(dest)?,
+            ExistingContent::Discard => discard_path(dest)?,
         };
         let (mode, reporter) = (self.mode, self.reporter);
         if mode.writes() {
             set_aside(dest, &aside)?;
         }
         match keep {
-            Keep::Backup => reporter.info(&format!(
+            ExistingContent::BackUp => reporter.info(&format!(
                 "{} {} to {}",
-                Verb::BackUp.say(mode),
+                Verb::BackUp.for_mode(mode),
                 dest.display(),
                 aside.display()
             )),
-            Keep::Discard => {
-                reporter.info(&format!("{} {}", Verb::Discard.say(mode), dest.display()));
+            ExistingContent::Discard => {
+                reporter.info(&format!(
+                    "{} {}",
+                    Verb::Discard.for_mode(mode),
+                    dest.display()
+                ));
             }
         }
         if !mode.writes() {
@@ -205,11 +212,15 @@ impl<'a> Resolver<'a> {
         if let Err(error) = install() {
             let (error, restored) = put_back(dest, &aside, error);
             if restored {
-                reporter.info(&format!("{} {}", Verb::Restore.say(mode), dest.display()));
+                reporter.info(&format!(
+                    "{} {}",
+                    Verb::Restore.for_mode(mode),
+                    dest.display()
+                ));
             }
             return Err(error);
         }
-        if keep == Keep::Discard {
+        if keep == ExistingContent::Discard {
             remove_aside(&aside, reporter);
         }
         Ok(())
@@ -231,8 +242,7 @@ impl<'a> Resolver<'a> {
 /// What names a backup, ahead of its stamp.
 const BACKUP_SUFFIX: &str = ".batfiles-backup-";
 
-/// Where a node waits to be discarded, which must be vacant: what is there is
-/// left over from another run, and nobody's to remove.
+/// Return `<dest>.batfiles-old`, failing if it is already occupied.
 fn discard_path(dest: &Path) -> Result<PathBuf, Error> {
     let aside = paths::beside(dest, ".batfiles-old");
     if paths::occupied(&aside)? {
@@ -249,12 +259,11 @@ pub(crate) fn set_aside(dest: &Path, aside: &Path) -> Result<(), Error> {
     })
 }
 
-/// After `error` failed an install over `dest`, rename the node [`set_aside`]
-/// moved back from `aside` if nothing is at `dest`. Answers the error to
-/// report, which names `aside` where the node could not go back, and whether
-/// it went back.
+/// Restore `aside` after an installation failure if `dest` is vacant. Return the error to
+/// report and whether restoration succeeded; failed restoration adds the aside path to the
+/// error.
 pub(crate) fn put_back(dest: &Path, aside: &Path, error: Error) -> (Error, bool) {
-    let vacant = matches!(paths::node_at(dest), Ok(None));
+    let vacant = matches!(paths::symlink_metadata_if_present(dest), Ok(None));
     if vacant && fs::rename(aside, dest).is_ok() {
         return (error, true);
     }
@@ -283,7 +292,7 @@ pub(crate) fn remove_aside(aside: &Path, reporter: &Reporter) {
 
 /// `now` in UTC as `YYYYMMDDTHHMMSSZ`, to the second.
 fn utc_stamp(now: SystemTime) -> String {
-    // Before 1970 is a clock nobody set, and any stamp will do.
+    // Clamp pre-epoch timestamps to the epoch.
     let seconds = now
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
@@ -336,16 +345,16 @@ mod tests {
     fn a_backup_never_takes_an_earlier_one() {
         let dir = tempfile::tempdir().expect("temp dir");
         let dest = dir.path().join("rc");
-        let conflicts = Conflicts {
-            policy: Policy::Backup,
+        let conflicts = ConflictSettings {
+            policy: ConflictPolicy::Backup,
             stamp: "STAMP".to_owned(),
         };
         let reporter = Reporter::new(false);
-        let resolver = Resolver::new(&conflicts, RunMode::Perform, &reporter);
+        let resolver = ConflictResolver::new(&conflicts, RunMode::Perform, &reporter);
         for contents in ["first", "second", "third"] {
             fs::write(&dest, contents).expect("a node to back up");
             resolver
-                .replace(&dest, Keep::Backup, || Ok(()))
+                .replace(&dest, ExistingContent::BackUp, || Ok(()))
                 .expect("backed up");
         }
         let backup = |suffix: &str| fs::read_to_string(dir.path().join(format!("rc{suffix}")));
@@ -362,11 +371,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let dest = dir.path().join("rc");
         fs::write(&dest, "mine").expect("a node");
-        let conflicts = Conflicts::new(Policy::Backup, SystemTime::now());
+        let conflicts = ConflictSettings::new(ConflictPolicy::Backup, SystemTime::now());
         let reporter = Reporter::new(false);
-        let resolver = Resolver::new(&conflicts, RunMode::Perform, &reporter);
+        let resolver = ConflictResolver::new(&conflicts, RunMode::Perform, &reporter);
 
-        let failed = resolver.replace(&dest, Keep::Discard, || {
+        let failed = resolver.replace(&dest, ExistingContent::Discard, || {
             Err(Error::Write {
                 path: dest.clone(),
                 source: io::ErrorKind::PermissionDenied.into(),
@@ -382,11 +391,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let dest = dir.path().join("rc");
         fs::write(&dest, "mine").expect("a node");
-        let conflicts = Conflicts::new(Policy::Backup, SystemTime::now());
+        let conflicts = ConflictSettings::new(ConflictPolicy::Backup, SystemTime::now());
         let reporter = Reporter::new(false);
-        let resolver = Resolver::new(&conflicts, RunMode::Perform, &reporter);
+        let resolver = ConflictResolver::new(&conflicts, RunMode::Perform, &reporter);
 
-        let failed = resolver.replace(&dest, Keep::Backup, || {
+        let failed = resolver.replace(&dest, ExistingContent::BackUp, || {
             fs::write(&dest, "partial").expect("a partial install");
             Err(Error::Write {
                 path: dest.clone(),

@@ -1,85 +1,62 @@
-//! Bootstrap adoption: what a machine starts with switched off, decided once by
-//! `clone` and written to [`disabled.toml`](crate::disabled).
-//!
-//! Three sources say something about it -- the leaf's `[default-disabled]`
-//! candidates, the `BATFILES_*` bootstrap lists, and the command's own
-//! enable/disable options -- and the
-//! [precedence](../docs/environment.md#bootstrap-enable-and-disable-lists)
-//! between them is a sequence: each source is applied over the one before it, so
-//! the last to name an action or group is the one that decides it.
-//!
-//! Only a machine with no `disabled.toml` is offered the candidates. The
-//! document existing is the machine having an opinion of its own, and
-//! [the section](../docs/repoformat.md#default-disabled-bootstrap-entries)
-//! cannot switch an action off again on a machine that has already enabled it.
-//! The explicit decisions apply either way: they were written for this
-//! invocation rather than by the repository.
+//! Bootstrap disabled state for `clone`. Apply eligible `[default-disabled]` entries only when
+//! `disabled.toml` is absent, then apply environment and CLI decisions in [precedence
+//! order](../docs/environment.md#bootstrap-enable-and-disable-lists).
 
 use crate::cli::BootstrapOptions;
 use crate::condition::{Bindings, Gate};
-use crate::disabled::{Change, Disabled, DisabledList, apply, outcome};
+use crate::disabled::{Change, DisabledItems, apply, outcome};
 use crate::env::Environment;
 use crate::error::Error;
-use crate::item::ItemAddress;
+use crate::item::{ItemAddress, ItemKind};
 use crate::location::StateRoots;
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::output::Reporter;
 use crate::paths;
 
-/// What the warning for an undecidable candidate condition says adoption did
-/// about it. A gate that cannot be decided closes, here as everywhere, so the
-/// candidate is not offered -- which is what leaves the action or group enabled.
+/// Warning suffix for a candidate whose condition cannot be evaluated.
 const NOT_DISABLED: &str = "it is left enabled";
 
 /// The origin reported for a candidate the repository declared.
 const DECLARED: &str = "default-disabled";
 
-/// The explicit decisions one `clone` was given, in the order they apply.
-///
-/// Read before the repository is cloned, so a malformed address fails the
-/// command with nothing downloaded.
+/// Explicit enable/disable decisions for `clone`, in precedence order.
 #[derive(Debug)]
-pub(crate) struct Bootstrap {
+pub(crate) struct BootstrapDecisions {
     decisions: Vec<Decision>,
 }
 
-/// One explicit decision: what it names, which of the document's two lists it
-/// belongs to, which way it moves the name, and what said so.
+/// An enable/disable decision with its item kind, address, and origin.
 #[derive(Debug)]
 struct Decision {
-    list: DisabledList,
+    kind: ItemKind,
     change: Change,
     origin: &'static str,
     name: ItemAddress,
 }
 
-impl Bootstrap {
-    /// Read the four variables and the four options into one ordered list.
-    ///
-    /// A malformed option value fails the command; a malformed variable value
-    /// warns and is dropped, since generated installers write the variables.
+impl BootstrapDecisions {
+    /// Read bootstrap environment variables and CLI options in precedence order. Invalid option
+    /// values fail; invalid environment values warn and are dropped.
     pub fn read(
         options: &BootstrapOptions,
         env: &Environment,
         reporter: &Reporter,
     ) -> Result<Self, Error> {
         use Change::{Disable, Enable};
-        use DisabledList::{Actions, Groups};
+        use ItemKind::{Action, Group};
 
         let mut decisions = Vec::new();
-        // The precedence: environment, then command line; within each,
-        // disable before enable, so enable wins. Actions and groups are
-        // separate sets, so their relative order only affects output.
-        for (list, change, variable) in [
-            (Actions, Disable, "BATFILES_DISABLE_ACTIONS"),
-            (Groups, Disable, "BATFILES_DISABLE_GROUPS"),
-            (Actions, Enable, "BATFILES_ENABLE_ACTIONS"),
-            (Groups, Enable, "BATFILES_ENABLE_GROUPS"),
+        // Environment precedes CLI; within each, enable overrides disable.
+        for (kind, change, variable) in [
+            (Action, Disable, "BATFILES_DISABLE_ACTIONS"),
+            (Group, Disable, "BATFILES_DISABLE_GROUPS"),
+            (Action, Enable, "BATFILES_ENABLE_ACTIONS"),
+            (Group, Enable, "BATFILES_ENABLE_GROUPS"),
         ] {
             for value in env.list(variable) {
                 match ItemAddress::try_from(value) {
                     Ok(name) => decisions.push(Decision {
-                        list,
+                        kind,
                         change,
                         origin: variable,
                         name,
@@ -88,20 +65,20 @@ impl Bootstrap {
                 }
             }
         }
-        for (list, change, option, values) in [
+        for (kind, change, option, values) in [
             (
-                Actions,
+                Action,
                 Disable,
                 "--disable-action",
                 &options.disable_actions,
             ),
-            (Groups, Disable, "--disable-group", &options.disable_groups),
-            (Actions, Enable, "--enable-action", &options.enable_actions),
-            (Groups, Enable, "--enable-group", &options.enable_groups),
+            (Group, Disable, "--disable-group", &options.disable_groups),
+            (Action, Enable, "--enable-action", &options.enable_actions),
+            (Group, Enable, "--enable-group", &options.enable_groups),
         ] {
             for value in values {
                 decisions.push(Decision {
-                    list,
+                    kind,
                     change,
                     origin: option,
                     name: ItemAddress::try_from(value.clone())?,
@@ -111,11 +88,7 @@ impl Bootstrap {
         Ok(Self { decisions })
     }
 
-    /// Decide this machine's starting point and record it.
-    ///
-    /// Reports one line per decision, and saves only where something moved: a
-    /// bootstrap that decides nothing leaves no document behind, so the next one
-    /// is offered the candidates in its turn.
+    /// Apply bootstrap decisions and report each one. Save disabled state only when it changes.
     pub fn adopt(
         &self,
         candidates: &DefaultDisabled,
@@ -123,38 +96,37 @@ impl Bootstrap {
         roots: &StateRoots,
         reporter: &Reporter,
     ) -> Result<(), Error> {
-        let path = roots.disabled();
-        // Presence rather than content: a document listing nothing is still a
-        // machine that has been set up, and an empty answer is an answer.
+        let path = roots.disabled_path();
+        // An existing empty document still means bootstrap defaults were already considered.
         let offered = !paths::occupied(&path)?;
-        let mut disabled = Disabled::load(&path)?;
+        let mut disabled = DisabledItems::load(&path)?;
 
         let mut lines = Vec::new();
         let mut changed = false;
 
         if offered {
-            for (list, name, gate) in entries(candidates) {
+            for (kind, name, gate) in entries(candidates) {
                 if let Some(exclusion) =
                     gate.and_then(|gate| gate.exclusion(bindings, Some(NOT_DISABLED)))
                 {
-                    exclusion.report_heading(reporter, &heading(list, name));
+                    exclusion.report_heading(reporter, &heading(kind, name));
                     continue;
                 }
-                let moved = apply(list.set_in(&mut disabled), Change::Disable, name);
+                let moved = apply(disabled.list_mut(kind), Change::Disable, name);
                 changed |= moved;
-                lines.push(line(list, Change::Disable, name, moved, DECLARED));
+                lines.push(line(kind, Change::Disable, name, moved, DECLARED));
             }
         }
 
         for decision in &self.decisions {
             let moved = apply(
-                decision.list.set_in(&mut disabled),
+                disabled.list_mut(decision.kind),
                 decision.change,
                 &decision.name,
             );
             changed |= moved;
             lines.push(line(
-                decision.list,
+                decision.kind,
                 decision.change,
                 &decision.name,
                 moved,
@@ -172,40 +144,35 @@ impl Bootstrap {
     }
 }
 
-/// Every candidate the leaf declared, in the order they are offered: the
-/// actions and then the groups, each with the gate that says whether this
-/// machine is offered it at all.
+/// Iterate declared candidates and their conditions: actions first, then groups.
 fn entries(
     candidates: &DefaultDisabled,
-) -> impl Iterator<Item = (DisabledList, &ItemAddress, Option<Gate<'_>>)> {
+) -> impl Iterator<Item = (ItemKind, &ItemAddress, Option<Gate<'_>>)> {
     let actions = candidates
         .actions
         .iter()
-        .map(|entry| (DisabledList::Actions, &entry.id, entry.gate()));
+        .map(|entry| (ItemKind::Action, &entry.id, entry.gate()));
     let groups = candidates
         .groups
         .iter()
-        .map(|entry| (DisabledList::Groups, &entry.group, entry.gate()));
+        .map(|entry| (ItemKind::Group, &entry.group, entry.gate()));
     actions.chain(groups)
 }
 
-/// How a report names one candidate, which is the record rather than the change
-/// it would have made.
-fn heading(list: DisabledList, name: &ItemAddress) -> String {
-    format!("candidate {} `{name}`", list.noun())
+/// Format a candidate's kind and address for diagnostics.
+fn heading(kind: ItemKind, name: &ItemAddress) -> String {
+    format!("candidate {kind} `{name}`")
 }
 
-/// One decision's line: what asked for the change, and what the change did.
-///
-/// The origin leads, as elsewhere an input is named for what it did.
+/// Format a decision with its origin and outcome.
 fn line(
-    list: DisabledList,
+    kind: ItemKind,
     change: Change,
     name: &ItemAddress,
     moved: bool,
     origin: &'static str,
 ) -> String {
-    format!("{origin}: {}", outcome(list, change, name, moved))
+    format!("{origin}: {}", outcome(kind, change, name, moved))
 }
 
 #[cfg(test)]
@@ -217,8 +184,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::rc::Rc;
 
-    /// A quiet reporter. Warnings still print, so these tests assert outcomes;
-    /// CLI tests cover the wording.
+    /// Create a reporter that suppresses informational output.
     fn quiet() -> Reporter {
         let mut reporter = Reporter::new(false);
         reporter.set_verbosity(Verbosity::Quiet);
@@ -252,13 +218,13 @@ mod tests {
     fn read<const N: usize, const M: usize>(
         pairs: [(&str, &str); N],
         variables: [(&str, &str); M],
-    ) -> Bootstrap {
-        Bootstrap::read(&options(pairs), &env(variables), &quiet()).expect("valid addresses")
+    ) -> BootstrapDecisions {
+        BootstrapDecisions::read(&options(pairs), &env(variables), &quiet())
+            .expect("valid addresses")
     }
 
-    /// Each decision as `origin name`, which is the whole of what one is once
-    /// the list and the change are read off the origin.
-    fn decisions(bootstrap: &Bootstrap) -> Vec<String> {
+    /// Format each decision as `origin name`.
+    fn decisions(bootstrap: &BootstrapDecisions) -> Vec<String> {
         bootstrap
             .decisions
             .iter()
@@ -266,8 +232,7 @@ mod tests {
             .collect()
     }
 
-    /// The candidates a manifest declares, written the way a manifest writes
-    /// them rather than as the section on its own.
+    /// Parse the `[default-disabled]` section from a complete manifest.
     fn candidates(manifest: &str) -> DefaultDisabled {
         toml::from_str::<crate::manifest::Manifest>(manifest)
             .expect("valid candidates")
@@ -285,11 +250,11 @@ mod tests {
     /// Adopt against the given variables, and answer with the document that was
     /// left behind, or `None` where none was written.
     fn adopt(
-        bootstrap: &Bootstrap,
+        bootstrap: &BootstrapDecisions,
         candidates: &DefaultDisabled,
         vars: &[(&str, &str)],
         dir: &tempfile::TempDir,
-    ) -> Option<Disabled> {
+    ) -> Option<DisabledItems> {
         let values: BTreeMap<_, _> = vars
             .iter()
             .map(|(name, value)| {
@@ -311,9 +276,9 @@ mod tests {
             )
             .expect("adoption should succeed");
         roots
-            .disabled()
+            .disabled_path()
             .exists()
-            .then(|| Disabled::load(&roots.disabled()).expect("the written document"))
+            .then(|| DisabledItems::load(&roots.disabled_path()).expect("the written document"))
     }
 
     fn temp() -> tempfile::TempDir {
@@ -324,12 +289,8 @@ mod tests {
         addresses.iter().map(ToString::to_string).collect()
     }
 
-    // Reading the two sources.
-
     #[test]
     fn the_decisions_are_ordered_by_the_precedence_they_apply_in() {
-        // The whole of the precedence in one list: the environment before the
-        // command line, and disable before enable within each.
         let bootstrap = read(
             [("--enable-action", "c"), ("--disable-action", "d")],
             [
@@ -374,7 +335,7 @@ mod tests {
 
     #[test]
     fn an_unusable_option_value_fails_the_command() {
-        let error = Bootstrap::read(
+        let error = BootstrapDecisions::read(
             &options([("--disable-action", "core..p10k")]),
             &env([]),
             &quiet(),
@@ -382,8 +343,6 @@ mod tests {
         .expect_err("an empty segment is not an address");
         assert!(error.to_string().contains("`core..p10k`"), "{error}");
     }
-
-    // Adopting.
 
     #[test]
     fn a_fresh_machine_takes_the_candidates_the_repository_declared() {
@@ -406,8 +365,8 @@ mod tests {
     fn a_machine_that_already_has_a_document_is_not_offered_them() {
         let dir = temp();
         let roots = machine(&dir);
-        Disabled::default()
-            .save(&roots.disabled())
+        DisabledItems::default()
+            .save(&roots.disabled_path())
             .expect("an existing document");
 
         let document = adopt(
@@ -418,17 +377,12 @@ mod tests {
         )
         .expect("a document");
 
-        // The candidate is passed over and the explicit decision is not: one was
-        // the repository's standing opinion and the other was written for this
-        // invocation.
         assert!(document.actions.is_empty());
         assert_eq!(names(&document.groups), ["gui"]);
     }
 
     #[test]
     fn deciding_nothing_leaves_no_document_behind() {
-        // Which is what keeps the rule above from latching a machine that was
-        // never actually set up.
         let dir = temp();
         assert!(adopt(&read([], []), &candidates(""), &[], &dir).is_none());
     }
@@ -442,8 +396,6 @@ mod tests {
             &[],
             &dir,
         );
-        // Nothing was left disabled, and the two decisions cancelled out, so
-        // there is nothing to write either.
         assert!(document.is_none_or(|document| document.actions.is_empty()));
     }
 
@@ -478,8 +430,6 @@ mod tests {
         assert!(document.is_none_or(|document| document.actions.is_empty()));
     }
 
-    // What a candidate's condition decides.
-
     #[test]
     fn a_candidate_is_offered_only_where_its_condition_admits_it() {
         let declared = candidates(
@@ -500,8 +450,6 @@ mod tests {
 
     #[test]
     fn a_condition_this_machine_cannot_decide_leaves_the_candidate_alone() {
-        // A gate that cannot be decided closes, here as everywhere else, so the
-        // candidate is not offered and the action it names stays enabled.
         let dir = temp();
         let document = adopt(
             &read([], []),
@@ -512,24 +460,16 @@ mod tests {
         assert!(document.is_none(), "an undecidable candidate was adopted");
     }
 
-    // What a decision says it did.
-
     #[test]
     fn every_line_names_what_asked_for_the_change() {
         let name = ItemAddress::try_from("p10k".to_owned()).expect("valid address");
         assert_eq!(
-            line(
-                DisabledList::Actions,
-                Change::Disable,
-                &name,
-                true,
-                DECLARED
-            ),
+            line(ItemKind::Action, Change::Disable, &name, true, DECLARED),
             "default-disabled: disabled action `p10k`"
         );
         assert_eq!(
             line(
-                DisabledList::Actions,
+                ItemKind::Action,
                 Change::Enable,
                 &name,
                 false,
@@ -537,9 +477,6 @@ mod tests {
             ),
             "--enable-action: action `p10k` was already enabled"
         );
-        assert_eq!(
-            heading(DisabledList::Groups, &name),
-            "candidate group `p10k`"
-        );
+        assert_eq!(heading(ItemKind::Group, &name), "candidate group `p10k`");
     }
 }

@@ -1,4 +1,4 @@
-//! Carrying one `[[actions]]` record out.
+//! Dispatch prepared actions.
 
 mod children;
 mod context;
@@ -10,31 +10,29 @@ mod git_clone;
 mod git_clone_list;
 mod symlink;
 
-pub(crate) use context::{Replacement, RunContext};
+pub(crate) use context::{DestinationOptions, RunContext};
 
 use crate::clone_list::PreparedList;
 use crate::error::Error;
 use crate::item::ItemId;
 use crate::manifest::action::Action;
 
-/// What carrying one record of the run's list out works from.
+/// Inputs for executing an action.
 ///
-/// Clone lists must use `CloneList` with their prepared entries. Inclusions are
-/// expanded during assembly and are never executable. All other actions use
-/// `Declared` with their manifest record.
+/// Clone lists require prepared entries. Other executable actions use `Declared`; inclusions
+/// must be expanded before dispatch.
 pub(crate) enum Executable<'a> {
-    /// A record whose declaration is the whole of what carrying it out needs.
+    /// An action that needs only its manifest declaration.
     Declared(&'a Action),
     /// A clone list, read for this run.
     CloneList(PreparedList<'a>),
 }
 
-/// Carry out one record, whichever kind it is.
+/// Execute a prepared action.
 ///
-/// `remote` is the materialization an
-/// [`include-remote`](crate::manifest::action::IncludeRemoteAction)'s record
-/// came from, or `None` for a leaf record. Only the symlink and copy actions
-/// consult it; a clone list's path was resolved during preparation.
+/// `remote` identifies the materialization containing an included record, or is `None` for a
+/// leaf record. Symlink and copy actions resolve sources against it; clone lists are already
+/// prepared.
 pub(crate) fn run(
     executable: &Executable<'_>,
     remote: Option<&ItemId>,
@@ -75,7 +73,7 @@ mod tests {
         let tree = tempfile::tempdir().expect("a temporary root");
         let roots = Roots {
             home: tree.path().join("home"),
-            batfiles_dir: tree.path().to_path_buf(),
+            batfiles_repo: tree.path().to_path_buf(),
             state: StateRoots {
                 config_dir: tree.path().join("config"),
                 cache_dir: tree.path().join("cache"),
@@ -86,7 +84,7 @@ mod tests {
             &roots,
             RunMode::Perform,
             Default::default(),
-            Replacement::default(),
+            DestinationOptions::default(),
             &reporter,
         )
         .expect("the roots resolve");

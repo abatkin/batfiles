@@ -11,16 +11,14 @@ pub(crate) struct BareRepo {
 }
 
 impl BareRepo {
-    /// A repository with one commit on `main`, holding one file: what a test
-    /// clones when the clone itself is the subject and the content is not.
+    /// Create a repository with one file and one commit on `main`.
     pub(crate) fn new() -> Self {
         let repo = Self::empty();
         repo.publish("README.md", "a plugin\n", "first");
         repo
     }
 
-    /// A repository holding the fixture tree at `tests/fixtures/<name>`, for
-    /// tests where the repository's content matters.
+    /// Publish `tests/fixtures/<name>` as a bare repository.
     pub(crate) fn from_fixture(name: &str) -> Self {
         let repo = Self::empty();
         repo.stand_on("main");
@@ -29,7 +27,7 @@ impl BareRepo {
         repo
     }
 
-    /// The two repositories and the link between them, with no commit yet.
+    /// Create an empty bare origin and working repository with its origin configured.
     fn empty() -> Self {
         let repo = Self {
             dir: tempfile::tempdir().expect("a temporary directory"),
@@ -46,20 +44,18 @@ impl BareRepo {
         repo
     }
 
-    /// Commit a file and push it, for the tests about what an update brings.
+    /// Commit a file on `main` and push it.
     pub(crate) fn publish(&self, name: &str, contents: &str, message: &str) {
         self.publish_on("main", name, contents, message);
     }
 
-    /// The same, on a branch other than `main`, for the tests about a declared
-    /// `ref`. The branch is created at whatever the working clone is standing on
-    /// the first time it is named, and extended after that.
+    /// Commit and push a file on `branch`. Create a missing branch at the working repository's
+    /// current commit.
     pub(crate) fn publish_on(&self, branch: &str, name: &str, contents: &str, message: &str) {
         self.commit(branch, name, contents, message, &["add", "-A"]);
     }
 
-    /// Start tracking a file the repository's own `.gitignore` covers, which
-    /// `publish` cannot do — `git add -A` passes an ignored path over.
+    /// Force-add an ignored file, commit it, and push the branch.
     pub(crate) fn publish_ignored(&self, branch: &str, name: &str, contents: &str) {
         self.commit(
             branch,
@@ -82,8 +78,6 @@ impl BareRepo {
     fn commit(&self, branch: &str, name: &str, contents: &str, message: &str, add: &[&str]) {
         self.stand_on(branch);
         let path = self.work().join(name);
-        // So that a name may be a path: a repository an action installs from
-        // keeps its files in directories like any other.
         fs::create_dir_all(path.parent().expect("a parent")).expect("a directory to commit into");
         fs::write(&path, contents).expect("a file to commit");
         self.record(branch, message, add);
@@ -99,8 +93,7 @@ impl BareRepo {
         }
     }
 
-    /// Commit whatever `add` stages and push it, for both the one-file case and
-    /// the whole-fixture one.
+    /// Stage using `add`, commit with `message`, and push `branch`.
     fn record(&self, branch: &str, message: &str, add: &[&str]) {
         let work = self.work();
         git(&work, add);
@@ -108,8 +101,7 @@ impl BareRepo {
         git(&work, &["push", "origin", branch]);
     }
 
-    /// Tag what the working clone is standing on, and push the tag: a `ref` that
-    /// is not a branch and therefore never moves.
+    /// Tag the working repository's current commit and push the tag.
     pub(crate) fn tag(&self, name: &str) {
         git(&self.work(), &["tag", name]);
         git(&self.work(), &["push", "origin", name]);
@@ -135,14 +127,12 @@ impl BareRepo {
     }
 }
 
-/// A branch's full ref name, which is what a fixture asks about rather than the
-/// short name a tag of the same spelling would also answer to.
+/// Return the full `refs/heads/<branch>` name.
 fn heads(branch: &str) -> String {
     format!("refs/heads/{branch}")
 }
 
-/// Whether a git command succeeded, for the one fixture question that has two
-/// legitimate answers: whether a branch is there yet.
+/// Run a fixture Git command and return whether it succeeded.
 pub(crate) fn git_succeeds(dir: &Path, args: &[&str]) -> bool {
     run_git(dir, args).status.success()
 }
@@ -159,8 +149,7 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
-/// The invocation both of the above share, with the identity and the cleared
-/// redirects that make a fixture build the same way on every machine.
+/// Run Git with an isolated fixture environment and fixed author identity, capturing output.
 fn run_git(dir: &Path, args: &[&str]) -> std::process::Output {
     let mut command = std::process::Command::new("git");
     // Fixture commands use only their repository's config and explicit options.

@@ -26,6 +26,10 @@ and compared with the resolved repository root. New symlinks store the anchored
 source path using the selected repository spelling. See
 [source and destination syntax](repoformat.md#sources-and-destinations).
 
+A path names a location; a *node* is whatever filesystem entry occupies it: a
+file, a directory, a symlink, or anything else. The rules below classify and
+settle nodes, not paths.
+
 ### Installing into what you install from
 
 Local installation actions refuse destinations that resolve inside their source

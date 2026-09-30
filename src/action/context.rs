@@ -13,40 +13,36 @@ use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, RepositoryRoot};
 use crate::remotes;
-use crate::replace::{self, Conflicts, Policy, Resolver};
+use crate::replace::{self, ConflictPolicy, ConflictResolver, ConflictSettings};
 use crate::repo_path::RepoPath;
 
 /// How a run treats what is already at its destinations.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Replacement {
+pub(crate) struct DestinationOptions {
     /// What to do with an unmanaged node in the way.
-    pub policy: Policy,
-    /// Whether seeds are installed again over what is already there.
+    pub policy: ConflictPolicy,
+    /// Whether to reinstall existing seed content.
     pub refresh_content: bool,
 }
 
-impl Default for Replacement {
+impl Default for DestinationOptions {
     fn default() -> Self {
         Self {
-            policy: Policy::Backup,
+            policy: ConflictPolicy::Backup,
             refresh_content: false,
         }
     }
 }
 
-/// Anchored repository and home roots, execution mode, excluded remotes,
-/// conflict policy, and reporter for one run.
-///
-/// Everything here is settled before the first action and read by every one of
-/// them. Nothing an action does changes it.
+/// Anchored roots, execution mode, remote exclusions, conflict settings, and reporter for a
+/// run.
 pub(crate) struct RunContext<'a> {
     repository: RepositoryRoot,
     home: PathBuf,
     mode: RunMode,
-    /// The declared remotes this machine's conditions close, and why, settled
-    /// once for the run before any action asks.
+    /// Remotes excluded by conditions, with the reason for each exclusion.
     excluded_remotes: BTreeMap<ItemId, Exclusion>,
-    conflicts: Conflicts,
+    conflicts: ConflictSettings,
     refresh_content: bool,
     reporter: &'a Reporter,
 }
@@ -57,16 +53,16 @@ impl<'a> RunContext<'a> {
         roots: &Roots,
         mode: RunMode,
         excluded_remotes: BTreeMap<ItemId, Exclusion>,
-        replacement: Replacement,
+        destination_options: DestinationOptions,
         reporter: &'a Reporter,
     ) -> Result<Self, Error> {
         Ok(Self {
-            repository: RepositoryRoot::at(&roots.batfiles_dir)?,
+            repository: RepositoryRoot::at(&roots.batfiles_repo)?,
             home: paths::anchor(&roots.home)?,
             mode,
             excluded_remotes,
-            conflicts: Conflicts::new(replacement.policy, SystemTime::now()),
-            refresh_content: replacement.refresh_content,
+            conflicts: ConflictSettings::new(destination_options.policy, SystemTime::now()),
+            refresh_content: destination_options.refresh_content,
             reporter,
         })
     }
@@ -76,27 +72,21 @@ impl<'a> RunContext<'a> {
         self.excluded_remotes.get(id)
     }
 
-    /// Resolve a validated source against the tree it is read from.
+    /// Resolve a validated source to an absolute path, preserving repository symlinks. `remote`
+    /// identifies an included record's materialization, or is `None` for a leaf record. Only
+    /// leaf sources may name their own remote.
     ///
-    /// `remote` is the materialization an
-    /// [inclusion](crate::manifest::action::IncludeRemoteAction)'s record came
-    /// from, or `None` for a leaf record. It never conflicts with a remote named
-    /// in `source`, which only a leaf action may write.
-    ///
-    /// The final node must exist; broken symlinks count as present.
-    /// Returns an absolute path preserving repository symlinks.
-    /// Excluded or missing remote materializations are errors.
+    /// The final node must exist; broken symlinks count as present. Excluded or missing remote
+    /// materializations are errors.
     pub fn source(&self, remote: Option<&ItemId>, source: &RepoPath) -> Result<PathBuf, Error> {
         let root = self.tree_root(remote.or(source.remote()))?;
-        // A file remote is named with no path, and is its materialization.
         let resolved = if source.path().is_empty() {
             root
         } else {
             paths::normalize_lexically(&root.join(source.path()))
         };
 
-        // Presence, not reachability: a source that is itself a broken symlink
-        // is there, and linking at it is what the repository asked for.
+        // Broken symlinks are valid link sources, so check the node without following it.
         if paths::occupied(&resolved)? {
             Ok(resolved)
         } else {
@@ -153,8 +143,7 @@ impl<'a> RunContext<'a> {
         remotes::materialization(self.repository.path(), id)
     }
 
-    /// The repository an action installs from, for the one question that needs
-    /// it: whether a symlink already at a destination points into it.
+    /// The anchored leaf repository root, used to recognize managed symlinks.
     pub fn repository(&self) -> &RepositoryRoot {
         &self.repository
     }
@@ -169,33 +158,29 @@ impl<'a> RunContext<'a> {
     }
 
     /// The run's conflict policy, for a destination an action installs to.
-    pub fn resolver(&self) -> Resolver<'_> {
-        Resolver::new(&self.conflicts, self.mode, self.reporter)
+    pub fn resolver(&self) -> ConflictResolver<'_> {
+        ConflictResolver::new(&self.conflicts, self.mode, self.reporter)
     }
 
-    /// The policy for a destination batfiles owns, such as a remote's
-    /// materialization: an unmanaged node there is refused, whatever the run
-    /// was asked to do with the user's.
-    pub fn tool_owned(&self) -> Resolver<'_> {
-        Resolver::new(&replace::REFUSING, self.mode, self.reporter)
+    /// Return a resolver that refuses unmanaged nodes at tool-owned destinations.
+    pub fn tool_owned(&self) -> ConflictResolver<'_> {
+        ConflictResolver::new(&replace::REFUSE_CONFLICTS, self.mode, self.reporter)
     }
 
-    /// Whether `--refresh-content` asks seeds to be installed again over what
-    /// is already there.
+    /// Whether `--refresh-content` requests reinstalling existing seed content.
     pub fn refresh_content(&self) -> bool {
         self.refresh_content
     }
 
-    /// Ensure a destination directory exists and report creation or link
-    /// removal. Returns false where a conflict along the path was skipped, and
-    /// nothing is there to install into.
+    /// Ensure a destination directory exists and report changes. Return `false` if a conflict
+    /// along the path was skipped.
     pub fn ensure_directory(&self, dir: &Path) -> Result<bool, Error> {
         let outcome = directory::ensure_directory(dir, &self.resolver())?;
         outcome.report_removals(self.mode, self.reporter);
         match outcome {
             DirectoryOutcome::Created { .. } => self.reporter.info(&format!(
                 "{} {}",
-                Verb::Create.say(self.mode),
+                Verb::Create.for_mode(self.mode),
                 dir.display()
             )),
             DirectoryOutcome::AlreadyThere => self
@@ -230,9 +215,6 @@ mod tests {
         destination(&home(), dest)
     }
 
-    // What a `dest` may say is checked by `manifest`, and tested there. These
-    // cover the other half: what an accepted one resolves to.
-
     #[test]
     fn a_destination_resolves_against_the_selected_home() {
         assert_eq!(dest_of("~/.zshrc"), home().join(".zshrc"));
@@ -243,8 +225,6 @@ mod tests {
 
     #[test]
     fn a_destination_may_deliberately_leave_the_home() {
-        // The home is a base, not a boundary. Someone linking into a sibling
-        // directory is expressing intent, not making a mistake.
         assert_eq!(dest_of("~/../shared/rc"), PathBuf::from("/home/shared/rc"));
     }
 }

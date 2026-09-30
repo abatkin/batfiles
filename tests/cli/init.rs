@@ -10,12 +10,7 @@ use super::support::{Tree, batfiles, display, entries, stderr_of};
 /// What a fresh `init` leaves behind, sorted as [`entries`] returns it.
 const SKELETON: [&str; 4] = [".gitignore", "batfiles.toml", "bin", "files"];
 
-/// A directory to run `init` in, beside a home it is not.
-///
-/// The two are siblings, and the home is selected rather than inherited: the
-/// only thing `init` asks a home is whether it is the directory being
-/// initialized, and that question needs an answer the developer's own account
-/// cannot change.
+/// An isolated working directory and sibling home for initialization tests.
 struct Workspace {
     tree: Tree,
 }
@@ -40,22 +35,16 @@ impl Workspace {
         self.init_in(&self.dir())
     }
 
-    /// The same, in some other directory — the home, for the case that refuses
-    /// it.
+    /// Build an `init` command running in `dir`.
     fn init_in(&self, dir: &Path) -> Command {
         let mut command = batfiles();
         command
             .current_dir(dir)
-            // The home batfiles reads comes from `std::env::home_dir`, which
-            // consults `HOME` on Unix and `USERPROFILE` on Windows and neither
-            // platform's variable on the other. Both are named so that every
-            // case here has the same definite answer wherever the suite runs,
-            // rather than one that depends on the real account's home.
+            // Set both platform-specific home variables to keep fixtures independent of the
+            // real account.
             .env("HOME", self.tree.path("home"))
             .env("USERPROFILE", self.tree.path("home"))
-            // The binary launches `git` itself, so the developer's own
-            // `init.templateDir` or `init.defaultBranch` would otherwise reach
-            // a fixture and change what `init` produces.
+            // Ignore the developer's Git templates and default branch settings.
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env(
                 "GIT_CONFIG_GLOBAL",
@@ -88,8 +77,6 @@ fn an_empty_directory_gets_the_whole_skeleton() {
 
 #[test]
 fn a_freshly_initialized_repository_synchronizes() {
-    // What makes the starter manifest more than a file of the right name: it is
-    // read, validated, and executed by the command a new repository exists for.
     let workspace = Workspace::new();
     workspace.init().arg("--no-git-init").assert().success();
 
@@ -101,8 +88,6 @@ fn a_freshly_initialized_repository_synchronizes() {
         .assert()
         .success();
 
-    // Every sample is commented out, so a repository nobody has edited yet
-    // installs nothing into the home.
     assert!(
         entries(&workspace.tree.path("home")).is_empty(),
         "a starter manifest installed something:\n{}",
@@ -119,8 +104,6 @@ fn the_exclusion_list_covers_the_generated_remotes_tree() {
         fs::read_to_string(workspace.path(".gitignore")).expect("a .gitignore"),
         "/remotes/\n"
     );
-    // The tree itself is generated, so nothing creates it until a remote is
-    // materialized.
     assert!(!workspace.path("remotes").exists());
 }
 
@@ -155,8 +138,6 @@ fn a_directory_already_inside_a_work_tree_keeps_the_repository_it_is_in() {
     let workspace = Workspace::new();
     workspace.init().assert().success();
 
-    // A second repository below the first: `init` must leave the surrounding
-    // work tree alone rather than nesting one inside it.
     let below = workspace.path("below");
     fs::create_dir(&below).expect("a directory below the repository");
     let assertion = workspace.init_in(&below).assert().success();
@@ -176,7 +157,6 @@ fn an_existing_manifest_refuses_the_command() {
 
     let assertion = workspace.init().assert().failure().code(1);
 
-    // Nothing beside it: the refusal comes before the first write.
     assert_eq!(entries(&workspace.dir()), ["batfiles.toml"]);
     let stderr = stderr_of(&assertion);
     assert!(
@@ -244,7 +224,6 @@ fn an_exclusion_list_that_does_not_cover_remotes_is_reported() {
 
     let assertion = workspace.init().arg("--no-git-init").assert().success();
 
-    // The user's file, so it is reported rather than rewritten.
     assert_eq!(
         fs::read_to_string(workspace.path(".gitignore")).expect("a .gitignore"),
         "*.swp\n"

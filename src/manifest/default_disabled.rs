@@ -1,48 +1,45 @@
-//! `[default-disabled]`: what a fresh machine starts with switched off.
+//! Bootstrap candidates declared in `[default-disabled]`.
 
 use serde::Deserialize;
 
-use super::check::{Invalid, RecordName};
+use super::check::{ManifestError, RecordName};
 use crate::condition::{Condition, Gate};
-use crate::item::ItemAddress;
+use crate::item::{ItemAddress, ItemKind};
 
-/// The two candidate lists.
+/// Action and group candidates for bootstrap disabled state.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct DefaultDisabled {
     #[serde(default)]
-    pub actions: Vec<ActionEntry>,
+    pub actions: Vec<DisabledActionCandidate>,
     #[serde(default)]
-    pub groups: Vec<GroupEntry>,
+    pub groups: Vec<DisabledGroupCandidate>,
 }
 
 impl DefaultDisabled {
-    /// Check that no entry writes both conditions. Checked as the document is
-    /// read, so the error surfaces on every machine, not only one being
-    /// bootstrapped; [`crate::bootstrap`] evaluates the conditions.
-    pub fn validate(&self) -> Result<(), Invalid> {
+    /// Reject entries declaring both `when` and `unless`.
+    pub fn validate(&self) -> Result<(), ManifestError> {
         for (index, entry) in self.actions.iter().enumerate() {
-            one_condition(&entry.when, &entry.unless, "action", index)?;
+            one_condition(&entry.when, &entry.unless, ItemKind::Action, index)?;
         }
         for (index, entry) in self.groups.iter().enumerate() {
-            one_condition(&entry.when, &entry.unless, "group", index)?;
+            one_condition(&entry.when, &entry.unless, ItemKind::Group, index)?;
         }
         Ok(())
     }
 }
 
-/// Refuse an entry writing both spellings, named by its one-based position
-/// within its own array.
+/// Reject simultaneous conditions. `index` is zero-based; diagnostics use one-based positions.
 fn one_condition(
     when: &Option<Condition>,
     unless: &Option<Condition>,
-    noun: &'static str,
+    kind: ItemKind,
     index: usize,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     if when.is_some() && unless.is_some() {
-        return Err(Invalid::BothConditions {
+        return Err(ManifestError::BothConditions {
             record: RecordName::Candidate {
-                noun,
+                kind,
                 number: index + 1,
             },
         });
@@ -53,7 +50,7 @@ fn one_condition(
 /// One `[[default-disabled.actions]]` entry.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct ActionEntry {
+pub(crate) struct DisabledActionCandidate {
     /// The action to start out disabled.
     pub id: ItemAddress,
     /// The condition under which the candidate is offered at all.
@@ -62,19 +59,18 @@ pub(crate) struct ActionEntry {
     pub unless: Option<Condition>,
 }
 
-impl ActionEntry {
-    /// The condition deciding whether this machine is offered the candidate, or
-    /// `None` where the entry wrote neither spelling.
-    /// [`DefaultDisabled::validate`] has established that it wrote at most one.
+impl DisabledActionCandidate {
+    /// Return the candidate's condition gate. Call after [`DefaultDisabled::validate`] rejects
+    /// simultaneous conditions.
     pub fn gate(&self) -> Option<Gate<'_>> {
-        Gate::declared(self.when.as_ref(), self.unless.as_ref())
+        Gate::from_fields(self.when.as_ref(), self.unless.as_ref())
     }
 }
 
 /// One `[[default-disabled.groups]]` entry.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct GroupEntry {
+pub(crate) struct DisabledGroupCandidate {
     /// The group to start out disabled.
     pub group: ItemAddress,
     /// The condition under which the candidate is offered at all.
@@ -83,9 +79,10 @@ pub(crate) struct GroupEntry {
     pub unless: Option<Condition>,
 }
 
-impl GroupEntry {
-    /// The same, for a group candidate.
+impl DisabledGroupCandidate {
+    /// Return the group candidate's condition gate. Call after [`DefaultDisabled::validate`]
+    /// rejects simultaneous conditions.
     pub fn gate(&self) -> Option<Gate<'_>> {
-        Gate::declared(self.when.as_ref(), self.unless.as_ref())
+        Gate::from_fields(self.when.as_ref(), self.unless.as_ref())
     }
 }

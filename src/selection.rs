@@ -1,15 +1,15 @@
-//! Which of a manifest's actions a run carries out.
+//! Select actions using command targets, disabled state, run-only skips, and conditions.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
 use crate::condition::{Bindings, Exclusion, Gate};
-use crate::disabled::Disabled;
+use crate::disabled::DisabledItems;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::inclusion::Unread;
-use crate::item::{ItemAddress, ItemId};
+use crate::item::{ItemAddress, ItemId, ItemKind};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
 
@@ -19,16 +19,11 @@ const SKIP_ACTIONS: &str = "BATFILES_SKIP_ACTIONS";
 /// The environment variable unioned with `--skip-group`.
 const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
 
-/// The outcome clause of an undecidable condition's warning. Without it, a
-/// failed `unless` could read as installing the record.
+/// Warning suffix for a condition evaluation failure.
 const NOT_INSTALLED: &str = "it is not installed";
 
-/// What selection reads of one record: the addresses its `id` and `group`
-/// answer to, and its condition.
-///
-/// The addresses are qualified as the record's are, so a leaf record's are
-/// unqualified. `None` where the record has no such field, or where it came
-/// from an inclusion without an `id`, which leaves it no address.
+/// A record's action address, group address, and condition for selection. Included addresses
+/// are qualified; absent IDs and unnamed inclusions have no address.
 #[derive(Clone, Copy)]
 pub(crate) struct Subject<'a> {
     pub address: Option<&'a ItemAddress>,
@@ -69,20 +64,17 @@ impl Target<'_> {
         }
     }
 
-    /// The error for a target that matched no record; `None` for
-    /// [`Everything`](Self::Everything). `unread` is each inclusion whose
-    /// manifest the run did not read, by `id`, and why. A target into one of
-    /// them names that inclusion and why, since its manifest might have
-    /// answered.
-    fn unresolved<'b>(
+    /// Build an unmatched-target error, or return `None` for [`Everything`](Self::Everything).
+    /// If the target falls within an unread inclusion, report why that inclusion was not read.
+    fn unmatched_target_error<'b>(
         &self,
         manifest: PathBuf,
         unread: impl IntoIterator<Item = (&'b ItemId, Unread<'b>)>,
     ) -> Option<Error> {
-        let (noun, address) = match self {
+        let (kind, address) = match self {
             Self::Everything => return None,
-            Self::Action(id) => ("action", *id),
-            Self::Group(group) => ("group", *group),
+            Self::Action(id) => (ItemKind::Action, *id),
+            Self::Group(group) => (ItemKind::Group, *group),
         };
         let unread = unread
             .into_iter()
@@ -92,13 +84,13 @@ impl Target<'_> {
                 match unread {
                     Unread::NotRequested => None,
                     Unread::Excluded(exclusion) => Some(Error::TargetInExcludedInclusion {
-                        noun,
+                        kind,
                         address,
                         inclusion,
                         reason: exclusion.reason().to_owned(),
                     }),
                     Unread::NotMaterialized(remote) => Some(Error::TargetInUnreadInclusion {
-                        noun,
+                        kind,
                         address,
                         inclusion,
                         remote: remote.clone(),
@@ -132,33 +124,33 @@ impl Target<'_> {
 
 /// Which exclusions a decision waives.
 #[derive(Clone, Copy)]
-enum Waivers {
-    /// Those the target waives for what it names.
-    Target,
-    /// None.
-    None,
+enum TargetWaivers {
+    /// Apply the target's exemptions to exclusions.
+    Apply,
+    /// Waive none.
+    Ignore,
 }
 
-impl Waivers {
+impl TargetWaivers {
     fn honors_action_exclusions(self, target: &Target<'_>) -> bool {
-        matches!(self, Self::None) || target.honors_action_exclusions()
+        matches!(self, Self::Ignore) || target.honors_action_exclusions()
     }
 
     fn honors_group_exclusions(self, target: &Target<'_>) -> bool {
-        matches!(self, Self::None) || target.honors_group_exclusions()
+        matches!(self, Self::Ignore) || target.honors_group_exclusions()
     }
 }
 
 /// Why an action is not being run.
 #[derive(Debug)]
 pub(crate) enum SkipReason<'a> {
-    /// A `disabled.toml` entry; `noun` names its list.
+    /// A `disabled.toml` entry; `kind` names its list.
     Disabled {
-        noun: &'static str,
+        kind: ItemKind,
         name: &'a ItemAddress,
     },
     /// A run-only skip, and the option or variable that supplied it.
-    Run {
+    RunOnly {
         name: &'a ItemAddress,
         origin: &'static str,
     },
@@ -167,8 +159,8 @@ pub(crate) enum SkipReason<'a> {
 impl fmt::Display for SkipReason<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Disabled { noun, name } => write!(f, "{noun} `{name}` is disabled"),
-            Self::Run { name, origin } => write!(f, "`{name}` from {origin}"),
+            Self::Disabled { kind, name } => write!(f, "{kind} `{name}` is disabled"),
+            Self::RunOnly { name, origin } => write!(f, "`{name}` from {origin}"),
         }
     }
 }
@@ -185,8 +177,7 @@ impl SkipList {
     fn extend(&mut self, values: &[String], origin: &'static str, reporter: &Reporter) {
         for value in values {
             match ItemAddress::try_from(value.clone()) {
-                // First writer wins, so the caller adds the option's names ahead
-                // of the environment's.
+                // Keep the CLI origin when the environment repeats the same skip.
                 Ok(name) => {
                     self.names.entry(name).or_insert(origin);
                 }
@@ -207,22 +198,22 @@ impl SkipList {
         &self,
         present: &[&ItemAddress],
         unread_inclusions: &[&ItemId],
-        noun: &str,
+        kind: ItemKind,
         reporter: &Reporter,
     ) {
         for (name, origin) in &self.names {
             if present.contains(&name) || unread_inclusions.iter().any(|id| name.qualified_by(id)) {
                 continue;
             }
-            reporter.warn(&format!("{origin} `{name}` matched no {noun}"));
+            reporter.warn(&format!("{origin} `{name}` matched no {kind}"));
         }
     }
 }
 
-/// One namespace's run-only skips: the option's names unioned with the
-/// variable's, or empty and unread where the target waives them.
-fn run_only(
-    consulted: bool,
+/// Combine CLI and environment skips when `honored`; otherwise return an empty list without
+/// reading either.
+fn read_skip_list(
+    honored: bool,
     values: &[String],
     option: &'static str,
     variable: &'static str,
@@ -230,21 +221,20 @@ fn run_only(
     reporter: &Reporter,
 ) -> SkipList {
     let mut skips = SkipList::default();
-    if consulted {
+    if honored {
         skips.extend(values, option, reporter);
         skips.extend(&env.list(variable), variable, reporter);
     }
     skips
 }
 
-/// What one run executes: the records its target asks for, less those that
-/// `disabled.toml` or a run-only skip excludes.
+/// Command target, persisted disabled state, and run-only skips used to select records.
 #[derive(Debug)]
 pub(crate) struct Selection<'a> {
     target: Target<'a>,
     actions: SkipList,
     groups: SkipList,
-    disabled: Disabled,
+    disabled: DisabledItems,
 }
 
 impl<'a> Selection<'a> {
@@ -254,11 +244,11 @@ impl<'a> Selection<'a> {
         skip_actions: &[String],
         skip_groups: &[String],
         env: &Environment,
-        disabled: Disabled,
+        disabled: DisabledItems,
         reporter: &Reporter,
     ) -> Self {
         Self {
-            actions: run_only(
+            actions: read_skip_list(
                 target.honors_action_exclusions(),
                 skip_actions,
                 "--skip-action",
@@ -266,7 +256,7 @@ impl<'a> Selection<'a> {
                 env,
                 reporter,
             ),
-            groups: run_only(
+            groups: read_skip_list(
                 target.honors_group_exclusions(),
                 skip_groups,
                 "--skip-group",
@@ -279,9 +269,9 @@ impl<'a> Selection<'a> {
         }
     }
 
-    /// Everything, less what `disabled.toml` excludes: no run-only skip is
-    /// read. What `vars refresh` decides reachability with.
-    pub fn persistent(disabled: Disabled) -> Self {
+    /// Select all records subject to persisted disabled state, without run-only skips. Used for
+    /// variable-refresh reachability.
+    pub fn without_run_skips(disabled: DisabledItems) -> Self {
         Self {
             target: Target::Everything,
             actions: SkipList::default(),
@@ -300,19 +290,17 @@ impl<'a> Selection<'a> {
         self.target.reaches_into(id)
     }
 
-    /// See [`Target::unresolved`].
-    pub fn unresolved<'b>(
+    /// See [`Target::unmatched_target_error`].
+    pub fn unmatched_target_error<'b>(
         &self,
         manifest: PathBuf,
         unread: impl IntoIterator<Item = (&'b ItemId, Unread<'b>)>,
     ) -> Option<Error> {
-        self.target.unresolved(manifest, unread)
+        self.target.unmatched_target_error(manifest, unread)
     }
 
-    /// The error for a target naming a record the command cannot run, or
-    /// `None`. Only `apply-action` naming an `include-remote` is refused: the
-    /// inclusion's `id` qualifies its records' addresses, so naming the
-    /// inclusion itself names the wrong thing.
+    /// Reject an `apply-action` target that names an inclusion; return `None` for other
+    /// targets.
     pub fn refusal(&self, action: &Action) -> Option<Error> {
         match (&self.target, action) {
             (Target::Action(id), Action::IncludeRemote(_)) => {
@@ -334,43 +322,42 @@ impl<'a> Selection<'a> {
         reporter: &Reporter,
     ) {
         self.actions
-            .warn_unmatched(addresses, unread_inclusions, "action", reporter);
-        self.groups
-            .warn_unmatched(group_addresses, unread_inclusions, "group", reporter);
+            .warn_unmatched(addresses, unread_inclusions, ItemKind::Action, reporter);
+        self.groups.warn_unmatched(
+            group_addresses,
+            unread_inclusions,
+            ItemKind::Group,
+            reporter,
+        );
     }
 
-    /// Why this run passes the record over, or `None` if it runs.
-    ///
-    /// Listed exclusions come first. The record's own condition is evaluated
-    /// only when nothing else excludes it, so an undecidable condition affects
-    /// only runs that would execute the record; there it excludes the record
-    /// like any other exclusion, reported at every verbosity.
+    /// Return the first exclusion, or `None` if admitted. Apply target exemptions, then check
+    /// disabled state and run-only skips before evaluating the condition. Evaluation failures
+    /// exclude the record.
     pub fn exclusion(&self, record: Subject<'_>, bindings: &Bindings<'_>) -> Option<Exclusion> {
-        self.decide(record, bindings, Waivers::Target)
+        self.decide(record, bindings, TargetWaivers::Apply)
     }
 
-    /// Why this run passes the record over, as [`exclusion`](Self::exclusion)
-    /// decides it but with nothing the target waives waived: every list this
-    /// selection read, and the record's condition. For an inclusion the target
-    /// reaches into without naming.
-    pub fn unwaived_exclusion(
+    /// Return the first exclusion without target exemptions. Check all loaded skip lists and
+    /// the record's condition. Used for inclusions reached indirectly by a target.
+    pub fn exclusion_without_waivers(
         &self,
         record: Subject<'_>,
         bindings: &Bindings<'_>,
     ) -> Option<Exclusion> {
-        self.decide(record, bindings, Waivers::None)
+        self.decide(record, bindings, TargetWaivers::Ignore)
     }
 
     fn decide(
         &self,
         record: Subject<'_>,
         bindings: &Bindings<'_>,
-        waivers: Waivers,
+        waivers: TargetWaivers,
     ) -> Option<Exclusion> {
         if let Some(reason) = self.listed_reason(record, waivers) {
-            return Some(Exclusion::Expected(reason.to_string()));
+            return Some(Exclusion::Deliberate(reason.to_string()));
         }
-        // Waived exactly where an exclusion naming the action is.
+        // Direct action targets waive their own conditions as well as listed exclusions.
         let gate = record
             .gate
             .filter(|_| waivers.honors_action_exclusions(&self.target))?;
@@ -381,7 +368,11 @@ impl<'a> Selection<'a> {
     /// Persistent disables precede run-only skips; action exclusions precede
     /// group exclusions within each source. `waivers` determines which
     /// exclusions are honored.
-    fn listed_reason<'b>(&self, record: Subject<'b>, waivers: Waivers) -> Option<SkipReason<'b>> {
+    fn listed_reason<'b>(
+        &self,
+        record: Subject<'b>,
+        waivers: TargetWaivers,
+    ) -> Option<SkipReason<'b>> {
         let address = record
             .address
             .filter(|_| waivers.honors_action_exclusions(&self.target));
@@ -393,21 +384,21 @@ impl<'a> Selection<'a> {
 
         if let Some(name) = address.filter(|it| listed(&self.disabled.actions, it)) {
             return Some(SkipReason::Disabled {
-                noun: "action",
+                kind: ItemKind::Action,
                 name,
             });
         }
         if let Some(name) = group_address.filter(|it| listed(&self.disabled.groups, it)) {
             return Some(SkipReason::Disabled {
-                noun: "group",
+                kind: ItemKind::Group,
                 name,
             });
         }
         if let Some((name, origin)) = address.and_then(|it| Some((it, self.actions.origin(it)?))) {
-            return Some(SkipReason::Run { name, origin });
+            return Some(SkipReason::RunOnly { name, origin });
         }
         group_address.and_then(|it| {
-            Some(SkipReason::Run {
+            Some(SkipReason::RunOnly {
                 name: it,
                 origin: self.groups.origin(it)?,
             })
@@ -442,9 +433,7 @@ mod tests {
         RunRecord::leaf(create_dir(id, group), 1)
     }
 
-    /// The same record, contributed by an inclusion with `id = inclusion`
-    /// (`None`: no `id`). Built from a parsed `include-remote` so it matches what
-    /// a run produces.
+    /// Build an included `create-dir` record with an optional inclusion ID.
     fn included(id: &str, group: &str, inclusion: Option<&str>) -> RunRecord {
         let named = match inclusion {
             Some(id) => format!("id = \"{id}\"\n"),
@@ -467,8 +456,8 @@ mod tests {
         ItemId::try_from(id.to_owned()).expect("valid ID")
     }
 
-    fn disabled(actions: &[&str], groups: &[&str]) -> Disabled {
-        Disabled {
+    fn disabled(actions: &[&str], groups: &[&str]) -> DisabledItems {
+        DisabledItems {
             actions: actions.iter().map(|name| address(name)).collect(),
             groups: groups.iter().map(|name| address(name)).collect(),
         }
@@ -479,7 +468,7 @@ mod tests {
         skip_actions: &[&str],
         skip_groups: &[&str],
         env: &[(&str, &str)],
-        disabled: Disabled,
+        disabled: DisabledItems,
     ) -> Selection<'static> {
         filter(Target::Everything, skip_actions, skip_groups, env, disabled)
     }
@@ -489,7 +478,7 @@ mod tests {
         skip_actions: &[&str],
         skip_groups: &[&str],
         env: &[(&str, &str)],
-        disabled: Disabled,
+        disabled: DisabledItems,
     ) -> Selection<'a> {
         Selection::new(
             target,
@@ -516,15 +505,15 @@ mod tests {
         record: &RunRecord,
         vars: &[(&str, &str)],
     ) -> Option<Exclusion> {
-        decided_with(selection, record, vars, Waivers::Target)
+        decided_with(selection, record, vars, TargetWaivers::Apply)
     }
 
-    /// The same, waiving only what `waivers` does.
+    /// Evaluate the record using `vars` and the specified target exemptions.
     fn decided_with(
         selection: &Selection,
         record: &RunRecord,
         vars: &[(&str, &str)],
-        waivers: Waivers,
+        waivers: TargetWaivers,
     ) -> Option<Exclusion> {
         let variables = Rc::new(VarSet::stack(
             vars.iter()
@@ -545,15 +534,15 @@ mod tests {
         selection.decide(record.subject(), &bindings, waivers)
     }
 
-    /// The reason for an [`Expected`](Exclusion::Expected) exclusion; panics on
-    /// an evaluation failure.
+    /// Return the reason for a [`Deliberate`](Exclusion::Deliberate) exclusion; panic on
+    /// evaluation failure.
     fn expected_reason(
         selection: &Selection,
         record: &RunRecord,
         vars: &[(&str, &str)],
     ) -> Option<String> {
         match decided(selection, record, vars) {
-            Some(Exclusion::Expected(reason)) => Some(reason),
+            Some(Exclusion::Deliberate(reason)) => Some(reason),
             Some(other) => panic!("expected an ordinary exclusion, got {other:?}"),
             None => None,
         }
@@ -573,18 +562,18 @@ mod tests {
 
     #[test]
     fn an_action_named_by_nothing_runs() {
-        let selection = selection(&["other"], &["other"], &[], Disabled::default());
+        let selection = selection(&["other"], &["other"], &[], DisabledItems::default());
         assert_eq!(reason(&selection, &action("zshrc", "shell")), None);
     }
 
     #[test]
     fn either_namespace_can_name_an_action() {
-        let by_action = selection(&["zshrc"], &[], &[], Disabled::default());
+        let by_action = selection(&["zshrc"], &[], &[], DisabledItems::default());
         assert_eq!(
             reason(&by_action, &action("zshrc", "shell")).as_deref(),
             Some("`zshrc` from --skip-action")
         );
-        let by_group = selection(&[], &["shell"], &[], Disabled::default());
+        let by_group = selection(&[], &["shell"], &[], DisabledItems::default());
         assert_eq!(
             reason(&by_group, &action("zshrc", "shell")).as_deref(),
             Some("`shell` from --skip-group")
@@ -597,7 +586,7 @@ mod tests {
             &[],
             &[],
             &[(SKIP_ACTIONS, "zshrc"), (SKIP_GROUPS, "gui")],
-            Disabled::default(),
+            DisabledItems::default(),
         );
         assert_eq!(
             reason(&selection, &action("zshrc", "shell")).as_deref(),
@@ -611,13 +600,11 @@ mod tests {
 
     #[test]
     fn the_option_is_credited_when_both_sources_name_one_thing() {
-        // Command-line arguments outrank the environment, and the line points at
-        // the input the reader is likelier to be able to change.
         let selection = selection(
             &["zshrc"],
             &[],
             &[(SKIP_ACTIONS, "zshrc")],
-            Disabled::default(),
+            DisabledItems::default(),
         );
         assert_eq!(
             reason(&selection, &action("zshrc", "shell")).as_deref(),
@@ -650,15 +637,12 @@ mod tests {
 
     #[test]
     fn an_actions_own_name_is_reported_ahead_of_its_groups() {
-        let selection = selection(&["zshrc"], &["shell"], &[], Disabled::default());
+        let selection = selection(&["zshrc"], &["shell"], &[], DisabledItems::default());
         assert_eq!(
             reason(&selection, &action("zshrc", "shell")).as_deref(),
             Some("`zshrc` from --skip-action")
         );
     }
-
-    // The waiver: an exclusion no finer-grained than what the command asked for
-    // does not apply. Each case names the record every list above names.
 
     #[test]
     fn asking_for_a_group_waives_the_group_level_exclusions_only() {
@@ -691,7 +675,6 @@ mod tests {
 
     #[test]
     fn asking_for_an_action_waives_every_exclusion() {
-        // `apply-action`: all four lists at once.
         let zshrc = address("zshrc");
         let selection = filter(
             Target::Action(&zshrc),
@@ -705,8 +688,7 @@ mod tests {
 
     #[test]
     fn an_unwaived_decision_honors_every_list_the_selection_read() {
-        // For a record the target reaches through without naming. A list the
-        // target never read stays unread: `apply-group` has no group skips.
+        // No-waiver decisions still use only the skip lists loaded for this command.
         let shell = address("corp.shell");
         let unwaived = |skip_actions: &[&str], skip_groups: &[&str], disabled| {
             let selection = filter(
@@ -716,27 +698,37 @@ mod tests {
                 &[],
                 disabled,
             );
-            decided_with(&selection, &action("corp", "work"), &[], Waivers::None)
-                .map(|it| it.reason().to_owned())
+            decided_with(
+                &selection,
+                &action("corp", "work"),
+                &[],
+                TargetWaivers::Ignore,
+            )
+            .map(|it| it.reason().to_owned())
         };
         assert_eq!(
             unwaived(&[], &[], disabled(&[], &["work"])).as_deref(),
             Some("group `work` is disabled")
         );
         assert_eq!(
-            unwaived(&["corp"], &[], Disabled::default()).as_deref(),
+            unwaived(&["corp"], &[], DisabledItems::default()).as_deref(),
             Some("`corp` from --skip-action")
         );
-        assert_eq!(unwaived(&[], &["work"], Disabled::default()), None);
+        assert_eq!(unwaived(&[], &["work"], DisabledItems::default()), None);
 
-        // And the record's condition, which naming an action would waive.
         let zshrc = address("corp.zshrc");
-        let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
+        let by_name = filter(
+            Target::Action(&zshrc),
+            &[],
+            &[],
+            &[],
+            DisabledItems::default(),
+        );
         let unwaived = decided_with(
             &by_name,
             &conditioned("when", "work"),
             &[("work", "false")],
-            Waivers::None,
+            TargetWaivers::Ignore,
         );
         assert_eq!(
             unwaived.map(|it| it.reason().to_owned()).as_deref(),
@@ -744,12 +736,9 @@ mod tests {
         );
     }
 
-    // The record's own condition, which is the one exclusion the manifest
-    // rather than the machine declares.
-
     #[test]
     fn a_condition_decides_the_record_it_is_written_on() {
-        let selection = selection(&[], &[], &[], Disabled::default());
+        let selection = selection(&[], &[], &[], DisabledItems::default());
         let vars = &[("work", "false")];
 
         assert_eq!(
@@ -761,8 +750,6 @@ mod tests {
             None
         );
 
-        // And the other way around, so neither spelling is the negation of the
-        // other by accident.
         let vars = &[("work", "true")];
         assert_eq!(
             expected_reason(&selection, &conditioned("when", "work"), vars),
@@ -777,14 +764,13 @@ mod tests {
     #[test]
     fn a_condition_is_consulted_only_where_nothing_else_excludes_the_record() {
         // `nowhere` is declared by no layer, so evaluating it would fail.
-        let skipping = selection(&["zshrc"], &[], &[], Disabled::default());
+        let skipping = selection(&["zshrc"], &[], &[], DisabledItems::default());
         assert_eq!(
             expected_reason(&skipping, &conditioned("when", "nowhere"), &[]).as_deref(),
             Some("`zshrc` from --skip-action")
         );
 
-        // Reached, and failing, once nothing else has an opinion.
-        let plain = selection(&[], &[], &[], Disabled::default());
+        let plain = selection(&[], &[], &[], DisabledItems::default());
         assert!(matches!(
             decided(&plain, &conditioned("when", "nowhere"), &[]),
             Some(Exclusion::EvaluationFailed(_))
@@ -793,9 +779,8 @@ mod tests {
 
     #[test]
     fn a_condition_that_cannot_be_decided_closes_the_gate_in_either_spelling() {
-        // A false `unless` installs, so treating a failure as false would
-        // install the record `unless` was written to suppress.
-        let selection = selection(&[], &[], &[], Disabled::default());
+        // An evaluation error must exclude even under `unless`.
+        let selection = selection(&[], &[], &[], DisabledItems::default());
 
         for spelling in ["when", "unless"] {
             let Some(Exclusion::EvaluationFailed(why)) =
@@ -806,7 +791,6 @@ mod tests {
             assert!(why.starts_with(&format!("{spelling} \"nowhere\"")), "{why}");
             assert!(why.contains("cannot be evaluated"), "{why}");
             assert!(why.contains(NOT_INSTALLED), "{why}");
-            // The fix the reader acts on.
             assert!(why.contains("`nowhere` is not declared"), "{why}");
             assert!(why.contains("batfiles vars set nowhere"), "{why}");
         }
@@ -814,9 +798,14 @@ mod tests {
 
     #[test]
     fn asking_for_one_action_waives_its_condition_too() {
-        // Including a condition this machine cannot decide.
         let zshrc = address("zshrc");
-        let by_name = filter(Target::Action(&zshrc), &[], &[], &[], Disabled::default());
+        let by_name = filter(
+            Target::Action(&zshrc),
+            &[],
+            &[],
+            &[],
+            DisabledItems::default(),
+        );
         assert_eq!(
             decided(&by_name, &conditioned("when", "work"), &[("work", "false")]),
             None
@@ -826,9 +815,14 @@ mod tests {
             None
         );
 
-        // A group is coarser than one record, so its members keep theirs.
         let shell = address("shell");
-        let by_group = filter(Target::Group(&shell), &[], &[], &[], Disabled::default());
+        let by_group = filter(
+            Target::Group(&shell),
+            &[],
+            &[],
+            &[],
+            DisabledItems::default(),
+        );
         assert_eq!(
             expected_reason(
                 &by_group,
@@ -842,14 +836,13 @@ mod tests {
 
     #[test]
     fn a_record_with_no_condition_is_decided_by_the_lists_alone() {
-        let selection = selection(&[], &[], &[], Disabled::default());
+        let selection = selection(&[], &[], &[], DisabledItems::default());
         assert_eq!(decided(&selection, &action("zshrc", "shell"), &[]), None);
     }
 
     #[test]
     fn a_condition_is_repeated_back_as_written_and_cannot_forge_a_line() {
-        // Repository text in a report is escaped.
-        let selection = selection(&[], &[], &[], Disabled::default());
+        let selection = selection(&[], &[], &[], DisabledItems::default());
         let record = conditioned("when", "work && vars['a\\nb']");
         let why = expected_reason(&selection, &record, &[("work", "true")])
             .expect("the condition should be false");
@@ -859,7 +852,6 @@ mod tests {
 
     #[test]
     fn a_name_that_is_not_an_address_is_dropped_rather_than_kept() {
-        // Warned about when read, and never matched.
         let mut skips = SkipList::default();
         skips.extend(&names_of(&["a..b", "zshrc"]), "--skip-action", &quiet());
         assert_eq!(skips.origin(&address("zshrc")), Some("--skip-action"));
@@ -868,16 +860,17 @@ mod tests {
 
     #[test]
     fn a_qualified_skip_is_kept_and_names_no_leaf_record() {
-        let by_skip = selection(&["core.zshrc"], &["core.shell"], &[], Disabled::default());
+        let by_skip = selection(
+            &["core.zshrc"],
+            &["core.shell"],
+            &[],
+            DisabledItems::default(),
+        );
         assert_eq!(reason(&by_skip, &action("zshrc", "shell")), None);
 
-        // Same shape in the persistent lists, which are silent about it.
         let by_disable = selection(&[], &[], &[], disabled(&["core.zshrc"], &["core.shell"]));
         assert_eq!(reason(&by_disable, &action("zshrc", "shell")), None);
     }
-
-    // What an inclusion contributed, which is the same rule read from the other
-    // side: a qualified name reaches it and an unqualified one does not.
 
     #[test]
     fn an_included_record_answers_to_its_qualified_name_alone() {
@@ -887,11 +880,10 @@ mod tests {
             (["core.zshrc"], [""; 1], "`core.zshrc` from --skip-action"),
             ([""; 1], ["core.shell"], "`core.shell` from --skip-group"),
         ] {
-            let selection = selection(&skips, &groups, &[], Disabled::default());
+            let selection = selection(&skips, &groups, &[], DisabledItems::default());
             assert_eq!(reason(&selection, &contributed).as_deref(), Some(expected));
         }
 
-        // Unqualified names mean the leaf's records only.
         let unqualified = selection(
             &["zshrc"],
             &["shell"],
@@ -903,8 +895,6 @@ mod tests {
 
     #[test]
     fn a_record_from_an_unnamed_inclusion_answers_to_nothing() {
-        // Neither spelling reaches such a record: the qualified one has no first
-        // segment to match, and the unqualified one means the leaf's own.
         let contributed = included("zshrc", "shell", None);
         let selection = selection(
             &["zshrc", "core.zshrc"],
@@ -926,7 +916,7 @@ mod tests {
             &[],
             &[],
             &[],
-            Disabled::default(),
+            DisabledItems::default(),
         );
         assert!(by_action.wants(contributed.subject()));
         assert!(!by_action.wants(leaf.subject()));
@@ -937,7 +927,7 @@ mod tests {
             &[],
             &[],
             &[],
-            Disabled::default(),
+            DisabledItems::default(),
         );
         assert!(by_group.wants(contributed.subject()));
         assert!(!by_group.wants(leaf.subject()));
@@ -945,9 +935,8 @@ mod tests {
 
     #[test]
     fn a_target_reaches_into_the_inclusion_its_address_is_qualified_by() {
-        // Asking for everything opens every inclusion, even unnamed ones.
         let core = item("core");
-        let everything = selection(&[], &[], &[], Disabled::default());
+        let everything = selection(&[], &[], &[], DisabledItems::default());
         assert!(everything.reaches_into(Some(&core)));
         assert!(everything.reaches_into(None));
 
@@ -957,16 +946,21 @@ mod tests {
             &[],
             &[],
             &[],
-            Disabled::default(),
+            DisabledItems::default(),
         );
         assert!(named.reaches_into(Some(&core)));
         assert!(!named.reaches_into(Some(&item("work"))));
         assert!(!named.reaches_into(None));
 
-        // An address naming the inclusion itself reaches the record, not inside
-        // it; `apply-action` refuses that one rather than opening it.
+        // An inclusion's own address does not reach its children.
         let record = address("core");
-        let inclusion = filter(Target::Action(&record), &[], &[], &[], Disabled::default());
+        let inclusion = filter(
+            Target::Action(&record),
+            &[],
+            &[],
+            &[],
+            DisabledItems::default(),
+        );
         assert!(!inclusion.reaches_into(Some(&core)));
     }
 }

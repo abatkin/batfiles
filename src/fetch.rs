@@ -23,8 +23,7 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the body may take, in total.
 const BODY_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// How many redirects to follow. A release URL that redirects to a storage host
-/// is ordinary; a chain this long is not.
+/// Maximum number of HTTP redirects to follow.
 const MAX_REDIRECTS: u32 = 5;
 
 /// How batfiles introduces itself to a server.
@@ -215,8 +214,7 @@ fn agent() -> ureq::Agent {
         .timeout_recv_body(Some(BODY_TIMEOUT))
         .max_redirects(MAX_REDIRECTS)
         .user_agent(USER_AGENT)
-        // The OS trust store, so a corporate CA is honored where the bundled
-        // Mozilla set would refuse the connection.
+        // Use the OS trust store, including locally installed corporate CAs.
         .tls_config(
             TlsConfig::builder()
                 .root_certs(RootCerts::PlatformVerifier)
@@ -227,7 +225,7 @@ fn agent() -> ureq::Agent {
         .new_agent()
 }
 
-/// Tell a server that said no from a network that could not ask.
+/// Convert HTTP status failures and transport failures to their corresponding crate errors.
 fn failed(url: &str, error: ureq::Error) -> Error {
     match error {
         ureq::Error::StatusCode(status) => Error::FetchStatus {
@@ -241,7 +239,7 @@ fn failed(url: &str, error: ureq::Error) -> Error {
     }
 }
 
-/// The digest as a manifest writes one.
+/// Encode digest bytes as lowercase hexadecimal.
 fn hex(digest: &[u8]) -> String {
     digest.iter().fold(String::new(), |mut written, byte| {
         // Writing to a String cannot fail.
@@ -262,8 +260,7 @@ fn set_download_permissions(into: &mut fs::File, built_at: &Path) -> Result<(), 
         })
 }
 
-/// Where a mode means something other than it does on unix, the staging node was
-/// created with the platform default and there is nothing to set.
+/// Keep platform-default permissions on non-Unix systems.
 #[cfg(not(unix))]
 fn set_download_permissions(_into: &mut fs::File, _built_at: &Path) -> Result<(), Error> {
     Ok(())
@@ -275,8 +272,6 @@ mod tests {
 
     #[test]
     fn a_digest_is_rendered_the_way_a_manifest_writes_one() {
-        // The empty string's SHA-256, which is the one digest that can be
-        // checked against a published constant without computing it here.
         assert_eq!(
             hex(&Sha256::digest(b"")),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -314,8 +309,6 @@ mod tests {
 
     #[test]
     fn every_byte_is_two_digits_wide() {
-        // A byte below 16 rendered as one digit would shift every digest that
-        // contains one, and would still look like a digest.
         assert_eq!(hex(&[0x00, 0x0f, 0xff]), "000fff");
     }
 }

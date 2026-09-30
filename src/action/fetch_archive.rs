@@ -1,4 +1,4 @@
-//! `fetch-archive`: one archive downloaded and unpacked where nothing is.
+//! `fetch-archive`: seed a destination with a downloaded archive's contents.
 
 use super::RunContext;
 use crate::archive;
@@ -15,11 +15,9 @@ pub(super) fn fetch_archive(
 ) -> Result<(), Error> {
     let dest = context.destination(&action.dest);
     install::seed_directory(
-        install::Seed {
+        install::SeedDescription {
             verb: Verb::Extract,
             origin: action.source.clone(),
-            // A download has nothing on this machine for a destination to be
-            // inside of, or to be inside one.
             source: None,
         },
         &dest,

@@ -3,8 +3,7 @@
 
 use crate::support::*;
 
-// Location resolution. The repository and the home are read and written, so
-// `-v` is how the other two are observed from outside the binary.
+// Use verbose output to observe roots that the command does not otherwise read or write.
 
 #[test]
 fn verbose_reports_every_resolved_root() {
@@ -182,9 +181,6 @@ fn a_command_that_does_not_use_the_repository_works_from_a_deleted_directory() {
 
 #[test]
 fn a_command_that_does_not_use_the_repository_resolves_only_its_own_state() {
-    // A state-only command reports the two roots it may read and no others.
-    // A repository is not merely unreported: none was resolved, so the manifest
-    // in the working directory is not selected by a command with no use for it.
     let tree = Tree::new();
     let working = tree.repository("working");
     let assertion = tree
@@ -211,8 +207,6 @@ fn a_command_that_does_not_use_the_repository_resolves_only_its_own_state() {
 
 #[test]
 fn config_and_cache_do_not_follow_the_selected_home() {
-    // Batfiles' own state belongs to the invoking user, not to whichever home
-    // is being installed into, so `--home-dir` must not move it.
     let tree = Tree::new();
     let assertion = tree
         .batfiles()
@@ -244,8 +238,6 @@ fn version_resolves_no_roots() {
 
 #[test]
 fn init_resolves_no_roots() {
-    // `init` works on the directory it was run in, so even at `-v` — where
-    // every other command prints what it selected — there is nothing to print.
     let tree = Tree::roots();
     let working = tree.path("working");
     std::fs::create_dir(&working).expect("a working directory");
@@ -264,7 +256,5 @@ fn init_resolves_no_roots() {
             "`init` resolved the {label} root:\n{stderr}"
         );
     }
-    // The roots it ignored include the one it would have been pointed at: the
-    // skeleton landed in the working directory, not in `BATFILES_DIR`.
     assert!(working.join("batfiles.toml").is_file());
 }

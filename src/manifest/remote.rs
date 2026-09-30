@@ -1,19 +1,15 @@
-//! `[remotes]`: the sources a manifest names so its actions can reach content
-//! it does not hold itself — a Git repository, a file, or an unpacked archive.
+//! Git, file, and archive sources declared in `[remotes]`.
 
 use serde::Deserialize;
 
 use super::check::{
-    Invalid, RecordName, check_archive_root, check_digest, check_git_ref, check_git_source,
+    ManifestError, RecordName, check_archive_root, check_digest, check_git_ref, check_git_source,
     check_url,
 };
 use crate::condition::{Condition, Gate};
 use crate::item::ItemId;
 
-/// One entry of `[remotes]`, selected by its required `type` field.
-///
-/// The map key is the remote's ID, so a remote is always named: diagnostics
-/// and actions refer to it by that key.
+/// A remote declaration, selected by its required `type` field and identified by its map key.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum Remote {
@@ -23,15 +19,12 @@ pub(crate) enum Remote {
 }
 
 impl Remote {
-    /// The rules serde cannot express, checked as the document is read.
-    ///
-    /// `id` is the map key the remote was declared under, which is how every
-    /// diagnostic here names it.
-    pub fn validate(&self, id: &ItemId) -> Result<(), Invalid> {
+    /// Validate the remote's fields and condition combination, naming it by `id` in errors.
+    pub fn validate(&self, id: &ItemId) -> Result<(), ManifestError> {
         let record = RecordName::Remote(id.clone());
         let (when, unless) = self.gate_fields();
         if when.is_some() && unless.is_some() {
-            return Err(Invalid::BothConditions { record });
+            return Err(ManifestError::BothConditions { record });
         }
         match self {
             Self::Git(remote) => {
@@ -68,11 +61,10 @@ impl Remote {
         }
     }
 
-    /// The condition deciding whether this machine has the remote at all, or
-    /// `None` where the record declares neither field.
+    /// Return the remote's admission condition gate, if declared.
     pub fn gate(&self) -> Option<Gate<'_>> {
         let (when, unless) = self.gate_fields();
-        Gate::declared(when, unless)
+        Gate::from_fields(when, unless)
     }
 
     /// The record's `when` and `unless`, in that order.
@@ -85,13 +77,11 @@ impl Remote {
     }
 }
 
-/// `git`: a repository batfiles clones and keeps up to date on its own, so that
-/// actions can install from a tree the leaf repository does not hold.
+/// `git`: a repository cloned and updated under `remotes/<id>`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitRemote {
-    /// The repository to clone, passed to git as written: what a
-    /// [`GitCloneAction`](super::action::GitCloneAction) calls `source`.
+    /// Repository source passed to Git unchanged.
     pub url: String,
 
     /// The branch, tag, or commit the materialization should be on, following
@@ -135,8 +125,7 @@ pub(crate) struct ArchiveRemote {
     pub url: String,
     /// The digest the fetched archive must have, if the manifest pins one.
     pub sha256: Option<String>,
-    /// A prefix every entry is written without, or `*` for the archive's
-    /// single top-level directory.
+    /// Prefix to strip from entry paths, or `*` for the archive's single top-level directory.
     pub archive_root: Option<String>,
 
     /// The condition under which this machine materializes the remote at all.
@@ -153,7 +142,7 @@ mod tests {
         toml::from_str(document)
     }
 
-    fn checked(document: &str) -> Result<(), Invalid> {
+    fn checked(document: &str) -> Result<(), ManifestError> {
         let remote = parse(document).unwrap_or_else(|error| panic!("{error}"));
         remote.validate(&ItemId::try_from("core".to_owned()).expect("valid ID"))
     }
@@ -164,8 +153,7 @@ mod tests {
             .to_string()
     }
 
-    /// The whole of a Git remote, which is one required field and three
-    /// optional ones.
+    /// A Git remote declaration with optional ref and condition fields.
     const COMPLETE: &str = "type = \"git\"\n\
          url = \"https://e.example/core.git\"\n\
          ref = \"main\"\n\
@@ -183,8 +171,6 @@ mod tests {
 
     #[test]
     fn a_url_is_whatever_git_accepts_but_never_nothing() {
-        // The one rule decidable from the value alone, exactly as it is for a
-        // `git-clone` source. What the rest means is git's question.
         let message = refused("type = \"git\"\nurl = \"\"\n");
         assert!(message.contains("remote `core`"), "{message}");
         assert!(message.contains("url is empty"), "{message}");
@@ -192,8 +178,6 @@ mod tests {
 
     #[test]
     fn a_ref_written_with_nothing_in_it_is_refused() {
-        // An absent `ref` follows whatever branch the materialization is on,
-        // which is not what a record asking for one meant.
         let message = refused("type = \"git\"\nurl = \"https://e.example/a.git\"\nref = \" \"\n");
         assert!(message.contains("remote `core`"), "{message}");
         assert!(message.contains("ref is empty"), "{message}");
@@ -230,7 +214,7 @@ mod tests {
         );
     }
 
-    /// A digest of the right shape, which nothing here fetches.
+    /// A valid SHA-256 digest for parsing tests.
     const SHA: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     #[test]
@@ -289,7 +273,6 @@ mod tests {
 
     #[test]
     fn an_unknown_type_is_not_a_remote_at_all() {
-        // A remote is selected by its `type`, and there is no record to check.
         let error = parse("type = \"rsync\"\nurl = \"e.example:/a\"\n")
             .expect_err("an unknown type should not deserialize");
         assert!(error.to_string().contains("rsync"), "{error}");
@@ -298,13 +281,10 @@ mod tests {
     #[test]
     fn every_remote_is_closed_over_the_fields_it_accepts() {
         for (document, unknown) in [
-            // The spelling `docs/future/repoformat.md` gives the ref field,
-            // which batfiles reads under `git-clone`'s name instead.
             (
                 "type = \"git\"\nurl = \"https://e.example/a.git\"\nbranch = \"main\"\n",
                 "branch",
             ),
-            // A field belonging to another variant.
             (
                 "type = \"git\"\nurl = \"https://e.example/a.git\"\nsha256 = \"00\"\n",
                 "sha256",
@@ -313,8 +293,6 @@ mod tests {
                 "type = \"file\"\nurl = \"https://e.example/a\"\narchive-root = \"*\"\n",
                 "archive-root",
             ),
-            // The entry filters, which are not built for an archive remote any
-            // more than for a `fetch-archive`.
             (
                 "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\ninclude = \"bin/*\"\n",
                 "include",

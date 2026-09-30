@@ -1,10 +1,5 @@
-//! The two fetching actions: what a download installs, what an archive unpacks,
-//! what each refuses to install, and what a dry run does instead of either.
-//!
-//! Every test answers from a local server (`architecture.md`, "Test environments").
-//! Several of them assert on [`Server::requests`] as well as on the tree,
-//! because "nothing was fetched" and "nothing was written" are different
-//! claims and the first is the one `--dry-run` makes.
+//! CLI tests for file downloads, archive extraction, validation failures, and dry runs. Use
+//! local-server request counts to detect unwanted downloads.
 
 use std::fs;
 
@@ -20,12 +15,7 @@ const STARSHIP: &str = "add_newline = false\n";
 /// [`STARSHIP`]'s digest, as the fixture manifest writes it.
 const STARSHIP_SHA256: &str = "0fbf196b3612d0bafdaaa79b45efb1d03c813bedc53bbe3e6e0f5550ec14683f";
 
-/// What the `fetching` fixture asks for, and the three bodies behind it.
-///
-/// A function rather than a constant because one of the three is an archive
-/// built at run time, and it is the whole set rather than a base to add to:
-/// every action in the fixture runs on every test that drives it, so a route
-/// missing here fails a test that is about something else.
+/// Return all three fixture routes, including the generated release archive.
 fn routes() -> Vec<(&'static str, Reply)> {
     vec![
         ("/pathogen.vim", Reply::Body(PATHOGEN)),
@@ -34,10 +24,7 @@ fn routes() -> Vec<(&'static str, Reply)> {
     ]
 }
 
-/// The fixture's routes with some of them answered differently.
-///
-/// The overrides go first, and the server answers with the first route that
-/// matches, so an entry here replaces the standard one for that path.
+/// Return fixture routes with supplied responses taking precedence.
 fn routes_but(overrides: &[(&'static str, Reply)]) -> Vec<(&'static str, Reply)> {
     let mut routes = overrides.to_vec();
     routes.extend(self::routes());
@@ -87,8 +74,6 @@ fn a_fetch_installs_a_file_the_home_does_not_have() {
 
     let assertion = tree.batfiles().arg("sync").assert().success();
 
-    // The parents are made on the way, which is the `mkdir -p` the shell
-    // script does before its `curl`.
     assert_eq!(
         fs::read_to_string(tree.home(".vim/autoload/pathogen.vim")).expect("the fetched file"),
         PATHOGEN
@@ -123,8 +108,7 @@ fn a_destination_that_is_already_there_is_kept_without_asking_the_server() {
         "kept {}",
         display(&tree.home(".vim/autoload/pathogen.vim"))
     )));
-    // The occupancy check comes first, so the requests are the *other* actions':
-    // a destination that is taken costs no transfer at all.
+    // The other actions account for the two requests.
     assert_eq!(server.requests(), 2);
 }
 
@@ -146,9 +130,6 @@ fn a_dry_run_says_what_it_would_fetch_and_fetches_nothing() {
         display(&tree.home(".vim/autoload/pathogen.vim")),
         server.address()
     )));
-    // An archive is reported at the granularity a whole directory is copied at:
-    // what it would install and where it came from, and no list of entries,
-    // which is the thing a dry run could not know without unpacking one.
     assert!(
         said.contains(&format!(
             "would extract {} from {}/fzf.tar.gz",
@@ -157,8 +138,6 @@ fn a_dry_run_says_what_it_would_fetch_and_fetches_nothing() {
         )),
         "{said}"
     );
-    // The stronger half of the promise: not merely that nothing was written,
-    // but that the network was never reached to find out what to write.
     assert_eq!(server.requests(), 0);
     assert_eq!(snapshot(&tree.path("home")), before);
 }
@@ -167,8 +146,6 @@ fn a_dry_run_says_what_it_would_fetch_and_fetches_nothing() {
 fn a_digest_that_does_not_match_installs_nothing() {
     let server = Server::new(&routes_but(&[
         ("/pathogen.vim", Reply::Body("fine\n")),
-        // The right shape, the wrong bytes: what an upstream file changing
-        // under a pinned digest looks like.
         ("/starship.toml", Reply::Body("add_newline = true\n")),
     ]));
     let tree = fetching(&server);
@@ -184,8 +161,6 @@ fn a_digest_that_does_not_match_installs_nothing() {
         said.contains("does not match the declared sha256"),
         "{said}"
     );
-    // Both digests, so the manifest can be corrected from the diagnostic when
-    // the change upstream was the expected one.
     assert!(said.contains("0fbf196b3612d0ba"), "{said}");
     assert!(
         !tree
@@ -209,11 +184,6 @@ dest = "~/.vimrc"
 
     let assertion = tree.batfiles().arg("sync").assert().failure();
 
-    // The case rule 15 is about: a short file published here would occupy the
-    // destination, and every later run would find it there and call the work
-    // done. The client is what notices — a body that ends before its
-    // `Content-Length` never becomes bytes batfiles could publish — and what
-    // this asserts is that batfiles then installs nothing.
     assert!(
         !tree.home(".vimrc").exists(),
         "half a download was installed"
@@ -229,13 +199,7 @@ dest = "~/.vimrc"
     );
 }
 
-/// An answer that is not a refusal is not therefore a file.
-///
-/// Batfiles asks for neither a range nor a conditional response, so these come
-/// from an endpoint or a proxy doing something it was not asked to. Installing
-/// one would put a fragment, or nothing at all, where the file goes — and a
-/// destination that is occupied is one every later run calls done, which for a
-/// `fetch-file` without a digest is a truncated file that never gets noticed.
+/// Reject partial or empty HTTP responses without installing a destination.
 #[test]
 fn an_answer_that_is_not_a_whole_file_installs_nothing() {
     for reply in [
@@ -311,7 +275,7 @@ fn a_redirect_is_followed() {
     );
 }
 
-/// A fetched file is readable, the way the `curl -o` this replaces left one.
+/// Publish fetched files with readable permissions.
 #[cfg(unix)]
 #[test]
 fn a_fetched_file_arrives_readable_rather_than_staying_private() {
@@ -326,17 +290,12 @@ fn a_fetched_file_arrives_readable_rather_than_staying_private() {
         .expect("the fetched file")
         .permissions()
         .mode();
-    // The staging node is created at 0600 so an interrupted run leaves nothing
-    // readable behind; publication is where it widens.
     assert_eq!(
         mode & 0o777,
         0o644,
         "the fetched file kept its staging mode"
     );
 }
-
-// What a manifest may say. Each of these is refused as the document is read,
-// so nothing is fetched and no destination is touched.
 
 #[test]
 fn a_source_that_is_not_a_url_is_refused_before_anything_runs() {
@@ -360,8 +319,6 @@ dest = "~/.ackrc"
 
 #[test]
 fn a_file_url_fetches_a_file_on_this_machine() {
-    // The same transfer a server's answer goes through, digest included, so the
-    // one thing a local source changes is where the bytes come from.
     let tree = Tree::new();
     let published = tree.path("published");
     fs::create_dir_all(&published).expect("the published directory");
@@ -466,13 +423,7 @@ dest = "~/.a"
     );
 }
 
-/// The archive fields belong to `fetch-archive`, so they are unknown on
-/// `fetch-file` for good rather than until a step.
-///
-/// Accepting `archive-root` and ignoring it would install the tarball itself at
-/// a destination every later run then finds occupied and calls done. `extract`
-/// does not exist in the format at all — a choice between two shapes is a
-/// `type`, never a boolean.
+/// Reject archive-specific fields on `fetch-file` actions.
 #[test]
 fn the_archive_fields_are_not_fields_of_a_plain_download() {
     let tree = Tree::new();
@@ -494,9 +445,7 @@ dest = "~/.local/tool"
     }
 }
 
-/// The entry filters are specified and not built, so they are refused rather
-/// than accepted and ignored — which would install more of an archive than the
-/// manifest asked for, at a destination every later run then calls done.
+/// Reject unsupported archive-entry filters.
 #[test]
 fn the_entry_filters_are_not_built_yet() {
     let tree = Tree::new();
@@ -514,8 +463,6 @@ dest = "~/.local/tool"
     }
 }
 
-// `fetch-archive`: what an archive installs, and what it refuses to.
-
 #[test]
 fn an_archive_is_unpacked_where_nothing_is() {
     let server = Server::new(&routes());
@@ -523,9 +470,6 @@ fn an_archive_is_unpacked_where_nothing_is() {
 
     let assertion = tree.batfiles().arg("sync").assert().success();
 
-    // The versioned directory is gone, because `archive-root = "*"` found it
-    // and stripped it; what is at `dest` is the tool rather than a directory
-    // holding the tool.
     assert_eq!(
         fs::read_to_string(tree.home(".local/fzf/bin/fzf")).expect("the unpacked program"),
         "#!/bin/sh\necho fzf\n"
@@ -536,8 +480,6 @@ fn an_archive_is_unpacked_where_nothing_is() {
         display(&tree.home(".local/fzf")),
         server.address()
     )));
-    // Neither the staging tree nor the archive it was unpacked from survives
-    // beside the destination.
     assert_eq!(entries(&tree.home(".local")), ["fzf"]);
 }
 
@@ -552,9 +494,7 @@ fn an_archive_without_a_root_keeps_the_paths_it_was_written_with() {
     for (name, body) in [
         ("gzipped", tarball(members)),
         ("plain", plain_tarball(members)),
-        // The original format, whose headers carry no `ustar` magic. A tar
-        // reader takes it; a detector that looks for the magic would refuse an
-        // archive it was about to read perfectly well.
+        // A V7 archive has no ustar magic.
         ("V7", v7_tarball(members)),
     ] {
         let server = Server::new(&[("/tool.tar.gz", Reply::Bytes(body))]);
@@ -570,12 +510,7 @@ fn an_archive_without_a_root_keeps_the_paths_it_was_written_with() {
     }
 }
 
-/// `tar czf x.tgz .` writes every entry with a leading `./`, which is how most
-/// archives are made and therefore the spelling that has to work.
-///
-/// It is also the spelling `archive-root = "*"` is most easily wrong about: a
-/// `.` left at the front of every path is a top-level component like any other,
-/// and stripping it would leave the versioned directory in place.
+/// Ignore leading `./` components when extracting and detecting the archive root.
 #[test]
 fn entries_written_with_a_leading_dot_slash_are_unpacked_as_though_they_were_not() {
     let server = serving(&[
@@ -595,13 +530,7 @@ fn entries_written_with_a_leading_dot_slash_are_unpacked_as_though_they_were_not
     assert_eq!(entries(&tree.home(".local/tool")), ["bin"]);
 }
 
-/// A gzip stream of several members concatenated, which `pigz` writes and `cat
-/// a.gz b.gz` produces.
-///
-/// A decoder that read only the first member would hand back the front of the
-/// tar and stop, and what makes that worth a test is that it does not look like
-/// a failure: the tree would be published short, and every later run would find
-/// the destination occupied and call it done.
+/// Read all concatenated gzip members before publishing the extracted tree.
 #[test]
 fn a_gzip_stream_of_several_members_is_read_to_the_end() {
     let members = &[
@@ -640,9 +569,7 @@ fn a_named_root_selects_what_is_under_it_and_leaves_the_rest() {
     );
 }
 
-/// A destination that is already there means the action is done, whatever put it
-/// there — including a `create-dir` earlier in the same manifest. `dest` is one
-/// name, not a merge root.
+/// Keep an existing destination directory without fetching or merging archive content.
 #[test]
 fn a_destination_that_is_already_a_directory_is_kept_without_asking_the_server() {
     let server = Server::new(&routes());
@@ -657,16 +584,11 @@ fn a_destination_that_is_already_a_directory_is_kept_without_asking_the_server()
         "an occupied destination was unpacked into"
     );
     assert!(stderr_of(&assertion).contains(&format!("kept {}", display(&tree.home(".local/fzf")))));
-    // Two requests, both the other actions': an occupied destination costs no
-    // transfer at all.
+    // The other actions account for the two requests.
     assert_eq!(server.requests(), 2);
 }
 
-/// Every way an entry can name a path outside the tree it is unpacked into.
-///
-/// Each fails the whole action rather than being skipped: an archive carrying
-/// one of these is not one to install part of, and nothing has been written when
-/// it is found, because the paths are all read before any of them is created.
+/// Reject archives with escaping entry paths before installing any content.
 #[test]
 fn an_entry_that_would_be_written_outside_the_destination_installs_nothing() {
     for (what, members) in [
@@ -713,16 +635,8 @@ fn an_entry_that_would_be_written_outside_the_destination_installs_nothing() {
     }
 }
 
-/// The escape that takes two entries, and that no check on a single path finds.
-///
-/// `a/b -> ../x` is honest and stays inside. `escape -> a/b/../../outside`
-/// cancels on paper to `outside`, which is inside; the kernel resolves `a/b` to
-/// `x` first, goes up twice from there, and lands beside the destination. Left
-/// alone, everything under `escape/` is then written outside `dest` — through a
-/// link, past every check that looked only at spellings.
-///
-/// The external directory exists here on purpose. Without it the write fails on
-/// its own and the test would pass for the wrong reason.
+/// Reject link targets that escape after traversing another archive symlink. The external
+/// destination exists so a missed validation cannot pass merely because the write fails.
 #[cfg(unix)]
 #[test]
 fn an_entry_reached_through_the_archives_own_symlink_installs_nothing() {
@@ -742,9 +656,8 @@ dest = "~/.local/tool"
 "#,
         server.address()
     ));
-    // Where `escape` resolves to once the kernel has followed `a/b`: a sibling
-    // of the destination, and one that already exists, so a write through the
-    // link would succeed rather than failing of its own accord.
+    // Create the outside directory so an unsafe write succeeds instead of failing for a missing
+    // parent.
     let outside = tree.home(".local/outside");
     fs::create_dir_all(&outside).expect("a directory beside the destination");
 
@@ -763,9 +676,7 @@ dest = "~/.local/tool"
     );
 }
 
-/// Nothing is created under a symlink the archive declares, even where the link
-/// stays inside: the kernel follows it before creating what is below it, so the
-/// entry does not land where the archive says it does.
+/// Reject entries nested under archive symlinks, even when the links remain inside the tree.
 #[cfg(unix)]
 #[test]
 fn an_entry_written_under_the_archives_own_symlink_installs_nothing() {
@@ -786,8 +697,7 @@ fn an_entry_written_under_the_archives_own_symlink_installs_nothing() {
     );
 }
 
-/// A symlink that stays inside the tree is installed as a symlink, target and
-/// all: an archive that ships one is describing its own layout.
+/// Preserve symlinks whose targets stay inside the extracted tree.
 #[cfg(unix)]
 #[test]
 fn a_symlink_that_stays_inside_the_tree_is_installed() {
@@ -811,8 +721,7 @@ fn a_symlink_that_stays_inside_the_tree_is_installed() {
     );
 }
 
-/// A hardlink is a second name for an entry the archive already holds, which is
-/// how a tar records the same file twice.
+/// Install hardlinks to other archive entries.
 #[test]
 fn a_hardlink_to_another_entry_is_installed() {
     let server = serving(&[
@@ -829,8 +738,7 @@ fn a_hardlink_to_another_entry_is_installed() {
     );
 }
 
-/// Anything that is not a file, a directory, or a link. Skipping it would
-/// publish an incomplete tree at a destination every later run calls finished.
+/// Reject unsupported archive entry kinds without publishing a partial tree.
 #[test]
 fn an_entry_that_is_not_a_file_a_directory_or_a_link_installs_nothing() {
     let server = serving(&[
@@ -889,8 +797,6 @@ fn an_archive_with_no_single_top_level_directory_is_refused() {
 
     assert!(!tree.home(".local/tool").exists());
     assert!(said.contains("no single top-level directory"), "{said}");
-    // Both of them, because what the author writes in place of the `*` is one
-    // of the names in the message.
     assert!(said.contains("docs") && said.contains("tool-1.0"), "{said}");
 }
 
@@ -918,7 +824,7 @@ fn an_archive_whose_digest_does_not_match_is_never_unpacked() {
     let server = serving(&[Member::File("bin/tool", 0o755, "run\n")]);
     let tree = one_archive(
         &server,
-        // The empty string's digest, which no archive has.
+        // The empty-body digest cannot match this archive.
         "sha256 = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n",
     );
 
@@ -930,8 +836,6 @@ fn an_archive_whose_digest_does_not_match_is_never_unpacked() {
         "{}",
         stderr_of(&assertion)
     );
-    // Neither leftover survives: the archive was downloaded, refused, and taken
-    // away, and the staging tree it would have been unpacked into with it.
     assert_eq!(entries(&tree.home(".local")), Vec::<String>::new());
 }
 
@@ -968,7 +872,6 @@ fn an_unpacked_entry_carries_the_archives_permissions_without_the_dangerous_ones
 
     let server = serving(&[
         Member::Directory("tool", 0o750),
-        // Setuid root is the whole reason this is masked rather than copied.
         Member::File("tool/setuid", 0o4755, "x\n"),
         Member::File("tool/program", 0o755, "x\n"),
         Member::File("tool/notes", 0o600, "x\n"),
@@ -991,18 +894,10 @@ fn an_unpacked_entry_carries_the_archives_permissions_without_the_dangerous_ones
         0o755,
         "an archive handed out setuid"
     );
-    // Applied last, and deepest-first, so a directory the archive marks
-    // unwritable is still one batfiles could fill on the way.
     assert_eq!(mode(".local/tool/tool"), 0o750);
 }
 
-/// The destination itself carries the mode of whatever `archive-root` stripped.
-///
-/// The staging directory is created closed so that an interrupted run leaves
-/// nothing readable behind, and the widening at the end is what the archive's own
-/// root entry supplies. Without it every `archive-root = "*"` destination is
-/// published at `0700` — nothing is broken, and nothing but the owner can enter
-/// the tool that was just installed.
+/// Apply the stripped root directory's permissions to the extraction destination.
 #[cfg(unix)]
 #[test]
 fn the_destination_carries_the_mode_of_the_directory_that_was_stripped() {
@@ -1026,8 +921,7 @@ fn the_destination_carries_the_mode_of_the_directory_that_was_stripped() {
     );
 }
 
-/// An archive that lists only files says nothing about the mode of the tree they
-/// are in, and the closed staging mode is not an answer to publish.
+/// Use readable default permissions when no archive entry specifies the root mode.
 #[cfg(unix)]
 #[test]
 fn a_destination_no_entry_describes_is_still_published_readable() {
@@ -1064,9 +958,7 @@ fn an_archive_root_is_matched_however_it_is_spelled() {
     );
 }
 
-/// An `archive-root` that climbs is refused as the manifest is read, because an
-/// archive entry may not climb either: a root spelled with `..` would be matched
-/// against entries that carry no such spelling and would select nothing.
+/// Reject `..` in archive roots during manifest validation.
 #[test]
 fn an_archive_root_that_climbs_is_refused_before_anything_is_fetched() {
     let tree = Tree::new();
@@ -1088,8 +980,7 @@ archive-root = "releases/../tool"
     );
 }
 
-/// A directory the archive marks read-only still gets its children, because the
-/// mode is applied after they are written rather than when it is created.
+/// Populate read-only archive directories before applying their final permissions.
 #[cfg(unix)]
 #[test]
 fn a_directory_the_archive_marks_unwritable_is_still_filled() {

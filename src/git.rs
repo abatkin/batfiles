@@ -15,11 +15,11 @@ use crate::error::Error;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{self, ExistingNode, Occupancy, RepositoryRoot};
-use crate::replace::{Resolution, Resolver};
+use crate::replace::{ConflictDecision, ConflictResolver};
 
-/// What can go wrong reaching a clone, as one enum a caller can match on.
+/// Failures when cloning or updating a repository.
 #[derive(Debug, ThisError)]
-pub(crate) enum Failure {
+pub(crate) enum GitError {
     /// `git` could not be run at all, most often because it is not on `PATH`.
     #[error(
         "could not run git: {source}. batfiles runs the `git` on your PATH so that your \
@@ -43,9 +43,7 @@ pub(crate) enum Failure {
     )]
     NotAClone { path: PathBuf },
 
-    /// A destination whose git directory is not its own: a `.git` that is a symlink or
-    /// a file rather than the directory `git clone` makes, or a real one whose
-    /// configured worktree is somewhere else.
+    /// The destination uses an indirect `.git` or a worktree rooted elsewhere.
     #[error(
         "cannot update {}: its .git belongs to a checkout somewhere else, so updating it \
          would change that one; move it aside and run sync again",
@@ -53,8 +51,7 @@ pub(crate) enum Failure {
     )]
     CloneElsewhere { path: PathBuf },
 
-    /// A destination holding a `.git` whose `HEAD` names no commit: what an interrupted
-    /// clone leaves, and what a damaged one looks like.
+    /// The destination's `.git` has no resolvable `HEAD` commit.
     #[error(
         "cannot update {}: it has a .git but nothing checked out, so it is an incomplete \
          or damaged clone ({message}); move it aside and run sync again",
@@ -62,8 +59,7 @@ pub(crate) enum Failure {
     )]
     CloneIncomplete { path: PathBuf, message: String },
 
-    /// A declared `ref` that names nothing in the clone: a branch nobody publishes, a
-    /// tag spelled wrong, a commit that was rebased away.
+    /// The declared ref resolves to no branch, tag, or commit in the clone.
     #[error(
         "cannot follow `{git_ref}` in {}: no branch, tag, or commit of that name is in the clone",
         .path.display()
@@ -71,10 +67,9 @@ pub(crate) enum Failure {
     RefUnresolvable { path: PathBuf, git_ref: String },
 }
 
-impl Failure {
-    /// What a directory that cannot be updated as a clone is, completing
-    /// "`dest` is …", for a conflict to be settled over. `None` for a failure
-    /// that says nothing about what is at the destination.
+impl GitError {
+    /// Describe an unusable clone for conflict handling, or return `None` for unrelated
+    /// failures. The description completes "`dest` is ...".
     fn unusable_clone(&self) -> Option<String> {
         match self {
             Self::NotAClone { .. } => Some("a directory, and not a git clone".to_owned()),
@@ -89,26 +84,27 @@ impl Failure {
     }
 }
 
-/// Clone into a vacant or replaceable destination; update an existing clone.
-/// Anything else in the way — including a directory that is not a usable
-/// clone — is settled under `resolver`'s policy, whose refusal names it.
-/// Dry runs inspect occupancy and report intent without invoking Git.
-/// Existing clones retain their configured remotes, regardless of `url`.
+/// Clone into a vacant or replaceable destination, or update an existing clone. Resolve other
+/// occupants, including unusable clones, using `resolver`. Existing clones retain their
+/// configured remotes regardless of `url`. Dry runs inspect and report without invoking Git.
 pub(crate) fn clone_or_update(
     url: &str,
     dest: &Path,
     git_ref: Option<&str>,
     repository: &RepositoryRoot,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
 ) -> Result<(), Error> {
     let (mode, reporter) = (resolver.mode(), resolver.reporter());
     let clone_here = || clone(url, dest, git_ref, resolver);
     match Occupancy::at(dest, repository)? {
-        // The only thing that can be a clone. Whether it *is* one takes `git`,
-        // so a dry run does not find out.
+        // Validating a clone invokes Git, which dry runs must not do.
         Occupancy::Unmanaged(ExistingNode::Directory) => {
             if !mode.writes() {
-                reporter.info(&format!("{} {}", Verb::Update.say(mode), dest.display()));
+                reporter.info(&format!(
+                    "{} {}",
+                    Verb::Update.for_mode(mode),
+                    dest.display()
+                ));
                 return Ok(());
             }
             let failure = match validate_clone(dest) {
@@ -120,18 +116,18 @@ pub(crate) fn clone_or_update(
                 return Err(failure.into());
             };
             match resolver.resolve(dest, &found)? {
-                Resolution::Refuse => Err(failure.into()),
-                Resolution::Skip => Ok(()),
-                Resolution::Replace(keep) => resolver.replace(dest, keep, clone_here),
+                ConflictDecision::Refuse => Err(failure.into()),
+                ConflictDecision::Skip => Ok(()),
+                ConflictDecision::Replace(keep) => resolver.replace(dest, keep, clone_here),
             }
         }
         Occupancy::Unmanaged(found) => match resolver.resolve(dest, &found)? {
-            Resolution::Refuse => Err(Error::DestinationExists {
+            ConflictDecision::Refuse => Err(Error::DestinationExists {
                 path: dest.to_path_buf(),
                 found,
             }),
-            Resolution::Skip => Ok(()),
-            Resolution::Replace(keep) => resolver.replace(dest, keep, clone_here),
+            ConflictDecision::Skip => Ok(()),
+            ConflictDecision::Replace(keep) => resolver.replace(dest, keep, clone_here),
         },
         Occupancy::Replaceable { written, .. } => {
             if mode.writes() {
@@ -139,7 +135,7 @@ pub(crate) fn clone_or_update(
             }
             reporter.info(&format!(
                 "{} the symlink at {} to {} to make room for the clone",
-                Verb::Remove.say(mode),
+                Verb::Remove.for_mode(mode),
                 dest.display(),
                 written.display()
             ));
@@ -149,13 +145,13 @@ pub(crate) fn clone_or_update(
     }
 }
 
-/// Carry out an action's clone into a destination nothing is at: the parents it
-/// needs, the clone itself, the declared ref, and the line reporting all of it.
+/// Clone into a vacant destination, creating parents and following the declared ref. Report the
+/// operation or dry-run intent.
 fn clone(
     url: &str,
     dest: &Path,
     git_ref: Option<&str>,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
 ) -> Result<(), Error> {
     let (mode, reporter) = (resolver.mode(), resolver.reporter());
     if !directory::create_parents(dest, resolver)? {
@@ -164,30 +160,27 @@ fn clone(
     if mode.writes() {
         clone_repository(url, dest)?;
         if let Some(git_ref) = git_ref {
-            // The clone line below already reports where the repository is.
             follow(dest, git_ref, reporter)?;
         }
     }
     reporter.info(&format!(
         "{} {} from {url}{}",
-        Verb::Clone.say(mode),
+        Verb::Clone.for_mode(mode),
         dest.display(),
         at(git_ref)
     ));
     Ok(())
 }
 
-/// Clone into a vacant destination without reporting it; the caller reports.
-/// Git creates missing parent directories. Takes no [`RunMode`]: the `clone`
-/// command calls this directly.
-///
-/// The `--` stops a URL beginning with a dash from being read as an option.
+/// Clone into a vacant destination without reporting progress. Git creates missing parents.
+/// This function always runs Git and does not check `RunMode`.
 pub(crate) fn clone_repository(url: &str, dest: &Path) -> Result<(), Error> {
     run(
         None,
         "clone",
         &[
             OsStr::new("clone"),
+            // Keep a URL beginning with `-` from being read as an option.
             OsStr::new("--"),
             OsStr::new(url),
             dest.as_os_str(),
@@ -229,12 +222,12 @@ fn report_update(dest: &Path, outcome: UpdateOutcome, target: &str, reporter: &R
         UpdateOutcome::Unchanged => reporter.detail(1, &format!("unchanged {}", dest.display())),
         UpdateOutcome::Advanced => reporter.info(&format!(
             "{} {}",
-            Verb::Update.say(RunMode::Perform),
+            Verb::Update.for_mode(RunMode::Perform),
             dest.display()
         )),
         UpdateOutcome::Switched => reporter.info(&format!(
             "{} {} to {target}",
-            Verb::SwitchRef.say(RunMode::Perform),
+            Verb::SwitchRef.for_mode(RunMode::Perform),
             dest.display()
         )),
         UpdateOutcome::Skipped => {}
@@ -253,16 +246,16 @@ enum UpdateOutcome {
     Skipped,
 }
 
-/// Put the worktree on whatever `git_ref` names, having resolved it once.
+/// Resolve `git_ref` and check out its branch or commit.
 fn follow(dest: &Path, git_ref: &str, reporter: &Reporter) -> Result<UpdateOutcome, Error> {
     match resolve(dest, git_ref)? {
-        Target::Branch { remote_ref } => branch(dest, git_ref, &remote_ref, reporter),
-        Target::Object { commit } => detach(dest, &commit),
+        RefTarget::Branch { remote_ref } => branch(dest, git_ref, &remote_ref, reporter),
+        RefTarget::Object { commit } => detach(dest, &commit),
     }
 }
 
 /// What a declared `ref` turned out to name.
-enum Target {
+enum RefTarget {
     /// A branch on a remote, held here as its full `refs/remotes/…` name. A
     /// local branch of the declared name follows it.
     Branch { remote_ref: String },
@@ -273,22 +266,21 @@ enum Target {
 
 /// Resolve a declared ref to a remote branch or commit. Prefer remote branches
 /// with `origin` first; otherwise resolve the input as a commit expression.
-fn resolve(dest: &Path, git_ref: &str) -> Result<Target, Error> {
+fn resolve(dest: &Path, git_ref: &str) -> Result<RefTarget, Error> {
     if names_a_branch(dest, git_ref)? {
         for remote in remotes(dest)? {
             let candidate = format!("refs/remotes/{remote}/{git_ref}");
             if has_ref(dest, &candidate)? {
-                return Ok(Target::Branch {
+                return Ok(RefTarget::Branch {
                     remote_ref: candidate,
                 });
             }
         }
     }
-    // `^{commit}` peels an annotated tag, so what comes back is comparable with
-    // `HEAD` and is something a detached checkout can sit on.
+    // Peel annotated tags to commits before comparing or checking them out.
     match verify(dest, &format!("{git_ref}^{{commit}}"))? {
-        Some(commit) => Ok(Target::Object { commit }),
-        None => Err(Failure::RefUnresolvable {
+        Some(commit) => Ok(RefTarget::Object { commit }),
+        None => Err(GitError::RefUnresolvable {
             path: dest.to_path_buf(),
             git_ref: git_ref.to_owned(),
         }
@@ -305,8 +297,7 @@ fn remotes(dest: &Path) -> Result<Vec<String>, Error> {
         .filter(|name| !name.is_empty())
         .map(str::to_owned)
         .collect();
-    // A stable sort on one bit, so `origin` comes first and the rest keep the
-    // order git listed them in.
+    // Stable sorting keeps other remotes in Git's order.
     names.sort_by_key(|name| name != "origin");
     Ok(names)
 }
@@ -341,7 +332,7 @@ fn branch(
     }
 
     let advanced = advance(dest, remote, reporter)?;
-    // A switch is reported; any following fast-forward is implied.
+    // A branch switch takes precedence over any subsequent fast-forward in the report.
     Ok(if switching {
         UpdateOutcome::Switched
     } else {
@@ -371,8 +362,7 @@ fn advance(dest: &Path, remote: &str, reporter: &Reporter) -> Result<UpdateOutco
     Ok(UpdateOutcome::Advanced)
 }
 
-/// The first path a fast-forward would create that something is already at, if
-/// there is one.
+/// Return the first occupied path that a fast-forward would create, if any.
 fn overwritten_by(dest: &Path, target: &str) -> Result<Option<PathBuf>, Error> {
     let listed = run(
         Some(dest),
@@ -417,7 +407,7 @@ fn short_remote_ref(remote: &str) -> &str {
     remote.strip_prefix("refs/remotes/").unwrap_or(remote)
 }
 
-/// Sit the worktree on one object, detached.
+/// Check out `commit_id` with a detached HEAD.
 fn detach(dest: &Path, commit_id: &str) -> Result<UpdateOutcome, Error> {
     if head_branch(dest)?.is_none() && commit(dest, "HEAD")? == commit_id {
         return Ok(UpdateOutcome::Unchanged);
@@ -431,7 +421,7 @@ fn detach(dest: &Path, commit_id: &str) -> Result<UpdateOutcome, Error> {
     Ok(UpdateOutcome::Switched)
 }
 
-/// What stops a checkout replacing a file the user keeps and git ignores.
+/// Checkout option that preserves ignored files.
 const KEEP_IGNORED: &str = "--no-overwrite-ignore";
 
 /// Resolve a revision expression. Returns None for an unresolved expression;
@@ -483,8 +473,7 @@ fn update_tracking(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
     Ok(())
 }
 
-/// Leave a clone as it is, and say why at a volume that is not hidden by
-/// default.
+/// Warn that the clone was not updated, including the reason.
 fn warn_skipped_update(reporter: &Reporter, dest: &Path, because: &str) {
     reporter.warn(&format!("not updating {}: {because}", dest.display()));
 }
@@ -494,19 +483,19 @@ fn warn_skipped_update(reporter: &Reporter, dest: &Path, because: &str) {
 fn validate_clone(dest: &Path) -> Result<(), Error> {
     match own_git_directory(dest)? {
         GitDirectory::Missing => {
-            return Err(Failure::NotAClone {
+            return Err(GitError::NotAClone {
                 path: dest.to_path_buf(),
             }
             .into());
         }
         GitDirectory::Indirect => {
-            return Err(Failure::CloneElsewhere {
+            return Err(GitError::CloneElsewhere {
                 path: dest.to_path_buf(),
             }
             .into());
         }
         GitDirectory::Damaged => {
-            return Err(Failure::CloneIncomplete {
+            return Err(GitError::CloneIncomplete {
                 path: dest.to_path_buf(),
                 message: "git does not read its .git as a repository".to_owned(),
             }
@@ -515,8 +504,8 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
         GitDirectory::Own => {}
     }
 
-    // Git has read the layout as a repository, so a failure from here on is
-    // git's, not the checkout's.
+    // After layout validation, propagate Git failures instead of classifying them as
+    // destination conflicts.
     let toplevel = run(
         Some(dest),
         "rev-parse",
@@ -528,7 +517,7 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
             if paths::canonicalize_or_normalize(&root)
                 == paths::canonicalize_or_normalize(dest) => {}
         _ => {
-            return Err(Failure::CloneElsewhere {
+            return Err(GitError::CloneElsewhere {
                 path: dest.to_path_buf(),
             }
             .into());
@@ -537,7 +526,7 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
 
     let output = git(Some(dest), &["rev-parse", "--verify", "HEAD"])?;
     if !output.status.success() {
-        return Err(Failure::CloneIncomplete {
+        return Err(GitError::CloneIncomplete {
             path: dest.to_path_buf(),
             message: complaint(&output),
         }
@@ -554,16 +543,13 @@ enum GitDirectory {
     Own,
     /// A real directory git does not read as a repository.
     Damaged,
-    /// A symlink or a file standing in for one, either of which can put git's
-    /// refs somewhere batfiles did not install.
+    /// A symlink or file in place of the clone's own `.git` directory.
     Indirect,
 }
 
 fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
     let git_dir = dest.join(".git");
-    // `node_at` does not follow, so `is_dir` is false for a symlink however it
-    // resolves.
-    Ok(match paths::node_at(&git_dir)? {
+    Ok(match paths::symlink_metadata_if_present(&git_dir)? {
         None => GitDirectory::Missing,
         Some(found) if found.is_dir() => {
             if is_repository_directory(&git_dir, dest)? {
@@ -576,13 +562,8 @@ fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
     })
 }
 
-/// Whether git reads `git_dir` as a repository directory — its `HEAD`, object
-/// store, refs, and any `commondir`, links followed as git follows them.
-///
-/// Asked with the global and system configuration set aside and in the C
-/// locale, so the one answer meaning "not a repository" is told apart from
-/// any other failure, which is an error: a git that cannot run properly says
-/// nothing about the directory.
+/// Ask Git whether `git_dir` is a repository directory. Ignore global and system configuration.
+/// Return `false` for an unrecognized repository and propagate other Git failures.
 fn is_repository_directory(git_dir: &Path, dest: &Path) -> Result<bool, Error> {
     let mut probe = command(
         Some(dest),
@@ -596,6 +577,7 @@ fn is_repository_directory(git_dir: &Path, dest: &Path) -> Result<bool, Error> {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        // The "not a gitdir" match below needs Git's untranslated messages.
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE");
     let output = capture(probe)?;
@@ -606,7 +588,7 @@ fn is_repository_directory(git_dir: &Path, dest: &Path) -> Result<bool, Error> {
     if output.status.code() == Some(128) && said.trim_start().starts_with("fatal: not a gitdir") {
         return Ok(false);
     }
-    Err(Failure::Failed {
+    Err(GitError::Failed {
         command: "rev-parse",
         path: dest.to_path_buf(),
         message: complaint(&output),
@@ -628,8 +610,7 @@ fn as_path(printed: &[u8]) -> Option<PathBuf> {
         use std::os::unix::ffi::OsStrExt;
         Some(PathBuf::from(OsStr::from_bytes(printed)))
     }
-    // Where a path is not bytes, git prints UTF-8; anything else is not a path
-    // this can compare, and a comparison it cannot make must not pass.
+    // On non-Unix platforms, reject paths that cannot be decoded as UTF-8.
     #[cfg(not(unix))]
     {
         std::str::from_utf8(printed).ok().map(PathBuf::from)
@@ -651,7 +632,6 @@ fn is_dirty(dest: &Path) -> Result<bool, Error> {
 /// Return the checked-out branch's upstream. Detached HEAD or absent tracking
 /// configuration returns None; malformed configuration and Git failures propagate.
 fn upstream(dest: &Path) -> Result<Option<String>, Error> {
-    // A detached HEAD is not on a branch and so follows nothing.
     let Some(branch) = head_branch(dest)? else {
         return Ok(None);
     };
@@ -689,14 +669,13 @@ fn commit(dest: &Path, revision: &str) -> Result<String, Error> {
     Ok(String::from_utf8_lossy(&found.stdout).trim().to_owned())
 }
 
-/// Whether `earlier` is reachable from `later`, which is what makes an update a
-/// fast-forward.
+/// Return whether `earlier` is an ancestor of `later`.
 fn ancestor(dest: &Path, earlier: &str, later: &str) -> Result<bool, Error> {
     let output = git(Some(dest), &["merge-base", "--is-ancestor", earlier, later])?;
     match output.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
-        _ => Err(Failure::Failed {
+        _ => Err(GitError::Failed {
             command: "merge-base",
             path: dest.to_path_buf(),
             message: complaint(&output),
@@ -717,7 +696,7 @@ fn run<S: AsRef<OsStr>>(
     if output.status.success() {
         Ok(output)
     } else {
-        Err(Failure::Failed {
+        Err(GitError::Failed {
             command,
             path: dest.to_path_buf(),
             message: complaint(&output),
@@ -735,7 +714,7 @@ fn ask(dest: &Path, command: &'static str, args: &[&str]) -> Result<Option<Strin
             String::from_utf8_lossy(&output.stdout).trim().to_owned(),
         )),
         Some(1) => Ok(None),
-        _ => Err(Failure::Failed {
+        _ => Err(GitError::Failed {
             command,
             path: dest.to_path_buf(),
             message: complaint(&output),
@@ -752,11 +731,9 @@ fn remove(dest: &Path) -> Result<(), Error> {
     })
 }
 
-/// Create a repository in `dir` unless one already covers it, answering whether
-/// one was created.
-///
-/// For `init`, which has no dry run, so it takes no [`RunMode`].
-pub(crate) fn init_repository(dir: &Path) -> Result<bool, Failure> {
+/// Initialize a repository in `dir` unless it is already inside a worktree. Return whether a
+/// repository was created. This function always performs writes when needed.
+pub(crate) fn init_repository(dir: &Path) -> Result<bool, GitError> {
     if inside_work_tree(dir)? {
         return Ok(false);
     }
@@ -765,7 +742,7 @@ pub(crate) fn init_repository(dir: &Path) -> Result<bool, Failure> {
     if output.status.success() {
         Ok(true)
     } else {
-        Err(Failure::Failed {
+        Err(GitError::Failed {
             command: "init",
             path: dir.to_path_buf(),
             message: complaint(&output),
@@ -773,12 +750,9 @@ pub(crate) fn init_repository(dir: &Path) -> Result<bool, Failure> {
     }
 }
 
-/// Whether `dir` already sits inside a work tree, a parent repository included.
-///
-/// Checks the output too: inside a bare repository's `.git`, `rev-parse`
-/// succeeds and prints `false`. Neither stream is shown; outside a repository
-/// its `fatal:` line is the answer, not an error.
-fn inside_work_tree(dir: &Path) -> Result<bool, Failure> {
+/// Return whether `dir` is inside a worktree, including a parent repository. Bare repositories
+/// and paths outside a repository return `false`.
+fn inside_work_tree(dir: &Path) -> Result<bool, GitError> {
     let output = launch(Some(dir), &["rev-parse", "--is-inside-work-tree"])?;
     Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
@@ -811,7 +785,7 @@ fn git<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Error>
 
 /// [`git`], returning the subsystem failure for callers that report a launch
 /// failure themselves.
-fn launch<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, Failure> {
+fn launch<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Result<Output, GitError> {
     capture(command(dir, args))
 }
 
@@ -830,10 +804,10 @@ fn command<S: AsRef<OsStr>>(dir: Option<&Path>, args: &[S]) -> Command {
 }
 
 /// Run a `git` command, capturing both of its streams.
-fn capture(mut command: Command) -> Result<Output, Failure> {
+fn capture(mut command: Command) -> Result<Output, GitError> {
     command
         .output()
-        .map_err(|source| Failure::Unavailable { source })
+        .map_err(|source| GitError::Unavailable { source })
 }
 
 /// What git said about a failure, or the status it exited with when it said

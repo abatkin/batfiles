@@ -4,12 +4,8 @@ use super::{Tree, display, stderr_of};
 use std::fs;
 use std::path::PathBuf;
 
-/// Run `sync` against a manifest expected to be rejected, and return the
-/// diagnostic.
-///
-/// Every rejection is the same shape: status 1, the file named, and no action
-/// reached — a manifest batfiles cannot make sense of stops the command before
-/// it claims to have done anything.
+/// Run `sync` with an invalid manifest and return diagnostics. Require exit status 1, a named
+/// manifest path, and no action progress.
 pub(crate) fn rejected(manifest: &str) -> String {
     let tree = Tree::new();
     tree.write_manifest(manifest);
@@ -83,8 +79,7 @@ dot-prefix = {dot_prefix}
     )
 }
 
-/// A repository at `~/dotfiles`, which is where batfiles looks by default and
-/// the layout in which a destination can reach the repository through `~`.
+/// Create a seeded repository at `~/dotfiles` and return its path.
 pub(crate) fn seeded_repository_in_the_home(tree: &Tree) -> PathBuf {
     let repo = tree.repository("home/dotfiles");
     fs::create_dir(repo.join("seed")).expect("a source directory");
@@ -92,9 +87,8 @@ pub(crate) fn seeded_repository_in_the_home(tree: &Tree) -> PathBuf {
     repo
 }
 
-// The portable half of the `leaf` fixture: the actions that need no symlink,
-// which the manifest declares first so that a platform which cannot make one
-// still runs them before the refusal stops the list.
+// Portable fixture actions run before symlink actions so they complete on platforms without
+// symlink support.
 
 /// Every directory `tests/fixtures/leaf` creates outright, as opposed to the
 /// ones made on the way to a destination.
@@ -113,8 +107,8 @@ pub(crate) const LEAF_SEEDS: [(&str, &str); 4] = [
     ("zsh-local/prompt.zsh", ".config/zsh/local/prompt.zsh"),
 ];
 
-/// The two `leaf` actions that name one destination, as `(winner, loser)`
-/// repository paths, and the destination they contend for.
+/// Source paths and shared destination for the leaf fixture's ordered seed pair, as `(winner,
+/// loser, destination)`.
 pub(crate) const LEAF_ORDERED_PAIR: (&str, &str, &str) = (
     "templates/profile.machine.zsh",
     "templates/profile.zsh",
@@ -130,17 +124,12 @@ pub(crate) fn assert_leaf_portable_actions(tree: &Tree) {
             "`{dest}` is not a directory that exists"
         );
     }
-    // The other half of the same rule: the gated action is the one record here
-    // that must *not* have run, and it is a `create-dir` like the first so that
-    // nothing but its condition separates them.
     assert!(
         !tree.home(LEAF_CLOSED_DEST).exists(),
         "`{LEAF_CLOSED_DEST}` was installed by an action whose condition is false"
     );
     for (source, dest) in LEAF_SEEDS {
         let installed = tree.home(dest);
-        // A seed is the user's copy, not a view of the repository's file: what
-        // it holds is what an editor would write to, and nothing links back.
         assert!(
             !installed.is_symlink(),
             "`{dest}` was linked rather than seeded"
@@ -153,21 +142,15 @@ pub(crate) fn assert_leaf_portable_actions(tree: &Tree) {
     }
 }
 
-// The `corporate` fixture: the remote an inclusion takes its records from. What
-// it declares is read by three files asking different questions of the same
-// three records, so the mapping between them lives here rather than in each.
-
 /// One record `tests/fixtures/corporate/batfiles.toml` declares.
 pub(crate) struct CorporateAction {
-    /// The `id` it is declared under, which is what an address and a report name
-    /// it by once the inclusion's own `id` qualifies it.
+    /// Declared action ID, qualified by the inclusion when addressed or reported.
     pub id: &'static str,
     /// Where it installs, relative to the selected home.
     pub dest: &'static str,
 }
 
-/// All three of them, in declaration order — which is the order an inclusion
-/// contributes them in, and the order a run reports them in.
+/// Corporate fixture actions in declaration order.
 pub(crate) const CORPORATE_ACTIONS: [CorporateAction; 3] = [
     CorporateAction {
         id: "zshrc",
@@ -183,10 +166,7 @@ pub(crate) const CORPORATE_ACTIONS: [CorporateAction; 3] = [
     },
 ];
 
-/// Which of them this home holds, by `id`, in declaration order.
-///
-/// Presence and nothing more: what each one installed is asserted where that is
-/// the question, and a filter case only asks which records were taken.
+/// Return IDs whose destinations exist, in declaration order. Check presence only, not content.
 pub(crate) fn installed_corporate(tree: &Tree) -> Vec<&'static str> {
     CORPORATE_ACTIONS
         .iter()

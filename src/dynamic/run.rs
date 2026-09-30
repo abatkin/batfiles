@@ -1,9 +1,6 @@
-//! Running one dynamic variable's command: an arbitrary, unsandboxed
-//! subprocess, run as the invoking user in both run modes.
-//!
-//! Classifies the result and returns; prints nothing and reads no clock. The
-//! contract is [how dynamic commands are
-//! run](../../docs/environment.md#how-dynamic-commands-are-run).
+//! Run dynamic-variable commands as the invoking user, including during dry runs. Return
+//! captured values or failures without printing diagnostics. See [command
+//! execution](../../docs/environment.md#how-dynamic-commands-are-run).
 
 use std::fmt;
 use std::io::{self, PipeReader, Read as _};
@@ -18,12 +15,10 @@ use crate::manifest::vars::{CaptureMode, CommandSpec, DynamicVarSpec};
 /// `command-timeout`'s default.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The first wait before re-checking a running command. The check before it
-/// fires too early for any command to have finished, so this is the floor on
-/// what every capture costs.
+/// Initial interval between checks for command completion.
 const FIRST_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-/// The interval polling backs off to, which bounds overshoot past a timeout.
+/// Maximum interval between checks for command completion.
 const MAX_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 const MIB: u64 = 1024 * 1024;
@@ -31,8 +26,7 @@ const MIB: u64 = 1024 * 1024;
 /// The most captured stdout a value may hold.
 const MAX_OUTPUT: u64 = MIB;
 
-/// The shell behind a `command` string: never the user's login shell, whose
-/// startup files would make one manifest capture differently per machine.
+/// Shell and execution flag used for string commands.
 #[cfg(unix)]
 const SHELL: (&str, &str) = ("sh", "-c");
 #[cfg(windows)]
@@ -42,13 +36,10 @@ const SHELL: (&str, &str) = ("cmd", "/C");
 const TRUE: &str = "true";
 const FALSE: &str = "false";
 
-/// Run `spec`'s command in `cwd`, the root of the repository that declared it.
+/// Run `spec`'s command in its declaring repository's root, `cwd`.
 ///
-/// The child inherits the process environment and standard error, unless
-/// `quiet`, which disconnects its standard error. Standard input is connected
-/// to nothing. At most [`MAX_OUTPUT`] bytes of its standard output are ever
-/// held, in memory; past that, the output is closed, so neither the command
-/// nor anything it leaves running can write more of it.
+/// Inherit the process environment and stderr, suppressing stderr when `quiet`. Disconnect
+/// stdin. Limit captured stdout to [`MAX_OUTPUT`] bytes and enforce the declaration's timeout.
 pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> CaptureOutcome {
     let started = Instant::now();
     let timeout = spec
@@ -70,8 +61,7 @@ pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> Capture
         .stdout(stdout)
         .stderr(stderr);
     let spawned = command.spawn();
-    // The builder holds this process's copy of the pipe's write end, which
-    // would keep the output from ever ending.
+    // Drop the builder's pipe writer so the reader can observe EOF.
     drop(command);
     let mut child = match spawned {
         Ok(child) => child,
@@ -89,8 +79,7 @@ pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> Capture
 
     let status = match wait_until(&mut child, started, timeout, output.as_mut()) {
         Ok(WaitOutcome::Exited(status)) => status,
-        // A command cut off never answered, so a status capture fails too
-        // rather than reading as `"false"`.
+        // A timeout fails status capture instead of yielding false.
         Ok(WaitOutcome::TimedOut) => return stopped(&mut child, CaptureError::TimedOut(timeout)),
         Ok(WaitOutcome::TooLarge) => return stopped(&mut child, CaptureError::TooLarge),
         Err(error) => {
@@ -103,8 +92,7 @@ pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> Capture
     let Some(mut output) = output else {
         return CaptureOutcome::Captured(if status.success() { TRUE } else { FALSE }.to_owned());
     };
-    // Checked first: a command whose output was closed on it may have died of
-    // that rather than exiting.
+    // Prefer the output-limit error over a resulting broken-pipe exit.
     if output.too_large() {
         return CaptureOutcome::Failed(CaptureError::TooLarge);
     }
@@ -171,7 +159,6 @@ impl fmt::Display for CaptureError {
             Self::NotStopped(error) => {
                 write!(f, "had to be stopped and could not be: {error}")
             }
-            // `Duration`'s `Debug` is its readable form: `5s`, `100ms`.
             Self::TimedOut(limit) => write!(f, "timed out after {limit:?}"),
             Self::TooLarge => write!(
                 f,
@@ -193,8 +180,7 @@ impl fmt::Display for CaptureError {
     }
 }
 
-/// The child's stdout and, for a stdout capture, the end the result is read
-/// from.
+/// Return the child's stdout configuration and an optional reader for stdout capture.
 fn child_stdout(capture: CaptureMode) -> io::Result<(Option<PipeReader>, Stdio)> {
     match capture {
         CaptureMode::Stdout => {
@@ -205,13 +191,8 @@ fn child_stdout(capture: CaptureMode) -> io::Result<(Option<PipeReader>, Stdio)>
     }
 }
 
-/// A command's standard output, drained on a thread of its own so the command
-/// never stalls on a full pipe.
-///
-/// The thread reads until the output ends or passes [`MAX_OUTPUT`], then
-/// closes it. It is never joined: one whose output something the command left
-/// running still holds open outlives the capture, blocked, and holds nothing
-/// but what it has read.
+/// Collect stdout on a background thread until EOF or [`MAX_OUTPUT`] is exceeded. The reader
+/// may outlive the capture if descendants keep the pipe open.
 struct OutputCollector {
     receiver: mpsc::Receiver<OutputReadOutcome>,
     ended: Option<OutputReadOutcome>,
@@ -236,8 +217,7 @@ impl OutputCollector {
                 Ok(_) => OutputReadOutcome::Complete(bytes),
                 Err(error) => OutputReadOutcome::Failed(error),
             };
-            // Sent before the output is closed, so the verdict is in by the
-            // time a writer can die of the closing.
+            // Send the verdict before closing the pipe, which may cause the child to exit.
             let _ = sender.send(ended);
             drop(limited);
         });
@@ -255,8 +235,7 @@ impl OutputCollector {
         matches!(self.ended, Some(OutputReadOutcome::TooLarge))
     }
 
-    /// The whole output, waiting for it to end until `timeout` after
-    /// `started`.
+    /// Wait for complete output until `timeout` after `started`, or return a capture failure.
     fn finish(mut self, started: Instant, timeout: Duration) -> Result<Vec<u8>, CaptureError> {
         let ended = match self.ended.take() {
             Some(ended) => ended,
@@ -281,9 +260,8 @@ enum WaitOutcome {
     TooLarge,
 }
 
-/// Wait until `timeout` after `started` for the direct child, giving up early
-/// once `output` has passed the limit. Polls with `try_wait`, which changes no
-/// process-wide state.
+/// Wait for the direct child until `timeout` after `started`. Stop waiting early if captured
+/// output exceeds the limit.
 fn wait_until(
     child: &mut Child,
     started: Instant,
@@ -312,8 +290,7 @@ fn next_poll_interval(current: Duration) -> Duration {
     (current * 2).min(MAX_POLL_INTERVAL)
 }
 
-/// Kill and reap the direct child. A process it started of its own keeps
-/// running.
+/// Kill and reap the direct child. Descendant processes are not stopped.
 fn stop(child: &mut Child) -> io::Result<()> {
     child.kill()?;
     child.wait()?;
@@ -375,7 +352,7 @@ mod tests {
         );
     }
 
-    /// Real commands, the seam for process behavior.
+    /// Tests using real subprocesses.
     #[cfg(unix)]
     mod running {
         use super::*;
@@ -403,8 +380,7 @@ mod tests {
             spec_of(CommandSpec::Args(args), capture, None)
         }
 
-        /// Quiet, so an expected failure does not write to the harness's
-        /// stderr.
+        /// Capture a command in a temporary directory with stderr suppressed.
         fn run(spec: &DynamicVarSpec) -> CaptureOutcome {
             let dir = TempDir::new().expect("temp dir");
             capture(spec, dir.path(), true)
@@ -477,9 +453,9 @@ mod tests {
             assert!(started.elapsed() < Duration::from_secs(10));
         }
 
-        /// Run `line` in a fresh directory, and wait up to five seconds for it
-        /// to hold a file named `ended`: what a writer the command left behind
-        /// creates once its output is closed on it.
+        /// Run `line` in a temporary directory, then wait up to five seconds for its descendant
+        /// to create an `ended` marker after stdout closes. Return the capture outcome and
+        /// whether the marker appeared.
         fn left_behind(line: &str, timeout: &str) -> (CaptureOutcome, bool) {
             let dir = TempDir::new().expect("temp dir");
             let spec = spec_of(
@@ -497,8 +473,7 @@ mod tests {
 
         #[test]
         fn a_writer_left_behind_past_the_limit_is_stopped() {
-            // The shell is killed; `yes` outlives it, and is stopped by its
-            // output being closed rather than writing on into anything.
+            // The surviving `yes` process exits when the output pipe closes.
             let (outcome, ended) = left_behind("(yes; touch ended) & sleep 30", "20s");
             assert!(
                 matches!(outcome, CaptureOutcome::Failed(CaptureError::TooLarge)),
@@ -519,8 +494,8 @@ mod tests {
 
         #[test]
         fn output_held_open_past_the_timeout_fails_a_command_that_exited() {
-            // What something left running might still write is not known, so
-            // there is no value; and it is stopped at the limit all the same.
+            // The direct child exits before its descendant writes, exercising the output
+            // deadline.
             let started = Instant::now();
             let (outcome, ended) =
                 left_behind("(sleep 0.5; yes; touch ended) & printf done", "200ms");
@@ -609,7 +584,7 @@ mod tests {
 
         #[test]
         fn stdin_is_connected_to_nothing() {
-            // Fails by hanging the suite.
+            // Inherited stdin would leave `cat` waiting for input.
             assert_eq!(captured(&args(["cat"], CaptureMode::Stdout)), "");
         }
 

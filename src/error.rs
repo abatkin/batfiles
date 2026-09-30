@@ -11,7 +11,7 @@ use crate::dynamic::refresh;
 use crate::fetch;
 use crate::git;
 use crate::init;
-use crate::item::{ItemAddress, ItemAddressError, ItemId};
+use crate::item::{ItemAddress, ItemAddressError, ItemId, ItemKind};
 use crate::manifest;
 use crate::paths::ExistingNode;
 use crate::remotes;
@@ -24,14 +24,12 @@ pub(crate) enum Error {
     #[error("could not determine a home directory")]
     HomeUnavailable,
 
-    /// The working directory a relative path had to be anchored against could not be
-    /// determined.
+    /// The working directory needed to anchor a relative path could not be determined.
     #[error("could not determine the current directory: {source}")]
     WorkingDirectory { source: io::Error },
 
     // Touching the filesystem, for documents, actions, and state files alike.
-    /// A path that could not be read or inspected: a document off the disk, or a
-    /// destination whose existing node had to be identified.
+    /// A path could not be read or inspected.
     #[error("could not read {}: {source}", .path.display())]
     Read { path: PathBuf, source: io::Error },
 
@@ -47,7 +45,7 @@ pub(crate) enum Error {
         source: toml::de::Error,
     },
 
-    /// A document that could not be turned back into TOML to be written.
+    /// A document could not be serialized to TOML.
     #[error("could not serialize {}: {source}", .path.display())]
     Serialize {
         path: PathBuf,
@@ -58,15 +56,14 @@ pub(crate) enum Error {
     #[error("invalid configuration in {}: {source}", .path.display())]
     InvalidManifest {
         path: PathBuf,
-        source: manifest::Invalid,
+        source: manifest::ManifestError,
     },
 
     /// A command-line argument that is not a well-formed address.
     #[error(transparent)]
     InvalidAddress(#[from] ItemAddressError),
 
-    /// A command-line argument that is not a well-formed variable name. Quotes
-    /// the key, since [`VarNameError`] states only the rule.
+    /// An invalid command-line variable name, with the rejected key and validation error.
     #[error("invalid variable name `{key}`: {source}")]
     InvalidVarName { key: String, source: VarNameError },
 
@@ -75,43 +72,42 @@ pub(crate) enum Error {
     VarNotSet { key: VarName },
 
     // Naming what to apply.
-    /// An `apply-action` naming an address no record in the manifest answers to.
+    /// An `apply-action` target absent from the manifest.
     #[error("no action in {} has the id `{id}`", .path.display())]
     UnknownAction { path: PathBuf, id: ItemAddress },
 
-    /// An `apply-group` naming a group no record in the manifest belongs to.
+    /// An `apply-group` target with no records in the manifest.
     #[error("no action in {} is in the group `{group}`", .path.display())]
     UnknownGroup { path: PathBuf, group: ItemAddress },
 
     /// An apply command's target inside an inclusion the run excluded, whose
-    /// manifest was therefore not read. `noun` says what the target names.
+    /// manifest was therefore not read. `kind` says what the target names.
     #[error(
-        "{noun} `{address}` would come from include-remote `{inclusion}`, which is \
+        "{kind} `{address}` would come from include-remote `{inclusion}`, which is \
          excluded: {reason}"
     )]
     TargetInExcludedInclusion {
-        noun: &'static str,
+        kind: ItemKind,
         address: ItemAddress,
         inclusion: ItemId,
         reason: String,
     },
 
     /// An apply command's target inside an inclusion whose remote has no
-    /// materialization to read. `noun` says what the target names.
+    /// materialization to read. `kind` says what the target names.
     #[error(
-        "{noun} `{address}` would come from include-remote `{inclusion}`, which \
+        "{kind} `{address}` would come from include-remote `{inclusion}`, which \
          cannot be read: remote `{remote}` is not materialized; run `batfiles sync` \
          to bring it down"
     )]
     TargetInUnreadInclusion {
-        noun: &'static str,
+        kind: ItemKind,
         address: ItemAddress,
         inclusion: ItemId,
         remote: ItemId,
     },
 
-    /// An `apply-action` naming an `include-remote`, whose `id` qualifies what it
-    /// contributes; the inclusion itself is nothing to run.
+    /// An `apply-action` target naming an inclusion instead of an executable action.
     #[error(
         "`{id}` is an include-remote action, which cannot be applied on its own; \
          name one of the actions it includes, as `{id}.<action>`"
@@ -123,16 +119,14 @@ pub(crate) enum Error {
     #[error("no such file in the repository: {}", .path.display())]
     SourceMissing { path: PathBuf },
 
-    /// An action sourcing from a remote that is not materialized on this
-    /// machine. Distinct from a missing source: `remotes/` is batfiles-owned.
+    /// An action source refers to a remote that has not been materialized.
     #[error(
         "remote `{remote}` is not materialized at {}; run `batfiles sync` to bring it down",
         .path.display()
     )]
     RemoteNotMaterialized { remote: ItemId, path: PathBuf },
 
-    /// A file or archive remote whose materialization path holds something no
-    /// stamp says batfiles fetched there, which is therefore not its to replace.
+    /// A file or archive materialization exists without a matching ownership stamp.
     #[error(
         "cannot materialize remote `{remote}`: {} is {found} that batfiles did not \
          fetch for it; remove it and run sync again",
@@ -141,11 +135,10 @@ pub(crate) enum Error {
     MaterializationNotFetched {
         remote: ItemId,
         path: PathBuf,
-        found: remotes::Found,
+        found: remotes::FilesystemEntryKind,
     },
 
-    /// A file or archive remote put in place whose stamp could not be written,
-    /// so what records it is missing or describes an earlier fetch.
+    /// A remote was fetched, but its ownership stamp could not be saved.
     #[error(
         "remote `{remote}` was fetched to {}, but the stamp recording it could not be \
          written: {source}; delete {} and run sync again",
@@ -158,13 +151,11 @@ pub(crate) enum Error {
         source: Box<Error>,
     },
 
-    /// An action sourcing from a remote whose condition excludes it on this
-    /// machine. `reason` is the remote's exclusion; a `sync` would not help.
+    /// An action source refers to a remote excluded by its condition.
     #[error("remote `{remote}` is excluded on this machine: {reason}")]
     RemoteExcluded { remote: ItemId, reason: String },
 
-    /// An `include-remote` whose materialized remote has no manifest. A
-    /// remote's manifest is optional, so this is absent rather than unfetched.
+    /// An included remote's materialization has no manifest.
     #[error(
         "remote `{remote}` has no {} at {}; an include-remote reads one, \
          and a remote that only supplies content to install does not have one",
@@ -177,7 +168,7 @@ pub(crate) enum Error {
     #[error("not a directory: {}", .path.display())]
     SourceNotADirectory { path: PathBuf },
 
-    /// A symlink found inside something a `copy` action was reproducing.
+    /// A symlink was found inside a directory being copied.
     #[error(
         "cannot copy {}: it is a symlink, and copying installs files and directories; \
          `symlink` is the action for a link",
@@ -193,8 +184,7 @@ pub(crate) enum Error {
     )]
     DestinationInsideSource { installed: PathBuf, dest: PathBuf },
 
-    /// A destination in the way that holds the source installed over it, so
-    /// setting it aside would take the source too.
+    /// A destination contains the source that would replace it.
     #[error(
         "cannot replace {}: {} is inside it, and setting it aside would take the source with it",
         .dest.display(),
@@ -202,8 +192,7 @@ pub(crate) enum Error {
     )]
     SourceInsideDestination { installed: PathBuf, dest: PathBuf },
 
-    /// Something is at a path an install would be built on — the staging node, or the
-    /// scratch file an archive is downloaded to.
+    /// A staging or download scratch path is already occupied.
     #[error(
         "cannot install: something is already at {}. If it is left over from an \
          interrupted run, remove it and run sync again",
@@ -211,7 +200,7 @@ pub(crate) enum Error {
     )]
     StagingPathTaken { path: PathBuf },
 
-    /// A socket, a fifo, a device — something with no meaningful copy.
+    /// A copy source is neither a regular file nor a directory.
     #[error(
         "cannot copy {}: it is neither a regular file nor a directory",
         .path.display()
@@ -225,16 +214,14 @@ pub(crate) enum Error {
     )]
     DotPrefixOnDotfile { child: String },
 
-    /// A tool-owned destination holding something batfiles did not create and
-    /// will not replace (`architecture.md`, rule 13).
+    /// A tool-owned destination contains an unmanaged node.
     #[error(
         "{} already exists and is {found}; move it aside and run sync again",
         .path.display()
     )]
     DestinationExists { path: PathBuf, found: ExistingNode },
 
-    /// An install that failed after the node it replaces was renamed aside,
-    /// where the node could not be put back.
+    /// Installation failed after moving the existing node aside, and restoring it also failed.
     #[error("{source}; what was at {} is now at {}", .path.display(), .aside.display())]
     SetAside {
         path: PathBuf,
@@ -242,14 +229,14 @@ pub(crate) enum Error {
         source: Box<Error>,
     },
 
-    /// A question about a conflict that standard input closed on.
+    /// Standard input ended while waiting for a conflict decision.
     #[error(
         "no answer about {}: standard input ended; nothing was done there",
         .path.display()
     )]
     NoAnswer { path: PathBuf },
 
-    /// A question about a conflict whose answer could not be read.
+    /// A conflict decision could not be read from standard input.
     #[error("could not read an answer about {}: {source}", .path.display())]
     Prompt { path: PathBuf, source: io::Error },
 
@@ -257,33 +244,30 @@ pub(crate) enum Error {
     #[error("`{action_type}` actions are not supported on this platform")]
     UnsupportedOnPlatform { action_type: &'static str },
 
-    /// A clone list that was read and breaks one of its own rules.
+    /// A clone list failed parsing or validation.
     #[error("invalid clone list in {}, line {line}: {source}", .path.display())]
     CloneList {
         path: PathBuf,
         line: usize,
-        source: clone_list::Invalid,
+        source: clone_list::CloneListError,
     },
 
-    /// A URL that could not be fetched at all: the name did not resolve, the connection
-    /// was refused or interrupted, TLS was not established, or the redirects did not
-    /// end.
+    /// A download failed during connection, transfer, or redirect handling.
     #[error("could not fetch {url}: {source}")]
     Fetch { url: String, source: ureq::Error },
 
-    /// A server that answered, with something other than the file.
+    /// The HTTP server returned an unsuccessful status.
     #[error("could not fetch {url}: the server answered {status}")]
     FetchStatus { url: String, status: u16 },
 
-    /// A `file://` URL naming no file on this machine. Refused as the manifest
-    /// is read, so reached only by a caller that fetches an unchecked URL.
+    /// An invalid local-file URL. Manifest validation normally rejects these before fetching.
     #[error("could not fetch {url}: the URL {source}")]
     FileUrl {
         url: String,
         source: fetch::FileUrlError,
     },
 
-    /// Bytes that arrived whole but are not the ones the manifest named.
+    /// Downloaded content does not match the declared SHA-256 digest.
     #[error(
         "{url} does not match the declared sha256:\n  declared {expected}\n  received {actual}"
     )]
@@ -293,31 +277,29 @@ pub(crate) enum Error {
         actual: String,
     },
 
-    /// Cloning or updating a repository.
+    /// A Git operation failed.
     #[error(transparent)]
-    Git(#[from] git::Failure),
+    Git(#[from] git::GitError),
 
-    /// An archive that arrived whole and cannot be unpacked.
+    /// An archive could not be unpacked.
     #[error("the archive from {url} {source}")]
     Archive {
         url: String,
-        source: archive::Invalid,
+        source: archive::ArchiveError,
     },
 
     // Refreshing dynamic variables.
-    /// A `vars refresh` naming what it cannot refresh, or whose commands failed.
+    /// Requested dynamic variables could not be refreshed.
     #[error(transparent)]
-    Refresh(#[from] refresh::Failure),
+    Refresh(#[from] refresh::RefreshError),
 
     // Laying out a new repository.
-    /// An `init` that refused the directory it was run in, or could not put a
-    /// Git repository around it.
+    /// Initialization refused the directory or failed to initialize Git.
     #[error(transparent)]
-    Init(#[from] init::Failure),
+    Init(#[from] init::InitError),
 
     // Bringing a repository onto a machine.
-    /// A `clone` whose destination is not vacant. Distinct from
-    /// [`Self::DestinationExists`], which concerns an action's destination.
+    /// The destination for the leaf repository clone is already occupied.
     #[error(
         "{} already exists; `clone` creates the repository it clones into. \
          Move it aside, name another directory with --batfiles-dir, \
@@ -326,8 +308,7 @@ pub(crate) enum Error {
     )]
     CloneDestinationExists { path: PathBuf },
 
-    /// A clone without a manifest: a Git repository, but not a batfiles one.
-    /// Reported instead of the synchronization's missing-file error.
+    /// The cloned repository has no batfiles manifest.
     #[error(
         "{} has no {}; what was cloned is a Git repository, but not a batfiles one",
         .path.display(),

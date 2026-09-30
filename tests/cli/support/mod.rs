@@ -24,14 +24,12 @@ pub(crate) use tree::Tree;
 
 use assert_cmd::Command;
 
-/// A command with nothing selected, for the cases that resolve no roots:
-/// `version`, `--help`, and anything clap rejects before dispatch.
+/// Build a batfiles command with color, variable-override, and proxy environment inputs cleared.
 pub(crate) fn batfiles() -> Command {
     let mut command = Command::cargo_bin("batfiles").expect("the batfiles binary should be built");
     // The tests must not inherit the developer's own color environment.
     command.env_remove("BATFILES_COLOR").env_remove("NO_COLOR");
-    // Nor their `BATFILES_VAR_*` variables. Read with `vars_os`, as batfiles
-    // does, so one non-UTF-8 variable cannot panic the suite.
+    // Remove inherited overrides, including non-UTF-8 variables.
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("BATFILES_VAR_") {
             command.env_remove(&key);
@@ -51,8 +49,7 @@ pub(crate) fn batfiles() -> Command {
     command
 }
 
-/// A `file://` URL naming `path`, as a manifest writes one, with the four
-/// characters a URL path cannot hold as written percent-encoded.
+/// Encode `path` as a `file://` URL, escaping percent signs, spaces, `#`, and `?`.
 pub(crate) fn file_url(path: &std::path::Path) -> String {
     let path = path.to_str().expect("fixture paths are UTF-8");
     let mut url = String::from("file://");

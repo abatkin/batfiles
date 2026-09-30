@@ -4,10 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-/// The captured process environment as a decoded `String` map.
-///
-/// The map is shared rather than owned outright, because the `env` namespace a
-/// condition reads must own what it reads. See [`Self::entries`].
+/// A snapshot of the process environment, decoded to UTF-8 strings.
 #[derive(Debug)]
 pub(crate) struct Environment {
     entries: Rc<BTreeMap<String, String>>,
@@ -53,35 +50,25 @@ impl Environment {
         self.entries.get(key).map(String::as_str)
     }
 
-    /// The whole capture, shared rather than copied. The expression language
-    /// needs an owned `env` namespace, so every namespace in a run shares this
-    /// map and sees what [`Self::get`] sees.
+    /// Return a shared handle to the captured environment map.
     pub fn entries(&self) -> Rc<BTreeMap<String, String>> {
         Rc::clone(&self.entries)
     }
 
     /// A location variable's value as a path.
-    pub fn location(&self, key: &str) -> Option<PathBuf> {
+    pub fn path_var(&self, key: &str) -> Option<PathBuf> {
         match self.get(key) {
             None | Some("") => None,
             Some(value) => Some(PathBuf::from(value)),
         }
     }
 
-    /// The keys that name user-variable overrides (`BATFILES_VAR_<NAME>`).
-    ///
-    /// Public because a diagnostic about a rejected suffix has to name the whole
-    /// environment variable, which is what the user goes and deletes.
+    /// Prefix for environment variables that override user variables.
     pub const VAR_PREFIX: &'static str = "BATFILES_VAR_";
 
-    /// The user-variable override candidates: every `BATFILES_VAR_<NAME>` key
-    /// with a non-empty suffix, yielding `(name, value)`.
-    ///
-    /// The name is the suffix verbatim — case-sensitive on Unix, already
-    /// uppercased on Windows by [`Environment::capture`]. A bare
-    /// `BATFILES_VAR_` names nothing and is left out; an empty value is kept,
-    /// because it is a value. Whether a suffix is a *usable* name is
-    /// [`crate::env_vars`]' question, not this module's.
+    /// Yield `(name, value)` overrides from `BATFILES_VAR_<NAME>` variables with nonempty
+    /// suffixes. Preserve empty values; do not validate names. Suffixes are case-sensitive on
+    /// Unix and uppercased on Windows during capture.
     pub fn var_overrides(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries.iter().filter_map(|(key, value)| {
             let name = key.strip_prefix(Self::VAR_PREFIX)?;
@@ -116,15 +103,15 @@ mod tests {
     #[test]
     fn a_location_treats_absent_and_empty_alike() {
         let env = Environment::from_pairs([("BATFILES_HOME", "")]);
-        assert_eq!(env.location("BATFILES_HOME"), None);
-        assert_eq!(env.location("MISSING"), None);
+        assert_eq!(env.path_var("BATFILES_HOME"), None);
+        assert_eq!(env.path_var("MISSING"), None);
     }
 
     #[test]
     fn a_location_keeps_surrounding_whitespace() {
         let env = Environment::from_pairs([("BATFILES_DIR", "  /has space  ")]);
         assert_eq!(
-            env.location("BATFILES_DIR"),
+            env.path_var("BATFILES_DIR"),
             Some(PathBuf::from("  /has space  "))
         );
     }
@@ -138,8 +125,6 @@ mod tests {
         ]);
         assert_eq!(
             env.var_overrides().collect::<Vec<_>>(),
-            // The empty value is carried through: it is what `PROFILE` is set
-            // to, not a sign that nothing set it.
             vec![("EDITOR", "vim"), ("PROFILE", "")]
         );
     }
@@ -152,8 +137,6 @@ mod tests {
 
     #[test]
     fn var_overrides_preserves_unvalidated_suffixes() {
-        // Including a suffix no name rule would accept: what is *usable* is
-        // decided in `env_vars`, where a rejection can warn about it.
         let env = Environment::from_pairs([("BATFILES_VAR_1up", "x")]);
         assert_eq!(env.var_overrides().collect::<Vec<_>>(), vec![("1up", "x")]);
     }
@@ -172,8 +155,6 @@ mod tests {
 
     #[test]
     fn an_empty_list_variable_names_nothing() {
-        // Distinct from a location, where empty means unset: here it means an
-        // explicitly empty list, and both come out the same way.
         let env = Environment::from_pairs([("BATFILES_SKIP_GROUPS", " , ")]);
         assert!(env.list("BATFILES_SKIP_GROUPS").is_empty());
     }

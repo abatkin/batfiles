@@ -1,12 +1,5 @@
-//! `when` and `unless`: the record's own say in whether it runs.
-//!
-//! A condition is the one exclusion the repository declares rather than the
-//! machine, which is what separates most of this file from `selection.rs`: the
-//! variables a condition is decided against come from four layers, and the
-//! record either belongs on this machine or does not.
-//!
-//! Nothing here needs a symlink, so it runs on every platform, and what a run
-//! installed is exactly the set of names under the home.
+//! CLI tests for `when` and `unless` admission using layered variables and portable directory
+//! actions.
 
 use crate::support::*;
 
@@ -36,8 +29,6 @@ fn installed(tree: &Tree, args: &[&str]) -> Vec<String> {
     entries(&tree.path("home"))
 }
 
-// What the two spellings decide.
-
 #[test]
 fn a_true_when_runs_the_record_and_a_false_one_does_not() {
     let tree = Tree::new();
@@ -51,8 +42,6 @@ fn a_true_when_runs_the_record_and_a_false_one_does_not() {
 
 #[test]
 fn unless_is_the_other_way_round_rather_than_a_second_when() {
-    // Written out as its own case because this is the one a reader gets
-    // backwards, and a `when` that happened to work for both would hide it.
     let tree = Tree::new();
     gated(&tree, "unless", "work", "[vars]\nwork = \"true\"\n\n");
     assert_eq!(installed(&tree, &[]), ["plain"]);
@@ -64,29 +53,21 @@ fn unless_is_the_other_way_round_rather_than_a_second_when() {
 
 #[test]
 fn a_record_with_no_condition_is_reached_by_nothing_here() {
-    // The reason every case above asserts two names: `plain` runs whatever the
-    // variables say, so a condition that closed the whole run would show up.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
     assert_eq!(installed(&tree, &[]), ["plain"]);
 }
 
-// What a condition may read.
-
 #[test]
 fn every_variable_layer_reaches_a_condition() {
-    // One condition, decided four times over: the layers are one flat scope, so
-    // a name resolves the same way whatever declared it.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
     assert_eq!(installed(&tree, &[]), ["plain"]);
 
-    // The command line, over the manifest's `false`.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
     assert_eq!(installed(&tree, &["--var", "work=yes"]), ["gated", "plain"]);
 
-    // The environment, over the same.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
     tree.batfiles()
@@ -96,7 +77,6 @@ fn every_variable_layer_reaches_a_condition() {
         .success();
     assert_eq!(entries(&tree.path("home")), ["gated", "plain"]);
 
-    // And the machine-local document, which no manifest has to mention.
     let tree = Tree::new();
     gated(&tree, "when", "work", "");
     tree.write_machine_vars("work = \"1\"\n");
@@ -105,8 +85,6 @@ fn every_variable_layer_reaches_a_condition() {
 
 #[test]
 fn a_condition_reads_the_host_through_facts_and_env() {
-    // Asserted against `std::env::consts` rather than a named platform, so this
-    // decides the same way on every runner.
     let tree = Tree::new();
     gated(
         &tree,
@@ -116,8 +94,6 @@ fn a_condition_reads_the_host_through_facts_and_env() {
     );
     assert_eq!(installed(&tree, &[]), ["gated", "plain"]);
 
-    // A fact batfiles does not define is empty rather than an error, which is
-    // what makes the set extensible and a typo quiet.
     let tree = Tree::new();
     gated(&tree, "when", "facts.osx == 'macos'", "");
     assert_eq!(installed(&tree, &[]), ["plain"]);
@@ -134,8 +110,6 @@ fn a_condition_reads_the_host_through_facts_and_env() {
 
 #[test]
 fn the_vars_namespace_is_total_where_a_bare_name_is_strict() {
-    // The spelling for a variable that is legitimately optional: absent, it is
-    // false rather than a failed run.
     let tree = Tree::new();
     gated(&tree, "when", "vars.work", "");
     assert_eq!(installed(&tree, &[]), ["plain"]);
@@ -144,8 +118,6 @@ fn the_vars_namespace_is_total_where_a_bare_name_is_strict() {
     gated(&tree, "when", "vars.work", "");
     assert_eq!(installed(&tree, &["--var", "work=yes"]), ["gated", "plain"]);
 }
-
-// How a closed record is reported.
 
 #[test]
 fn a_closed_record_is_reported_at_v_with_the_condition_as_written() {
@@ -191,8 +163,6 @@ fn an_unless_says_it_is_true_rather_than_that_it_is_false() {
 
 #[test]
 fn a_disable_is_reported_ahead_of_the_condition_that_would_also_have_closed_it() {
-    // Precedence among the reasons: the disable is the one still in force
-    // tomorrow, and the condition is never even evaluated.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
     tree.batfiles()
@@ -209,12 +179,8 @@ fn a_disable_is_reported_ahead_of_the_condition_that_would_also_have_closed_it()
     );
 }
 
-// What the two commands that name a record make of one.
-
 #[test]
 fn apply_action_carries_out_the_record_it_names_whatever_its_condition_says() {
-    // The waiver is the action tier's, and a condition sits in it: nothing is
-    // finer-grained than the one record `apply-action` was given.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
 
@@ -228,8 +194,6 @@ fn apply_action_carries_out_the_record_it_names_whatever_its_condition_says() {
 
 #[test]
 fn apply_group_honors_the_conditions_of_the_records_in_it() {
-    // A group is coarser than one record, so naming it waives the group-level
-    // lists and not what each member says about itself.
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");
 
@@ -269,8 +233,6 @@ when = "work"
         stderr_of(&assertion)
     );
 }
-
-// What a manifest may write.
 
 #[test]
 fn a_record_writes_one_condition_or_none() {
@@ -323,13 +285,8 @@ when = "work &&"
     );
 }
 
-// What a condition batfiles cannot decide costs.
-
 #[test]
 fn an_undeclared_name_closes_the_gate_and_warns_rather_than_stopping() {
-    // No `-v`: a warning is the one line about a passed-over record that a run
-    // prints whether or not detail was asked for, because nothing about it was
-    // asked for.
     let tree = Tree::new();
     gated(&tree, "when", "work", "");
 
@@ -343,16 +300,11 @@ fn an_undeclared_name_closes_the_gate_and_warns_rather_than_stopping() {
     ] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
-    // The gate closed, and the record after it was carried out all the same:
-    // one bad identifier costs its own record and nothing else.
     assert_eq!(entries(&tree.path("home")), ["plain"]);
 }
 
 #[test]
 fn an_unless_that_cannot_be_decided_closes_rather_than_installing() {
-    // The asymmetry the two spellings hide. A false `unless` opens a gate, so
-    // treating a failure as false would install the very record the line was
-    // written to suppress.
     let tree = Tree::new();
     gated(&tree, "unless", "no_gui_", "");
 
@@ -367,9 +319,6 @@ fn an_unless_that_cannot_be_decided_closes_rather_than_installing() {
 
 #[test]
 fn a_value_outside_the_truthiness_table_closes_without_repeating_the_value() {
-    // A condition is the one place a value reaches a diagnostic without having
-    // been asked for, and a manifest batfiles evaluates is not always the
-    // user's own.
     let tree = Tree::new();
     gated(
         &tree,
@@ -393,8 +342,6 @@ fn a_value_outside_the_truthiness_table_closes_without_repeating_the_value() {
 
 #[test]
 fn a_condition_on_a_record_something_else_excludes_is_never_evaluated() {
-    // Which is what keeps one undecidable condition from costing a run that was
-    // never going to carry the record out.
     let tree = Tree::new();
     gated(&tree, "when", "nothing_declares_this", "");
 
@@ -408,9 +355,6 @@ fn a_condition_on_a_record_something_else_excludes_is_never_evaluated() {
 
 #[test]
 fn apply_action_reaches_a_record_whose_condition_cannot_be_decided() {
-    // The waiver, which is what a reader does about the warning: naming one
-    // record reaches it even where a `sync` over the same manifest passes it
-    // over, and the condition is not evaluated at all.
     let tree = Tree::new();
     gated(&tree, "when", "nothing_declares_this", "");
 
@@ -428,8 +372,6 @@ fn apply_action_reaches_a_record_whose_condition_cannot_be_decided() {
     );
     assert_eq!(entries(&tree.path("home")), ["gated", "plain"]);
 }
-
-// A dry run decides conditions the way an ordinary one does.
 
 #[test]
 fn a_dry_run_reports_the_record_its_condition_closes() {

@@ -1,6 +1,4 @@
-//! Command-line definitions and color resolution; other environment inputs are
-//! handled outside this module tree. Parsing includes unimplemented options;
-//! [`crate::app`] dispatches the command or rejects them.
+//! Command-line definitions and color resolution. [`crate::app`] dispatches parsed commands.
 
 mod actions;
 mod disabled;
@@ -10,23 +8,14 @@ mod vars;
 
 pub(crate) mod color;
 
-// The argument types appear in `Command`'s variants, so they are re-exported
-// here rather than reached through their submodule paths.
 pub(crate) use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
 pub(crate) use disabled::{ActionAddresses, GroupAddresses};
 pub(crate) use init::InitArgs;
-// Not variants' types: the bootstrap reads its group on its own, the way
-// `init` reads its command's arguments, and every action-executing command
-// hands the shared group to its run.
-pub(crate) use options::{ActionOptions, BootstrapOptions};
+pub(crate) use options::{BootstrapOptions, ExecutionOptions};
 pub(crate) use vars::VarsCommand;
 
 use std::path::PathBuf;
 
-// `--color` reuses clap's own `ColorChoice`: it already spells the three modes
-// batfiles offers, and it is the type clap wants back when told how to render
-// its help and errors, so an equivalent local enum would only add a mapping
-// that can drift.
 use clap::{Args, ColorChoice, Parser, Subcommand};
 
 /// A dotfiles manager built around plain files and explicit composition.
@@ -76,8 +65,7 @@ pub(crate) struct GlobalOptions {
     pub cache_dir: Option<PathBuf>,
 }
 
-/// Each variant carries a named argument type, so a command implementation can
-/// take exactly the arguments it owns.
+/// Supported commands and their arguments.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Initialize the current directory with the leaf-repository layout

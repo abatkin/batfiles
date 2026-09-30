@@ -7,9 +7,7 @@ pub(crate) fn display(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// A fixture repository's tree as the source ships it, for the two things that
-/// are made out of one: a leaf repository copied into a tree, and a bare
-/// repository the fixture is committed into.
+/// Return the path to a committed fixture repository.
 pub(crate) fn fixture_tree(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -30,8 +28,7 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// The names directly inside a directory, sorted, for asserting that a run
-/// installed everything it should have and nothing else.
+/// Return sorted names of direct directory children.
 pub(crate) fn entries(dir: &Path) -> Vec<String> {
     let mut found: Vec<String> = fs::read_dir(dir)
         .expect("a readable directory")
@@ -86,8 +83,6 @@ fn record_into(root: &Path, dir: &Path, found: &mut Vec<String>) {
         let entry = entry.expect("a directory entry");
         let path = entry.path();
         let name = display(path.strip_prefix(root).expect("a path under the root"));
-        // Never followed: a symlink is a thing that is there, and what it
-        // reaches is somebody else's part of the tree.
         let kind = entry.file_type().expect("a file type");
         if kind.is_symlink() {
             found.push(format!("{name} -> {}", display(&link_target(&path))));

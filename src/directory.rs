@@ -1,4 +1,4 @@
-//! Making the directories an action needs, and saying what that took.
+//! Create action destination directories and report changes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,20 +7,18 @@ use crate::error::Error;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verb};
 use crate::paths::{ExistingNode, reaches_nothing};
-use crate::replace::{Resolution, Resolver};
+use crate::replace::{ConflictDecision, ConflictResolver};
 
 /// What [`ensure_directory`] found, for a caller that reports what it did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DirectoryOutcome {
     /// A directory was already there. Nothing was written.
     AlreadyThere,
-    /// Nothing was there, and now the directory is — along with any missing
-    /// parents, and minus any broken symlink that had to be cleared to make
-    /// one. `replaced` is empty in the ordinary case. A node that was in the
-    /// way and backed up or discarded has been reported already.
-    Created { replaced: Vec<BrokenLink> },
-    /// Something other than a directory is in the way, and the conflict policy
-    /// skipped it, which has been reported. Nothing was written.
+    /// The directory and any missing parents were created, or would be in a dry run.
+    /// `removed_links` lists broken links cleared along the path; other conflicts have already
+    /// been reported.
+    Created { removed_links: Vec<BrokenLink> },
+    /// The conflict policy skipped a non-directory node; the skip has been reported.
     Skipped,
 }
 
@@ -37,7 +35,7 @@ impl DirectoryOutcome {
     fn removals(&self) -> &[BrokenLink] {
         match self {
             Self::AlreadyThere | Self::Skipped => &[],
-            Self::Created { replaced } => replaced,
+            Self::Created { removed_links } => removed_links,
         }
     }
 }
@@ -45,41 +43,34 @@ impl DirectoryOutcome {
 /// A broken symlink that was cleared so a directory could be made where it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BrokenLink {
-    /// Where the link was, which is not always a path the caller named: making
-    /// a directory makes its missing ancestors too, and any of them can be the
-    /// one that was in the way.
+    /// Path of the removed link, possibly at an ancestor of the requested directory.
     pub path: PathBuf,
-    /// The target it named, reported so the removal can be recognized rather
-    /// than merely announced.
+    /// The removed link's target.
     pub target: PathBuf,
 }
 
 impl BrokenLink {
-    /// The one sentence for a cleared link, wherever it was cleared, in the
-    /// tense the mode calls for.
+    /// Format a link removal message in the tense selected by `mode`.
     pub fn removal_note(&self, mode: RunMode) -> String {
         format!(
             "{} a broken symlink to {} to make {}",
-            Verb::Remove.say(mode),
+            Verb::Remove.for_mode(mode),
             self.target.display(),
             self.path.display()
         )
     }
 }
 
-/// Ensure a directory and its parents exist, following links to directories.
-/// Clear broken links along the path; settle any other node in the way under
-/// `resolver`'s policy, whose refusal names it. Dry runs return intended
-/// creations and removals without changing the filesystem.
+/// Ensure a directory and its parents exist, following symlinks to directories. Clear broken
+/// links and resolve other conflicts using `resolver`. Dry runs return planned changes without
+/// writing.
 pub(crate) fn ensure_directory(
     dir: &Path,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
 ) -> Result<DirectoryOutcome, Error> {
     match fs::metadata(dir) {
         Ok(existing) if existing.is_dir() => Ok(DirectoryOutcome::AlreadyThere),
         Ok(existing) => replace_with_directory(dir, ExistingNode::of(&existing), resolver),
-        // Nothing resolves here — either the path is empty or something on the
-        // way to it is not a directory, and only making it will say which.
         Err(error) if reaches_nothing(&error) => make_directory(dir, resolver),
         Err(error) => Err(Error::Read {
             path: dir.to_path_buf(),
@@ -88,24 +79,23 @@ pub(crate) fn ensure_directory(
     }
 }
 
-/// Settle a node that is not a directory where one has to be, and make the
-/// directory in its place unless that was skipped. Its parent is known to be a
-/// directory, since the node resolved.
+/// Replace a non-directory node according to the conflict policy, unless skipped. Its parent
+/// must already resolve to a directory.
 fn replace_with_directory(
     dir: &Path,
     found: ExistingNode,
-    resolver: &Resolver<'_>,
+    resolver: &ConflictResolver<'_>,
 ) -> Result<DirectoryOutcome, Error> {
     match resolver.resolve(dir, &found)? {
-        Resolution::Refuse => Err(Error::DestinationExists {
+        ConflictDecision::Refuse => Err(Error::DestinationExists {
             path: dir.to_path_buf(),
             found,
         }),
-        Resolution::Skip => Ok(DirectoryOutcome::Skipped),
-        Resolution::Replace(keep) => {
+        ConflictDecision::Skip => Ok(DirectoryOutcome::Skipped),
+        ConflictDecision::Replace(keep) => {
             resolver.replace(dir, keep, || create(dir, resolver.mode()))?;
             Ok(DirectoryOutcome::Created {
-                replaced: Vec::new(),
+                removed_links: Vec::new(),
             })
         }
     }
@@ -113,13 +103,10 @@ fn replace_with_directory(
 
 /// Make one directory and every missing ancestor, clearing a broken symlink at
 /// any level that has to become one.
-fn make_directory(dir: &Path, resolver: &Resolver<'_>) -> Result<DirectoryOutcome, Error> {
+fn make_directory(dir: &Path, resolver: &ConflictResolver<'_>) -> Result<DirectoryOutcome, Error> {
     let mode = resolver.mode();
-    // The ancestors first, so this is only ever creating a directory whose
-    // parent is known to be one.
-    let mut replaced = match dir.parent() {
-        // An empty parent is what a one-component relative path has, and it is
-        // not a directory anything should try to make.
+    let mut removed_links = match dir.parent() {
+        // A single-component relative path has an empty parent; do not try to create it.
         Some(parent) if !parent.as_os_str().is_empty() => {
             match ensure_directory(parent, resolver)? {
                 DirectoryOutcome::Skipped => return Ok(DirectoryOutcome::Skipped),
@@ -130,7 +117,7 @@ fn make_directory(dir: &Path, resolver: &Resolver<'_>) -> Result<DirectoryOutcom
     };
 
     if let Some(target) = broken_link_at(dir)? {
-        replaced.push(BrokenLink {
+        removed_links.push(BrokenLink {
             path: dir.to_path_buf(),
             target,
         });
@@ -139,7 +126,7 @@ fn make_directory(dir: &Path, resolver: &Resolver<'_>) -> Result<DirectoryOutcom
         }
     }
     create(dir, mode)?;
-    Ok(DirectoryOutcome::Created { replaced })
+    Ok(DirectoryOutcome::Created { removed_links })
 }
 
 /// Create one directory whose parent is there, in perform mode.
@@ -175,21 +162,18 @@ fn remove_link(path: &Path) -> Result<(), Error> {
     })
 }
 
-/// Create the directories a destination sits in, if they are not there, and
-/// report any broken links that took clearing. Returns false where a conflict
-/// along the way was skipped, and the destination cannot be installed.
-pub(crate) fn create_parents(dest: &Path, resolver: &Resolver<'_>) -> Result<bool, Error> {
+/// Ensure the destination's parent directories exist and report removed broken links. Return
+/// `false` if a conflict was skipped.
+pub(crate) fn create_parents(dest: &Path, resolver: &ConflictResolver<'_>) -> Result<bool, Error> {
     let outcome = parents(dest, resolver)?;
     outcome.report_removals(resolver.mode(), resolver.reporter());
     Ok(!matches!(outcome, DirectoryOutcome::Skipped))
 }
 
-/// The directories a destination sits in, made as [`ensure_directory`] makes
-/// one.
-fn parents(dest: &Path, resolver: &Resolver<'_>) -> Result<DirectoryOutcome, Error> {
+/// Ensure the destination's parent directory exists.
+fn parents(dest: &Path, resolver: &ConflictResolver<'_>) -> Result<DirectoryOutcome, Error> {
     match dest.parent() {
-        // An empty parent is what a one-component relative path has; there is
-        // no directory to make, and the destination is the working directory's.
+        // An empty parent means the destination is in the working directory.
         Some(parent) if !parent.as_os_str().is_empty() => ensure_directory(parent, resolver),
         // A path with no parent is a root, which is already there.
         _ => Ok(DirectoryOutcome::AlreadyThere),

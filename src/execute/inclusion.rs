@@ -1,52 +1,41 @@
-//! What an opened `include-remote` contributes to a run: the records of the
-//! manifest it read, with its filters' verdict on each.
-//!
-//! Composition happens while the run's list is assembled; the record itself
-//! installs nothing. Which inclusion it is, whether it is opened, and reading
-//! its manifest are [`inclusion`](crate::inclusion)'s.
+//! Compose an opened inclusion's variables and filtered records during run assembly.
+//! [`crate::inclusion`] handles identity, admission, and manifest loading.
 
 use std::collections::BTreeMap;
 
 use crate::condition::Exclusion;
 use crate::inclusion::Inclusion;
-use crate::item::{ItemId, ItemIdList};
+use crate::item::{ItemId, ItemIdList, ItemKind};
 use crate::manifest::Manifest;
 use crate::manifest::action::{Action, IncludeRemoteAction};
 use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
 use crate::var::VarName;
 
-/// What one `include-remote` read out of the manifest it opened.
+/// Variables and records contributed by an opened inclusion.
 pub(super) struct InclusionContents {
     /// The included manifest's `[vars]`: the layer below the leaf's in the
     /// inclusion's [scope](crate::var_set::VarSet::with_inclusion). Empty when
     /// the remote declares none.
     pub vars: BTreeMap<VarName, VarSpec>,
-    pub actions: Vec<IncludedAction>,
+    pub records: Vec<IncludedRecord>,
 }
 
-/// One record of an included manifest, with the inclusion filters' verdict.
-///
-/// Records the filters leave out are kept, so a skip naming one still matches
-/// and the run can report why it was passed over.
-pub(super) struct IncludedAction {
+/// An included manifest record and its filter result. Retain excluded records for skip matching
+/// and reporting.
+pub(super) struct IncludedRecord {
     /// One-based position in the included manifest.
     pub number: usize,
     pub action: Action,
-    /// Whether the inclusion's [filters](Filter) take this record. Filters state
-    /// what the leaf repository composed, not what this machine leaves out, so
-    /// no command waives them.
+    /// Whether the inclusion filters select this record; no command bypasses these filters.
     pub included_by_filter: bool,
 }
 
-/// What `inclusion`, written as `declaration`, contributes from `included`,
-/// the manifest it opened: its `[vars]`, and its records with the filters'
-/// verdict on each.
+/// Compose `included` using `inclusion`'s identity and `declaration`'s filters. Return its
+/// variables and records with filter results.
 ///
-/// Warns about the manifest's own `[remotes]`, any inclusion it declares, which
-/// is dropped, and each filter name it does not declare. Contents with no
-/// records mean the manifest contributed nothing; only then can a qualified
-/// name be checked against it.
+/// Drop nested inclusions and warn about them, ignored remote declarations, and unmatched
+/// filter names.
 pub(super) fn compose(
     inclusion: &Inclusion,
     declaration: &IncludeRemoteAction,
@@ -63,8 +52,7 @@ pub(super) fn compose(
         // The declared position, not recomputed after filtering: a record
         // without an `id` is named by where it was written.
         let number = index + 1;
-        // Inclusion is one level deep: a nested inclusion is dropped with a
-        // warning, before the filters, so its `id` cannot satisfy one.
+        // Drop nested inclusions before filtering so their IDs cannot satisfy a filter.
         if let Action::IncludeRemote(_) = record {
             reporter.warn(&format!(
                 "not included: {}; an included repository does not reach \
@@ -74,7 +62,7 @@ pub(super) fn compose(
             continue;
         }
         let included_by_filter = filter.selects(&record);
-        records.push(IncludedAction {
+        records.push(IncludedRecord {
             number,
             action: record,
             included_by_filter,
@@ -82,21 +70,18 @@ pub(super) fn compose(
     }
     filter.warn_unmatched(&records, label, remote, reporter);
     InclusionContents {
-        // The remote's `[vars]` apply whichever records the filters took.
         vars: included.vars,
-        actions: records,
+        records,
     }
 }
 
 /// The exclusion for a record `inclusion`'s filters left out, naming the
 /// inclusion.
 pub(super) fn not_selected(inclusion: &Inclusion) -> Exclusion {
-    Exclusion::Expected(format!("not selected by {}", inclusion.label()))
+    Exclusion::Deliberate(format!("not selected by {}", inclusion.label()))
 }
 
-/// Warn, once per inclusion, that the included manifest's `[remotes]` are
-/// ignored, naming each; silent when it declares none. The rule is
-/// [`docs/repoformat.md`](../../docs/repoformat.md#an-included-manifests-own-remotes)'s.
+/// Warn once per inclusion about ignored remote declarations, listing their IDs.
 fn report_ignored_remotes(included: &Manifest, label: &str, remote: &ItemId, reporter: &Reporter) {
     if included.remotes.is_empty() {
         return;
@@ -114,16 +99,11 @@ fn report_ignored_remotes(included: &Manifest, label: &str, remote: &ItemId, rep
     ));
 }
 
-/// Which of a remote's actions one inclusion takes.
+/// Action and group filters for an inclusion. Absent filters select everything; an empty
+/// allow-list selects nothing.
 ///
-/// Each field is an `Option`: with none written the inclusion takes
-/// everything, while an empty allow-list takes nothing. Valid combinations are
-/// [`check_inclusion_filters`](crate::manifest::check)'s rule; what each selects
-/// is [`docs/repoformat.md`](../../docs/repoformat.md#selecting-part-of-a-remote)'s.
-///
-/// Filters match each record's declared `id` and `group`. A record without an
-/// `id` is never named by an action filter: an allow-list leaves it out and a
-/// deny-list takes it. The same holds for `group`.
+/// Match declared IDs and groups. An unnamed record fails an allow-list and passes a deny-list
+/// for that field. See [filter rules](../../docs/repoformat.md#selecting-part-of-a-remote).
 struct Filter {
     install_actions: Option<ItemIdList>,
     install_groups: Option<ItemIdList>,
@@ -147,8 +127,6 @@ impl Filter {
         let names = |list: Option<&ItemIdList>, item: Option<&ItemId>| {
             list.map(|list| item.is_some_and(|item| list.contains(item)))
         };
-        // Allow, then deny: the only order in which `exclude-actions` narrows a
-        // group filter. At most one allow-list is written.
         let allowed = names(self.install_actions.as_ref(), id)
             .or_else(|| names(self.install_groups.as_ref(), group))
             .unwrap_or(true);
@@ -157,39 +135,58 @@ impl Filter {
             && !names(self.exclude_actions.as_ref(), id).unwrap_or(false)
     }
 
-    /// Warn once per filter name that nothing in the included manifest answers
-    /// to. Not a failure: the remote may be older than the leaf expects.
+    /// Warn once per filter name that matches no declared action or group.
     fn warn_unmatched(
         &self,
-        included: &[IncludedAction],
+        included: &[IncludedRecord],
         label: &str,
         remote: &ItemId,
         reporter: &Reporter,
     ) {
-        for (field, name, noun) in self.unmatched(included) {
+        for (field, name, kind) in self.unmatched(included) {
             reporter.warn(&format!(
-                "{label}: {field} `{name}` matched no {noun} in remote `{remote}`"
+                "{label}: {field} `{name}` matched no {kind} in remote `{remote}`"
             ));
         }
     }
 
-    /// Every unmatched filter name, as (field, name, noun). Action filters are
+    /// Every unmatched filter name, as (field, name, kind). Action filters are
     /// checked against declared IDs, group filters against declared groups.
-    fn unmatched(&self, included: &[IncludedAction]) -> Vec<(&'static str, &ItemId, &'static str)> {
+    fn unmatched(&self, included: &[IncludedRecord]) -> Vec<(&'static str, &ItemId, ItemKind)> {
         let declared = |of: fn(&Action) -> Option<&ItemId>| -> Vec<&ItemId> {
             included.iter().filter_map(|it| of(&it.action)).collect()
         };
         let (actions, groups) = (declared(Action::id), declared(Action::group));
         let mut unmatched = Vec::new();
-        for (field, list, present, noun) in [
-            ("install-actions", &self.install_actions, &actions, "action"),
-            ("exclude-actions", &self.exclude_actions, &actions, "action"),
-            ("install-groups", &self.install_groups, &groups, "group"),
-            ("exclude-groups", &self.exclude_groups, &groups, "group"),
+        for (field, list, present, kind) in [
+            (
+                "install-actions",
+                &self.install_actions,
+                &actions,
+                ItemKind::Action,
+            ),
+            (
+                "exclude-actions",
+                &self.exclude_actions,
+                &actions,
+                ItemKind::Action,
+            ),
+            (
+                "install-groups",
+                &self.install_groups,
+                &groups,
+                ItemKind::Group,
+            ),
+            (
+                "exclude-groups",
+                &self.exclude_groups,
+                &groups,
+                ItemKind::Group,
+            ),
         ] {
             for name in list.as_ref().map(ItemIdList::as_slice).unwrap_or_default() {
                 if !present.contains(&name) {
-                    unmatched.push((field, name, noun));
+                    unmatched.push((field, name, kind));
                 }
             }
         }
@@ -201,16 +198,13 @@ impl Filter {
 mod tests {
     use super::*;
 
-    /// An inclusion carrying the filters named, read the way a manifest hands
-    /// one over. The combinations that reach this point are the ones
-    /// `check_inclusion_filters` accepts.
+    /// Parse an inclusion with the supplied filters.
     fn inclusion(filters: &str) -> IncludeRemoteAction {
         toml::from_str(&format!("id = \"corp\"\nremote = \"corporate\"\n{filters}"))
             .expect("the record should parse")
     }
 
-    /// One of the included manifest's records, by the two things a filter looks
-    /// at. `None` is a record written without that field.
+    /// Build an included action with optional ID and group.
     fn action(id: Option<&str>, group: Option<&str>) -> Action {
         let named = |field: &str, value: Option<&str>| match value {
             Some(value) => format!("{field} = \"{value}\"\n"),
@@ -224,9 +218,7 @@ mod tests {
         .expect("the record should parse")
     }
 
-    /// Which of the `corporate` fixture's shape of manifest an inclusion takes:
-    /// three named records in two groups, one record in no group, and one
-    /// record with neither.
+    /// Return the fixture record labels selected by `filters`.
     fn selected(filters: &str) -> Vec<&'static str> {
         let declared = [
             ("zshrc", Some("shell")),
@@ -281,8 +273,6 @@ mod tests {
 
     #[test]
     fn a_record_a_filter_cannot_name_is_taken_only_by_a_deny_list() {
-        // `seeds` is the same case one field over: a record written without a
-        // `group` is named by neither group filter.
         assert!(!selected("install-actions = [\"zshrc\"]").contains(&"<unnamed>"));
         assert!(!selected("install-groups = [\"shell\"]").contains(&"seeds"));
         assert!(selected("exclude-actions = [\"zshrc\"]").contains(&"<unnamed>"));
@@ -291,8 +281,6 @@ mod tests {
 
     #[test]
     fn excluded_actions_narrow_what_a_group_filter_selected() {
-        // The one combination the two halves are written for: take a group,
-        // less one of its members.
         assert_eq!(
             selected("install-groups = [\"shell\"]\nexclude-actions = [\"zshrc\"]"),
             ["<unnamed in shell>"]
@@ -305,20 +293,18 @@ mod tests {
 
     #[test]
     fn an_empty_list_is_not_an_absent_one() {
-        // The distinction the `Option` around each field exists for.
         assert!(selected("install-actions = []").is_empty());
         assert!(selected("install-groups = []").is_empty());
         assert_eq!(selected("exclude-actions = []"), selected(""));
         assert_eq!(selected("exclude-groups = []"), selected(""));
     }
 
-    /// The names the filters in `filters` matched nothing, as the warning
-    /// names them.
+    /// Return unmatched filter names formatted as diagnostic labels.
     fn unmatched(filters: &str) -> Vec<String> {
         let included = ["zshrc", "p10k"]
             .into_iter()
             .enumerate()
-            .map(|(index, id)| IncludedAction {
+            .map(|(index, id)| IncludedRecord {
                 number: index + 1,
                 action: action(Some(id), Some("shell")),
                 included_by_filter: true,
@@ -328,7 +314,7 @@ mod tests {
         Filter::of(&record)
             .unmatched(&included)
             .into_iter()
-            .map(|(field, name, noun)| format!("{field} `{name}` matched no {noun}"))
+            .map(|(field, name, kind)| format!("{field} `{name}` matched no {kind}"))
             .collect()
     }
 
@@ -350,9 +336,6 @@ mod tests {
 
     #[test]
     fn each_filter_is_matched_against_the_namespace_it_names() {
-        // An action ID is not a group name: a filter naming `shell` is
-        // satisfied by the group and not by any record's `id`, and the other
-        // way round for `zshrc`.
         assert!(unmatched("install-groups = [\"shell\"]").is_empty());
         assert_eq!(
             unmatched("install-actions = [\"shell\"]"),

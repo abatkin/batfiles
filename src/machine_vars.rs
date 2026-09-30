@@ -1,9 +1,5 @@
-//! Read and edit machine-local `vars.toml` with `vars set`, `get`, and `unset`.
-//! These commands do not read the repository or apply environment/CLI overrides.
-//!
-//! Mutation reports name the key, never the value: values may contain tokens or
-//! identifying paths that must not leak into terminal scrollback or script logs.
-//! `vars get` explicitly requests the persisted value on standard output.
+//! Read and edit machine-local `vars.toml`. Ignore repository values and environment/CLI
+//! overrides. Mutation reports include keys only; `vars get` prints the requested stored value.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,9 +12,7 @@ use crate::output::Reporter;
 use crate::tomlfile;
 use crate::var::VarName;
 
-/// The parsed `vars.toml`.
-///
-/// The map is exposed directly: the document has no other structure.
+/// Machine-local variable values parsed from `vars.toml`.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct MachineVars {
@@ -34,34 +28,28 @@ impl MachineVars {
         tomlfile::read_or_default(path)
     }
 
-    /// Rewrite the document.
-    ///
-    /// An empty map writes an empty file: removing the last key leaves a valid
-    /// `vars.toml` behind rather than deleting it.
+    /// Rewrite the document. An empty map writes an empty file.
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         tomlfile::write(path, self)
     }
 }
 
-/// Store `value` under `key`, replacing any previous machine-local value.
-///
-/// The value is stored verbatim, the empty string included: values are opaque
-/// strings, so there is no separate value rule to check.
+/// Store `value` verbatim under `key`, replacing any previous machine-local value. Empty values
+/// are allowed.
 pub(crate) fn set(
     key: &str,
     value: &str,
     roots: &StateRoots,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    // The key is validated before the document is touched, so a bad name reads
-    // and writes nothing.
+    // Reject invalid keys before touching state.
     let key = parse(key)?;
 
-    let path = roots.machine_vars();
+    let path = roots.machine_vars_path();
     let mut vars = MachineVars::load(&path)?;
 
     let outcome = store(&mut vars.values, &key, value);
-    if outcome.changed() {
+    if outcome.requires_save() {
         vars.save(&path)?;
     }
 
@@ -72,10 +60,9 @@ pub(crate) fn set(
 /// Print the machine-local value of `key`, or fail because it has none.
 pub(crate) fn get(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let key = parse(key)?;
-    let vars = MachineVars::load(&roots.machine_vars())?;
+    let vars = MachineVars::load(&roots.machine_vars_path())?;
 
-    // An absent key fails rather than printing an empty line: the empty string
-    // is a value `vars set` accepts, and the two must stay distinguishable.
+    // A missing key must remain distinct from a stored empty string.
     match vars.values.get(&key) {
         Some(value) => {
             reporter.data(value);
@@ -89,13 +76,11 @@ pub(crate) fn get(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<
 pub(crate) fn unset(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let key = parse(key)?;
 
-    let path = roots.machine_vars();
+    let path = roots.machine_vars_path();
     let mut vars = MachineVars::load(&path)?;
 
-    // Removing an absent key changes nothing, so it does not rewrite the
-    // document — or create a `vars.toml` that was not there before.
     let outcome = remove(&mut vars.values, &key);
-    if outcome.changed() {
+    if outcome.requires_save() {
         vars.save(&path)?;
     }
 
@@ -116,11 +101,11 @@ fn parse(key: &str) -> Result<VarName, Error> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     /// The key had no value and now has one.
-    Set,
+    Added,
     /// The key held a different value.
-    Changed,
+    Replaced,
     /// The key already held exactly this value.
-    Kept,
+    Unchanged,
     /// The key was present and is now gone.
     Removed,
     /// There was nothing to remove.
@@ -128,22 +113,21 @@ enum Outcome {
 }
 
 impl Outcome {
-    /// Whether the document has to be rewritten. This is the answer that keeps
-    /// an idempotent mutation from touching the file.
-    fn changed(self) -> bool {
-        matches!(self, Self::Set | Self::Changed | Self::Removed)
+    /// Return whether the mutation requires saving the document.
+    fn requires_save(self) -> bool {
+        matches!(self, Self::Added | Self::Replaced | Self::Removed)
     }
 }
 
-/// Store one value, reporting whether — and how — the map moved.
+/// Store a value and return whether it was added, replaced, or unchanged.
 fn store(values: &mut BTreeMap<VarName, String>, key: &VarName, value: &str) -> Outcome {
     match values.get(key) {
-        Some(existing) if existing == value => Outcome::Kept,
+        Some(existing) if existing == value => Outcome::Unchanged,
         existing => {
             let outcome = if existing.is_some() {
-                Outcome::Changed
+                Outcome::Replaced
             } else {
-                Outcome::Set
+                Outcome::Added
             };
             values.insert(key.clone(), value.to_owned());
             outcome
@@ -151,7 +135,7 @@ fn store(values: &mut BTreeMap<VarName, String>, key: &VarName, value: &str) -> 
     }
 }
 
-/// Remove one key, reporting whether the map moved.
+/// Remove a key and return whether it was present.
 fn remove(values: &mut BTreeMap<VarName, String>, key: &VarName) -> Outcome {
     if values.remove(key).is_some() {
         Outcome::Removed
@@ -160,15 +144,12 @@ fn remove(values: &mut BTreeMap<VarName, String>, key: &VarName) -> Outcome {
     }
 }
 
-/// The line describing what one mutation did.
-///
-/// Every line names the key and none of them names the value; see the module
-/// documentation for why that divergence from `disabled` is deliberate.
+/// Format a mutation result, naming the key but never its value.
 fn describe(key: &VarName, outcome: Outcome) -> String {
     match outcome {
-        Outcome::Set => format!("set `{key}`"),
-        Outcome::Changed => format!("changed `{key}` (it had a different value)"),
-        Outcome::Kept => format!("`{key}` was already set to that value"),
+        Outcome::Added => format!("set `{key}`"),
+        Outcome::Replaced => format!("changed `{key}` (it had a different value)"),
+        Outcome::Unchanged => format!("`{key}` was already set to that value"),
         Outcome::Removed => format!("unset `{key}`"),
         Outcome::Absent => format!("`{key}` was not set"),
     }
@@ -193,8 +174,6 @@ mod tests {
         toml::from_str(document)
     }
 
-    // The document.
-
     #[test]
     fn the_document_is_a_flat_map_of_strings() {
         let vars =
@@ -212,8 +191,6 @@ mod tests {
 
     #[test]
     fn a_value_is_a_string_and_is_never_inferred() {
-        // `work = true` is the slip a TOML author makes, and it is the manifest's
-        // `[vars]` rule too: every variable value is a string.
         let error = parse_document("work = true\n").expect_err("booleans are not values");
         assert!(
             error.to_string().contains("invalid type: boolean"),
@@ -223,7 +200,6 @@ mod tests {
 
     #[test]
     fn a_key_must_be_a_valid_variable_name() {
-        // A hand-edited file cannot introduce a name no manifest could declare.
         let error = parse_document("has-dash = 'x'\n").expect_err("dashes are not names");
         assert!(
             error.to_string().contains("a variable name must"),
@@ -234,8 +210,7 @@ mod tests {
         assert!(error.to_string().contains("reserved"), "{error}");
     }
 
-    /// A path in a fresh directory, named the way the config directory would
-    /// name it.
+    /// Return a `vars.toml` path under the temporary directory.
     fn path(dir: &tempfile::TempDir) -> std::path::PathBuf {
         dir.path().join(MachineVars::FILE_NAME)
     }
@@ -260,8 +235,6 @@ mod tests {
 
     #[test]
     fn removing_the_last_key_leaves_an_empty_document_behind() {
-        // The file survives its last key and reads back as the empty document;
-        // a CLI test asserts that its bytes are empty.
         let dir = tempfile::tempdir().expect("temp dir");
         parse_document("editor = 'nvim'\n")
             .expect("parse")
@@ -279,37 +252,39 @@ mod tests {
         );
     }
 
-    // The commands that edit it.
-
     #[test]
     fn setting_an_absent_key_stores_it() {
         let mut vars = BTreeMap::new();
-        assert_eq!(store(&mut vars, &name("editor"), "nvim"), Outcome::Set);
+        assert_eq!(store(&mut vars, &name("editor"), "nvim"), Outcome::Added);
         assert_eq!(vars, values([("editor", "nvim")]));
     }
 
     #[test]
     fn setting_a_different_value_replaces_it() {
         let mut vars = values([("editor", "nvim")]);
-        assert_eq!(store(&mut vars, &name("editor"), "emacs"), Outcome::Changed);
+        assert_eq!(
+            store(&mut vars, &name("editor"), "emacs"),
+            Outcome::Replaced
+        );
         assert_eq!(vars, values([("editor", "emacs")]));
     }
 
     #[test]
     fn setting_the_value_already_there_does_not_move_the_map() {
         let mut vars = values([("editor", "nvim")]);
-        assert_eq!(store(&mut vars, &name("editor"), "nvim"), Outcome::Kept);
+        assert_eq!(
+            store(&mut vars, &name("editor"), "nvim"),
+            Outcome::Unchanged
+        );
         assert_eq!(vars, values([("editor", "nvim")]));
     }
 
     #[test]
     fn the_empty_string_is_a_value_like_any_other() {
-        // Values are opaque strings, and `vars get`'s absent-key failure is what
-        // keeps this distinguishable from having no value at all.
         let mut vars = BTreeMap::new();
-        assert_eq!(store(&mut vars, &name("editor"), ""), Outcome::Set);
+        assert_eq!(store(&mut vars, &name("editor"), ""), Outcome::Added);
         assert_eq!(vars, values([("editor", "")]));
-        assert_eq!(store(&mut vars, &name("editor"), ""), Outcome::Kept);
+        assert_eq!(store(&mut vars, &name("editor"), ""), Outcome::Unchanged);
     }
 
     #[test]
@@ -328,24 +303,24 @@ mod tests {
 
     #[test]
     fn only_a_real_change_rewrites_the_document() {
-        assert!(Outcome::Set.changed());
-        assert!(Outcome::Changed.changed());
-        assert!(Outcome::Removed.changed());
-        assert!(!Outcome::Kept.changed());
-        assert!(!Outcome::Absent.changed());
+        assert!(Outcome::Added.requires_save());
+        assert!(Outcome::Replaced.requires_save());
+        assert!(Outcome::Removed.requires_save());
+        assert!(!Outcome::Unchanged.requires_save());
+        assert!(!Outcome::Absent.requires_save());
     }
 
     #[test]
     fn every_outcome_says_whether_the_state_moved() {
         let key = name("editor");
         let line = |outcome| describe(&key, outcome);
-        assert_eq!(line(Outcome::Set), "set `editor`");
+        assert_eq!(line(Outcome::Added), "set `editor`");
         assert_eq!(
-            line(Outcome::Changed),
+            line(Outcome::Replaced),
             "changed `editor` (it had a different value)"
         );
         assert_eq!(
-            line(Outcome::Kept),
+            line(Outcome::Unchanged),
             "`editor` was already set to that value"
         );
         assert_eq!(line(Outcome::Removed), "unset `editor`");
@@ -354,13 +329,12 @@ mod tests {
 
     #[test]
     fn no_outcome_line_echoes_the_value() {
-        // The point of the divergence from `disabled`, and the thing a later
-        // edit aiming for consistency would silently undo.
+        // Mutation diagnostics must not disclose stored values.
         let key = name("editor");
         for outcome in [
-            Outcome::Set,
-            Outcome::Changed,
-            Outcome::Kept,
+            Outcome::Added,
+            Outcome::Replaced,
+            Outcome::Unchanged,
             Outcome::Removed,
             Outcome::Absent,
         ] {
@@ -372,7 +346,6 @@ mod tests {
 
     #[test]
     fn an_invalid_key_is_rejected_and_quoted() {
-        // `VarNameError` states only the rule, so the diagnostic adds the key.
         let error = parse("1up").expect_err("a leading digit is invalid");
         let message = error.to_string();
         assert!(message.contains("`1up`"), "{message}");

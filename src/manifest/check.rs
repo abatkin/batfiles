@@ -1,9 +1,6 @@
-//! Manifest rules TOML cannot express, and their diagnostics.
-//!
-//! Each `check_*` below validates one value's shape;
-//! [`Manifest::validate`](super::Manifest::validate) applies rules spanning
-//! records. Both are decided from the document alone, while it is read. See
-//! [`docs/repoformat.md`](../../docs/repoformat.md#reading-the-manifest).
+//! Validate manifest values without filesystem access.
+//! [`Manifest::validate`](super::Manifest::validate) applies cross-record rules. See [manifest
+//! validation](../../docs/repoformat.md#reading-the-manifest).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -14,21 +11,17 @@ use thiserror::Error;
 use super::action::IncludeRemoteAction;
 use super::remote::Remote;
 use crate::fetch::{FileUrlError, file_url_path};
-use crate::item::ItemId;
+use crate::item::{ItemId, ItemKind};
 use crate::repo_path::{REMOTE_PREFIX, RepoPath};
 
-/// How a load diagnostic names the record that broke the rule; every
-/// [`Invalid`] message opens with one.
-///
-/// Actions and bootstrap candidates are named by position: an action need not
-/// have an `id`, and what a candidate names is never looked up. A remote is
-/// named by its map key.
+/// Record identifier used in validation errors: a one-based position for actions and bootstrap
+/// candidates, or a remote ID.
 #[derive(Debug, Clone)]
 pub(crate) enum RecordName {
     /// An action, by its one-based position in `[[actions]]`.
     Action(usize),
     /// A `[default-disabled]` candidate, by its array and one-based position.
-    Candidate { noun: &'static str, number: usize },
+    Candidate { kind: ItemKind, number: usize },
     /// A `[remotes]` entry, by the ID it was declared under.
     Remote(ItemId),
 }
@@ -37,14 +30,11 @@ impl fmt::Display for RecordName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Action(number) => write!(f, "action {number}"),
-            Self::Candidate { noun, number } => write!(f, "default-disabled {noun} {number}"),
+            Self::Candidate { kind, number } => write!(f, "default-disabled {kind} {number}"),
             Self::Remote(id) => write!(f, "remote `{id}`"),
         }
     }
 }
-
-// Path rules are the same for every tree; only the noun naming the tree
-// changes, with a phrasing for each kind of sentence.
 
 /// How a message names the tree a path is read from.
 fn tree_of(written: &RepoPath) -> String {
@@ -62,7 +52,7 @@ fn root_of(written: &RepoPath) -> String {
     }
 }
 
-/// How a message names all of it.
+/// Describe the entire repository or remote materialization for a source-path diagnostic.
 fn whole_of(written: &RepoPath) -> String {
     match written.remote() {
         None => "the whole repository".to_owned(),
@@ -76,13 +66,9 @@ fn named_remote_of(written: &RepoPath) -> String {
     written.remote().map(ItemId::to_string).unwrap_or_default()
 }
 
-/// A manifest that parsed but breaks one of the rules in this module, or the
-/// cross-record ones [`Manifest::validate`](super::Manifest::validate) holds.
-///
-/// Re-exported as `manifest::Invalid`, which is how the rest of the crate names
-/// it.
+/// Manifest validation failures, including value and cross-record constraints.
 #[derive(Debug, Error)]
-pub(crate) enum Invalid {
+pub(crate) enum ManifestError {
     #[error("action {second} repeats the id `{id}`, which action {first} already uses")]
     DuplicateActionId {
         id: ItemId,
@@ -90,8 +76,7 @@ pub(crate) enum Invalid {
         second: usize,
     },
 
-    /// Two remote IDs that a case-folding filesystem cannot tell apart. Refused
-    /// on every platform, since one manifest serves all of a person's machines.
+    /// Two remote IDs differ only in case.
     #[error(
         "remotes `{one}` and `{other}` differ only in case; where the filesystem \
          ignores case they are one directory under `remotes/`, and only one of \
@@ -99,19 +84,15 @@ pub(crate) enum Invalid {
     )]
     RemotesShareOneDirectory { one: ItemId, other: ItemId },
 
-    /// A record writing both `when` and `unless`, which has no obvious meaning.
-    /// Shared by every kind of record that takes a condition.
+    /// A record declares both `when` and `unless`.
     #[error("{record}: writes both `when` and `unless`; a record has one condition or none")]
     BothConditions { record: RecordName },
 
-    // A `source` is a path in the declaring repository or, with `@`, in a
-    // remote's materialization. Each variant carries the written path, from
-    // which the message renders both the quote and the tree.
+    // Repository source paths.
     #[error("{record}: source is empty; a source names a path within the repository")]
     SourceEmpty { record: RecordName },
 
-    /// A source naming its own starting point — a leading `/`, a `\`, or a
-    /// drive letter — rather than one relative to the tree it is read from.
+    /// A source path has a root or platform prefix instead of being tree-relative.
     #[error("{record}: source `{written}` is not relative to {}", root_of(.written))]
     SourceNotRelative {
         record: RecordName,
@@ -145,8 +126,7 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// A source naming a remote no `[remotes]` entry declares. The message
-    /// points at the missing declaration, not at the path.
+    /// A source references an undeclared remote.
     #[error(
         "{record}: source `{written}` names {}, which this manifest does not \
          declare; add a `[remotes.{}]` record",
@@ -158,9 +138,7 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// An action read from an included manifest whose source names a remote,
-    /// declared or not. Remote references belong to the leaf, which keeps
-    /// inclusion one level deep.
+    /// An included action references a remote in its source.
     #[error(
         "{record}: source `{written}` names a remote, which an included action may not do; \
          remote references belong to the leaf repository, and an included action installs \
@@ -171,8 +149,7 @@ pub(crate) enum Invalid {
         written: RepoPath,
     },
 
-    /// A source naming a path within a file remote, whose materialization is
-    /// the one file rather than a tree holding it.
+    /// A source names a path inside a file remote.
     #[error(
         "{record}: source `{written}` names a path within {}, which is a single file; \
          write `@{}` to name the file itself",
@@ -213,8 +190,7 @@ pub(crate) enum Invalid {
     )]
     InclusionRemoteUndeclared { record: RecordName, remote: ItemId },
 
-    /// An `include-remote` writing two selection filters that do not compose.
-    /// The message names both fields and the combinations that do.
+    /// An inclusion declares incompatible selection filters.
     #[error(
         "{record}: writes both `{one}` and `{other}`; an inclusion names at most one of \
          `install-actions`, `install-groups`, and `exclude-groups`, and `exclude-actions` \
@@ -226,7 +202,7 @@ pub(crate) enum Invalid {
         other: &'static str,
     },
 
-    // A `dest` names a path on the machine, anchored to the selected home.
+    // Destination paths.
     #[error("{record}: dest is empty; write `~` for the home directory itself")]
     DestinationEmpty { record: RecordName },
 
@@ -236,8 +212,7 @@ pub(crate) enum Invalid {
     )]
     DestinationOtherHome { record: RecordName, value: String },
 
-    // Fetching actions and file and archive remotes: a URL and an optional
-    // digest.
+    // Fetch URLs and digests.
     #[error("{record}: {field} `{value}` is not an http://, https://, or file:// URL")]
     SourceNotAUrl {
         record: RecordName,
@@ -257,8 +232,7 @@ pub(crate) enum Invalid {
     #[error("{record}: sha256 `{value}` is not 64 hexadecimal digits")]
     DigestNotSha256 { record: RecordName, value: String },
 
-    // A repository for git to clone, in any form git accepts; shared by
-    // `git-clone` and Git remotes. Only emptiness is checked.
+    // Git sources and refs.
     #[error("{record}: {field} is empty; it names a repository for git to clone")]
     GitSourceEmpty {
         record: RecordName,
@@ -266,13 +240,11 @@ pub(crate) enum Invalid {
         field: &'static str,
     },
 
-    /// An empty `ref`. Not read as absent, which would follow the current
-    /// branch.
+    /// An explicitly empty Git ref.
     #[error("{record}: ref is empty; a ref names a branch, tag, or commit to follow")]
     GitRefEmpty { record: RecordName },
 
-    /// An `archive-root` that could only match escaping entries, which unpacking
-    /// refuses. Caught before anything is downloaded.
+    /// An archive root is not a valid path inside the archive.
     #[error(
         "{record}: archive-root `{value}` is not a path inside the archive; \
          write a prefix such as `tool-1.0`, or `*` for the archive's single top-level directory"
@@ -280,40 +252,35 @@ pub(crate) enum Invalid {
     ArchiveRootNotInside { record: RecordName, value: String },
 }
 
-/// What a field installs from: a `source-dir` names a directory, and any
-/// other source a file or a directory.
+/// Required source kind: any file or directory, or a directory only.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum SourceShape {
     Any,
     Directory,
 }
 
-/// The rules a `source` satisfies as written, including that a named remote is
-/// declared in `remotes`, and that a file remote is named whole and never as a
-/// directory. Whether anything exists at the path is decided when the action
-/// runs.
+/// Validate source syntax, declared remote references, and required source shape. File remotes
+/// must be referenced as whole files. Do not check filesystem existence.
 pub(super) fn check_source(
     written: &RepoPath,
     shape: SourceShape,
     record: &RecordName,
     remotes: &BTreeMap<ItemId, Remote>,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     let path = written.path();
-    // Only a plain string can say nothing at all; a reference that names a
-    // remote and no path has named a tree, and is refused as naming all of it,
-    // unless the remote is a single file.
+    // An empty path with a remote ID can name a whole file remote; a plain empty source cannot.
     if written.remote().is_none() && path.is_empty() {
-        return Err(Invalid::SourceEmpty {
+        return Err(ManifestError::SourceEmpty {
             record: record.clone(),
         });
     }
     if let Some(Remote::File(_)) = written.remote().and_then(|id| remotes.get(id)) {
         return match (path.is_empty(), shape) {
-            (false, _) => Err(Invalid::SourceInsideFileRemote {
+            (false, _) => Err(ManifestError::SourceInsideFileRemote {
                 record: record.clone(),
                 written: written.clone(),
             }),
-            (true, SourceShape::Directory) => Err(Invalid::SourceDirIsFileRemote {
+            (true, SourceShape::Directory) => Err(ManifestError::SourceDirIsFileRemote {
                 record: record.clone(),
                 written: written.clone(),
             }),
@@ -321,40 +288,37 @@ pub(super) fn check_source(
         };
     }
     if path.starts_with(REMOTE_PREFIX) {
-        return Err(Invalid::SourceStartsWithRemotePrefix {
+        return Err(ManifestError::SourceStartsWithRemotePrefix {
             record: record.clone(),
             written: written.clone(),
         });
     }
     if is_anchored(Path::new(path)) {
-        return Err(Invalid::SourceNotRelative {
+        return Err(ManifestError::SourceNotRelative {
             record: record.clone(),
             written: written.clone(),
         });
     }
     match depth_within_tree(path) {
         None => {
-            return Err(Invalid::SourceOutsideTree {
+            return Err(ManifestError::SourceOutsideTree {
                 record: record.clone(),
                 written: written.clone(),
             });
         }
-        // Zero components deep is the tree's own root, however it was spelled:
-        // `.`, `./`, `shell/..`, and a reference with no path all land there.
+        // `.` and paths such as `shell/..` resolve to the tree root.
         Some(0) => {
-            return Err(Invalid::SourceIsWholeTree {
+            return Err(ManifestError::SourceIsWholeTree {
                 record: record.clone(),
                 written: written.clone(),
             });
         }
         Some(_) => {}
     }
-    // Checked after the path rules, which concern what the reader can see in
-    // the value.
     if let Some(id) = written.remote()
         && !remotes.contains_key(id)
     {
-        return Err(Invalid::SourceRemoteUndeclared {
+        return Err(ManifestError::SourceRemoteUndeclared {
             record: record.clone(),
             written: written.clone(),
         });
@@ -362,36 +326,32 @@ pub(super) fn check_source(
     Ok(())
 }
 
-/// An `include-remote`'s `remote` must be a `git` remote declared in the same
-/// manifest: only a repository has a manifest to read.
+/// Require the inclusion to reference a Git remote declared in the same manifest.
 pub(super) fn check_inclusion_remote(
     remote: &ItemId,
     record: &RecordName,
     remotes: &BTreeMap<ItemId, Remote>,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     match remotes.get(remote) {
         Some(Remote::Git(_)) => Ok(()),
-        Some(other) => Err(Invalid::InclusionRemoteNotGit {
+        Some(other) => Err(ManifestError::InclusionRemoteNotGit {
             record: record.clone(),
             remote: remote.clone(),
             kind: other.kind(),
         }),
-        None => Err(Invalid::InclusionRemoteUndeclared {
+        None => Err(ManifestError::InclusionRemoteUndeclared {
             record: record.clone(),
             remote: remote.clone(),
         }),
     }
 }
 
-/// Which of an `include-remote`'s selection filters may appear together.
-///
-/// `install-actions`, `install-groups`, and `exclude-groups` each make a
-/// selection, so at most one may be written. `exclude-actions` narrows a group
-/// filter's selection; with `install-actions` it could only contradict it.
+/// Reject incompatible inclusion filters. At most one of `install-actions`, `install-groups`,
+/// and `exclude-groups` may be present; `exclude-actions` cannot accompany `install-actions`.
 pub(super) fn check_inclusion_filters(
     action: &IncludeRemoteAction,
     record: &RecordName,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     // A diagnostic names the conflicting pair in this order.
     let selectors = [
         ("install-actions", action.install_actions.is_some()),
@@ -408,7 +368,7 @@ pub(super) fn check_inclusion_filters(
     };
     match conflict {
         None => Ok(()),
-        Some((one, other)) => Err(Invalid::InclusionFiltersConflict {
+        Some((one, other)) => Err(ManifestError::InclusionFiltersConflict {
             record: record.clone(),
             one,
             other,
@@ -422,19 +382,18 @@ pub(super) fn check_inclusion_filters(
 pub(super) fn check_included_source(
     written: &RepoPath,
     record: &RecordName,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     if written.remote().is_none() {
         Ok(())
     } else {
-        Err(Invalid::IncludedSourceNamesRemote {
+        Err(ManifestError::IncludedSourceNamesRemote {
             record: record.clone(),
             written: written.clone(),
         })
     }
 }
 
-/// Whether a path starts from somewhere of its own rather than from wherever it
-/// is joined onto.
+/// Return whether the path starts with a root or platform prefix.
 fn is_anchored(source: &Path) -> bool {
     matches!(
         source.components().next(),
@@ -458,18 +417,17 @@ fn depth_within_tree(source: &str) -> Option<usize> {
     Some(depth)
 }
 
-/// The rules a `dest` satisfies as written.
-pub(super) fn check_dest(dest: &str, record: &RecordName) -> Result<(), Invalid> {
+/// Reject empty destinations and unsupported `~user` prefixes.
+pub(super) fn check_dest(dest: &str, record: &RecordName) -> Result<(), ManifestError> {
     if dest.is_empty() {
-        return Err(Invalid::DestinationEmpty {
+        return Err(ManifestError::DestinationEmpty {
             record: record.clone(),
         });
     }
-    // `~` alone and `~/…` mean the selected home. `~other` is another user's,
-    // which batfiles does not look up.
+    // Allow `~` and `~/...`, but do not expand other users' homes.
     match dest.strip_prefix('~') {
         Some(rest) if !rest.is_empty() && !rest.starts_with('/') => {
-            Err(Invalid::DestinationOtherHome {
+            Err(ManifestError::DestinationOtherHome {
                 record: record.clone(),
                 value: dest.to_owned(),
             })
@@ -478,13 +436,13 @@ pub(super) fn check_dest(dest: &str, record: &RecordName) -> Result<(), Invalid>
     }
 }
 
-/// The rules a URL to fetch satisfies as written: a fetching action's `source`
-/// or a file or archive remote's `url`, which `field` names.
+/// Validate a fetch URL. `field` identifies `source` on actions or `url` on remotes in
+/// diagnostics.
 pub(super) fn check_url(
     source: &str,
     field: &'static str,
     record: &RecordName,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     let scheme = |prefix: &str| {
         let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
         source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
@@ -494,13 +452,13 @@ pub(super) fn check_url(
     }
     match file_url_path(source) {
         Some(Ok(_)) => Ok(()),
-        Some(Err(error)) => Err(Invalid::FileUrl {
+        Some(Err(error)) => Err(ManifestError::FileUrl {
             record: record.clone(),
             field,
             value: source.to_owned(),
             source: error,
         }),
-        None => Err(Invalid::SourceNotAUrl {
+        None => Err(ManifestError::SourceNotAUrl {
             record: record.clone(),
             field,
             value: source.to_owned(),
@@ -508,15 +466,15 @@ pub(super) fn check_url(
     }
 }
 
-/// The rule a repository for git to clone satisfies as written. `field` is
-/// `source` on a `git-clone` action and `url` on a Git remote.
+/// Reject an empty or whitespace-only Git source. `field` identifies `source` on actions or
+/// `url` on remotes in diagnostics.
 pub(super) fn check_git_source(
     source: &str,
     field: &'static str,
     record: &RecordName,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     if source.trim().is_empty() {
-        return Err(Invalid::GitSourceEmpty {
+        return Err(ManifestError::GitSourceEmpty {
             record: record.clone(),
             field,
         });
@@ -524,21 +482,24 @@ pub(super) fn check_git_source(
     Ok(())
 }
 
-/// The rule a `ref` satisfies as written, for `git-clone` and Git remotes.
-pub(super) fn check_git_ref(git_ref: Option<&str>, record: &RecordName) -> Result<(), Invalid> {
+/// Reject an empty or whitespace-only Git ref; allow an absent ref.
+pub(super) fn check_git_ref(
+    git_ref: Option<&str>,
+    record: &RecordName,
+) -> Result<(), ManifestError> {
     if git_ref.is_some_and(|value| value.trim().is_empty()) {
-        return Err(Invalid::GitRefEmpty {
+        return Err(ManifestError::GitRefEmpty {
             record: record.clone(),
         });
     }
     Ok(())
 }
 
-/// The shape a `sha256` has to have to be one.
-pub(super) fn check_digest(sha256: Option<&str>, record: &RecordName) -> Result<(), Invalid> {
+/// Require a declared SHA-256 digest to contain exactly 64 hexadecimal digits.
+pub(super) fn check_digest(sha256: Option<&str>, record: &RecordName) -> Result<(), ManifestError> {
     match sha256 {
         Some(value) if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
-            Err(Invalid::DigestNotSha256 {
+            Err(ManifestError::DigestNotSha256 {
                 record: record.clone(),
                 value: value.to_owned(),
             })
@@ -547,11 +508,11 @@ pub(super) fn check_digest(sha256: Option<&str>, record: &RecordName) -> Result<
     }
 }
 
-/// The shape an `archive-root` has to have to name something inside an archive.
+/// Validate an optional archive-root path or the `*` automatic-root selector.
 pub(super) fn check_archive_root(
     archive_root: Option<&str>,
     record: &RecordName,
-) -> Result<(), Invalid> {
+) -> Result<(), ManifestError> {
     let Some(value) = archive_root else {
         return Ok(());
     };
@@ -561,7 +522,7 @@ pub(super) fn check_archive_root(
     if names_a_path_inside_an_archive(value) {
         Ok(())
     } else {
-        Err(Invalid::ArchiveRootNotInside {
+        Err(ManifestError::ArchiveRootNotInside {
             record: record.clone(),
             value: value.to_owned(),
         })
@@ -574,7 +535,6 @@ fn names_a_path_inside_an_archive(value: &str) -> bool {
     let mut named = 0;
     for component in Path::new(value).components() {
         match component {
-            // Dropped rather than counted, the way an entry path drops it.
             Component::CurDir => {}
             Component::Normal(_) => named += 1,
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
@@ -614,7 +574,7 @@ mod tests {
         RepoPath::local(source.to_owned())
     }
 
-    fn source_error(source: &str) -> Invalid {
+    fn source_error(source: &str) -> ManifestError {
         check_source(&local(source), SourceShape::Any, &record(), &declaring(&[]))
             .expect_err("expected the source to be refused")
     }
@@ -624,7 +584,7 @@ mod tests {
         assert_eq!(RecordName::Action(3).to_string(), "action 3");
         assert_eq!(
             RecordName::Candidate {
-                noun: "group",
+                kind: ItemKind::Group,
                 number: 1
             }
             .to_string(),
@@ -656,7 +616,8 @@ mod tests {
             assert!(
                 matches!(
                     source_error(escaping),
-                    Invalid::SourceNotRelative { .. } | Invalid::SourceOutsideTree { .. }
+                    ManifestError::SourceNotRelative { .. }
+                        | ManifestError::SourceOutsideTree { .. }
                 ),
                 "`{escaping}` was accepted"
             );
@@ -665,44 +626,43 @@ mod tests {
 
     #[test]
     fn a_component_that_starts_a_path_over_is_never_ordinary_depth() {
-        // Which spellings produce a root or a prefix is platform-specific — see
-        // the test below — so this covers the handling, not the parsing.
         assert_eq!(depth_within_tree("/etc/hosts"), None);
         assert_eq!(depth_within_tree("shell/zshrc"), Some(2));
     }
 
-    /// The spellings that reach that arm on Windows and nowhere else: on Unix
-    /// each is an ordinary file name, since a file really can be called
-    /// `C:config`. No CI runner reaches this, so `task lint`'s Windows target is
-    /// what keeps it compiling.
+    /// Reject Windows rooted and drive-relative source paths.
     #[cfg(windows)]
     #[test]
     fn a_windows_rooted_or_drive_relative_source_is_refused() {
-        // Absolute on Windows means a drive *and* a root, so `is_absolute` is
-        // false for all three of these while `join` still honors each.
+        // Windows rooted or drive-relative paths can override `join` without being absolute.
         for anchored in [r"\etc\hosts", "/etc/hosts", "C:config"] {
             assert!(
                 !Path::new(anchored).is_absolute(),
                 "`{anchored}` is absolute after all, so this test proves nothing"
             );
             assert!(
-                matches!(source_error(anchored), Invalid::SourceNotRelative { .. }),
+                matches!(
+                    source_error(anchored),
+                    ManifestError::SourceNotRelative { .. }
+                ),
                 "`{anchored}` was accepted"
             );
         }
-        // The one that is absolute is refused by the same check, not a second.
         assert!(matches!(
             source_error(r"C:\config"),
-            Invalid::SourceNotRelative { .. }
+            ManifestError::SourceNotRelative { .. }
         ));
     }
 
     #[test]
     fn a_source_may_not_name_the_whole_repository() {
-        assert!(matches!(source_error(""), Invalid::SourceEmpty { .. }));
+        assert!(matches!(
+            source_error(""),
+            ManifestError::SourceEmpty { .. }
+        ));
         for whole in [".", "./", "shell/.."] {
             assert!(
-                matches!(source_error(whole), Invalid::SourceIsWholeTree { .. }),
+                matches!(source_error(whole), ManifestError::SourceIsWholeTree { .. }),
                 "`{whole}` was not recognized as the whole repository"
             );
         }
@@ -716,7 +676,7 @@ mod tests {
             .expect("the value that was just read")
     }
 
-    fn remote_error(written: &str) -> Invalid {
+    fn remote_error(written: &str) -> ManifestError {
         check_source(
             &remote_path(written),
             SourceShape::Any,
@@ -748,7 +708,10 @@ mod tests {
         assert!(check_source(&written, SourceShape::Any, &record(), &declaring(&["core"])).is_ok());
         let refused = check_source(&written, SourceShape::Any, &record(), &declaring(&["work"]))
             .expect_err("expected an undeclared remote to be refused");
-        assert!(matches!(refused, Invalid::SourceRemoteUndeclared { .. }));
+        assert!(matches!(
+            refused,
+            ManifestError::SourceRemoteUndeclared { .. }
+        ));
         let message = refused.to_string();
         assert!(message.contains("does not declare"), "{message}");
         assert!(message.contains("[remotes.core]"), "{message}");
@@ -765,13 +728,12 @@ mod tests {
                 &declaring(&[])
             )
             .expect_err("expected the source to be refused"),
-            Invalid::SourceOutsideTree { .. }
+            ManifestError::SourceOutsideTree { .. }
         ));
     }
 
     #[test]
     fn a_refused_remote_reference_names_the_remote_rather_than_the_repository() {
-        // The same three refusals, naming the remote's tree.
         for (refused, expected) in [
             ("@core/../secrets", "resolves outside remote `core`"),
             (
@@ -788,11 +750,9 @@ mod tests {
 
     #[test]
     fn a_path_within_a_remote_may_not_start_the_reference_over() {
-        // `@` introduces a remote and nothing else, in either spelling, so a
-        // second one cannot open a path within the first.
         assert!(matches!(
             remote_error("@core/@other/zshrc"),
-            Invalid::SourceStartsWithRemotePrefix { .. }
+            ManifestError::SourceStartsWithRemotePrefix { .. }
         ));
         let structured: BTreeMap<String, RepoPath> =
             toml::from_str("source = { remote = \"core\", path = \"@other/zshrc\" }\n")
@@ -805,7 +765,7 @@ mod tests {
                 &declaring(&["core"])
             )
             .expect_err("expected the source to be refused"),
-            Invalid::SourceStartsWithRemotePrefix { .. }
+            ManifestError::SourceStartsWithRemotePrefix { .. }
         ));
     }
 
@@ -869,9 +829,8 @@ mod tests {
         assert!(message.contains("[remotes.core]"), "{message}");
     }
 
-    /// An inclusion carrying the filters named, read as a manifest hands one
-    /// over, and checked.
-    fn filters(written: &str) -> Result<(), Invalid> {
+    /// Parse and validate an inclusion's filters.
+    fn filters(written: &str) -> Result<(), ManifestError> {
         let action: IncludeRemoteAction =
             toml::from_str(&format!("id = \"corp\"\nremote = \"core\"\n{written}"))
                 .expect("the record should parse");
@@ -886,7 +845,6 @@ mod tests {
             "install-groups = [\"shell\"]",
             "exclude-groups = [\"gui\"]",
             "exclude-actions = [\"p10k\"]",
-            // The two combinations the narrowing half is written for.
             "install-groups = [\"shell\"]\nexclude-actions = [\"p10k\"]",
             "exclude-groups = [\"gui\"]\nexclude-actions = [\"p10k\"]",
         ] {
@@ -916,8 +874,6 @@ mod tests {
                 "install-groups",
                 "exclude-groups",
             ),
-            // The allow-list already names every action to take, so a list of
-            // actions to leave out could only contradict it.
             (
                 "install-actions = [\"zshrc\"]\nexclude-actions = [\"p10k\"]",
                 "install-actions",
@@ -934,16 +890,13 @@ mod tests {
 
     #[test]
     fn an_empty_filter_is_written_as_much_as_a_full_one() {
-        // Absent and empty differ everywhere else, so they differ here: an
-        // empty allow-list is a selection, and a second one still conflicts.
+        // Even an empty allow-list counts as a declared selector.
         assert!(filters("install-actions = []").is_ok());
         assert!(filters("install-actions = []\ninstall-groups = []").is_err());
     }
 
     #[test]
     fn an_included_action_installs_from_the_repository_that_declared_it() {
-        // Decided from the spelling alone, whatever the included manifest
-        // declares.
         assert!(check_included_source(&local("files/zshrc"), &record()).is_ok());
         let message = check_included_source(&remote_path("@shared/vimrc"), &record())
             .expect_err("expected a remote reference to be refused")
@@ -955,8 +908,6 @@ mod tests {
 
     #[test]
     fn a_dest_may_be_anywhere_the_selected_home_can_reach() {
-        // The home is a base, not a boundary: someone linking onto another
-        // volume or into a sibling directory is expressing intent.
         for accepted in ["~", "~/.zshrc", ".zshrc", "/etc/hosts", "~/../shared/rc"] {
             assert!(
                 check_dest(accepted, &record()).is_ok(),
@@ -967,11 +918,9 @@ mod tests {
 
     #[test]
     fn a_dest_is_written_out_rather_than_left_empty() {
-        // `~` says "the home directory itself" and an empty value only looks
-        // like it, so the explicit spelling is the one batfiles accepts.
         assert!(matches!(
             check_dest("", &record()).expect_err("expected an empty dest to be refused"),
-            Invalid::DestinationEmpty { .. }
+            ManifestError::DestinationEmpty { .. }
         ));
     }
 
@@ -981,8 +930,6 @@ mod tests {
             "http://example.com/a",
             "https://example.com/a",
             "HTTPS://EXAMPLE.COM/A",
-            // Everything after the scheme is the server's business, including
-            // what looks like nonsense from here.
             "https://example.com/a b?c=d#e",
         ] {
             assert!(
@@ -1008,7 +955,7 @@ mod tests {
                 matches!(
                     check_url(refused, "source", &record())
                         .expect_err("expected the source to be refused"),
-                    Invalid::SourceNotAUrl { .. }
+                    ManifestError::SourceNotAUrl { .. }
                 ),
                 "`{refused}` was accepted"
             );
@@ -1037,13 +984,12 @@ mod tests {
             check_digest(Some(&sha.to_uppercase()), &record()).is_ok(),
             "a digest written in capitals is the same digest"
         );
-        // Too short, too long, and the right length with a non-digit in it.
         for refused in [&sha[..63], &format!("{sha}0")[..], &sha.replace('e', "g")] {
             assert!(
                 matches!(
                     check_digest(Some(refused), &record())
                         .expect_err("expected the digest to be refused"),
-                    Invalid::DigestNotSha256 { .. }
+                    ManifestError::DigestNotSha256 { .. }
                 ),
                 "`{refused}` was accepted"
             );
@@ -1057,8 +1003,6 @@ mod tests {
             Some("*"),
             Some("tool-1.0"),
             Some("tool-1.0/bin"),
-            // The spelling `tar czf x.tgz .` gives every entry, dropped here as
-            // it is dropped there.
             Some("./tool-1.0"),
         ] {
             assert!(
@@ -1075,7 +1019,7 @@ mod tests {
                 matches!(
                     check_archive_root(Some(refused), &record())
                         .expect_err("expected the archive root to be refused"),
-                    Invalid::ArchiveRootNotInside { .. }
+                    ManifestError::ArchiveRootNotInside { .. }
                 ),
                 "`{refused}` was accepted"
             );
@@ -1087,7 +1031,7 @@ mod tests {
         assert!(matches!(
             check_dest("~other/.zshrc", &record())
                 .expect_err("expected another user's home to be refused"),
-            Invalid::DestinationOtherHome { .. }
+            ManifestError::DestinationOtherHome { .. }
         ));
     }
 }

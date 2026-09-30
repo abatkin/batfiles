@@ -1,21 +1,13 @@
-//! The persistent enable/disable commands.
-//!
-//! They read and write `disabled.toml` and nothing else, so what these tests
-//! pin down is the document and the account of the edit. What a run then *does*
-//! with the lists belongs to the filter, and is in `selection`.
+//! CLI tests for persistent enable/disable commands and their `disabled.toml` changes.
 
 use crate::support::*;
 
-/// A `disabled.toml` under a config directory that does not exist yet.
-///
-/// The one case that cannot use [`Tree`]'s config root, which is created up
-/// front: what is under test is that a command creates neither the document nor
-/// its directory when it changed nothing.
+/// Build a command using an absent config directory and return its expected disabled-state
+/// path.
 fn in_absent_config(tree: &Tree) -> (assert_cmd::Command, std::path::PathBuf) {
     let absent = tree.path("config/nested");
     let mut command = batfiles();
     command.arg("--config-dir").arg(&absent);
-    // The other roots still have to resolve; only the config one is missing.
     command
         .env("BATFILES_HOME", tree.path("home"))
         .env("BATFILES_DIR", tree.path("repo"))
@@ -53,8 +45,6 @@ fn a_group_goes_in_the_other_list() {
 
 #[test]
 fn a_name_matching_nothing_is_recorded_without_complaint() {
-    // These commands never open the manifest, so they cannot tell a typo from a
-    // name a later branch will introduce. Pre-registering one is the point.
     let tree = Tree::new();
     let assertion = tree
         .batfiles()
@@ -74,11 +64,6 @@ fn a_name_matching_nothing_is_recorded_without_complaint() {
 
 #[test]
 fn an_address_is_recorded_exactly_as_written() {
-    // Qualified and deeper-than-resolvable addresses alike: these commands
-    // validate syntax and resolve nothing, so `a.b.c.d.e` is simply an address
-    // that names nothing yet. The order is the dotted text's, which puts
-    // `a.b.c.d.e` ahead of `core.zshrc` and the shorter `core.zshrc` ahead of
-    // the name extending it.
     let tree = Tree::new();
     tree.batfiles()
         .args([
@@ -95,7 +80,6 @@ fn an_address_is_recorded_exactly_as_written() {
         "actions = [\"a.b.c.d.e\", \"core.zshrc\", \"core.zshrc.plugin\"]\ngroups = []\n"
     );
 
-    // And an address comes back out the way any other name does.
     tree.batfiles()
         .args(["enable-action", "core.zshrc"])
         .assert()
@@ -109,7 +93,6 @@ fn an_address_is_recorded_exactly_as_written() {
 #[test]
 fn enabling_removes_a_name_and_keeps_an_empty_document() {
     let tree = Tree::new();
-    // Given out of order, so the document that lands is the sorted one.
     tree.batfiles()
         .args(["disable-action", "zshrc", "p10k"])
         .assert()
@@ -128,7 +111,6 @@ fn enabling_removes_a_name_and_keeps_an_empty_document() {
         "actions = [\"zshrc\"]\ngroups = []\n"
     );
 
-    // Emptying the last entry keeps a canonical document rather than deleting it.
     tree.batfiles()
         .args(["enable-action", "zshrc"])
         .assert()
@@ -155,7 +137,6 @@ fn each_outcome_line_says_whether_the_state_moved() {
         "action `p10k` was already disabled\n"
     );
 
-    // The one that matters most: re-enabling something that really was off.
     let assertion = tree
         .batfiles()
         .args(["enable-action", "p10k"])
@@ -191,7 +172,6 @@ fn quiet_suppresses_the_outcome_lines_without_suppressing_the_work() {
 #[test]
 fn a_repeated_name_warns_and_is_applied_once() {
     let tree = Tree::new();
-    // Under `--quiet`, so the warning is the only thing that can appear.
     let assertion = tree
         .batfiles()
         .args(["--quiet", "disable-action", "p10k", "p10k"])
@@ -211,14 +191,11 @@ fn a_repeated_name_warns_and_is_applied_once() {
 
 #[test]
 fn an_invalid_name_fails_before_anything_is_written() {
-    // Unsorted and duplicated on purpose: a save of any kind would canonicalize
-    // it, so byte-identical content is the proof nothing was written.
+    // Unsorted duplicates make an unintended state rewrite detectable.
     let tree = Tree::new();
     let original = "actions = [\"p10k\", \"zshrc\", \"p10k\"]\n";
     tree.write_disabled(original);
 
-    // `vim` is perfectly valid and is still not applied: the invocation either
-    // applies in full or changes nothing.
     let assertion = tree
         .batfiles()
         .args(["disable-action", "vim", "core..p10k"])
@@ -255,8 +232,6 @@ fn a_no_op_mutation_does_not_rewrite_the_document() {
 
 #[test]
 fn a_no_op_against_a_missing_file_creates_nothing() {
-    // A command that changed nothing does not leave a `disabled.toml` — or a
-    // config directory — behind just because it ran.
     let tree = Tree::new();
     let (mut command, absent) = in_absent_config(&tree);
 
@@ -270,7 +245,6 @@ fn a_no_op_against_a_missing_file_creates_nothing() {
 
 #[test]
 fn a_malformed_entry_in_the_file_fails_the_command() {
-    // Enabling is deliberately not a repair path for a file that does not parse.
     let tree = Tree::new();
     let original = "actions = [\"my action\"]\n";
     tree.write_disabled(original);
@@ -294,8 +268,6 @@ fn a_malformed_entry_in_the_file_fails_the_command() {
 
 #[test]
 fn the_leaf_repository_is_never_loaded() {
-    // A `batfiles.toml` that cannot parse, and then no leaf repository at all.
-    // A command that never opens the manifest cannot be failed by it.
     let tree = Tree::new();
     tree.write_manifest("actions = \n");
 
@@ -313,11 +285,7 @@ fn the_leaf_repository_is_never_loaded() {
     assert_eq!(tree.disabled_document(), "actions = []\ngroups = []\n");
 }
 
-/// A save that cannot happen must not be reported as though it did.
-///
-/// Restricting a directory is the only way to get past the load and fail at the
-/// write, so this is Unix-only; `src/tomlfile.rs` covers the write path itself
-/// on both platforms.
+/// Unix tests ensuring failed saves are not reported as successful edits.
 #[cfg(unix)]
 mod unwritable {
     use super::*;
@@ -330,8 +298,7 @@ mod unwritable {
         let config = tree.path("config");
         fs::set_permissions(&config, fs::Permissions::from_mode(0o555)).expect("restrict");
 
-        // A process that can write anyway — root — cannot exercise this, and a
-        // test that passes because the restriction did nothing proves nothing.
+        // Skip if this user can bypass the directory permissions.
         let writable = fs::File::create(config.join(".probe")).is_ok();
         if writable {
             fs::remove_file(config.join(".probe")).expect("remove the probe");

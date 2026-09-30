@@ -1,5 +1,4 @@
-//! Item IDs, the lists a record names several of them in, and the dotted
-//! addresses built from them.
+//! Validated item IDs, ID lists, and dotted addresses.
 
 use std::fmt;
 
@@ -50,11 +49,24 @@ impl fmt::Display for ItemId {
     }
 }
 
-/// One ID or a list of them, read as a list either way: `exclude-actions =
-/// "p10k"` and `exclude-actions = ["p10k"]` are the same list.
-///
-/// An absent field is not an empty list, so a record holds an
-/// `Option<ItemIdList>`.
+/// Whether an item is an action or a group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ItemKind {
+    Action,
+    Group,
+}
+
+impl fmt::Display for ItemKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Action => "action",
+            Self::Group => "group",
+        })
+    }
+}
+
+/// A list of IDs, parsed from either one string or an array. Use `Option<ItemIdList>` to
+/// distinguish absent fields from empty lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct ItemIdList(Vec<ItemId>);
 
@@ -81,8 +93,7 @@ impl<'de> Deserialize<'de> for ItemIdList {
                 f.write_str("an ID or a list of IDs")
             }
 
-            /// The short form: a one-item list, validated as an `ItemId`, so a
-            /// dotted address is refused.
+            /// Parse a single ID as a one-item list.
             fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<ItemIdList, E> {
                 let id = ItemId::try_from(value.to_owned()).map_err(E::custom)?;
                 Ok(ItemIdList(vec![id]))
@@ -126,10 +137,7 @@ pub(crate) struct ItemAddressError {
 }
 
 impl ItemAddress {
-    /// Join an optional inclusion ID and an item ID: `zshrc` for a leaf item,
-    /// `corp.zshrc` for one the `corp`
-    /// [inclusion](crate::manifest::action::IncludeRemoteAction) contributed.
-    /// Both parts are already valid IDs, so no parsing is needed.
+    /// Join an optional inclusion ID and item ID, yielding `id` or `qualifier.id`.
     pub fn qualified(qualifier: Option<&ItemId>, id: &ItemId) -> Self {
         match qualifier {
             None => Self(id.as_str().to_owned()),
@@ -137,10 +145,7 @@ impl ItemAddress {
         }
     }
 
-    /// Whether this address's first segment is `id` and more segments follow,
-    /// so it reaches inside the inclusion with that `id`. Decides whether the
-    /// inclusion's manifest is read; an address too deep to resolve reaches in
-    /// and then matches nothing.
+    /// Return whether this address starts with `id` followed by at least one more segment.
     pub fn qualified_by(&self, id: &ItemId) -> bool {
         self.0
             .split_once(SEGMENT_SEPARATOR)
@@ -190,15 +195,12 @@ mod tests {
 
     #[test]
     fn an_id_cannot_contain_a_separator() {
-        // Dots compose qualified addresses and commas delimit environment
-        // lists, so neither can appear in a segment.
         assert!(!accepted("core.zshrc"));
         assert!(!accepted("zshrc,vimrc"));
         assert!(!accepted("two words"));
     }
 
-    /// An `ItemIdList` read the way a manifest hands one over, so that the
-    /// short and long spellings go through the same deserializer a record does.
+    /// Deserialize an ID list from a TOML field value.
     fn id_list(value: &str) -> Result<ItemIdList, toml::de::Error> {
         #[derive(Deserialize)]
         struct Wrapper {
@@ -228,8 +230,6 @@ mod tests {
 
     #[test]
     fn an_empty_list_is_a_list_that_names_nothing() {
-        // Distinct from an absent field, which is why a record holds an
-        // `Option` and this type has no spelling for "not written".
         let empty = id_list("[]").expect("an empty list");
         assert_eq!(empty, ItemIdList::default());
         assert!(!empty.contains(&id("zshrc")));
@@ -237,8 +237,6 @@ mod tests {
 
     #[test]
     fn every_element_of_an_id_list_is_an_id() {
-        // An address is not an ID: a filter names what the included manifest
-        // calls a record, and qualifying it would name it twice over.
         for malformed in ["'corp.p10k'", "['zshrc', 'corp.p10k']", "['ok', 2]", "''"] {
             let error = id_list(malformed).expect_err("the value should be refused");
             assert!(
@@ -256,8 +254,7 @@ mod tests {
 
     #[test]
     fn an_address_is_any_positive_number_of_id_segments() {
-        // Three segments is the deepest form the repository model will ever
-        // resolve, but arity is a lookup concern rather than a syntax one.
+        // Parsing accepts arbitrary address depth; lookup determines what resolves.
         for candidate in ["p10k", "core.zshrc", "core.zsh-plugins.p10k", "a.b.c.d.e"] {
             assert_eq!(address(candidate).to_string(), candidate);
         }
@@ -275,7 +272,6 @@ mod tests {
 
     #[test]
     fn a_rejected_address_names_the_whole_address() {
-        // The offending segment alone would not say which line to fix.
         let error = ItemAddress::try_from("core._hidden".to_owned()).expect_err("invalid segment");
         assert!(error.to_string().contains("`core._hidden`"), "{error}");
     }
@@ -286,8 +282,6 @@ mod tests {
 
     #[test]
     fn an_item_is_addressed_under_the_inclusion_that_contributed_it() {
-        // A contributed record's address differs from the leaf record with the
-        // same ID; matching is address equality.
         let (core, zshrc) = (id("core"), id("zshrc"));
         assert_eq!(ItemAddress::qualified(None, &zshrc), address("zshrc"));
         assert_eq!(

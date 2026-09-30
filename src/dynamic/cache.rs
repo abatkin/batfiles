@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::tomlfile;
 
-/// The parsed cache, keyed by declaration [identity](super::VarIdentity) rather
-/// than by variable name.
+/// The parsed cache, keyed by declaration [key](super::DynamicVarKey) rather than
+/// by variable name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct DynamicVarCache {
@@ -105,7 +105,6 @@ captured-at = "2026-06-19T12:00:00Z"
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join(DynamicVarCache::FILE_NAME);
         let cache = parse(EXAMPLE).expect("parse");
-        // What `save` writes.
         let document = toml::to_string(&cache).expect("serialize");
         assert!(document.contains("[\"remote:core.has_op\"]"), "{document}");
         assert!(

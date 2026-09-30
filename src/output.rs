@@ -1,8 +1,8 @@
-//! How batfiles words what it did, and where it says it.
+//! Format progress messages, diagnostics, and requested output.
 
 use crate::mode::RunMode;
 
-/// One act an action reports, in whichever tense the mode calls for.
+/// An installation operation reported in the tense selected by the run mode.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Verb {
     Link,
@@ -50,7 +50,7 @@ impl Verb {
     }
 
     /// What an action did, or — under [`RunMode::DryRun`] — would do.
-    pub fn say(self, mode: RunMode) -> String {
+    pub fn for_mode(self, mode: RunMode) -> String {
         match mode {
             RunMode::Perform => self.past().to_string(),
             RunMode::DryRun => format!("would {}", self.infinitive()),
@@ -114,8 +114,7 @@ impl Verbosity {
         }
     }
 
-    /// Whether ordinary status output should be printed. Only `--quiet`
-    /// suppresses it; `-v` adds detail rather than replacing this.
+    /// Return whether informational output is enabled; only quiet mode suppresses it.
     fn shows_info(self) -> bool {
         !matches!(self, Self::Quiet)
     }
@@ -135,9 +134,7 @@ pub(crate) struct Reporter {
 }
 
 impl Reporter {
-    /// Start at normal verbosity. Color is settled before the arguments are
-    /// parsed, so a reporter exists — and can warn about its own inputs —
-    /// before `--verbose` and `--quiet` have been read.
+    /// Create a reporter with the selected color setting and normal verbosity.
     pub fn new(color: bool) -> Self {
         Self {
             color,
@@ -160,30 +157,20 @@ impl Reporter {
         eprintln!("{}", self.line(Label::Warning, message));
     }
 
-    /// What a command did, printed at normal verbosity and suppressed by
-    /// `--quiet`.
-    ///
-    /// This is a diagnostic rather than requested data: it says what happened
-    /// instead of answering a question, so it goes to standard error.
+    /// Print a progress message to stderr unless quiet mode is enabled.
     pub fn info(&self, message: &str) {
         if self.verbosity.shows_info() {
             eprintln!("{message}");
         }
     }
 
-    /// A question for the user, left open on its line for the answer. Printed
-    /// whatever the verbosity: a run waiting on an answer nobody can see
-    /// would only hang.
+    /// Print a prompt to stderr without a newline, regardless of verbosity.
     pub fn prompt(&self, question: &str) {
         eprint!("{question} ");
     }
 
-    /// Data the user asked for. Printed to standard output, unlabeled and
-    /// uncolored, and never gated by verbosity: `--quiet` suppresses what a
-    /// command *did*, not what it was *asked for*.
-    ///
-    /// Nothing is added around the value, so `$(batfiles vars get editor)`
-    /// yields the stored string and nothing else.
+    /// Print requested data to stdout with a trailing newline, without labels or color,
+    /// regardless of verbosity.
     pub fn data(&self, message: &str) {
         println!("{message}");
     }
@@ -198,9 +185,7 @@ impl Reporter {
         self.verbosity.shows_detail(level)
     }
 
-    /// Extra detail, printed only at `-v` repeated at least `level` times.
-    /// Unlabeled: it elaborates on what a command is doing rather than
-    /// reporting a problem.
+    /// Print unlabeled detail to stderr when `-v` is repeated at least `level` times.
     pub fn detail(&self, level: u8, message: &str) {
         if self.verbosity.shows_detail(level) {
             eprintln!("{message}");
@@ -245,12 +230,10 @@ mod tests {
 
     #[test]
     fn a_verb_is_reported_in_the_tense_the_mode_calls_for() {
-        assert_eq!(Verb::Link.say(RunMode::Perform), "linked");
-        assert_eq!(Verb::Link.say(RunMode::DryRun), "would link");
-        // The irregular ones, which is why `past` is a table rather than a
-        // suffix.
-        assert_eq!(Verb::Copy.say(RunMode::Perform), "copied");
-        assert_eq!(Verb::Keep.say(RunMode::Perform), "kept");
+        assert_eq!(Verb::Link.for_mode(RunMode::Perform), "linked");
+        assert_eq!(Verb::Link.for_mode(RunMode::DryRun), "would link");
+        assert_eq!(Verb::Copy.for_mode(RunMode::Perform), "copied");
+        assert_eq!(Verb::Keep.for_mode(RunMode::Perform), "kept");
     }
 
     #[test]
@@ -258,14 +241,11 @@ mod tests {
         assert_eq!(quoted_value("nvim"), "\"nvim\"");
         assert_eq!(quoted_value(""), "\"\"");
         assert_eq!(quoted_value("it's"), "\"it's\"");
-        // Printable text of any script is the value, not a threat.
         assert_eq!(quoted_value("café"), "\"café\"");
     }
 
     #[test]
     fn a_value_cannot_forge_a_line_of_its_own() {
-        // The point of the escaping: a newline in a value would otherwise end
-        // the line it is printed on and start one that reads like batfiles'.
         assert_eq!(
             quoted_value("ok\nerror: forged"),
             "\"ok\\nerror: forged\"",
@@ -277,7 +257,6 @@ mod tests {
     #[test]
     fn a_value_cannot_steer_the_terminal() {
         assert_eq!(quoted_value("\u{1b}[31mred"), "\"\\u{1b}[31mred\"");
-        // Non-printable and direction-changing characters go the same way.
         assert_eq!(quoted_value("a\u{202e}b"), "\"a\\u{202e}b\"");
     }
 
@@ -310,8 +289,6 @@ mod tests {
 
     #[test]
     fn a_reporter_answers_for_detail_the_way_it_prints_it() {
-        // The question a caller asks instead of building a message it would
-        // hand to `detail`, so the two have to agree at every level.
         let mut reporter = Reporter::new(false);
         assert!(!reporter.shows_detail(1));
         reporter.set_verbosity(Verbosity::Verbose(1));

@@ -6,23 +6,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A validated user-variable name.
-///
-/// Names match `[A-Za-z_][A-Za-z0-9_]*` and cannot be one of the reserved
-/// identifiers in [`RESERVED`]. Holding one is proof the name has been checked,
-/// so a name is validated where it enters and nowhere after.
-///
-/// This is **not** the rule [`ItemId`](crate::item::ItemId) enforces, and the
-/// difference is deliberate: `_hidden` is a name and not an ID, while `9front`,
-/// `oh-my-zsh`, and `env` are IDs and not names. Neither validator stands in for
-/// the other.
-///
-/// Deserializing goes through the same check, which is what makes it the key
-/// type of the `[vars]` map: an invalid name fails the document that holds it,
-/// and the TOML error underlines the offending key.
-///
-/// Serialization writes the name back as the bare string, so a name that was
-/// read as a map key is written as one.
+/// A user-variable name matching `[A-Za-z_][A-Za-z0-9_]*`, excluding [`RESERVED`] identifiers.
+/// Deserialization validates the name; serialization writes its string value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(try_from = "String")]
 pub(crate) struct VarName(String);
@@ -40,15 +25,10 @@ pub(crate) enum VarNameError {
     Reserved,
 }
 
-/// Identifiers the expression language and its batfiles bindings own, so none of
-/// them can name a user variable.
-///
-/// No user variable can shadow the `facts`, `env`, or `vars` namespaces, or
-/// the `true` and `false` literals, so resolution needs no precedence rule
-/// between user variables and reserved identifiers.
+/// Reserved namespace names and boolean literals that cannot be user-variable names.
 const RESERVED: [&str; 5] = ["facts", "env", "vars", "true", "false"];
 
-/// The rule itself.
+/// Validate variable-name syntax and reject reserved identifiers.
 fn validate(name: &str) -> Result<(), VarNameError> {
     let mut rest = name.chars();
     match rest.next() {
@@ -71,10 +51,7 @@ impl VarName {
     }
 }
 
-/// Borrowing as `str` is what lets a map keyed by a name be looked up with text
-/// that has not been through [`validate`], which is every lookup a condition
-/// makes: an expression can name anything. The ordering the map relies on is
-/// the inner `String`'s, so the two agree as [`Borrow`] requires.
+/// Borrow the name as text for map lookups, preserving string ordering.
 impl Borrow<str> for VarName {
     fn borrow(&self) -> &str {
         &self.0
@@ -116,8 +93,6 @@ mod tests {
     #[test]
     fn later_characters_are_letters_digits_or_underscores() {
         assert!(checked("EDITOR_2").is_ok());
-        // The hyphen is the one to know about: it is ordinary in an ID and in
-        // the manifest's own field names, and invalid here.
         assert_eq!(checked("has-dash"), Err(VarNameError::Invalid));
         assert_eq!(checked("has.dot"), Err(VarNameError::Invalid));
         assert_eq!(checked("has space"), Err(VarNameError::Invalid));
@@ -130,9 +105,7 @@ mod tests {
 
     #[test]
     fn the_expression_keywords_are_reserved() {
-        // Listed literally rather than read back from `RESERVED`, so trimming
-        // the constant fails here — which is what keeps condition namespace
-        // dispatch unshadowable.
+        // Keep expected names independent of `RESERVED` to detect accidental removals.
         for reserved in ["facts", "env", "vars", "true", "false"] {
             assert_eq!(
                 checked(reserved),
@@ -144,7 +117,6 @@ mod tests {
 
     #[test]
     fn a_name_is_case_sensitive() {
-        // `Editor` and `editor` are two variables, here as in the map they key.
         assert_ne!(
             checked("Editor").expect("valid"),
             checked("editor").expect("valid")
@@ -153,8 +125,6 @@ mod tests {
 
     #[test]
     fn a_rejection_explains_the_rule_it_broke() {
-        // These reach the user through serde, which renders the error as
-        // written, so each one has to read on its own.
         assert!(
             VarNameError::Invalid
                 .to_string()

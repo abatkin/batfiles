@@ -1,5 +1,4 @@
-//! `git-clone`: one repository, cloned where nothing is and updated where it
-//! already is.
+//! `git-clone`: clone or update a repository at a destination.
 
 use super::RunContext;
 use crate::error::Error;

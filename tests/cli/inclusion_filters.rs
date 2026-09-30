@@ -1,13 +1,5 @@
-//! Which of a remote's actions an inclusion takes.
-//!
-//! The four filters say what the leaf composed, which is a different question
-//! from what this machine leaves out — so a record they leave out keeps its
-//! address, is reported, and is not brought back by naming it. That boundary is
-//! what separates this file from `selection.rs`.
-//!
-//! The remote is the `corporate` fixture, whose three records are shaped for
-//! exactly this: `zshrc` in group `shell`, `p10k` in group `prompt`, and `seeds`
-//! in no group at all.
+//! CLI tests for inclusion allow/deny filters. Filtered records retain addresses for reporting
+//! and cannot be restored by explicit application. Use the `corporate` fixture.
 
 use crate::support::*;
 
@@ -33,7 +25,6 @@ remote = "corporate"
 
 #[test]
 fn an_inclusion_writing_no_filter_takes_the_whole_manifest() {
-    // The baseline every case below is a departure from.
     let (_origin, tree) = filtering("");
 
     tree.batfiles().arg("sync").assert().success();
@@ -66,8 +57,6 @@ fn a_deny_list_leaves_out_what_it_names_and_takes_the_rest() {
 
 #[test]
 fn excluded_actions_narrow_what_a_group_filter_selected() {
-    // The combination the two halves exist for: a group, less one of its
-    // members.
     let (_origin, tree) =
         filtering("exclude-groups = [\"prompt\"]\nexclude-actions = [\"seeds\"]\n");
 
@@ -87,8 +76,6 @@ fn an_empty_allow_list_takes_nothing_and_is_not_an_absent_one() {
         installed_corporate(&tree).is_empty(),
         "an empty allow-list took something:\n{stderr}"
     );
-    // The inclusion itself still ran: it read the manifest and contributed
-    // records, all of which its own filter then passed over.
     assert!(
         stderr.contains("include-remote corp"),
         "the inclusion did not report at its position:\n{stderr}"
@@ -115,9 +102,6 @@ fn a_record_the_filters_left_out_says_so_rather_than_going_unmentioned() {
 
 #[test]
 fn an_inclusion_with_no_id_is_named_by_where_it_was_written() {
-    // What such an inclusion is called instead: the position it was written at,
-    // and the remote it includes. What it contributed answers to no address, so
-    // the label is all a reader gets to go on.
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
     tree.write_manifest(
@@ -145,10 +129,6 @@ exclude-actions = ["p10k"]
 
 #[test]
 fn naming_a_record_the_filters_left_out_does_not_bring_it_back() {
-    // `apply-action` waives what this machine keeps: its disabled lists, its
-    // skips, and the record's own condition. The filters are not that. They are
-    // the leaf saying what it took from the remote, so they hold under every
-    // command, as a remote's own condition does.
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
     tree.batfiles().arg("sync").assert().success();
 
@@ -171,9 +151,6 @@ fn naming_a_record_the_filters_left_out_does_not_bring_it_back() {
 
 #[test]
 fn a_command_that_named_one_record_says_when_it_carried_nothing_out() {
-    // At every verbosity, since it is the answer to what was asked rather than
-    // detail about a list: the record's own line, with the reason on it, is the
-    // `-v` half.
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
     tree.batfiles().arg("sync").assert().success();
 
@@ -192,9 +169,6 @@ fn a_command_that_named_one_record_says_when_it_carried_nothing_out() {
 
 #[test]
 fn a_skip_naming_a_record_the_filters_left_out_matched_something() {
-    // The reason such a record stays in the list: it still answers to its
-    // address, so a name that reaches it is answered rather than reported as
-    // reaching nothing.
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
 
     let assertion = tree
@@ -212,9 +186,6 @@ fn a_skip_naming_a_record_the_filters_left_out_matched_something() {
 
 #[test]
 fn a_filter_name_the_remote_does_not_declare_warns_and_the_run_carries_on() {
-    // The manifest was read, so batfiles can tell. A warning rather than a
-    // failure: a remote at an older revision than the leaf expects is a
-    // repository to update, not a run to stop.
     let (_origin, tree) = filtering("install-actions = [\"zshrc\", \"nowhere\"]\n");
 
     let assertion = tree.batfiles().arg("sync").assert().success();
@@ -235,8 +206,6 @@ fn a_filter_name_the_remote_does_not_declare_warns_and_the_run_carries_on() {
 
 #[test]
 fn a_group_filter_is_answered_by_a_group_and_not_by_an_action_of_that_name() {
-    // Two namespaces, one spelling. `zshrc` is a record's `id` and no group's
-    // name, so a group filter naming it has named nothing.
     let (_origin, tree) = filtering("exclude-groups = [\"zshrc\"]\n");
 
     let assertion = tree.batfiles().arg("sync").assert().success();
@@ -251,9 +220,6 @@ fn a_group_filter_is_answered_by_a_group_and_not_by_an_action_of_that_name() {
 
 #[test]
 fn an_inclusion_may_not_describe_its_selection_twice() {
-    // Refused as the manifest is read, before anything is materialized: two
-    // selections over one set of records have no reading that is obviously the
-    // one that was meant.
     let (_origin, tree) =
         filtering("install-actions = [\"zshrc\"]\nexclude-groups = [\"prompt\"]\n");
 
@@ -271,8 +237,6 @@ fn an_inclusion_may_not_describe_its_selection_twice() {
 
 #[test]
 fn a_filter_names_a_record_as_the_remote_declares_it() {
-    // Unqualified: the qualifier is the inclusion's own `id`, so writing it
-    // again would name the record twice over.
     let (_origin, tree) = filtering("install-actions = [\"corp.zshrc\"]\n");
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);

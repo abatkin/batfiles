@@ -13,8 +13,7 @@ impl RunMode {
         if dry_run { Self::DryRun } else { Self::Perform }
     }
 
-    /// Whether this run may write. Every helper that writes asks this, and
-    /// nothing else asks it.
+    /// Return whether action helpers may modify the filesystem.
     pub fn writes(self) -> bool {
         matches!(self, Self::Perform)
     }

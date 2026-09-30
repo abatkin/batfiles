@@ -1,31 +1,15 @@
-//! Shared command option groups and `--var` parsing.
-//!
-//! Unimplemented options retain string values. Skip lists also remain strings:
-//! invalid names must warn and be dropped using the reporter, not fail parsing.
-//!
-//! Validate `--var` here so invalid keys cause usage errors before root resolution
-//! or file reads. Deferring validation to variable merging would read `vars.toml`
-//! first. Environment overrides instead warn in [`crate::env_vars`].
+//! Shared command options and `--var` parsing. Invalid variable keys are usage errors; invalid
+//! skip names are handled during selection.
 
 use clap::Args;
 
 use crate::var::VarName;
 
-/// Controls accepted by every command that executes actions.
-///
-/// `--interactive` is refused beside `--dry-run`, which each command that has
-/// one declares, since a dry run has nothing to ask about.
-///
-/// `clone` accepts them because it forwards them to its follow-up
-/// synchronization.
+/// Options shared by commands that execute actions. `--interactive` conflicts with `--dry-run`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Action Execution Options")]
-pub(crate) struct ActionOptions {
+pub(crate) struct ExecutionOptions {
     /// Set a one-shot variable; repeatable, last value for a key wins
-    ///
-    /// Kept in the order it was written, duplicate keys included: which value a
-    /// repeated key ends up with is settled with the rest of the precedence,
-    /// where every layer's within-layer rule can be read in one place.
     #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_var)]
     pub vars: Vec<(VarName, String)>,
 
@@ -50,7 +34,7 @@ pub(crate) struct ActionOptions {
 
 /// Both run-only selectors, accepted by `sync` and `clone`.
 #[derive(Debug, Args)]
-pub(crate) struct SelectionOptions {
+pub(crate) struct SkipOptions {
     #[command(flatten)]
     pub actions: SkipActionOptions,
 
@@ -76,14 +60,8 @@ pub(crate) struct SkipGroupOptions {
     pub skip_groups: Vec<String>,
 }
 
-/// Split `KEY=VALUE` at the first `=` and validate the key.
-///
-/// An empty value is significant: `--var profile=` sets `profile` to the empty
-/// string, which is a value like any other.
-///
-/// The shape is checked before the name, so `--var profile` reports the missing
-/// `=` rather than complaining that the whole argument breaks the name rule.
-/// `--var =work` is the same mistake read from the other side.
+/// Parse `KEY=VALUE`, splitting at the first `=` and validating the key. Empty values are
+/// allowed; missing `=` or empty keys are errors.
 fn parse_var(raw: &str) -> Result<(VarName, String), String> {
     match raw.split_once('=') {
         Some((key, value)) if !key.is_empty() => match VarName::try_from(key.to_owned()) {
@@ -125,8 +103,6 @@ mod tests {
 
     #[test]
     fn a_var_splits_at_the_first_equals_sign() {
-        // Only the key is a name, so the rest of the argument is the value
-        // whatever it contains.
         assert_eq!(parse_var("a=b=c"), Ok((name("a"), "b=c".to_owned())));
     }
 
@@ -137,8 +113,6 @@ mod tests {
 
     #[test]
     fn the_shape_is_checked_before_the_name() {
-        // `--var profile` is a missing `=`, not a variable named `profile` that
-        // broke a rule, and the message has to say the former.
         assert_eq!(
             parse_var("profile"),
             Err("expected `KEY=VALUE`, found `profile`".to_owned())

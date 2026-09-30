@@ -1,8 +1,5 @@
-//! The duration behind a dynamic variable's `cache` and `command-timeout`.
-//!
-//! Written as a TOML string in jiff's "friendly" format, narrowed to what a
-//! batfiles duration can mean. See
-//! [`docs/repoformat.md`](../../docs/repoformat.md#duration-values).
+//! Parse friendly duration strings for dynamic-variable cache and command timeouts. See
+//! [duration values](../../docs/repoformat.md#duration-values).
 
 use std::fmt;
 use std::time::Duration;
@@ -17,7 +14,7 @@ use serde::Deserialize;
 #[serde(try_from = "String")]
 pub(crate) struct FriendlyDuration(Duration);
 
-/// The friendly format alone: `Span`'s own `FromStr` also accepts ISO 8601.
+/// Parser for friendly durations; ISO 8601 durations are not accepted.
 static PARSER: SpanParser = SpanParser::new();
 
 impl FriendlyDuration {
@@ -51,8 +48,7 @@ impl FriendlyDuration {
     }
 }
 
-/// Why a candidate duration was rejected. Carries the text, since serde
-/// renders the error verbatim.
+/// A rejected duration string and its validation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DurationError {
     candidate: String,
@@ -74,8 +70,7 @@ enum Reason {
 impl fmt::Display for DurationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "`{}` is not a valid duration: ", self.candidate)?;
-        // jiff's own message advertises units batfiles rejects, so it is not
-        // passed on.
+        // The upstream error suggests units this parser rejects.
         f.write_str(match self.reason {
             Reason::Syntax => "write a number and a unit, such as `30s`, `1h 30m`, or `1d`",
             Reason::Negative => "a duration cannot be negative",
@@ -106,7 +101,7 @@ mod tests {
         value: FriendlyDuration,
     }
 
-    /// Through TOML, the seam every value actually crosses.
+    /// Parse a duration through a TOML field.
     fn parse(text: &str) -> Result<FriendlyDuration, toml::de::Error> {
         toml::from_str::<Wrapper>(&format!("value = '{text}'")).map(|wrapper| wrapper.value)
     }
@@ -120,7 +115,6 @@ mod tests {
 
     #[test]
     fn every_spelling_the_format_advertises_parses() {
-        // `1d` and `1w` also pin a day at 24 hours and a week at 7 days.
         for (text, milliseconds) in [
             ("30s", 30_000),
             ("5m", 300_000),

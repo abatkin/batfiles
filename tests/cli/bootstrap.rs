@@ -1,8 +1,5 @@
-//! Bootstrap adoption: what a machine `clone` sets up starts with switched off.
-//!
-//! The repositories are published inline into a local bare repository, as the
-//! rest of [`clone`](super::clone)'s tests are, because a leaf naming its own
-//! origin cannot be a committed fixture.
+//! CLI tests for bootstrap disabled-state adoption during `clone`, using local bare
+//! repositories.
 
 use std::fs;
 
@@ -71,8 +68,6 @@ fn a_candidate_is_adopted_and_the_synchronization_passes_it_over() {
 
     let assertion = cloning(&tree, &origin).assert().success();
 
-    // The whole point of the section, in one command: the repository said where
-    // this machine starts, and the run that followed honored it.
     assert_eq!(installed(&tree), ["zshrc"]);
     assert_eq!(
         tree.disabled_document(),
@@ -90,9 +85,6 @@ fn a_candidate_is_adopted_and_the_synchronization_passes_it_over() {
 
 #[test]
 fn a_machine_that_already_has_a_disabled_document_is_not_offered_them() {
-    // The document existing is this machine having an opinion of its own, and
-    // the section cannot switch an action off again on a machine that has
-    // already enabled it.
     let tree = Tree::roots();
     tree.write_disabled("actions = [\"zshrc\"]\ngroups = []\n");
     let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\n");
@@ -108,8 +100,6 @@ fn a_machine_that_already_has_a_disabled_document_is_not_offered_them() {
 
 #[test]
 fn an_explicit_decision_applies_to_such_a_machine_all_the_same() {
-    // The other half of the rule above: what this invocation asked for was not
-    // written by the repository, so the machine's own state does not silence it.
     let tree = Tree::roots();
     tree.write_disabled("actions = []\ngroups = []\n");
     let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\n");
@@ -129,8 +119,6 @@ fn an_explicit_decision_applies_to_such_a_machine_all_the_same() {
 
 #[test]
 fn a_bootstrap_that_decides_nothing_writes_no_document() {
-    // Which is what keeps the rule above from latching a machine that was never
-    // actually set up.
     let tree = Tree::roots();
 
     cloning(&tree, &origin_with("")).assert().success();
@@ -144,9 +132,6 @@ fn a_bootstrap_that_decides_nothing_writes_no_document() {
 
 #[test]
 fn the_command_line_outranks_the_environment_and_enable_outranks_disable() {
-    // The whole precedence in one invocation: the environment disables a
-    // candidate's companion and enables the candidate, and the command line
-    // overturns both.
     let tree = Tree::roots();
     let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\n");
 
@@ -198,8 +183,6 @@ fn a_candidate_is_offered_only_where_its_condition_admits_it() {
 
 #[test]
 fn a_condition_this_machine_cannot_decide_leaves_the_candidate_alone() {
-    // A gate that cannot be decided closes, here as everywhere else, so the
-    // candidate is not offered and the action it names is installed.
     let tree = Tree::roots();
     let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\nwhen = \"nowhere\"\n");
 
@@ -216,8 +199,6 @@ fn a_condition_this_machine_cannot_decide_leaves_the_candidate_alone() {
 
 #[test]
 fn a_candidate_a_condition_closes_is_reported_at_one_level_of_detail() {
-    // An expected exclusion is not a problem, so it says so only when asked --
-    // the same volume every other closed gate is reported at.
     let tree = Tree::roots();
     let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\nwhen = \"slow\"\n");
 
@@ -283,9 +264,6 @@ fn an_unusable_variable_name_warns_and_the_rest_of_the_list_still_applies() {
 
 #[test]
 fn an_included_remotes_own_candidates_are_ignored() {
-    // Bootstrap policy belongs to the repository this machine was pointed at.
-    // The remote's own section is structurally valid and read past, as its
-    // `[remotes]` is.
     let tree = Tree::roots();
     let core = BareRepo::new();
     core.publish("files/corerc", "# core\n", "the file it installs");
@@ -335,8 +313,6 @@ remote = "core"
 
 #[test]
 fn sync_is_not_a_bootstrap_and_adopts_nothing() {
-    // The counterpart to every case above: adoption is one command's doing, so
-    // a later `sync` over the same manifest leaves the machine's state alone.
     let tree = Tree::roots();
     let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\n");
 

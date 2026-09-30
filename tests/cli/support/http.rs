@@ -11,21 +11,17 @@ use std::thread::JoinHandle;
 pub(crate) enum Reply {
     /// The file itself.
     Body(&'static str),
-    /// A binary body, such as an archive. Owned, since the archives served are
-    /// built at run time.
+    /// An owned binary response body.
     Bytes(Vec<u8>),
     /// A path the server does not have, answered 404.
     Missing,
-    /// An answer that is not a refusal and not a whole file either: a 204 with
-    /// nothing in it, or a 206 holding one range of one.
+    /// A response that is not a complete file, such as HTTP 204 or 206.
     NotAWholeFile { status: u16, body: &'static str },
-    /// A permanent move to another path on the same server, which is what a
-    /// release URL does before it hands over a file.
+    /// A permanent redirect to another path on the same server.
     RedirectTo(&'static str),
 }
 
-/// A local HTTP server, so no test reaches the network (`architecture.md`, "Test
-/// environments").
+/// A loopback HTTP server with configurable responses and request counting.
 pub(crate) struct Server {
     server: Arc<tiny_http::Server>,
     address: String,
@@ -45,12 +41,11 @@ impl Server {
             let server = Arc::clone(&server);
             let requests = Arc::clone(&requests);
             std::thread::spawn(move || {
-                // Ends when `unblock` is called from `drop`, which is what
-                // stops the thread outliving the test that started it.
+                // `Drop` unblocks the server so the request thread can exit.
                 for request in server.incoming_requests() {
                     requests.fetch_add(1, Ordering::SeqCst);
-                    // The first match wins, so a caller that prepends a route
-                    // answers that path differently without rebuilding the set.
+                    // The first matching route wins, allowing callers to override routes by
+                    // prepending them.
                     let reply = routes
                         .iter()
                         .find(|(path, _)| *path == request.url())
@@ -105,15 +100,13 @@ fn response(reply: Reply) -> tiny_http::Response<Cursor<Vec<u8>>> {
     }
 }
 
-/// A server that promises a length, sends less than it, and hangs up, for the
-/// one test about a transfer that does not finish.
+/// Serve `body` with an overstated content length, then close the connection. Return the server
+/// URL.
 pub(crate) fn server_that_hangs_up(body: &'static str, promised: usize) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a local socket");
     let address = format!("http://{}", listener.local_addr().expect("its address"));
     std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().expect("a connection");
-        // Enough of the request to have read it; what it asks for does not
-        // change the answer.
         let _ = socket.read(&mut [0u8; 1024]);
         let _ = write!(
             socket,

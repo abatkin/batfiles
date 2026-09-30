@@ -12,7 +12,7 @@ mod directory;
 mod disabled;
 mod dynamic;
 mod env;
-mod env_vars;
+mod env_overrides;
 mod error;
 mod execute;
 mod fetch;

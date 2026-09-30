@@ -1,4 +1,4 @@
-//! `[[actions]]`: the ordered list of things a repository does.
+//! Ordered action declarations from `[[actions]]`.
 
 use std::collections::BTreeMap;
 
@@ -6,8 +6,9 @@ use serde::Deserialize;
 
 use super::ReadAs;
 use super::check::{
-    Invalid, RecordName, SourceShape, check_archive_root, check_dest, check_digest, check_git_ref,
-    check_git_source, check_inclusion_filters, check_inclusion_remote, check_source, check_url,
+    ManifestError, RecordName, SourceShape, check_archive_root, check_dest, check_digest,
+    check_git_ref, check_git_source, check_inclusion_filters, check_inclusion_remote, check_source,
+    check_url,
 };
 use super::remote::Remote;
 use crate::condition::{Condition, Gate};
@@ -32,7 +33,7 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    /// The `type` and the four fields every variant carries.
+    /// Borrow the action type, ID, group, and condition fields.
     pub fn metadata(&self) -> ActionMetadata<'_> {
         let (kind, id, group, when, unless) = match self {
             Self::Symlink(it) => ("symlink", &it.id, &it.group, &it.when, &it.unless),
@@ -55,18 +56,15 @@ impl Action {
         }
     }
 
-    /// Validate declared paths, URLs, digests, archive roots, and Git refs.
-    /// `record` is how a diagnostic names the record.
-    ///
-    /// A remote named by a source must be in `remotes`, the manifest's
-    /// declarations. So must an `include-remote`'s, but only when `read_as` is
-    /// the leaf: an included manifest's inclusions are dropped, not followed.
+    /// Validate paths, URLs, digests, archive roots, and Git refs, using `record` in
+    /// diagnostics. Source remotes must appear in `remotes`. Check an inclusion's remote
+    /// declaration only for [`ReadAs::Leaf`].
     pub fn validate(
         &self,
         record: &RecordName,
         remotes: &BTreeMap<ItemId, Remote>,
         read_as: ReadAs,
-    ) -> Result<(), Invalid> {
+    ) -> Result<(), ManifestError> {
         match self {
             Self::Symlink(action) => {
                 check_source(&action.source, SourceShape::Any, record, remotes)?;
@@ -85,7 +83,6 @@ impl Action {
                 check_source(&action.source_dir, SourceShape::Directory, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
-            // `source` is a URL, not a repository path.
             Self::FetchFile(action) => {
                 check_url(&action.source, "source", record)?;
                 check_digest(action.sha256.as_deref(), record)?;
@@ -97,8 +94,6 @@ impl Action {
                 check_archive_root(action.archive_root.as_deref(), record)?;
                 check_dest(&action.dest, record)
             }
-            // `source` is whatever `git` accepts to clone, checked like a Git
-            // remote's `url`.
             Self::GitClone(action) => {
                 check_git_source(&action.source, "source", record)?;
                 check_git_ref(action.git_ref.as_deref(), record)?;
@@ -108,8 +103,7 @@ impl Action {
                 check_source(&action.source, SourceShape::Any, record, remotes)?;
                 check_dest(&action.dest_dir, record)
             }
-            // No source or destination. Only a leaf inclusion's remote must
-            // resolve; a nested one is dropped with a warning.
+            // Nested inclusions are dropped later, so their remote references need not resolve.
             Self::IncludeRemote(action) => {
                 if let ReadAs::Leaf = read_as {
                     check_inclusion_remote(&action.remote, record, remotes)?;
@@ -147,7 +141,7 @@ impl Action {
         self.metadata().group
     }
 
-    /// The gate the action's condition makes, if it was written with one.
+    /// Return the action's condition gate, if declared.
     pub fn gate(&self) -> Option<Gate<'_>> {
         self.metadata().gate()
     }
@@ -214,39 +208,27 @@ impl<'a> Contributor<'a> {
     }
 }
 
-/// The `type` tag and the four fields every `[[actions]]` record carries,
-/// borrowed from one.
-///
-/// The shared fields are documented here once. Each record type declares them
-/// itself, as flat tables rejecting unknown fields, and comments one only
-/// where it means something particular.
-///
-/// - `id` makes the action addressable: `apply-action` names one, and
-///   `disabled.toml` remembers one. What an action installs is not separately
-///   addressable.
-/// - `group` is the one group the action belongs to, which `apply-group` names
-///   and `disabled.toml` also remembers.
-/// - `when` admits the action where the condition is true, `unless` where it is
-///   false. A record writes at most one of the two.
+/// Shared action metadata borrowed from a declaration. `id` identifies the action, `group`
+/// names its group, and `when` or `unless` controls admission. Validated records declare at
+/// most one condition field.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ActionMetadata<'a> {
     /// The action's `type`, spelled as the manifest spells it.
     pub kind: &'static str,
     pub id: Option<&'a ItemId>,
     pub group: Option<&'a ItemId>,
-    /// Kept apart from `unless` so validation can reject a record writing
-    /// both.
+    /// Admit when this condition is true; mutually exclusive with `unless` after validation.
     pub when: Option<&'a Condition>,
     pub unless: Option<&'a Condition>,
 }
 
 impl<'a> ActionMetadata<'a> {
-    /// The gate this record's condition makes, or `None` where it has none.
+    /// Return the declared condition gate, or `None` if absent.
     pub fn gate(self) -> Option<Gate<'a>> {
-        Gate::declared(self.when, self.unless)
+        Gate::from_fields(self.when, self.unless)
     }
 
-    /// Whether the record writes both spellings, which no record may.
+    /// Return whether both `when` and `unless` are declared.
     pub fn writes_both_conditions(self) -> bool {
         self.when.is_some() && self.unless.is_some()
     }
@@ -283,13 +265,12 @@ pub(crate) struct SymlinkDirAction {
     /// The directory the links are made in, resolved against the selected home
     /// when the action runs and created if it is missing.
     pub dest_dir: String,
-    /// Whether each link's name gains a leading `.`, for a repository that
-    /// keeps its dotfiles undotted.
+    /// Whether to prepend `.` to each installed link name.
     #[serde(default)]
     pub dot_prefix: bool,
 }
 
-/// `create-dir`: one directory, created where nothing is.
+/// `create-dir`: ensure a destination directory exists.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CreateDirAction {
@@ -302,7 +283,7 @@ pub(crate) struct CreateDirAction {
     pub dest: String,
 }
 
-/// `copy`: one file or one directory, seeded at a destination where nothing is.
+/// `copy`: seed a destination with a file or directory copy.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct CopyAction {
@@ -313,8 +294,7 @@ pub(crate) struct CopyAction {
     /// The file or directory to copy, within the repository that declared the
     /// action or within a remote it names.
     pub source: RepoPath,
-    /// Where the copy goes, exactly. Resolved against the selected home when
-    /// the action runs.
+    /// Exact destination path, resolved against the selected home at execution.
     pub dest: String,
 }
 
@@ -333,13 +313,12 @@ pub(crate) struct CopyDirAction {
     /// The directory the copies are made in, resolved against the selected home
     /// when the action runs and created if it is missing.
     pub dest_dir: String,
-    /// Whether each installed name gains a leading `.`, for a repository that
-    /// keeps its dotfiles undotted.
+    /// Whether to prepend `.` to each installed child name.
     #[serde(default)]
     pub dot_prefix: bool,
 }
 
-/// `fetch-file`: one file downloaded to a destination where nothing is.
+/// `fetch-file`: seed a destination with a downloaded file.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchFileAction {
@@ -349,15 +328,13 @@ pub(crate) struct FetchFileAction {
     pub unless: Option<Condition>,
     /// The URL to fetch, as written; not a repository path.
     pub source: String,
-    /// Where the file goes, exactly. Resolved against the selected home when
-    /// the action runs, with missing parents created on the way.
+    /// Exact destination path, resolved against the selected home. Missing parents are created.
     pub dest: String,
     /// The digest the fetched bytes must have, if the repository pins one.
     pub sha256: Option<String>,
 }
 
-/// `fetch-archive`: one archive downloaded and unpacked at a destination where
-/// nothing is.
+/// `fetch-archive`: seed a destination directory with a downloaded archive's contents.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FetchArchiveAction {
@@ -367,19 +344,16 @@ pub(crate) struct FetchArchiveAction {
     pub unless: Option<Condition>,
     /// The URL to fetch, as written; not a repository path.
     pub source: String,
-    /// Where the unpacked directory goes, exactly. Resolved against the
-    /// selected home when the action runs, with missing parents created on the
-    /// way.
+    /// Exact extraction destination, resolved against the selected home. Missing parents are
+    /// created.
     pub dest: String,
     /// The digest the fetched archive must have, if the repository pins one.
     pub sha256: Option<String>,
-    /// A prefix every entry is written without, or `*` for the single
-    /// top-level directory a release tarball usually has.
+    /// Prefix to strip from entry paths, or `*` to detect a single top-level directory.
     pub archive_root: Option<String>,
 }
 
-/// `git-clone`: one repository cloned where nothing is, and brought up to date
-/// where a clone of it already is.
+/// `git-clone`: clone a repository or update an existing clone.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneAction {
@@ -390,8 +364,8 @@ pub(crate) struct GitCloneAction {
     /// The repository to clone, passed to git as written. Not checked as a URL:
     /// git also accepts `git@host:path`, plain directories, and other schemes.
     pub source: String,
-    /// Where the clone goes, exactly. Resolved against the selected home when
-    /// the action runs, with missing parents created on the way.
+    /// Exact clone destination, resolved against the selected home. Missing parents are
+    /// created.
     pub dest: String,
     /// The branch, tag, or commit to follow. Absent, an update follows whatever
     /// branch the clone is on.
@@ -399,8 +373,7 @@ pub(crate) struct GitCloneAction {
     pub git_ref: Option<String>,
 }
 
-/// `git-clone-list`: every repository a list in the repository names, cloned
-/// under one directory.
+/// `git-clone-list`: clone repositories from a list into one parent directory.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitCloneListAction {
@@ -416,8 +389,7 @@ pub(crate) struct GitCloneListAction {
     pub dest_dir: String,
 }
 
-/// `include-remote`: the actions another repository declares, taken into this
-/// one at this position in the list.
+/// `include-remote`: insert another repository's actions at this declaration's position.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct IncludeRemoteAction {
@@ -431,24 +403,16 @@ pub(crate) struct IncludeRemoteAction {
     /// The key of the declared remote whose manifest is read.
     pub remote: ItemId,
 
-    /// Which of the remote's actions this inclusion takes, by their
-    /// unqualified IDs and groups.
-    ///
-    /// Each is absent, one ID, or a list; absent is not empty. With none
-    /// written every action is selected, while an empty allow-list selects
-    /// none. Valid combinations are [`check_inclusion_filters`]'s rule; what
-    /// each selects is
-    /// [`docs/repoformat.md`](../../docs/repoformat.md#selecting-part-of-a-remote)'s.
+    /// Action allow-list using unqualified IDs. `None` applies no action allow-list; an empty
+    /// list selects nothing. See [filter
+    /// combinations](../../docs/repoformat.md#selecting-part-of-a-remote).
     pub install_actions: Option<ItemIdList>,
     pub install_groups: Option<ItemIdList>,
     pub exclude_actions: Option<ItemIdList>,
     pub exclude_groups: Option<ItemIdList>,
 
-    /// Variable overrides applying only to the records this inclusion
-    /// contributes. Parsed like a manifest's
-    /// [`[vars]`](crate::manifest::Manifest::vars); placed among the layers by
-    /// [`VarSet::with_inclusion`](crate::var_set::VarSet::with_inclusion), per
-    /// [`docs/environment.md`](../../docs/environment.md#variable-precedence).
+    /// Variable overrides for contributed records only, applied by
+    /// [`VarSet::with_inclusion`](crate::var_set::VarSet::with_inclusion).
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
 }
@@ -475,8 +439,7 @@ mod tests {
         action.describe(number, Contributor::UnnamedInclusion(label))
     }
 
-    /// One complete record per variant. The expected names are written out, not
-    /// read back from serde's tag, so a swapped or misspelled label fails.
+    /// Check every action type against its expected manifest spelling.
     #[test]
     fn every_action_type_is_named_as_the_manifest_spells_it() {
         for (record, kind) in [
@@ -547,7 +510,6 @@ mod tests {
 
     #[test]
     fn an_override_follows_the_rules_a_manifests_own_vars_follow() {
-        // Enforced by serde as the document is read.
         for (document, expected) in [
             (
                 "vars = { \"has space\" = \"1\" }\n",
@@ -578,8 +540,6 @@ mod tests {
             inclusion.exclude_actions,
             Some(ItemIdList::from_iter([item("p10k"), item("seeds")]))
         );
-        // The two that were not written, which is a different answer from an
-        // empty list: these select everything rather than nothing.
         assert_eq!(inclusion.install_actions, None);
         assert_eq!(inclusion.exclude_groups, None);
     }
@@ -601,8 +561,6 @@ mod tests {
 
     #[test]
     fn an_inclusion_names_the_remote_it_includes() {
-        // The one required field. Without it the record selects nothing, which
-        // is not an inclusion that means anything.
         let error = toml::from_str::<Action>("type = \"include-remote\"\n")
             .expect_err("a record naming no remote should be refused");
         assert!(
@@ -624,8 +582,6 @@ mod tests {
 
     #[test]
     fn an_included_record_is_named_by_the_address_that_reaches_it() {
-        // What a line calls a record is what a reader would type to name it, so
-        // an inclusion's qualifier goes on both of a record's IDs.
         assert_eq!(
             described_under(
                 "type = \"symlink\"\nid = \"zshrc\"\ngroup = \"shell\"\nsource = \"a\"\ndest = \"~/b\"\n",
@@ -634,8 +590,6 @@ mod tests {
             ),
             "symlink corp.zshrc (group corp.shell)"
         );
-        // A record with no `id` is named by its position in the manifest that
-        // declared it, which is not an address and so is not qualified.
         assert_eq!(
             described_under("type = \"create-dir\"\ndest = \"~/b\"\n", 2, "corp"),
             "create-dir action 2"
@@ -644,10 +598,6 @@ mod tests {
 
     #[test]
     fn a_record_of_an_unnamed_inclusion_says_which_one_contributed_it() {
-        // No address reaches such a record, so its names stay exactly what the
-        // manifest that declared them wrote and the line says where they came
-        // from in words. Without it, two inclusions of one remote contribute
-        // lines nothing can tell apart.
         let label = "include-remote action 2 of remote `corporate`";
         assert_eq!(
             described_from(
@@ -657,7 +607,6 @@ mod tests {
             ),
             "symlink zshrc (from include-remote action 2 of remote `corporate`)"
         );
-        // One parenthetical rather than two, for a record that is also grouped.
         assert_eq!(
             described_from(
                 "type = \"symlink\"\nid = \"zshrc\"\ngroup = \"shell\"\nsource = \"a\"\ndest = \"~/b\"\n",
@@ -674,8 +623,6 @@ mod tests {
 
     #[test]
     fn a_record_without_an_id_is_named_by_its_position() {
-        // The same words a load error uses for a record with no `id`, so a line
-        // of output and a diagnostic point at the same one.
         assert_eq!(
             described("type = \"copy\"\nsource = \"a\"\ndest = \"~/b\"\n", 3),
             "copy action 3"

@@ -8,9 +8,11 @@ use std::rc::Rc;
 
 use thiserror::Error as ThisError;
 
-use super::{DynamicVarResolver, ManifestSource, RefreshOutcome, RefreshSelection, VarIdentity};
+use super::{
+    DynamicValueState, DynamicVarKey, DynamicVarResolver, ManifestSource, RefreshSelection,
+};
 use crate::condition::{Bindings, Exclusion, HostNamespaces};
-use crate::disabled::Disabled;
+use crate::disabled::DisabledItems;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::inclusion::{self, Inclusion};
@@ -25,40 +27,42 @@ use crate::remotes;
 use crate::selection::{Selection, Subject};
 use crate::var_set::VarSet;
 
-/// Refresh the named keys, or every declaration in play when none are named,
-/// and write what was captured to the cache.
+/// Refresh the named dynamic variables, or all eligible declarations if `keys` is empty, and
+/// save captured values.
 ///
-/// Every key is checked before any command it names runs, and each one that
-/// cannot be refreshed is reported together. A remote key needs the leaf's
-/// declarations resolved first, since the gates deciding which remotes are in
-/// play read them; those run as a run would run them, and what they captured is
-/// saved even when a key then fails. Fails after saving when a forced command
-/// failed.
+/// Validate requested keys before running their commands. Remote validation may first run leaf
+/// declarations to evaluate conditions; save those captures even if validation fails. Report
+/// all invalid keys together. Forced command failures return an error after saving successful
+/// captures.
 pub(crate) fn run(
-    keys: &[VarIdentity],
+    keys: &[DynamicVarKey],
     roots: &Roots,
     env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    let manifest = Manifest::load(&roots.manifest())?;
+    let manifest = Manifest::load(&roots.manifest_path())?;
     let selection = RefreshSelection::from_keys(keys);
     refuse(
         selection
             .keys()
             .filter_map(|key| {
-                declared_in_leaf(key, &manifest).map(|reason| Refusal::of(key, reason))
+                declared_in_leaf(key, &manifest).map(|reason| UnrefreshableKey::of(key, reason))
             })
             .collect(),
     )?;
 
-    let mut dynamic =
-        DynamicVarResolver::refresh(&roots.state, selection.clone(), &manifest.remotes, reporter);
+    let mut dynamic = DynamicVarResolver::for_refresh(
+        &roots.state,
+        selection.clone(),
+        &manifest.remotes,
+        reporter,
+    );
     if selection.reaches_remotes() {
         refresh_with_remotes(manifest, &selection, roots, env, &mut dynamic, reporter)?;
     } else {
         let leaf = ManifestSource {
             remote: None,
-            root: &roots.batfiles_dir,
+            root: &roots.batfiles_repo,
         };
         dynamic.force(&manifest.vars, &leaf)?;
     }
@@ -66,8 +70,8 @@ pub(crate) fn run(
     report(&dynamic, reporter)
 }
 
-/// Resolve the leaf, decide which remotes are in play, check the remote keys
-/// `asked` names against them, and force what is wanted in each.
+/// Resolve leaf variables, validate requested remote keys against admitted inclusions, and
+/// refresh selected remote declarations.
 fn refresh_with_remotes(
     manifest: Manifest,
     asked: &RefreshSelection,
@@ -78,22 +82,21 @@ fn refresh_with_remotes(
 ) -> Result<(), Error> {
     let variables = Rc::new(VarSet::resolve(
         &manifest.vars,
-        &roots.batfiles_dir,
+        &roots.batfiles_repo,
         &roots.state,
         env,
         &[],
         dynamic,
         reporter,
     )?);
-    // Before anything that can fail, so the leaf's captures outlive it.
+    // Save leaf captures even if later reachability or key validation fails.
     dynamic.save();
     let host = HostNamespaces::capture(env);
     let bindings = Bindings::new(&variables, &host);
-    let selection = Selection::persistent(Disabled::load(&roots.state.disabled())?);
+    let selection =
+        Selection::without_run_skips(DisabledItems::load(&roots.state.disabled_path())?);
     let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
-    // Anchored as a run anchors it, so a materialization, and the commands run
-    // in it, are where a run finds them.
-    let repository = paths::anchor(&roots.batfiles_dir)?;
+    let repository = paths::anchor(&roots.batfiles_repo)?;
     let reach = reachability(&manifest.actions, &selection, &bindings, &excluded_remotes);
 
     let wanted: BTreeSet<&ItemId> = match asked {
@@ -105,14 +108,14 @@ fn refresh_with_remotes(
     let mut opened = Vec::new();
     for remote in wanted {
         let reason = match reach.get(remote) {
-            None => Reason::NotIncluded {
+            None => UnrefreshableReason::NotIncluded {
                 remote: remote.clone(),
             },
             Some(Reach::Excluded(exclusions)) => {
                 for (label, exclusion) in exclusions {
                     exclusion.report_heading(reporter, label);
                 }
-                Reason::NotInPlay {
+                UnrefreshableReason::NotInPlay {
                     remote: remote.clone(),
                     reasons: exclusions
                         .iter()
@@ -120,21 +123,20 @@ fn refresh_with_remotes(
                         .collect(),
                 }
             }
-            // Admitted by `reachability`, so its tree may be read.
             Some(Reach::InPlay(inclusion)) => match inclusion.manifest(&repository)? {
                 None if matches!(asked, RefreshSelection::All) => {
                     let path = remotes::materialization(&repository, remote);
                     inclusion::warn_not_materialized(remote, &path, reporter);
                     continue;
                 }
-                None => Reason::NotMaterialized {
+                None => UnrefreshableReason::NotMaterialized {
                     remote: remote.clone(),
                     path: remotes::materialization(&repository, remote),
                 },
                 Some(included) => {
                     for key in asked.keys_for(remote) {
                         if let Some(reason) = declared(included.vars.get(&key.name), Some(remote)) {
-                            refusals.push(Refusal::of(key, reason));
+                            refusals.push(UnrefreshableKey::of(key, reason));
                         }
                     }
                     opened.push((remote, included.vars));
@@ -143,7 +145,7 @@ fn refresh_with_remotes(
             },
         };
         for key in asked.keys_for(remote) {
-            refusals.push(Refusal::of(key, reason.clone()));
+            refusals.push(UnrefreshableKey::of(key, reason.clone()));
         }
     }
     refusals.sort_by(|a, b| a.key.cmp(&b.key));
@@ -160,8 +162,7 @@ fn refresh_with_remotes(
     Ok(())
 }
 
-/// Whether a remote is in play: named by an inclusion a run on this machine
-/// would open.
+/// Whether an admitted inclusion makes a remote eligible for refresh.
 enum Reach {
     /// The first inclusion naming it that a run would open.
     InPlay(Inclusion),
@@ -169,10 +170,8 @@ enum Reach {
     Excluded(Vec<(String, Exclusion)>),
 }
 
-/// Decide, for every remote an `include-remote` names, whether it is in play,
-/// by asking each inclusion what a run of `selection` would, with the remote
-/// conditions `excluded_remotes` decided. A remote no inclusion names is absent
-/// from the result.
+/// Evaluate inclusion admission for each remote named by an `include-remote`. Apply `selection`
+/// and `excluded_remotes`; omit remotes with no inclusion.
 fn reachability(
     actions: &[Action],
     selection: &Selection<'_>,
@@ -186,7 +185,6 @@ fn reachability(
         };
         let remote = declaration.remote.clone();
         let inclusion = Inclusion::at(declaration, index + 1);
-        // A leaf record's addresses are unqualified.
         let leaf = |id: Option<&ItemId>| id.map(|id| ItemAddress::qualified(None, id));
         let (address, group_address) = (leaf(action.id()), leaf(action.group()));
         let record = Subject {
@@ -217,39 +215,41 @@ fn reachability(
 }
 
 /// Why a key cannot be refreshed, as far as the leaf manifest alone can tell.
-fn declared_in_leaf(key: &VarIdentity, manifest: &Manifest) -> Option<Reason> {
+fn declared_in_leaf(key: &DynamicVarKey, manifest: &Manifest) -> Option<UnrefreshableReason> {
     let Some(remote) = &key.remote else {
         return declared(manifest.vars.get(&key.name), None);
     };
     match manifest.remotes.get(remote) {
-        None => Some(Reason::UnknownRemote {
+        None => Some(UnrefreshableReason::UnknownRemote {
             remote: remote.clone(),
         }),
-        Some(declaration) if !declaration.allows_dynamic_vars() => Some(Reason::NotAllowed {
-            remote: remote.clone(),
-        }),
+        Some(declaration) if !declaration.allows_dynamic_vars() => {
+            Some(UnrefreshableReason::NotAllowed {
+                remote: remote.clone(),
+            })
+        }
         Some(_) => None,
     }
 }
 
 /// Why `spec`, looked up in the leaf's or `remote`'s `[vars]`, is not a
 /// dynamic declaration.
-fn declared(spec: Option<&VarSpec>, remote: Option<&ItemId>) -> Option<Reason> {
+fn declared(spec: Option<&VarSpec>, remote: Option<&ItemId>) -> Option<UnrefreshableReason> {
     match spec {
-        None => Some(Reason::NotDeclared {
+        None => Some(UnrefreshableReason::NotDeclared {
             remote: remote.cloned(),
         }),
-        Some(VarSpec::Static(_)) => Some(Reason::Static),
+        Some(VarSpec::Static(_)) => Some(UnrefreshableReason::Static),
         Some(VarSpec::Dynamic(_)) => None,
     }
 }
 
 /// Fail naming every refusal, if there are any.
-fn refuse(refusals: Vec<Refusal>) -> Result<(), Error> {
+fn refuse(refusals: Vec<UnrefreshableKey>) -> Result<(), Error> {
     if refusals.is_empty() {
         Ok(())
     } else {
-        Err(Failure::Unrefreshable(refusals).into())
+        Err(RefreshError::Unrefreshable(refusals).into())
     }
 }
 
@@ -259,9 +259,9 @@ fn report(dynamic: &DynamicVarResolver<'_>, reporter: &Reporter) -> Result<(), E
     let mut failed = 0;
     for (identity, resolved) in dynamic.forced() {
         forced += 1;
-        match resolved.refresh {
-            RefreshOutcome::Refreshed => reporter.info(&format!("refreshed `{identity}`")),
-            // Each already warned, saying what the run fell back on.
+        match resolved.state {
+            DynamicValueState::Refreshed => reporter.info(&format!("refreshed `{identity}`")),
+            // Resolution already reported each failure and its fallback.
             _ => failed += 1,
         }
     }
@@ -271,16 +271,16 @@ fn report(dynamic: &DynamicVarResolver<'_>, reporter: &Reporter) -> Result<(), E
     if failed == 0 {
         Ok(())
     } else {
-        Err(Failure::NotRefreshed { count: failed }.into())
+        Err(RefreshError::NotRefreshed { count: failed }.into())
     }
 }
 
 /// `vars refresh`'s own failures.
 #[derive(Debug, ThisError)]
-pub(crate) enum Failure {
+pub(crate) enum RefreshError {
     /// Keys naming something the command cannot refresh, in key order.
     #[error("{}", render(.0))]
-    Unrefreshable(Vec<Refusal>),
+    Unrefreshable(Vec<UnrefreshableKey>),
 
     /// Forced commands that ran and captured nothing; each was warned about.
     #[error(
@@ -292,13 +292,13 @@ pub(crate) enum Failure {
 
 /// One key, and why it cannot be refreshed.
 #[derive(Debug)]
-pub(crate) struct Refusal {
-    key: VarIdentity,
-    reason: Reason,
+pub(crate) struct UnrefreshableKey {
+    key: DynamicVarKey,
+    reason: UnrefreshableReason,
 }
 
-impl Refusal {
-    fn of(key: &VarIdentity, reason: Reason) -> Self {
+impl UnrefreshableKey {
+    fn of(key: &DynamicVarKey, reason: UnrefreshableReason) -> Self {
         Self {
             key: key.clone(),
             reason,
@@ -308,7 +308,7 @@ impl Refusal {
 
 /// Why a key cannot be refreshed.
 #[derive(Debug, Clone, ThisError)]
-pub(crate) enum Reason {
+pub(crate) enum UnrefreshableReason {
     #[error("{} does not declare it", declarer(.remote.as_ref()))]
     NotDeclared { remote: Option<ItemId> },
 
@@ -350,7 +350,7 @@ fn declarer(remote: Option<&ItemId>) -> String {
 }
 
 /// One refusal on one line, or several beneath a count.
-fn render(refusals: &[Refusal]) -> String {
+fn render(refusals: &[UnrefreshableKey]) -> String {
     match refusals {
         [only] => format!("cannot refresh `{}`: {}", only.key, only.reason),
         _ => {

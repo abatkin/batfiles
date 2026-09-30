@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
-use crate::item::ItemAddress;
+use crate::item::{ItemAddress, ItemKind};
 use crate::location::StateRoots;
 use crate::output::Reporter;
 use crate::tomlfile;
@@ -16,7 +16,7 @@ use crate::tomlfile;
 /// The parsed `disabled.toml`.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Disabled {
+pub(crate) struct DisabledItems {
     /// Disabled action addresses.
     #[serde(default)]
     pub actions: BTreeSet<ItemAddress>,
@@ -25,7 +25,7 @@ pub(crate) struct Disabled {
     pub groups: BTreeSet<ItemAddress>,
 }
 
-impl Disabled {
+impl DisabledItems {
     /// The document's file name; [`StateRoots`] decides its directory.
     pub const FILE_NAME: &'static str = "disabled.toml";
 
@@ -38,16 +38,17 @@ impl Disabled {
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         tomlfile::write(path, self)
     }
+
+    /// The list holding disabled names of `kind`.
+    pub fn list_mut(&mut self, kind: ItemKind) -> &mut BTreeSet<ItemAddress> {
+        match kind {
+            ItemKind::Action => &mut self.actions,
+            ItemKind::Group => &mut self.groups,
+        }
+    }
 }
 
-/// Which of the document's two lists a command edits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DisabledList {
-    Actions,
-    Groups,
-}
-
-/// Which way a command moves a name through its list.
+/// Whether to add an address to disabled state or remove it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Change {
     Disable,
@@ -57,25 +58,24 @@ pub(crate) enum Change {
 /// Add the names to, or remove them from, the machine-local disabled list.
 pub(crate) fn run(
     names: &[String],
-    list: DisabledList,
+    kind: ItemKind,
     change: Change,
     roots: &StateRoots,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    // Every name is validated before the document is touched, so an invocation
-    // either applies in full or changes nothing.
+    // Validate all names before reading or writing state.
     let names = parse_all(names, reporter)?;
 
-    let path = roots.disabled();
-    let mut disabled = Disabled::load(&path)?;
-    let set = list.set_in(&mut disabled);
+    let path = roots.disabled_path();
+    let mut disabled = DisabledItems::load(&path)?;
+    let set = disabled.list_mut(kind);
 
     let mut changed = false;
     let mut lines: Vec<String> = Vec::with_capacity(names.len());
     for name in &names {
         let mutated = apply(set, change, name);
         changed |= mutated;
-        lines.push(outcome(list, change, name, mutated));
+        lines.push(outcome(kind, change, name, mutated));
     }
 
     if changed {
@@ -102,7 +102,7 @@ fn parse_all(names: &[String], reporter: &Reporter) -> Result<Vec<ItemAddress>, 
     Ok(parsed)
 }
 
-/// Move one name, reporting whether the set actually changed.
+/// Enable or disable an address, returning whether the set changed.
 pub(crate) fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) -> bool {
     match change {
         Change::Disable => set.insert(name.clone()),
@@ -110,40 +110,13 @@ pub(crate) fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &Item
     }
 }
 
-/// The line describing what one name's mutation did.
-///
-/// One vocabulary for the two writers of this document: a bootstrap adds what
-/// asked for the change, and says the rest of it the same way these commands do.
-pub(crate) fn outcome(
-    list: DisabledList,
-    change: Change,
-    name: &ItemAddress,
-    changed: bool,
-) -> String {
-    let noun = list.noun();
+/// Format the outcome of enabling or disabling an action or group.
+pub(crate) fn outcome(kind: ItemKind, change: Change, name: &ItemAddress, changed: bool) -> String {
     match (change, changed) {
-        (Change::Disable, true) => format!("disabled {noun} `{name}`"),
-        (Change::Disable, false) => format!("{noun} `{name}` was already disabled"),
-        (Change::Enable, true) => format!("enabled {noun} `{name}` (was disabled)"),
-        (Change::Enable, false) => format!("{noun} `{name}` was already enabled"),
-    }
-}
-
-impl DisabledList {
-    /// The set this command edits.
-    pub fn set_in(self, disabled: &mut Disabled) -> &mut BTreeSet<ItemAddress> {
-        match self {
-            Self::Actions => &mut disabled.actions,
-            Self::Groups => &mut disabled.groups,
-        }
-    }
-
-    /// What one entry is called in the command's output.
-    pub fn noun(self) -> &'static str {
-        match self {
-            Self::Actions => "action",
-            Self::Groups => "group",
-        }
+        (Change::Disable, true) => format!("disabled {kind} `{name}`"),
+        (Change::Disable, false) => format!("{kind} `{name}` was already disabled"),
+        (Change::Enable, true) => format!("enabled {kind} `{name}` (was disabled)"),
+        (Change::Enable, false) => format!("{kind} `{name}` was already enabled"),
     }
 }
 
@@ -151,7 +124,7 @@ impl DisabledList {
 mod tests {
     use super::*;
 
-    fn parse(document: &str) -> Result<Disabled, toml::de::Error> {
+    fn parse(document: &str) -> Result<DisabledItems, toml::de::Error> {
         toml::from_str(document)
     }
 
@@ -163,8 +136,6 @@ mod tests {
         items.into_iter().map(id).collect()
     }
 
-    // The document.
-
     #[test]
     fn both_lists_parse() {
         let disabled =
@@ -175,7 +146,7 @@ mod tests {
 
     #[test]
     fn either_list_may_be_absent() {
-        assert_eq!(parse("").expect("empty"), Disabled::default());
+        assert_eq!(parse("").expect("empty"), DisabledItems::default());
         assert_eq!(
             parse("actions = ['p10k']\n").expect("actions only").groups,
             BTreeSet::new()
@@ -202,8 +173,6 @@ mod tests {
 
     #[test]
     fn a_malformed_entry_fails_the_document() {
-        // An entry that can never become live is not junk worth preserving, so
-        // it fails the load rather than being carried or silently dropped.
         let error = parse("groups = ['my group']\n").expect_err("spaces are not IDs");
         assert!(error.to_string().contains("`my group`"), "{error}");
     }
@@ -214,21 +183,18 @@ mod tests {
         assert_eq!(disabled.actions, set(["a.b.c.d.e", "core.zshrc"]));
     }
 
-    /// A path in a fresh directory, named the way the config directory would
-    /// name it.
+    /// Return a `disabled.toml` path under the temporary directory.
     fn path(dir: &tempfile::TempDir) -> std::path::PathBuf {
-        dir.path().join(Disabled::FILE_NAME)
+        dir.path().join(DisabledItems::FILE_NAME)
     }
 
     /// The document as it would be serialized; [`crate::tomlfile`] writes it.
-    fn written(disabled: &Disabled) -> String {
+    fn written(disabled: &DisabledItems) -> String {
         toml::to_string(disabled).expect("serialize")
     }
 
     #[test]
     fn the_written_document_is_sorted_and_deduplicated() {
-        // Declared out of order and repeated, so the canonical form is the
-        // record's doing rather than the input's.
         let disabled = parse("actions = ['zshrc', 'p10k', 'zshrc']\n").expect("parse");
         assert_eq!(
             written(&disabled),
@@ -238,12 +204,13 @@ mod tests {
 
     #[test]
     fn an_empty_set_still_leaves_a_canonical_document() {
-        // Both keys are written even when empty: an empty `disabled.toml` is
-        // kept rather than deleted, and it reads back as what it started as.
-        assert_eq!(written(&Disabled::default()), "actions = []\ngroups = []\n");
+        assert_eq!(
+            written(&DisabledItems::default()),
+            "actions = []\ngroups = []\n"
+        );
         assert_eq!(
             parse("actions = []\ngroups = []\n").expect("parse"),
-            Disabled::default()
+            DisabledItems::default()
         );
     }
 
@@ -251,8 +218,8 @@ mod tests {
     fn a_missing_file_disables_nothing() {
         let dir = tempfile::tempdir().expect("temp dir");
         assert_eq!(
-            Disabled::load(&path(&dir)).expect("absent is empty"),
-            Disabled::default()
+            DisabledItems::load(&path(&dir)).expect("absent is empty"),
+            DisabledItems::default()
         );
     }
 
@@ -262,10 +229,8 @@ mod tests {
         let disabled = parse("actions = ['p10k']\ngroups = ['gui']\n").expect("parse");
 
         disabled.save(&path(&dir)).expect("save");
-        assert_eq!(Disabled::load(&path(&dir)).expect("load"), disabled);
+        assert_eq!(DisabledItems::load(&path(&dir)).expect("load"), disabled);
     }
-
-    // The commands that edit it.
 
     fn quiet() -> Reporter {
         let mut reporter = Reporter::new(false);
@@ -311,9 +276,9 @@ mod tests {
 
     #[test]
     fn each_list_is_edited_on_its_own() {
-        let mut disabled = Disabled::default();
+        let mut disabled = DisabledItems::default();
         apply(
-            DisabledList::Groups.set_in(&mut disabled),
+            disabled.list_mut(ItemKind::Group),
             Change::Disable,
             &id("work"),
         );
@@ -324,7 +289,7 @@ mod tests {
     #[test]
     fn every_outcome_says_whether_the_state_moved() {
         let name = id("p10k");
-        let line = |change, changed| outcome(DisabledList::Actions, change, &name, changed);
+        let line = |change, changed| outcome(ItemKind::Action, change, &name, changed);
         assert_eq!(line(Change::Disable, true), "disabled action `p10k`");
         assert_eq!(
             line(Change::Disable, false),
@@ -343,7 +308,7 @@ mod tests {
     #[test]
     fn the_outcome_names_the_kind_the_command_edits() {
         assert_eq!(
-            outcome(DisabledList::Groups, Change::Disable, &id("work"), true),
+            outcome(ItemKind::Group, Change::Disable, &id("work"), true),
             "disabled group `work`"
         );
     }
@@ -359,8 +324,6 @@ mod tests {
 
     #[test]
     fn one_invalid_name_rejects_the_whole_invocation() {
-        // Syntax is the only rule here, and `src/item.rs` already tests it; what
-        // matters is that a bad argument stops the command before it writes.
         let names = ["p10k".to_owned(), "core..p10k".to_owned()];
         let error = parse_all(&names, &quiet()).expect_err("an empty segment is not an address");
         assert!(error.to_string().contains("`core..p10k`"), "{error}");

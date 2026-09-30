@@ -1,14 +1,6 @@
-//! `init`: lay the conventional leaf-repository skeleton into the current
-//! directory.
-//!
-//! The command resolves no roots. It works on the current directory alone, and
-//! the only home it consults is the invoking user's OS home — not the selected
-//! destination home — so that `init` in a fresh shell cannot turn `$HOME` itself
-//! into the dotfiles repository.
-//!
-//! Nothing existing is replaced. Every rule is checked before the first path is
-//! created, so a refused `init` leaves the directory exactly as it found it, and
-//! a path that already has the kind `init` wants is simply left alone.
+//! Initialize the conventional leaf-repository layout in the current directory. Reject the
+//! invoking user's OS home and validate existing paths before writing. Keep existing entries of
+//! the expected kind.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,9 +22,7 @@ const GITIGNORE: &str = ".gitignore";
 pub(crate) fn run(args: &InitArgs, reporter: &Reporter) -> Result<(), Error> {
     let dir = std::env::current_dir().map_err(|source| Error::WorkingDirectory { source })?;
 
-    // Validation is what protects a directory from being half-initialized:
-    // creation itself is not transactional, so everything that can be checked is
-    // checked before the first write.
+    // Validate before writing; layout creation is not transactional.
     let missing = validate(&dir, crate::location::detect_os_home)?;
     create(&dir, &missing)?;
 
@@ -44,7 +34,7 @@ pub(crate) fn run(args: &InitArgs, reporter: &Reporter) -> Result<(), Error> {
     warn_unignored_remotes(&dir, &missing, reporter);
 
     if !args.no_git_init {
-        reporter.info(if git::init_repository(&dir).map_err(Failure::from)? {
+        reporter.info(if git::init_repository(&dir).map_err(InitError::from)? {
             "initialized a Git repository"
         } else {
             "a Git repository already covers this directory"
@@ -55,10 +45,9 @@ pub(crate) fn run(args: &InitArgs, reporter: &Reporter) -> Result<(), Error> {
     Ok(())
 }
 
-/// One conventional path `init` lays down, read for validation, creation, and
-/// reporting.
+/// A file or directory in the initial repository layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Entry {
+enum SkeletonEntry {
     File {
         name: &'static str,
         content: &'static str,
@@ -68,41 +57,36 @@ enum Entry {
     },
 }
 
-/// The skeleton, in creation order, so a run interrupted by an I/O error leaves
-/// a predictable partial result.
-///
-/// `remotes/` is deliberately absent: it is generated, tool-owned
-/// materialization data, and should appear only once something materializes a
-/// remote. `.gitignore` excludes it instead.
-const SKELETON: [Entry; 4] = [
-    Entry::File {
+/// Initial repository entries in creation order. `remotes/` is created on materialization and
+/// excluded by `.gitignore`.
+const SKELETON: [SkeletonEntry; 4] = [
+    SkeletonEntry::File {
         name: Manifest::FILE_NAME,
         content: BATFILES_TOML,
     },
-    Entry::File {
+    SkeletonEntry::File {
         name: GITIGNORE,
         content: GITIGNORE_CONTENT,
     },
-    Entry::Directory { name: "bin" },
-    Entry::Directory { name: "files" },
+    SkeletonEntry::Directory { name: "bin" },
+    SkeletonEntry::Directory { name: "files" },
 ];
 
-impl Entry {
+impl SkeletonEntry {
     fn name(self) -> &'static str {
         match self {
             Self::File { name, .. } | Self::Directory { name } => name,
         }
     }
 
-    fn kind(self) -> Kind {
+    fn kind(self) -> SkeletonKind {
         match self {
-            Self::File { .. } => Kind::File,
-            Self::Directory { .. } => Kind::Directory,
+            Self::File { .. } => SkeletonKind::File,
+            Self::Directory { .. } => SkeletonKind::Directory,
         }
     }
 
-    /// How the entry is named in the report: a directory carries its trailing
-    /// slash so the two kinds are told apart at a glance.
+    /// Return the entry name, with a trailing slash for directories.
     fn label(self) -> String {
         match self {
             Self::File { name, .. } => name.to_owned(),
@@ -113,12 +97,12 @@ impl Entry {
 
 /// What a skeleton path must be when something already occupies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+enum SkeletonKind {
     File,
     Directory,
 }
 
-impl Kind {
+impl SkeletonKind {
     fn matches(self, metadata: &fs::Metadata) -> bool {
         match self {
             Self::File => metadata.is_file(),
@@ -134,25 +118,20 @@ impl Kind {
     }
 }
 
-/// Check every rule, and answer with the entries that still have to be created.
-///
-/// `os_home` supplies the invoking user's OS home, matching
-/// [`detect_os_home`](crate::location::detect_os_home)'s signature so tests can
-/// decide what the home is.
+/// Validate the target directory and return missing layout entries. `os_home` supplies the
+/// invoking user's OS home.
 fn validate(
     dir: &Path,
     os_home: impl FnOnce() -> Result<PathBuf, Error>,
-) -> Result<Vec<Entry>, Error> {
-    // Presence, not kind: anything named `batfiles.toml` — a directory or a
-    // dangling symlink included — means this directory already claims to be a
-    // batfiles repository, and `init` is not a repair path for one.
+) -> Result<Vec<SkeletonEntry>, Error> {
+    // Refuse any existing manifest node, including a directory or broken symlink.
     let manifest = dir.join(Manifest::FILE_NAME);
     if paths::occupied(&manifest)? {
-        return Err(Failure::AlreadyInitialized { path: manifest }.into());
+        return Err(InitError::AlreadyInitialized { path: manifest }.into());
     }
 
     if is_os_home(dir, os_home) {
-        return Err(Failure::HomeDirectory {
+        return Err(InitError::HomeDirectory {
             path: dir.to_path_buf(),
         }
         .into());
@@ -164,8 +143,8 @@ fn validate(
         match occupant(&path, entry.kind())? {
             Occupant::Absent => missing.push(entry),
             Occupant::Matching => {}
-            Occupant::Wrong => {
-                return Err(Failure::WrongKind {
+            Occupant::WrongKind => {
+                return Err(InitError::WrongKind {
                     path,
                     expected: entry.kind().describe(),
                 }
@@ -181,33 +160,23 @@ fn validate(
 enum Occupant {
     Absent,
     Matching,
-    Wrong,
+    WrongKind,
 }
 
-/// Classify what occupies `path`, if anything.
-///
-/// Symlinks are followed here, unlike the `batfiles.toml` check above: a
-/// `files -> /elsewhere` link pointing at a directory is a deliberate
-/// arrangement, and `init` neither replaces it nor writes through it. A link to
-/// the wrong kind, or one pointing at nothing, is a wrong kind like any other.
-fn occupant(path: &Path, kind: Kind) -> Result<Occupant, Error> {
+/// Classify `path` against the expected kind, following symlinks. Broken symlinks and targets
+/// of another kind are mismatches.
+fn occupant(path: &Path, kind: SkeletonKind) -> Result<Occupant, Error> {
     if !paths::occupied(path)? {
         return Ok(Occupant::Absent);
     }
     Ok(match fs::metadata(path) {
         Ok(metadata) if kind.matches(&metadata) => Occupant::Matching,
-        _ => Occupant::Wrong,
+        _ => Occupant::WrongKind,
     })
 }
 
-/// Whether `dir` is the invoking user's OS home directory.
-///
-/// The comparison is between canonical paths: `current_dir` is symlink-resolved
-/// on Unix while `$HOME` frequently is not, so the two only line up once both
-/// have been resolved.
-///
-/// A home that cannot be determined or canonicalized answers `false`: the
-/// check only refuses this one directory.
+/// Compare `dir` with the invoking user's OS home using canonical paths. Return `false` if the
+/// home cannot be determined or either path cannot be canonicalized.
 fn is_os_home(dir: &Path, os_home: impl FnOnce() -> Result<PathBuf, Error>) -> bool {
     let Ok(home) = os_home() else {
         return false;
@@ -219,7 +188,7 @@ fn is_os_home(dir: &Path, os_home: impl FnOnce() -> Result<PathBuf, Error>) -> b
 }
 
 /// Create the missing entries, in order.
-fn create(dir: &Path, missing: &[Entry]) -> Result<(), Error> {
+fn create(dir: &Path, missing: &[SkeletonEntry]) -> Result<(), Error> {
     for entry in missing {
         let path = dir.join(entry.name());
         let failed = |source| Error::Write {
@@ -227,38 +196,31 @@ fn create(dir: &Path, missing: &[Entry]) -> Result<(), Error> {
             source,
         };
         match entry {
-            Entry::Directory { .. } => fs::create_dir(&path).map_err(failed)?,
-            Entry::File { content, .. } => fs::write(&path, content).map_err(failed)?,
+            SkeletonEntry::Directory { .. } => fs::create_dir(&path).map_err(failed)?,
+            SkeletonEntry::File { content, .. } => fs::write(&path, content).map_err(failed)?,
         }
     }
     Ok(())
 }
 
-/// The line naming what was created. Pre-existing paths are not listed: `init`
-/// reports what it did, not what it found.
-fn created_line(missing: &[Entry]) -> String {
+/// Format a summary listing only newly created entries.
+fn created_line(missing: &[SkeletonEntry]) -> String {
     let names: Vec<String> = missing.iter().map(|entry| entry.label()).collect();
     format!("created {}", names.join(", "))
 }
 
-/// Warn when a `.gitignore` batfiles did not write leaves the tool-owned
-/// `remotes/` tree tracked.
-///
-/// The file is the user's, so this reports rather than edits; the match is only
-/// a heuristic.
-fn warn_unignored_remotes(dir: &Path, missing: &[Entry], reporter: &Reporter) {
+/// Warn if an existing `.gitignore` does not appear to exclude `remotes/`. Leave the file
+/// unchanged.
+fn warn_unignored_remotes(dir: &Path, missing: &[SkeletonEntry], reporter: &Reporter) {
     if missing.iter().any(|entry| entry.name() == GITIGNORE) {
         // Freshly written by `init`, so it already excludes the tree.
         return;
     }
     let Ok(document) = fs::read_to_string(dir.join(GITIGNORE)) else {
-        // An unreadable `.gitignore` earns no diagnostic of its own: nothing
-        // here depends on reading it.
+        // An unreadable ignore file does not block initialization.
         return;
     };
     if !ignores_remotes(&document) {
-        // The bare name, unlike the initialized directory reported above: a
-        // `.gitignore` is understood relative to the repository root.
         reporter.warn(&format!(
             "{GITIGNORE} does not ignore the tool-owned `{tree}/` tree; consider adding \
              `/{tree}/` to it",
@@ -267,12 +229,8 @@ fn warn_unignored_remotes(dir: &Path, missing: &[Entry], reporter: &Reporter) {
     }
 }
 
-/// Whether an exclusion list appears to cover the generated `remotes/` tree.
-///
-/// A deliberately loose substring match on the bare name, so `/remotes`,
-/// `remotes/`, and `dotfiles/remotes/**` all count. This only decides whether to
-/// emit a warning, and a false negative — nagging someone who already excluded
-/// the tree — is the worse of the two errors.
+/// Return whether any line contains `remotes`. This is a warning heuristic, not a Git pattern
+/// parser.
 fn ignores_remotes(document: &str) -> bool {
     document
         .lines()
@@ -282,7 +240,7 @@ fn ignores_remotes(document: &str) -> bool {
 /// `init`'s own failures. Filesystem failures use the crate's shared read and
 /// write errors.
 #[derive(Debug, ThisError)]
-pub(crate) enum Failure {
+pub(crate) enum InitError {
     /// Something named `batfiles.toml` is already here.
     #[error("{} already exists; this is already a batfiles repository", .path.display())]
     AlreadyInitialized { path: PathBuf },
@@ -294,8 +252,8 @@ pub(crate) enum Failure {
     )]
     HomeDirectory { path: PathBuf },
 
-    /// A skeleton path exists as the wrong kind of filesystem node. Carries the
-    /// kind it should have had, already phrased for the message.
+    /// An existing layout path has the wrong filesystem kind; `expected` describes the required
+    /// kind.
     #[error(
         "{} exists and is not {expected}, which `init` needs it to be",
         .path.display()
@@ -310,14 +268,11 @@ pub(crate) enum Failure {
     #[error("{source} (use `--no-git-init` to skip Git initialization)")]
     Git {
         #[from]
-        source: git::Failure,
+        source: git::GitError,
     },
 }
 
-/// The starter manifest: a valid document that installs nothing, with one
-/// commented sample per conventional directory so neither is left unexplained,
-/// and one carrying a condition so that machine-dependent installation is
-/// discoverable from the file itself.
+/// An empty starter manifest with commented action and condition examples.
 const BATFILES_TOML: &str = r#"# Batfiles configuration.
 #
 # Uncomment and adjust the examples as you add files to this repository.
@@ -354,11 +309,7 @@ const BATFILES_TOML: &str = r#"# Batfiles configuration.
 # when = "profile == 'work'"
 "#;
 
-/// `remotes/` is materialization output, regenerated from the manifest, so it
-/// does not belong in history.
-///
-/// Spells out [`remotes::DIRECTORY`], since `concat!` cannot take a const path;
-/// a unit test keeps the two equal.
+/// Initial `.gitignore` contents excluding generated remote materializations.
 const GITIGNORE_CONTENT: &str = "/remotes/\n";
 
 #[cfg(test)]
@@ -379,7 +330,7 @@ mod tests {
         tempfile::tempdir().expect("temp dir")
     }
 
-    fn names(entries: &[Entry]) -> Vec<&'static str> {
+    fn names(entries: &[SkeletonEntry]) -> Vec<&'static str> {
         entries.iter().map(|entry| entry.name()).collect()
     }
 
@@ -415,7 +366,7 @@ mod tests {
 
             let error = validate(dir.path(), os_home).expect_err("already a repository");
             assert!(
-                matches!(error, Error::Init(Failure::AlreadyInitialized { .. })),
+                matches!(error, Error::Init(InitError::AlreadyInitialized { .. })),
                 "unexpected error: {error}"
             );
             assert!(error.to_string().contains(Manifest::FILE_NAME), "{error}");
@@ -439,7 +390,7 @@ mod tests {
         let home = || Ok(dir.path().to_path_buf());
         let error = validate(dir.path(), home).expect_err("the home directory");
         assert!(
-            matches!(error, Error::Init(Failure::HomeDirectory { .. })),
+            matches!(error, Error::Init(InitError::HomeDirectory { .. })),
             "unexpected error: {error}"
         );
     }
@@ -452,8 +403,6 @@ mod tests {
 
     #[test]
     fn a_home_that_does_not_exist_skips_the_check() {
-        // Canonicalizing a `$HOME` pointing at nothing fails, which is not an
-        // answer of "this is the home directory".
         let dir = temp();
         let absent = dir.path().join("absent");
         assert!(!is_os_home(dir.path(), || Ok(absent)));
@@ -462,8 +411,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_symlinked_home_still_matches_the_current_directory() {
-        // The case the canonicalization exists for: `$HOME` reached through a
-        // symlink, which `current_dir` would have already resolved.
         let dir = temp();
         let home = dir.path().join("home");
         fs::create_dir(&home).expect("fixture");
@@ -480,28 +427,27 @@ mod tests {
         let target = dir.path().join("elsewhere");
         fs::create_dir(&target).expect("fixture");
         std::os::unix::fs::symlink(&target, dir.path().join("files")).expect("fixture");
-        // A link to nothing resolves to nothing, which is not a directory.
         std::os::unix::fs::symlink(dir.path().join("nowhere"), dir.path().join("bin"))
             .expect("fixture");
 
         assert_eq!(
-            occupant(&dir.path().join("files"), Kind::Directory).expect("inspect"),
+            occupant(&dir.path().join("files"), SkeletonKind::Directory).expect("inspect"),
             Occupant::Matching
         );
         assert_eq!(
-            occupant(&dir.path().join("bin"), Kind::Directory).expect("inspect"),
-            Occupant::Wrong
+            occupant(&dir.path().join("bin"), SkeletonKind::Directory).expect("inspect"),
+            Occupant::WrongKind
         );
     }
 
     #[test]
     fn the_report_marks_directories_and_lists_only_new_paths() {
         let created = [
-            Entry::File {
+            SkeletonEntry::File {
                 name: Manifest::FILE_NAME,
                 content: "",
             },
-            Entry::Directory { name: "bin" },
+            SkeletonEntry::Directory { name: "bin" },
         ];
         assert_eq!(created_line(&created), "created batfiles.toml, bin/");
     }
@@ -511,10 +457,7 @@ mod tests {
         assert!(ignores_remotes("/remotes/\n"));
         assert!(ignores_remotes("*.swp\nremotes/\n"));
         assert!(ignores_remotes("dotfiles/remotes/**\n"));
-        // Both slashless spellings are real rules that cover the tree: a
-        // gitignore pattern containing no slash matches an entry of that name at
-        // any depth, directories included. Matching on `remotes/` would nag the
-        // user who had written either of these.
+        // Slashless ignore patterns also cover the remotes directory.
         assert!(ignores_remotes("/remotes\n"));
         assert!(ignores_remotes("remotes\n"));
 
@@ -530,8 +473,6 @@ mod tests {
 
     #[test]
     fn the_starter_manifest_declares_nothing_at_all() {
-        // Every sample is commented out. A CLI test covers loading and
-        // validation.
         let manifest: Manifest =
             toml::from_str(BATFILES_TOML).expect("the starter manifest should parse");
         assert!(manifest.actions.is_empty());
@@ -541,14 +482,14 @@ mod tests {
 
     #[test]
     fn every_git_failure_points_at_the_flag_that_avoids_git() {
-        let unavailable = Failure::from(git::Failure::Unavailable {
+        let unavailable = InitError::from(git::GitError::Unavailable {
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
         });
         let message = unavailable.to_string();
         assert!(message.contains("--no-git-init"), "{message}");
         assert!(message.contains("could not run git"), "{message}");
 
-        let failed = Failure::from(git::Failure::Failed {
+        let failed = InitError::from(git::GitError::Failed {
             command: "init",
             path: PathBuf::from("/repo"),
             message: "fatal: cannot mkdir".to_owned(),

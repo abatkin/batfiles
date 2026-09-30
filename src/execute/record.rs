@@ -1,5 +1,4 @@
-//! The run's list: each record's action, addresses, heading, and what this run
-//! does with it, with each inclusion owning the records it contributed.
+//! Run records with their addresses, report headings, dispositions, and included children.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -13,14 +12,11 @@ use crate::output::Reporter;
 use crate::selection::{Selection, Subject};
 use crate::var_set::VarSet;
 
-/// One record in the run's list: an action, its addresses, its report heading,
-/// and what this run does with it.
+/// An action's declaration, addresses, report heading, and disposition for this run.
 pub(crate) struct RunRecord {
     pub action: Action,
-    /// The address the record's `id` answers to. `None` for a record without an
-    /// `id` or one from an inclusion without an `id`. A contributed record's
-    /// address is always qualified, so an unqualified `zshrc` reaches only the
-    /// leaf's record.
+    /// The action address, qualified for included records. `None` if the record or its
+    /// inclusion has no ID.
     pub address: Option<ItemAddress>,
     /// The address of the record's `group`, qualified the same way.
     pub group_address: Option<ItemAddress>,
@@ -42,10 +38,8 @@ impl RunRecord {
     }
 
     fn new(action: Action, number: usize, by: Contributor<'_>) -> Self {
-        // A record from an inclusion without an `id` has no address: there is no
-        // qualifier to match, and an unqualified address means the leaf's
-        // record. Its heading names the inclusion instead. Addresses and heading
-        // use the same qualifier.
+        // Unnamed inclusions have no qualifier; assigning unqualified addresses would collide
+        // with leaf records.
         let qualifier = by.qualifier();
         let addressed = qualifier.is_some() || matches!(by, Contributor::Leaf);
         let qualify = |id: Option<&ItemId>| {
@@ -59,7 +53,7 @@ impl RunRecord {
             action,
             address,
             group_address,
-            disposition: Disposition::Unwanted,
+            disposition: Disposition::NotRequested,
         }
     }
 
@@ -75,35 +69,31 @@ impl RunRecord {
 
 /// What this run does with one record.
 pub(super) enum Disposition {
-    /// Not requested by the command. Kept in the list so a skip naming it is not
-    /// reported as matching nothing.
-    Unwanted,
+    /// Not requested by the command; still available for skip matching.
+    NotRequested,
     /// Requested, and excluded for this reason.
     Excluded(Exclusion),
-    /// Requested, and executed.
-    Run,
+    /// Requested and not excluded.
+    Allowed,
 }
 
 /// One record of the leaf manifest, in declaration order.
-pub(super) enum Node {
+pub(super) enum LeafEntry {
     /// Any record but an inclusion.
     Action(RunRecord),
-    /// An `include-remote`. `record`'s disposition says whether the run
-    /// requested and admitted it. `opened` is `None` when the manifest was not
-    /// read: the inclusion was not requested, was excluded, or was admitted with
-    /// no materialization, which leaves the plan partial.
+    /// An inclusion and its contributed records. `opened` is `None` if it was unrequested,
+    /// excluded, or lacked a materialization.
     Inclusion {
         record: RunRecord,
         inclusion: Inclusion,
-        opened: Option<Opened>,
+        opened: Option<OpenedInclusion>,
     },
 }
 
 /// What an admitted inclusion read out of its remote's manifest.
-pub(super) struct Opened {
-    /// The scope its records and their clone lists' entries are decided in:
-    /// [derived](crate::var_set::VarSet::with_inclusion) for the inclusion, or
-    /// the run's set where neither it nor its remote declared variables.
+pub(super) struct OpenedInclusion {
+    /// Variable scope for included records and their clone-list entries. Derived for the
+    /// inclusion, or shared with the run when neither inclusion nor remote declares variables.
     pub scope: Rc<VarSet>,
     /// Every record the manifest declared, in its order, including those the
     /// inclusion's filters left out. Never an inclusion.
@@ -112,7 +102,7 @@ pub(super) struct Opened {
 
 /// The run's list, and what reports need to know about its assembly.
 pub(crate) struct RunList {
-    pub(super) nodes: Vec<Node>,
+    pub(super) entries: Vec<LeafEntry>,
     /// Whether the target named a record in the list. An inclusion opened only
     /// to reach inside it does not count.
     pub(super) target_found: bool,
@@ -122,29 +112,28 @@ impl RunList {
     /// Every record the run knows of in declaration order: each leaf record,
     /// followed, for an opened inclusion, by the records it contributed.
     pub fn records(&self) -> impl Iterator<Item = &RunRecord> {
-        self.nodes.iter().flat_map(|node| {
-            let (record, opened) = match node {
-                Node::Action(record) => (record, None),
-                Node::Inclusion { record, opened, .. } => (record, opened.as_ref()),
+        self.entries.iter().flat_map(|entry| {
+            let (record, opened) = match entry {
+                LeafEntry::Action(record) => (record, None),
+                LeafEntry::Inclusion { record, opened, .. } => (record, opened.as_ref()),
             };
             std::iter::once(record).chain(opened.into_iter().flat_map(|it| &it.records))
         })
     }
 
-    /// The ID of each inclusion whose manifest this run did not read, and why.
-    /// Nothing inside one was listed, so no address qualified by its ID can be
-    /// told to match nothing.
+    /// Iterate unread inclusion IDs and their reasons. Qualified addresses inside them cannot
+    /// be classified as unmatched.
     pub fn unread_inclusions(&self) -> impl Iterator<Item = (&ItemId, Unread<'_>)> {
-        self.nodes.iter().filter_map(|node| match node {
-            Node::Inclusion {
+        self.entries.iter().filter_map(|entry| match entry {
+            LeafEntry::Inclusion {
                 record,
                 inclusion,
                 opened: None,
             } => {
                 let unread = match &record.disposition {
-                    Disposition::Unwanted => Unread::NotRequested,
+                    Disposition::NotRequested => Unread::NotRequested,
                     Disposition::Excluded(exclusion) => Unread::Excluded(exclusion),
-                    Disposition::Run => Unread::NotMaterialized(inclusion.remote()),
+                    Disposition::Allowed => Unread::NotMaterialized(inclusion.remote()),
                 };
                 Some((inclusion.id()?, unread))
             }
@@ -167,12 +156,16 @@ impl RunList {
         );
     }
 
-    /// The error for a target that named nothing listed here, read from
-    /// `manifest`, or `None` where it named something or asked for everything.
-    pub fn unresolved(&self, selection: &Selection<'_>, manifest: PathBuf) -> Option<Error> {
+    /// Return an error if the selection's target matched no record, or `None` if it matched or
+    /// selected everything. Diagnostics identify `manifest` or an unread inclusion.
+    pub fn unmatched_target_error(
+        &self,
+        selection: &Selection<'_>,
+        manifest: PathBuf,
+    ) -> Option<Error> {
         if self.target_found {
             return None;
         }
-        selection.unresolved(manifest, self.unread_inclusions())
+        selection.unmatched_target_error(manifest, self.unread_inclusions())
     }
 }

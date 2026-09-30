@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use super::inclusion::{IncludedAction, InclusionContents, compose, not_selected};
-use super::record::{Disposition, Node, Opened, RunList, RunRecord};
+use super::inclusion::{IncludedRecord, InclusionContents, compose, not_selected};
+use super::record::{Disposition, LeafEntry, OpenedInclusion, RunList, RunRecord};
 use crate::action::RunContext;
 use crate::condition::{Bindings, HostNamespaces};
 use crate::dynamic::{DynamicVarResolver, ManifestSource};
@@ -17,31 +17,24 @@ use crate::selection::Selection;
 use crate::var::VarName;
 use crate::var_set::{VarSet, VarValue};
 
-/// Build the run's list from the leaf's actions, expanding each inclusion the
-/// run reaches, and set every record's disposition.
+/// Assemble and select run records, expanding only admitted inclusions. Invalid targets,
+/// unreadable included manifests, and cache read failures return errors before any action
+/// executes.
 ///
-/// Expansion and selection share one pass: an inclusion is opened only if the
-/// selection admits it, and the records it contributes are then selected like
-/// any other. An unreadable inclusion manifest, or a target naming a record the
-/// command cannot run, fails here, before any action runs.
-///
-/// `context` must hold this command's materializations. `variables` is the
-/// run's set, used for every record except those an opened inclusion
-/// contributed, which are decided in its [scope](Opened::scope); `host` backs
-/// each scope's bindings. `dynamic` resolves the declarations of each manifest
-/// an inclusion opens, in that remote's materialization; an unreadable cache
-/// fails here.
+/// `context` must contain this command's materializations. Leaf records use `run_scope`;
+/// included records use a scope derived from it. `host` supplies captured host inputs, and
+/// `dynamic` resolves each opened manifest's dynamic variables.
 pub(super) fn assemble(
     actions: Vec<Action>,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
-    variables: &Rc<VarSet>,
+    run_scope: &Rc<VarSet>,
     host: &HostNamespaces,
     dynamic: &mut DynamicVarResolver<'_>,
 ) -> Result<RunList, Error> {
-    let bindings = Bindings::new(variables, host);
+    let bindings = Bindings::new(run_scope, host);
     let mut run_list = RunList {
-        nodes: Vec::with_capacity(actions.len()),
+        entries: Vec::with_capacity(actions.len()),
         target_found: false,
     };
 
@@ -49,8 +42,6 @@ pub(super) fn assemble(
         let mut record = RunRecord::leaf(action, index + 1);
 
         let target_names_record = match_and_record_target(&mut run_list, &record, selection);
-        // A target naming a record the command cannot run is an invocation
-        // error, raised before anything is prepared or run.
         if target_names_record && let Some(error) = selection.refusal(&record.action) {
             return Err(error);
         }
@@ -59,14 +50,11 @@ pub(super) fn assemble(
             if target_names_record {
                 record.disposition = disposition(&record, selection, &bindings);
             }
-            run_list.nodes.push(Node::Action(record));
+            run_list.entries.push(LeafEntry::Action(record));
             continue;
         };
         let inclusion = Inclusion::at(declaration, index + 1);
-        // Whether the run intends to read the inclusion's manifest; an exclusion
-        // or a missing materialization can still leave it unread. A target
-        // inside it, like `apply-action --id corp.zshrc`, opens it without
-        // naming the inclusion, and so without waiving its exclusions.
+        // A qualified target opens its inclusion without bypassing the inclusion's exclusions.
         let should_open_inclusion = target_names_record || selection.reaches_into(inclusion.id());
         if should_open_inclusion {
             let remote_exclusion = context.excluded_remote(inclusion.remote());
@@ -74,17 +62,13 @@ pub(super) fn assemble(
                 inclusion.exclusion(record.subject(), selection, &bindings, remote_exclusion);
             record.disposition = match exclusion {
                 Some(exclusion) => Disposition::Excluded(exclusion),
-                None => Disposition::Run,
+                None => Disposition::Allowed,
             };
         }
-        // Unread when not requested, excluded, or not materialized.
         let included = match record.disposition {
-            Disposition::Run => {
+            Disposition::Allowed => {
                 let included = inclusion.manifest(context.repository().path())?;
                 if included.is_none() {
-                    // An action sourcing from an absent materialization is
-                    // refused; a missing inclusion only warns, and the run
-                    // continues with a partial plan.
                     inclusion::warn_not_materialized(
                         inclusion.remote(),
                         &context.materialization(inclusion.remote()),
@@ -96,7 +80,7 @@ pub(super) fn assemble(
             _ => None,
         };
         let Some(included) = included else {
-            run_list.nodes.push(Node::Inclusion {
+            run_list.entries.push(LeafEntry::Inclusion {
                 record,
                 inclusion,
                 opened: None,
@@ -105,42 +89,37 @@ pub(super) fn assemble(
         };
         let InclusionContents {
             vars: remote_vars,
-            actions: included_actions,
+            records: included_records,
         } = compose(&inclusion, declaration, included, context.reporter());
-        // Resolved only for an opened inclusion, once its gates have been
-        // decided in the leaf's scope.
+        // Resolve remote variables only after the inclusion's gate passes in the leaf scope.
         let tree = context.materialization(inclusion.remote());
         let source = ManifestSource {
             remote: Some(inclusion.remote()),
             root: &tree,
         };
         let remote_vars = dynamic.layer(&remote_vars, &source, &BTreeMap::new())?;
-        // Derived, and reported, only for an opened inclusion.
         let scope = inclusion_scope(
             &remote_vars,
             &declaration.vars,
             inclusion.label(),
-            variables,
+            run_scope,
             context.reporter(),
         );
         let scoped = Bindings::new(&scope, host);
 
-        let mut records = Vec::with_capacity(included_actions.len());
-        for IncludedAction {
+        let mut records = Vec::with_capacity(included_records.len());
+        for IncludedRecord {
             number,
             action,
             included_by_filter,
-        } in included_actions
+        } in included_records
         {
             let mut contributed = RunRecord::contributed(action, number, inclusion.contributor());
-            // Targeting the inclusion targets every record it contributed; a
-            // qualified address targets one.
             let target_names_contributed =
                 match_and_record_target(&mut run_list, &contributed, selection);
             if target_names_record || target_names_contributed {
-                // The inclusion's filters come first and bypass the selection,
-                // so no command waives them. A filtered-out record's condition
-                // is never evaluated.
+                // Inclusion filters cannot be waived and must suppress condition evaluation for
+                // rejected records.
                 contributed.disposition = if included_by_filter {
                     disposition(&contributed, selection, &scoped)
                 } else {
@@ -149,10 +128,10 @@ pub(super) fn assemble(
             }
             records.push(contributed);
         }
-        run_list.nodes.push(Node::Inclusion {
+        run_list.entries.push(LeafEntry::Inclusion {
             record,
             inclusion,
-            opened: Some(Opened { scope, records }),
+            opened: Some(OpenedInclusion { scope, records }),
         });
     }
 
@@ -171,7 +150,7 @@ fn match_and_record_target(
     named
 }
 
-/// The disposition of a requested record: its first exclusion, or `Run`.
+/// The disposition of a requested record: its first exclusion, or `Allowed`.
 fn disposition(
     record: &RunRecord,
     selection: &Selection<'_>,
@@ -179,7 +158,7 @@ fn disposition(
 ) -> Disposition {
     match selection.exclusion(record.subject(), bindings) {
         Some(exclusion) => Disposition::Excluded(exclusion),
-        None => Disposition::Run,
+        None => Disposition::Allowed,
     }
 }
 
@@ -195,7 +174,6 @@ fn inclusion_scope(
     run: &Rc<VarSet>,
     reporter: &Reporter,
 ) -> Rc<VarSet> {
-    // Empty layers change nothing.
     if remote.is_empty() && overrides.is_empty() {
         return Rc::clone(run);
     }

@@ -1,4 +1,4 @@
-//! `symlink` and `symlink-dir`: the same link, made once or once per child.
+//! `symlink` and `symlink-dir`: link a source node or each of its direct children.
 
 use std::fs;
 use std::path::Path;
@@ -14,14 +14,14 @@ use crate::item::ItemId;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
 use crate::output::Verb;
 use crate::paths::{self, Occupancy};
-use crate::replace::Resolution;
+use crate::replace::ConflictDecision;
 
 #[cfg(not(unix))]
 fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
     Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
-/// Carry out one `symlink` action: the whole of it is one link.
+/// Create or repair the symlink declared by one `symlink` action.
 pub(super) fn link(
     action: &SymlinkAction,
     remote: Option<&ItemId>,
@@ -89,7 +89,7 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
             }
             reporter.info(&format!(
                 "{} {} -> {} (was {})",
-                Verb::Relink.say(mode),
+                Verb::Relink.for_mode(mode),
                 dest.display(),
                 target.display(),
                 written.display()
@@ -97,7 +97,7 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
         }
         Occupancy::Vacant => {
             paths::refuse_destination_inside_source(target, dest)?;
-            // After that, so a doomed action makes no directories on its way.
+            // Resolve the conflict before creating parent directories.
             if !directory::create_parents(dest, &resolver)? {
                 return Ok(());
             }
@@ -110,14 +110,14 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
             paths::refuse_destination_inside_source(target, dest)?;
             paths::refuse_setting_aside_a_source(target, dest)?;
             match resolver.resolve(dest, &found)? {
-                Resolution::Refuse => {
+                ConflictDecision::Refuse => {
                     return Err(Error::DestinationExists {
                         path: dest.to_path_buf(),
                         found,
                     });
                 }
-                Resolution::Skip => {}
-                Resolution::Replace(keep) => {
+                ConflictDecision::Skip => {}
+                ConflictDecision::Replace(keep) => {
                     resolver.replace(dest, keep, || {
                         if mode.writes() {
                             create(target, dest)?;
@@ -132,12 +132,11 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
     Ok(())
 }
 
-/// Say that a link was made where nothing was, or where something was set
-/// aside.
+/// Report a symlink creation or planned creation.
 fn report_link(target: &Path, dest: &Path, context: &RunContext) {
     context.reporter().info(&format!(
         "{} {} -> {}",
-        Verb::Link.say(context.mode()),
+        Verb::Link.for_mode(context.mode()),
         dest.display(),
         target.display()
     ));

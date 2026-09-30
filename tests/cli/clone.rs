@@ -1,11 +1,4 @@
-//! `clone`: bringing a leaf repository onto a machine that has none, and
-//! synchronizing it in the same command.
-//!
-//! Every test clones from a local bare repository (`architecture.md`, "Test
-//! environments"). The repositories are published inline rather than copied
-//! from `tests/fixtures/`, because what a leaf here has to name -- the origin it
-//! was cloned from, the remote it composes -- is a temporary directory no
-//! committed file can spell.
+//! CLI tests for cloning and synchronizing a leaf repository from local bare origins.
 
 use std::fs;
 
@@ -13,12 +6,10 @@ use assert_cmd::Command;
 
 use crate::support::*;
 
-/// What the installed file holds, so a destination can be checked for the
-/// content the clone brought rather than only for existing.
+/// Expected contents of the cloned fixture's installed file.
 const GITCONFIG: &str = "[user]\n\tname = cloned\n";
 
-/// A repository worth cloning: the file to install and the manifest declaring
-/// it.
+/// Publish the supplied manifest and a seed file to a local bare repository.
 fn origin_with(manifest: &str) -> BareRepo {
     let origin = BareRepo::new();
     origin.publish("files/gitconfig", GITCONFIG, "a file to install");
@@ -39,8 +30,7 @@ fn cloning(tree: &Tree, origin: &BareRepo) -> Command {
     command
 }
 
-/// The same, with nothing naming a repository at all, so the destination is
-/// whatever `clone` decides on its own.
+/// Build a clone command with no explicit repository destination.
 fn cloning_unselected(tree: &Tree, origin: &BareRepo) -> Command {
     let mut command = cloning(tree, origin);
     command.env_remove("BATFILES_DIR");
@@ -60,8 +50,6 @@ fn a_repository_is_cloned_and_installed_in_one_command() {
         fs::read_to_string(repo.join("batfiles.toml")).expect("the cloned manifest"),
         one_copy("files/gitconfig", "~/.gitconfig")
     );
-    // The synchronization is the point: the file is in the home, not merely in
-    // the repository that declares it.
     assert_eq!(
         fs::read_to_string(tree.home(".gitconfig")).expect("the installed file"),
         GITCONFIG
@@ -96,9 +84,6 @@ fn the_default_destination_is_dotfiles_under_the_selected_home() {
 
 #[test]
 fn a_manifest_in_the_working_directory_selects_nothing() {
-    // The one way `clone` resolves its destination differently from every other
-    // repository command: a manifest in the working directory is what selects a
-    // repository to *read*, and this command is creating one.
     let tree = Tree::roots();
     let origin = origin();
     let working = tree.repository("working");
@@ -147,10 +132,7 @@ fn an_occupied_destination_is_refused_before_anything_is_cloned() {
     }
 }
 
-/// What can be at a destination that `clone` creates for itself. An empty
-/// directory is the interesting one: `git clone` would accept it, and batfiles
-/// refuses it, because a directory batfiles did not create is not one it will
-/// write a repository into.
+/// Occupied destination kinds that the clone command must refuse, including empty directories.
 #[derive(Debug, Clone, Copy)]
 enum Occupant {
     EmptyDirectory,
@@ -181,8 +163,6 @@ impl Occupant {
 #[test]
 fn a_git_repository_that_is_not_a_batfiles_one_is_named_as_such() {
     let tree = Tree::roots();
-    // `BareRepo::new` publishes a README and nothing else, which is every
-    // repository on the internet that is not this kind of repository.
     let origin = BareRepo::new();
 
     let assertion = cloning(&tree, &origin).assert().failure().code(1);
@@ -191,8 +171,6 @@ fn a_git_repository_that_is_not_a_batfiles_one_is_named_as_such() {
     for expected in ["batfiles.toml", "not a batfiles one"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
     }
-    // The clone is kept, so the diagnostic can be checked against what actually
-    // arrived rather than downloaded again to be looked at.
     assert!(
         tree.path("repo").join("README.md").is_file(),
         "the clone was removed"
@@ -273,8 +251,6 @@ when = "profile == 'work'"
 
 #[test]
 fn a_cloned_leaf_materializes_the_remotes_it_composes() {
-    // The bootstrap story end to end: one command turns a URL into a machine
-    // whose home holds what a remote the leaf never contained declares.
     let tree = Tree::roots();
     let core = BareRepo::new();
     core.publish(

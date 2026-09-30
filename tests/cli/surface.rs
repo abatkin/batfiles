@@ -88,9 +88,6 @@ fn a_valid_batfiles_color_is_quiet() {
         .stderr("");
 }
 
-// The next three cases cover output that clap produces itself, which is
-// rendered before there is a parsed command to consult.
-
 #[test]
 fn an_invalid_batfiles_color_warns_even_when_clap_handles_the_arguments() {
     for args in [vec!["--version"], vec!["--help"], vec!["not-a-command"]] {
@@ -134,8 +131,6 @@ fn color_never_applies_to_a_clap_usage_error() {
 
 #[test]
 fn an_invalid_var_key_fails_before_any_file_is_read() {
-    // No repository at all, so anything that got as far as reading one would
-    // say so. The control below is what makes that assertion mean something.
     let tree = Tree::roots();
 
     let assertion = tree
@@ -156,9 +151,6 @@ fn an_invalid_var_key_fails_before_any_file_is_read() {
 
 #[test]
 fn the_same_run_without_the_var_does_read_the_repository() {
-    // The control for the case above: the missing manifest is reported when
-    // nothing stops the run before it, and it fails at 1 rather than 2 because
-    // the command did start work.
     let tree = Tree::roots();
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
     let stderr = stderr_of(&assertion);
@@ -167,8 +159,6 @@ fn the_same_run_without_the_var_does_read_the_repository() {
         "unexpected stderr:\n{stderr}"
     );
 }
-
-// Batfiles' own diagnostics, as opposed to the ones clap renders.
 
 #[test]
 fn an_error_is_labeled() {
@@ -203,8 +193,6 @@ fn color_always_colors_the_label_of_an_error_batfiles_raised() {
 
 #[test]
 fn an_invalid_batfiles_color_is_not_reported_when_the_option_settled_it() {
-    // Precedence stops at the first input that answers, so a value the
-    // resolution never consulted is never validated either.
     batfiles()
         .env("BATFILES_COLOR", "sometimes")
         .args(["--color", "never", "version"])

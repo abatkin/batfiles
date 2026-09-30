@@ -4,7 +4,7 @@
 
 use clap::Subcommand;
 
-use crate::dynamic::VarIdentity;
+use crate::dynamic::DynamicVarKey;
 use crate::item::ItemId;
 use crate::var::VarName;
 
@@ -35,14 +35,13 @@ pub(crate) enum VarsCommand {
         /// A leaf variable, or `<remote-id>.<name>`; every one in play when
         /// omitted
         #[arg(value_name = "KEY", value_parser = parse_key)]
-        keys: Vec<VarIdentity>,
+        keys: Vec<DynamicVarKey>,
     },
 }
 
-/// Parse a key: a leaf variable's name, or a remote's ID and the name it
-/// declares, joined by the first `.`. Checked here, so a malformed key is a
-/// usage error before any root is resolved.
-fn parse_key(raw: &str) -> Result<VarIdentity, String> {
+/// Parse a leaf variable name or `<remote-id>.<name>`, splitting at the first `.`. Invalid
+/// names return a usage-error message.
+fn parse_key(raw: &str) -> Result<DynamicVarKey, String> {
     let (remote, name) = match raw.split_once('.') {
         Some((remote, name)) => (
             Some(ItemId::try_from(remote.to_owned()).map_err(|error| error.to_string())?),
@@ -52,7 +51,7 @@ fn parse_key(raw: &str) -> Result<VarIdentity, String> {
     };
     let name = VarName::try_from(name.to_owned())
         .map_err(|error| format!("`{name}` is not a valid variable name: {error}"))?;
-    Ok(VarIdentity { remote, name })
+    Ok(DynamicVarKey { remote, name })
 }
 
 #[cfg(test)]

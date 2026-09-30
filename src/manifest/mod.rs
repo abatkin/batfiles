@@ -1,4 +1,4 @@
-//! `batfiles.toml`: the one file in a repository with intrinsic meaning.
+//! Parse and validate `batfiles.toml` manifests.
 
 pub(crate) mod action;
 pub(crate) mod check;
@@ -22,18 +22,11 @@ use crate::manifest::vars::VarSpec;
 use crate::tomlfile;
 use crate::var::VarName;
 
-/// Re-exported as `manifest::Invalid`, matching
-/// [`clone_list::Invalid`](crate::clone_list::Invalid) and
-/// [`archive::Invalid`](crate::archive::Invalid).
-pub(crate) use crate::manifest::check::Invalid;
+pub(crate) use crate::manifest::check::ManifestError;
 
-/// Which repository's manifest is being read.
-///
-/// Because [inclusion is one level
-/// deep](../../docs/repoformat.md#what-an-included-action-may-not-write), an
-/// included manifest's actions may not source from a remote, its
-/// `include-remote`s need not name a declared remote, and its `[remotes]` are
-/// ignored rather than checked. All other rules are the same.
+/// Manifest validation context. Included manifests cannot source from remotes; their nested
+/// inclusions need not reference declared remotes, and their `[remotes]` declarations are
+/// ignored.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ReadAs {
     /// The repository batfiles was pointed at.
@@ -47,26 +40,20 @@ pub(crate) enum ReadAs {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct Manifest {
-    /// Declared repositories, keyed by ID. Sync materializes non-excluded
-    /// declarations in ID order, whether or not an action references them.
+    /// Remote declarations keyed by ID. Sync materializes admitted remotes in ID order,
+    /// including unreferenced ones.
     #[serde(default)]
     pub remotes: BTreeMap<ItemId, Remote>,
 
-    /// The ordered action list. Order is significant, so this is the one
-    /// section that is a sequence rather than a map.
+    /// Actions in execution order.
     #[serde(default)]
     pub actions: Vec<Action>,
 
-    /// Variable values and dynamic declarations, keyed by name. Serde rejects
-    /// invalid names, values that are neither a string nor a declaration, and
-    /// malformed declarations as the document is read. The lowest layer of the
-    /// run's own [variable set](crate::var_set).
+    /// Validated static values and dynamic declarations, keyed by variable name.
     #[serde(default)]
     pub vars: BTreeMap<VarName, VarSpec>,
 
-    /// What a fresh machine starts with switched off. Accepted and checked as
-    /// the document is read, including the conditions its entries carry;
-    /// adopting the candidates belongs to the bootstrap.
+    /// Validated action and group candidates for bootstrap disabled state.
     #[serde(default)]
     pub default_disabled: DefaultDisabled,
 }
@@ -80,8 +67,7 @@ impl Manifest {
         Self::load_as(path, ReadAs::Leaf)
     }
 
-    /// The same, for the manifest of a remote an `include-remote` selects,
-    /// checked [as an included manifest](ReadAs::Included).
+    /// Read and validate a remote manifest using [`ReadAs::Included`] rules.
     pub fn load_included(path: &Path) -> Result<Self, CrateError> {
         Self::load_as(path, ReadAs::Included)
     }
@@ -97,20 +83,16 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// The rules serde cannot express. Cross-record rules are checked here;
-    /// each record applies its own, using the shared [checks](check).
-    fn validate(&self, read_as: ReadAs) -> Result<(), Invalid> {
-        // Skipped for an included manifest, whose `[remotes]` are ignored.
-        //
-        // A remote's ID is also its materialization directory, so IDs must
-        // differ case-insensitively. IDs are ASCII, so ASCII folding matches a
-        // case-insensitive filesystem.
+    /// Apply per-record and cross-record validation for the manifest context.
+    fn validate(&self, read_as: ReadAs) -> Result<(), ManifestError> {
+        // Ignore included remotes. Leaf remote IDs become directory names and must be unique
+        // ignoring ASCII case.
         if let ReadAs::Leaf = read_as {
             let mut directories: BTreeMap<String, &ItemId> = BTreeMap::new();
             for (id, remote) in &self.remotes {
                 remote.validate(id)?;
                 if let Some(one) = directories.insert(id.as_str().to_ascii_lowercase(), id) {
-                    return Err(Invalid::RemotesShareOneDirectory {
+                    return Err(ManifestError::RemotesShareOneDirectory {
                         one: one.clone(),
                         other: id.clone(),
                     });
@@ -126,7 +108,7 @@ impl Manifest {
             if let Some(id) = action.id()
                 && let Some(first) = seen.insert(id, action_number)
             {
-                return Err(Invalid::DuplicateActionId {
+                return Err(ManifestError::DuplicateActionId {
                     id: id.clone(),
                     first,
                     second: action_number,
@@ -134,19 +116,16 @@ impl Manifest {
             }
 
             if action.metadata().writes_both_conditions() {
-                return Err(Invalid::BothConditions { record });
+                return Err(ManifestError::BothConditions { record });
             }
 
-            // Checked first: an included action naming any remote is refused
-            // for that, not for naming an undeclared one.
+            // Report the forbidden remote reference before checking whether that remote exists.
             if let ReadAs::Included = read_as
                 && let Some(source) = action.source()
             {
                 check_included_source(source, &record)?;
             }
 
-            // Each record checks its own fields; `remotes` lets it check a
-            // source's remote against the declarations.
             action.validate(&record, &self.remotes, read_as)?;
         }
         self.default_disabled.validate()

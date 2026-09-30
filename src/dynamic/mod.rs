@@ -1,9 +1,6 @@
-//! Dynamic variables: running their commands, and resolving them against the
-//! disposable `dynamic-vars.toml` cache.
-//!
-//! Commands run in both run modes, and are arbitrary programs with side effects
-//! batfiles does not control. See [how dynamic commands are
-//! run](../../docs/environment.md#how-dynamic-commands-are-run).
+//! Resolve dynamic variables by running commands or reading `dynamic-vars.toml`. Commands may
+//! have side effects and run during dry runs too. See [command
+//! execution](../../docs/environment.md#how-dynamic-commands-are-run).
 
 mod cache;
 pub(crate) mod refresh;
@@ -16,8 +13,8 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 
 pub(crate) use self::cache::DynamicVarCache;
-pub(crate) use self::resolve::{CachePolicy, RefreshOutcome, ResolvedDynamicVar, VarIdentity};
-use self::resolve::{ScopedDeclaration, resolve};
+pub(crate) use self::resolve::{CachePolicy, DynamicValueState, DynamicVarKey, ResolvedDynamicVar};
+use self::resolve::{PendingDeclaration, resolve};
 use crate::error::Error;
 use crate::item::ItemId;
 use crate::location::StateRoots;
@@ -27,26 +24,23 @@ use crate::output::Reporter;
 use crate::var::VarName;
 use crate::var_set::VarValue;
 
-/// One command's dynamic declarations, each resolved once.
-///
-/// Loads the cache only when a declaration needs it, and writes it only when
-/// something was captured. Every inclusion of one remote shares its
-/// declarations' results, so each command runs at most once per run.
+/// Resolve each dynamic declaration at most once per invocation, sharing remote results across
+/// inclusions. Load the cache on demand and save only captured values.
 pub(crate) struct DynamicVarResolver<'a> {
     path: PathBuf,
     policy: CachePolicy,
     /// Declarations run under [`CachePolicy::Force`] whatever `policy` says;
     /// `None` uses `policy` for every declaration.
     forced: Option<RefreshSelection>,
-    /// Whether a declaration a machine-local value shadows goes unrun.
-    lazy: bool,
+    /// Whether to skip declarations shadowed by machine-local values.
+    skip_shadowed: bool,
     /// The remotes whose declarations may run.
     allowed: BTreeSet<ItemId>,
     /// Remotes already reported as not allowed to run their declarations.
     refused: BTreeSet<ItemId>,
     reporter: &'a Reporter,
     cache: Option<DynamicVarCache>,
-    resolved: BTreeMap<VarIdentity, ResolvedDynamicVar>,
+    resolved: BTreeMap<DynamicVarKey, ResolvedDynamicVar>,
     changed: bool,
 }
 
@@ -55,13 +49,12 @@ pub(crate) struct DynamicVarResolver<'a> {
 pub(crate) enum RefreshSelection {
     All,
     /// At least one key, as constructed by [`Self::from_keys`].
-    Named(BTreeSet<VarIdentity>),
+    Named(BTreeSet<DynamicVarKey>),
 }
 
 impl RefreshSelection {
-    /// The selection a command line's keys ask for: [`All`](Self::All) when
-    /// there are none, and each key once however often it was written.
-    pub fn from_keys(keys: &[VarIdentity]) -> Self {
+    /// Select all declarations if `keys` is empty; otherwise select the distinct named keys.
+    pub fn from_keys(keys: &[DynamicVarKey]) -> Self {
         if keys.is_empty() {
             Self::All
         } else {
@@ -70,7 +63,7 @@ impl RefreshSelection {
     }
 
     /// The keys named, in key order; none for [`All`](Self::All).
-    pub fn keys(&self) -> impl Iterator<Item = &VarIdentity> {
+    pub fn keys(&self) -> impl Iterator<Item = &DynamicVarKey> {
         match self {
             Self::All => None,
             Self::Named(keys) => Some(keys),
@@ -80,7 +73,7 @@ impl RefreshSelection {
     }
 
     /// The keys naming one of `remote`'s declarations.
-    pub fn keys_for<'a>(&'a self, remote: &'a ItemId) -> impl Iterator<Item = &'a VarIdentity> {
+    pub fn keys_for<'a>(&'a self, remote: &'a ItemId) -> impl Iterator<Item = &'a DynamicVarKey> {
         self.keys()
             .filter(move |key| key.remote.as_ref() == Some(remote))
     }
@@ -94,7 +87,7 @@ impl RefreshSelection {
         }
     }
 
-    fn contains(&self, identity: &VarIdentity) -> bool {
+    fn contains(&self, identity: &DynamicVarKey) -> bool {
         match self {
             Self::All => true,
             Self::Named(keys) => keys.contains(identity),
@@ -111,10 +104,9 @@ pub(crate) struct ManifestSource<'a> {
 }
 
 impl<'a> DynamicVarResolver<'a> {
-    /// Evaluate every declaration handed over, shadowed or not: the resolver
-    /// for commands that execute actions. `remotes` are the leaf's, whose
-    /// `allow-dynamic-vars` decides which remotes may run commands.
-    pub fn eager(
+    /// Create a resolver for action execution, including declarations shadowed by machine-local
+    /// values. The leaf's `remotes` determine which remotes may run dynamic commands.
+    pub fn for_run(
         state: &StateRoots,
         policy: CachePolicy,
         remotes: &BTreeMap<ItemId, Remote>,
@@ -128,16 +120,15 @@ impl<'a> DynamicVarResolver<'a> {
         Self::new(state, policy, false, allowed, reporter)
     }
 
-    /// Leave unrun a declaration a machine-local value shadows: the resolver
-    /// for `vars list`, which reads no remote.
-    pub fn lazy(state: &StateRoots, policy: CachePolicy, reporter: &'a Reporter) -> Self {
+    /// Create a resolver for `vars list`, skipping declarations shadowed by machine-local
+    /// values and excluding remote declarations.
+    pub fn for_listing(state: &StateRoots, policy: CachePolicy, reporter: &'a Reporter) -> Self {
         Self::new(state, policy, true, BTreeSet::new(), reporter)
     }
 
-    /// Force `selection` and resolve any other declaration a
-    /// [`layer`](Self::layer) needs as a run would: the resolver for
-    /// `vars refresh`. Otherwise [`eager`](Self::eager).
-    pub fn refresh(
+    /// Create a resolver that forces `selection` and uses the run policy for other declarations
+    /// needed by [`layer`](Self::layer).
+    pub fn for_refresh(
         state: &StateRoots,
         selection: RefreshSelection,
         remotes: &BTreeMap<ItemId, Remote>,
@@ -145,22 +136,22 @@ impl<'a> DynamicVarResolver<'a> {
     ) -> Self {
         Self {
             forced: Some(selection),
-            ..Self::eager(state, CachePolicy::Auto, remotes, reporter)
+            ..Self::for_run(state, CachePolicy::Auto, remotes, reporter)
         }
     }
 
     fn new(
         state: &StateRoots,
         policy: CachePolicy,
-        lazy: bool,
+        skip_shadowed: bool,
         allowed: BTreeSet<ItemId>,
         reporter: &'a Reporter,
     ) -> Self {
         Self {
-            path: state.dynamic_vars(),
+            path: state.dynamic_vars_cache_path(),
             policy,
             forced: None,
-            lazy,
+            skip_shadowed,
             allowed,
             refused: BTreeSet::new(),
             reporter,
@@ -170,12 +161,11 @@ impl<'a> DynamicVarResolver<'a> {
         }
     }
 
-    /// One manifest's `[vars]` as a variable layer, running what the policy
-    /// calls for. `machine` is this machine's `vars.toml`, which a lazy
-    /// resolver consults.
+    /// Build a variable layer from one manifest's `[vars]`, resolving commands according to
+    /// policy. Listing resolvers use `machine` to skip shadowed declarations.
     ///
-    /// A remote not allowed to run commands contributes its static values
-    /// alone, and says so at `-v`. Fails only when the cache cannot be read.
+    /// Remotes without permission to run commands contribute only static values and are
+    /// reported at `-v`. Cache read failures return an error.
     pub fn layer(
         &mut self,
         vars: &BTreeMap<VarName, VarSpec>,
@@ -206,10 +196,8 @@ impl<'a> DynamicVarResolver<'a> {
             .collect())
     }
 
-    /// Resolve only the declarations in one manifest's `[vars]` that this
-    /// resolver forces, building no layer. A remote not allowed to run
-    /// commands runs none, as with [`layer`](Self::layer). Fails only when the
-    /// cache cannot be read.
+    /// Resolve only forced declarations from `vars`, without building a variable layer.
+    /// Disallowed remote commands are skipped. Cache read failures return an error.
     pub fn force(
         &mut self,
         vars: &BTreeMap<VarName, VarSpec>,
@@ -226,7 +214,7 @@ impl<'a> DynamicVarResolver<'a> {
 
     /// The forced declarations resolved so far, in identity order: the leaf's
     /// by name, then each remote's.
-    pub fn forced(&self) -> impl Iterator<Item = (&VarIdentity, &ResolvedDynamicVar)> {
+    pub fn forced(&self) -> impl Iterator<Item = (&DynamicVarKey, &ResolvedDynamicVar)> {
         self.resolved
             .iter()
             .filter(|(identity, _)| self.policy_of(identity) == CachePolicy::Force)
@@ -241,18 +229,18 @@ impl<'a> DynamicVarResolver<'a> {
         machine: &BTreeMap<VarName, String>,
         only_forced: bool,
     ) -> Result<(), Error> {
-        let pending: Vec<ScopedDeclaration<'_>> = vars
+        let pending: Vec<PendingDeclaration<'_>> = vars
             .iter()
             .filter_map(|(name, spec)| match spec {
                 VarSpec::Static(_) => None,
                 VarSpec::Dynamic(spec) => {
                     let identity = identity(source, name);
-                    Some(ScopedDeclaration {
+                    Some(PendingDeclaration {
                         policy: self.policy_of(&identity),
                         identity,
                         spec,
                         cwd: source.root,
-                        shadowed: self.lazy && machine.contains_key(name),
+                        shadowed: self.skip_shadowed && machine.contains_key(name),
                     })
                 }
             })
@@ -275,7 +263,7 @@ impl<'a> DynamicVarResolver<'a> {
         Ok(())
     }
 
-    fn policy_of(&self, identity: &VarIdentity) -> CachePolicy {
+    fn policy_of(&self, identity: &DynamicVarKey) -> CachePolicy {
         if self
             .forced
             .as_ref()
@@ -287,8 +275,8 @@ impl<'a> DynamicVarResolver<'a> {
         }
     }
 
-    /// The static half of a remote's `[vars]`: a declaration it may not run
-    /// declares nothing. Reports the ones left out at `-v`, once per remote.
+    /// Return a remote's static values, omitting disallowed dynamic declarations. Report
+    /// omissions at `-v`, once per remote.
     fn refuse(
         &mut self,
         vars: &BTreeMap<VarName, VarSpec>,
@@ -333,8 +321,8 @@ impl<'a> DynamicVarResolver<'a> {
     }
 }
 
-fn identity(source: &ManifestSource<'_>, name: &VarName) -> VarIdentity {
-    VarIdentity {
+fn identity(source: &ManifestSource<'_>, name: &VarName) -> DynamicVarKey {
+    DynamicVarKey {
         remote: source.remote.cloned(),
         name: name.clone(),
     }

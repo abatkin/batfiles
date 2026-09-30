@@ -25,7 +25,7 @@ pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
     })
 }
 
-/// Read and parse one document, treating a missing file as an empty one.
+/// Read and parse a document, returning `T::default()` if the file is missing.
 pub(crate) fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Error> {
     match read(path) {
         Err(error) if error.is_not_found() => Ok(T::default()),
@@ -256,8 +256,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&dest).expect("destination"), "original");
     }
 
-    /// Permissions are a Unix mode here; on Windows `Permissions` carries only
-    /// the read-only flag, so there is nothing equivalent to assert.
+    /// Tests for Unix permission preservation.
     #[cfg(unix)]
     mod permissions {
         use super::*;

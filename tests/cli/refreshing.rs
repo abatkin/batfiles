@@ -63,7 +63,6 @@ fn a_changed_seed_is_backed_up_and_installed_again() {
 
 #[test]
 fn a_seed_already_as_it_would_be_is_left_alone() {
-    // Refreshing twice makes one backup, not one per run.
     let tree = a_seed_both_sides_changed();
     refresh(&tree, &[]).success();
 

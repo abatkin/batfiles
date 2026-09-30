@@ -1,8 +1,5 @@
-//! `vars refresh`: running dynamic variables' commands whatever the cache
-//! holds, for the leaf and for each remote in play.
-//!
-//! A leaf command appends to `<name>-runs` in the leaf repository, and a
-//! remote's to `remote-runs` there, which is how a case tells what ran.
+//! CLI tests for forced refresh of leaf and remote dynamic variables. Command marker files
+//! record which declarations ran.
 
 use std::fs;
 
@@ -122,7 +119,6 @@ fn every_key_that_cannot_be_refreshed_is_named_and_nothing_runs() {
 
 #[test]
 fn a_malformed_key_is_a_usage_error_before_any_root_is_resolved() {
-    // No home, repository, or state root exists for this invocation to find.
     let assertion = batfiles()
         .args(["vars", "refresh", "remote:core.team"])
         .assert()
@@ -249,7 +245,6 @@ fn a_remote_key_runs_in_that_remotes_materialization() {
         "refreshed `corporate.team`\n"
     );
     assert_eq!(runs(&tree, "remote-runs"), 2);
-    // The leaf's fresh value decided the gates; nothing reran it.
     assert_eq!(runs(&tree, "email-runs"), before);
 }
 
@@ -335,7 +330,6 @@ fn a_gate_reads_a_leaf_value_refreshed_by_the_same_command() {
         "{stderr}"
     );
     assert_eq!(runs(&tree, "remote-runs"), 1);
-    // What the leaf captured is kept although the command failed.
     assert!(cache_document(&tree).contains("value = \"no\""));
 }
 
@@ -388,9 +382,6 @@ fn a_remote_no_inclusion_names_is_not_in_play() {
 
 #[test]
 fn a_remote_in_play_is_refreshed_without_reading_what_it_contributes() {
-    // Reachability is decided by the inclusions' gates; what the remote's
-    // actions would need, such as a list it does not hold, is never read, and
-    // nothing is installed.
     let (origin, tree) = unsynchronized(ALLOWED, "");
     origin.publish(
         "batfiles.toml",
@@ -405,8 +396,7 @@ dest-dir = "~/.plugins"
 "#,
         "a list the remote does not hold",
     );
-    // Materialized by a sync that opens neither inclusion, so the missing list
-    // is not what fails it.
+    // Skip both inclusions so sync does not try to read the missing clone list.
     tree.batfiles()
         .args(["sync", "--skip-action", "first", "--skip-action", "second"])
         .assert()
@@ -416,13 +406,8 @@ dest-dir = "~/.plugins"
     assert!(!tree.home(".plugins").exists());
 }
 
-// What a refresh reads of the remotes in play: each requested remote's whole
-// manifest, and nothing that composing an inclusion reads or reports.
-
-/// A leaf including `alpha`, whose remote declares `team` by command as
-/// [`remote`] does, and `zeta`, whose remote publishes `zeta_manifest`. Both
-/// allow commands. Synchronized once, whatever that sync makes of `zeta`, so
-/// both are materialized.
+/// Create and synchronize a leaf including two command-enabled remotes: `alpha` from [`remote`]
+/// and `zeta` from `zeta_manifest`.
 fn two_remotes(zeta_manifest: &str) -> Tree {
     let alpha = remote();
     let zeta = BareRepo::new();
@@ -452,7 +437,7 @@ remote = "zeta"
     );
     tree.point_remote_at("alpha", &alpha);
     tree.point_remote_at("zeta", &zeta);
-    // Materialization precedes assembly, so a `zeta` it cannot read still lands.
+    // Even if assembly fails, sync must materialize both remotes first.
     let _ = tree.batfiles().arg("sync").assert();
     for remote in ["alpha", "zeta"] {
         assert!(
@@ -472,7 +457,6 @@ fn declaring_team(actions: &str) -> String {
 
 #[test]
 fn a_named_remote_is_the_only_one_opened() {
-    // `zeta`'s manifest does not parse; refreshing `alpha` never reads it.
     let tree = two_remotes("[vars\n");
 
     assert_eq!(refresh(&tree, &["alpha.team"]), "refreshed `alpha.team`\n");
@@ -497,8 +481,6 @@ fn an_included_manifest_is_validated_whole_though_refresh_prepares_nothing() {
 
 #[test]
 fn no_remote_command_runs_until_every_remote_key_is_checked() {
-    // `alpha.team` is refreshable and sorts first; `zeta.nope` is not, so
-    // neither runs.
     let tree = two_remotes(&declaring_team(""));
     let before = runs(&tree, "remote-runs");
 
@@ -515,8 +497,6 @@ fn no_remote_command_runs_until_every_remote_key_is_checked() {
 
 #[test]
 fn leaf_keys_need_neither_the_inclusions_nor_the_disabled_lists() {
-    // The remote was never brought down and `disabled.toml` does not parse:
-    // a refresh of leaf keys alone consults neither.
     let tree = leaf();
     let manifest = std::fs::read_to_string(tree.manifest()).expect("the leaf manifest");
     tree.write_manifest(&format!(
@@ -544,9 +524,6 @@ fn an_inclusion_whose_filters_take_nothing_keeps_its_remote_in_play() {
 
 #[test]
 fn a_refresh_reports_nothing_composing_an_inclusion_would() {
-    // The remote declares remotes of its own and an inclusion, and the leaf's
-    // filter names an action it does not declare: a sync warns about all
-    // three, and a refresh, which composes nothing, about none.
     let origin = BareRepo::new();
     origin.publish(
         "batfiles.toml",

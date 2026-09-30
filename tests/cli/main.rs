@@ -1,7 +1,5 @@
-//! End-to-end checks of the built `batfiles` binary.
-//!
-//! One test target, in the pieces it divides into. `support` holds what the
-//! others are written against; the rest are grouped by what they exercise.
+//! End-to-end tests of the built `batfiles` binary, grouped by behavior with shared fixtures in
+//! `support`.
 
 mod support;
 

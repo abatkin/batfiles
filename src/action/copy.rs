@@ -1,4 +1,4 @@
-//! `copy` and `copy-dir`: the same seed, made once or once per child.
+//! `copy` and `copy-dir`: seed destinations from a source node or its direct children.
 
 use std::fs;
 use std::io;
@@ -7,7 +7,7 @@ use std::path::Path;
 use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
-use crate::install::{self, SeedKind};
+use crate::install::{self, ContentKind};
 use crate::item::ItemId;
 use crate::manifest::action::{CopyAction, CopyDirAction};
 use crate::output::Verb;
@@ -47,30 +47,27 @@ pub(super) fn copy_dir(
     )
 }
 
-/// Seed one node by reproducing it, choosing the seed entry point by the
-/// source's classified kind.
-fn seed(source: &Path, kind: SeedKind, dest: &Path, context: &RunContext) -> Result<(), Error> {
-    let what = install::Seed {
+/// Seed `dest` with a copy of `source`, using its classified content kind.
+fn seed(source: &Path, kind: ContentKind, dest: &Path, context: &RunContext) -> Result<(), Error> {
+    let seed = install::SeedDescription {
         verb: Verb::Copy,
         origin: source.display().to_string(),
         source: Some(source),
     };
     match kind {
-        SeedKind::File => install::seed_file(what, dest, context, |into, staging| {
+        ContentKind::File => install::seed_file(seed, dest, context, |into, staging| {
             copy_file(source, into, staging)
         }),
-        SeedKind::Directory => install::seed_directory(what, dest, context, |staging| {
+        ContentKind::Directory => install::seed_directory(seed, dest, context, |staging| {
             copy_children(source, staging)
         }),
     }
 }
 
 /// Classify a source the manifest named, following a final symlink.
-fn kind_of_source(source: &Path) -> Result<SeedKind, Error> {
+fn kind_of_source(source: &Path) -> Result<ContentKind, Error> {
     let found = fs::metadata(source).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            // Reachability, not presence: the source has already been resolved
-            // and found, so this is a link whose target is gone.
             Error::SourceMissing {
                 path: source.to_path_buf(),
             }
@@ -84,8 +81,8 @@ fn kind_of_source(source: &Path) -> Result<SeedKind, Error> {
     classify(&found, source)
 }
 
-/// Classify a node found inside a directory being copied, following nothing.
-fn kind_of_child(source: &Path) -> Result<SeedKind, Error> {
+/// Classify a copied directory child without following symlinks.
+fn kind_of_child(source: &Path) -> Result<ContentKind, Error> {
     let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),
         source: error,
@@ -98,12 +95,12 @@ fn kind_of_child(source: &Path) -> Result<SeedKind, Error> {
     classify(&found, source)
 }
 
-/// The tail both of the above share, once each has decided what to inspect.
-fn classify(found: &fs::Metadata, source: &Path) -> Result<SeedKind, Error> {
+/// Classify metadata as a file or directory; reject other node types.
+fn classify(found: &fs::Metadata, source: &Path) -> Result<ContentKind, Error> {
     if found.is_file() {
-        Ok(SeedKind::File)
+        Ok(ContentKind::File)
     } else if found.is_dir() {
-        Ok(SeedKind::Directory)
+        Ok(ContentKind::Directory)
     } else {
         Err(Error::SourceNotCopyable {
             path: source.to_path_buf(),
@@ -130,10 +127,10 @@ fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
         let from = source.join(&child);
         let to = built_at.join(&child);
         match kind_of_child(&from)? {
-            SeedKind::File => {
+            ContentKind::File => {
                 copy_file(&from, create_new_file(&to)?, &to)?;
             }
-            SeedKind::Directory => {
+            ContentKind::Directory => {
                 fs::create_dir(&to).map_err(|error| Error::Write {
                     path: to.clone(),
                     source: error,
@@ -142,8 +139,7 @@ fn copy_children(source: &Path, built_at: &Path) -> Result<(), Error> {
             }
         }
     }
-    // Last, and not at creation: a source directory its owner cannot write into
-    // would otherwise lock batfiles out of the copy it is still filling.
+    // Apply directory permissions after filling it; the source may be read-only.
     mirror_permissions(source, built_at)
 }
 
@@ -160,8 +156,7 @@ fn create_new_file(path: &Path) -> Result<fs::File, Error> {
         })
 }
 
-/// Give a copied file or directory the permissions of what it was copied from,
-/// so an executable arrives executable and a private directory arrives private.
+/// Apply the source file or directory permissions to the copy.
 fn mirror_permissions(source: &Path, built_at: &Path) -> Result<(), Error> {
     let found = fs::metadata(source).map_err(|error| Error::Read {
         path: source.to_path_buf(),

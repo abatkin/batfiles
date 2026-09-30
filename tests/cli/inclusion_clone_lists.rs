@@ -1,9 +1,5 @@
-//! A clone list an inclusion contributed: read from the remote's tree, decided
-//! in the inclusion's scope, and prepared with every other list before the
-//! first action writes.
-//!
-//! Each case publishes its own remote manifest and list, and includes it as
-//! `corp` from a leaf written beside it.
+//! CLI tests for included clone-list source resolution, variable scope, and preparation before
+//! action writes.
 
 use crate::support::*;
 
@@ -53,9 +49,6 @@ fn plugins(fields: &str) -> String {
 
 #[test]
 fn an_inclusions_actions_and_list_run_where_the_inclusion_is_written() {
-    // Declaration order across both manifests: the leaf's first action, the
-    // inclusion's heading, what it contributed in the order its remote wrote
-    // them, and then the rest of the leaf. Each once.
     let upstream = BareRepo::new();
     let plugin = upstream.another("zsh-z");
     let origin = remote(
@@ -128,9 +121,6 @@ fn an_inclusions_actions_and_list_run_where_the_inclusion_is_written() {
 
 #[test]
 fn a_malformed_list_in_a_late_inclusion_stops_the_run_before_the_first_action() {
-    // Every selected list is read before anything is installed, wherever in
-    // the run its record sits: the leaf's action ahead of the inclusion does
-    // not run.
     let origin = remote(
         &plugins(""),
         "https://e.example/a.git\nhttps://e.example/b.git colour=blue\n",
@@ -151,10 +141,6 @@ fn a_malformed_list_in_a_late_inclusion_stops_the_run_before_the_first_action() 
 
 #[test]
 fn applying_an_included_list_waives_its_condition_and_not_its_entries() {
-    // The list and its entries are decided in the inclusion's scope, where
-    // `work` is false though the leaf says true. Naming the list waives the
-    // record's own condition; its entries keep theirs. The list is read from
-    // the remote's tree, which is the only place it exists.
     let upstream = BareRepo::new();
     let origin = remote(
         &plugins("when = \"work\"\n"),
@@ -170,7 +156,6 @@ fn applying_an_included_list_waives_its_condition_and_not_its_entries() {
         "",
     );
 
-    // Honored by a run that did not name it.
     tree.batfiles().arg("sync").assert().success();
     assert!(!tree.home(".plugins").exists());
 
@@ -193,9 +178,6 @@ fn applying_an_included_list_waives_its_condition_and_not_its_entries() {
 
 #[test]
 fn an_included_list_with_nothing_to_clone_still_makes_its_directory() {
-    // Whether it declares no entries or this machine excludes every one, the
-    // list is carried out: the directory is made, and naming it applies one
-    // action rather than nothing.
     let upstream = BareRepo::new();
     for list in [
         String::new(),

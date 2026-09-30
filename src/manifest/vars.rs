@@ -1,8 +1,5 @@
-//! `[vars]` values: a static string, or a dynamic-variable declaration.
-//!
-//! Every variable is a string, so a table is unambiguous: it is a declaration,
-//! and it must match that closed record. See
-//! [`docs/repoformat.md`](../../docs/repoformat.md#variables).
+//! Static strings and dynamic-variable declarations in `[vars]`. See [variable
+//! syntax](../../docs/repoformat.md#variables).
 
 use std::fmt;
 
@@ -12,11 +9,7 @@ use serde::{Deserialize, Deserializer};
 
 use super::duration::FriendlyDuration;
 
-/// One entry in `[vars]`.
-///
-/// Deserialized by hand, choosing the form by TOML type, so a typo inside a
-/// declaration is reported as the unknown field it is rather than as a failure
-/// to match an untagged union.
+/// A static string or dynamic command declaration from `[vars]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VarSpec {
     /// A value written in the manifest.
@@ -65,8 +58,7 @@ pub(crate) struct DynamicVarSpec {
     pub command_timeout: Option<FriendlyDuration>,
 }
 
-/// Accept a `command-timeout`, rejecting zero. `cache = "0s"` stays valid,
-/// so the rule belongs to this field rather than to [`FriendlyDuration`].
+/// Deserialize an optional positive duration, rejecting zero.
 fn positive_duration<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<FriendlyDuration>, D::Error> {

@@ -1,8 +1,4 @@
-//! What a run does with something batfiles did not put where it installs: back
-//! it up and replace it by default, skip it under `--no-overwrite`, and ask
-//! under `--interactive`.
-//!
-//! Unix-only because most of the destinations are symlinks.
+//! Unix CLI tests for destination backups, skipped conflicts, and interactive replacement.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -108,8 +104,6 @@ fn a_directory_in_the_way_is_backed_up_whole() {
 
 #[test]
 fn a_second_backup_never_takes_the_first() {
-    // The same destination, in the way twice within the same second: the
-    // second backup is named apart from the first rather than over it.
     let tree = occupied_link();
     tree.batfiles().arg("sync").assert().success();
     fs::remove_file(tree.home(".zshrc")).expect("the link");
@@ -436,8 +430,6 @@ dest-dir = "~/.plugins"
 
 #[test]
 fn a_remote_materialization_in_the_way_is_refused_whatever_the_policy() {
-    // `remotes/` is batfiles' own, so what it does not recognize there is a
-    // mistake to report rather than a conflict to settle.
     let origin = BareRepo::new();
     let tree = Tree::new();
     tree.write_manifest(&format!(
@@ -471,8 +463,6 @@ fn a_remote_materialization_in_the_way_is_refused_whatever_the_policy() {
 
 #[test]
 fn a_destination_holding_the_link_source_is_never_set_aside() {
-    // Setting `nested` aside would take the source with it and leave a link
-    // to where the source used to be; overwriting would delete it.
     let tree = Tree::new();
     let source = tree.repo_file("nested/a", "# a\n");
     let dest = tree.path("repo/nested");
@@ -526,9 +516,6 @@ fn a_seed_refresh_never_sets_aside_its_own_source() {
 
 #[test]
 fn a_clone_list_entry_that_fails_after_its_backup_costs_only_that_entry() {
-    // The directory in the way is backed up and the clone lands, but its ref
-    // resolves to nothing: the clone stays, so the backup cannot go back, and
-    // the warning says where it is. The next entry is still cloned.
     let origin = BareRepo::new();
     let tree = Tree::new();
     tree.write_manifest(
@@ -593,10 +580,8 @@ fn a_directory_with_damaged_git_metadata_is_a_conflict() {
 
 #[test]
 fn a_link_source_reached_through_a_repository_alias_is_never_set_aside() {
-    // `alias -> repo` selects the repository, so the source is written
-    // `alias/nested/a`, and `repo/nested -> real` is the destination. Neither
-    // spelling contains the other, but reaching the source walks through the
-    // destination link, so replacing it would make a link to itself.
+    // Resolving the source traverses the destination symlink; replacing that link would create
+    // a self-reference.
     let tree = Tree::new();
     let repo = tree.path("repo");
     tree.repo_file("real/a", "# a\n");
@@ -621,9 +606,8 @@ fn a_link_source_reached_through_a_repository_alias_is_never_set_aside() {
 
 #[test]
 fn a_git_that_fails_on_a_healthy_clone_is_not_a_conflict() {
-    // A configuration git cannot read fails every command it runs. That says
-    // nothing about the checkout, which must not be skipped or backed up as
-    // damaged.
+    // Broken global Git configuration must not make a healthy clone look like a replaceable
+    // conflict.
     let origin = BareRepo::new();
     let tree = one_clone(&origin);
     tree.batfiles().arg("sync").assert().success();
@@ -669,8 +653,7 @@ fn a_git_directory_whose_head_is_not_one_is_damaged() {
 
 #[test]
 fn a_clone_whose_object_store_is_a_link_is_updated_rather_than_replaced() {
-    // Git follows `.git/objects` as a link, so this is a healthy checkout: it
-    // is updated, and nothing is offered for replacement.
+    // A symlinked objects directory is valid Git storage.
     let origin = BareRepo::new();
     let tree = one_clone(&origin);
     tree.batfiles().arg("sync").assert().success();

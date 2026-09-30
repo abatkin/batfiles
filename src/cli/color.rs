@@ -1,10 +1,4 @@
-//! Color selection.
-//!
-//! Color is presentation-only, so unlike the other environment inputs it is
-//! resolved here rather than alongside them and never passed into domain logic.
-//! It belongs to `cli` because it is the semantics of one option: it scans the
-//! raw arguments and yields the `clap::ColorChoice` that clap needs back in
-//! order to render its own help and errors.
+//! Resolve color settings and scan raw arguments for `--color` before clap parses them.
 
 use std::ffi::OsString;
 
@@ -13,21 +7,14 @@ use clap::ColorChoice;
 /// The outcome of resolving color inputs.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ColorResolution {
-    /// The selected mode. `Auto` is deliberately left unresolved so that each
-    /// consumer can apply its own terminal detection.
+    /// Selected mode; consumers resolve `Auto` using their own terminal detection.
     pub mode: ColorChoice,
-    /// A diagnostic for an invalid `BATFILES_COLOR`, which falls back rather
-    /// than silently selecting a different mode.
+    /// Warning for an invalid `BATFILES_COLOR` value.
     pub warning: Option<String>,
 }
 
 impl ColorResolution {
-    /// Whether batfiles' own diagnostics should be colored. `auto` follows
-    /// standard error, which is where every line batfiles colors is written;
-    /// the caller supplies the answer so this stays testable.
-    ///
-    /// The mode itself is handed to clap untouched, leaving clap's terminal
-    /// detection in charge of `auto` for the output clap renders.
+    /// Return whether diagnostics should be colored, using `stderr_is_terminal` for `Auto`.
     pub(crate) fn enabled(&self, stderr_is_terminal: bool) -> bool {
         match self.mode {
             ColorChoice::Always => true,
@@ -39,10 +26,8 @@ impl ColorResolution {
 
 /// Resolve `--color > BATFILES_COLOR > non-empty NO_COLOR > auto`.
 ///
-/// The two environment values are passed in already decoded. "Set but empty"
-/// survives as `Some("")` and "unset" as `None`; a value batfiles cannot
-/// interpret was lossily decoded upstream and simply lands on the invalid
-/// branch, warning and falling back.
+/// Environment values must be decoded already. `None` means unset; `Some("")` means set but
+/// empty. Invalid `BATFILES_COLOR` values warn and fall back.
 pub(crate) fn resolve(
     choice: Option<ColorChoice>,
     batfiles_color: Option<&str>,
@@ -51,8 +36,6 @@ pub(crate) fn resolve(
     let mut warning = None;
 
     let selected = choice.or_else(|| match batfiles_color {
-        // An absent or empty value is treated as unset, as it is for the
-        // location variables, rather than as an invalid mode.
         None | Some("") => None,
         Some(raw) => parse_choice(raw).or_else(|| {
             warning = Some(format!(
@@ -62,8 +45,6 @@ pub(crate) fn resolve(
         }),
     });
 
-    // NO_COLOR follows the cross-tool convention: presence alone is not enough,
-    // but any non-empty value counts.
     let mode = selected.unwrap_or(match no_color {
         Some(value) if !value.is_empty() => ColorChoice::Never,
         _ => ColorChoice::Auto,
@@ -72,13 +53,8 @@ pub(crate) fn resolve(
     ColorResolution { mode, warning }
 }
 
-/// Recover `--color` from the raw arguments before clap parses them.
-///
-/// Presentation has to be settled before clap can render `--help`, `--version`,
-/// or a usage error, so the option is located here rather than read off the
-/// parsed `Cli`. This scan is deliberately forgiving: anything it cannot
-/// interpret — a missing value, an unrecognized value, a value after `--` — is
-/// left to clap, which reports it properly.
+/// Find the last valid `--color` value before `--` in raw arguments. Ignore missing or invalid
+/// values; clap reports them during parsing.
 pub(crate) fn preparse_choice(args: &[OsString]) -> Option<ColorChoice> {
     let mut found = None;
     // Skip the program name.
@@ -103,8 +79,7 @@ pub(crate) fn preparse_choice(args: &[OsString]) -> Option<ColorChoice> {
     found
 }
 
-/// `ColorChoice`'s own case-sensitive parse of `auto`, `always`, and `never`,
-/// so the option and `BATFILES_COLOR` accept exactly the same spellings.
+/// Parse the case-sensitive values `auto`, `always`, and `never`.
 fn parse_choice(raw: &str) -> Option<ColorChoice> {
     raw.parse().ok()
 }
@@ -167,7 +142,6 @@ mod tests {
             "an empty value should not be reported"
         );
 
-        // Being unset, it leaves the next input in precedence to decide.
         assert_eq!(resolve(None, Some(""), Some("1")).mode, ColorChoice::Never);
     }
 

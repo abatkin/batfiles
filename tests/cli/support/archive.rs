@@ -2,8 +2,7 @@
 
 use std::io::Write as _;
 
-// Archives the fetching tests serve, built at run time: entries such as
-// `../../.ssh/authorized_keys` or `/etc/passwd` cannot be committed.
+// Build archives at runtime to test absolute paths and parent traversal.
 
 /// One entry of an archive a test builds.
 pub(crate) enum Member {
@@ -15,7 +14,7 @@ pub(crate) enum Member {
     Symlink(&'static str, &'static str),
     /// A hardlink, and the archive path it points at.
     Hardlink(&'static str, &'static str),
-    /// Something batfiles installs none of: a fifo, here by its tar type.
+    /// A FIFO entry for unsupported-entry tests.
     Fifo(&'static str),
 }
 
@@ -24,15 +23,12 @@ pub(crate) fn tarball(members: &[Member]) -> Vec<u8> {
     tar_bytes(members, Headers::Gnu, |bytes| gzip(&bytes))
 }
 
-/// The same archive, uncompressed, for the half of the format sniffing that is
-/// about a plain `.tar`.
+/// Build an uncompressed GNU tar archive from the supplied members.
 pub(crate) fn plain_tarball(members: &[Member]) -> Vec<u8> {
     tar_bytes(members, Headers::Gnu, |bytes| bytes)
 }
 
-/// The same archive in the original V7 format, whose headers carry no `ustar`
-/// magic at all — the shape a detector that looks for that magic refuses and a
-/// tar reader accepts.
+/// Build an uncompressed V7 tar archive without `ustar` header magic.
 pub(crate) fn v7_tarball(members: &[Member]) -> Vec<u8> {
     tar_bytes(members, Headers::V7, |bytes| bytes)
 }
@@ -44,8 +40,7 @@ enum Headers {
     V7,
 }
 
-/// The same archive, gzipped as two members concatenated, which is what `pigz`
-/// writes and what `cat a.gz b.gz` produces.
+/// Build a tar archive compressed as two concatenated gzip members.
 pub(crate) fn multi_member_tarball(members: &[Member]) -> Vec<u8> {
     tar_bytes(members, Headers::Gnu, |bytes| {
         let (first, second) = bytes.split_at(bytes.len() / 2);
@@ -72,9 +67,7 @@ fn tar_bytes(
             Headers::Gnu => tar::Header::new_gnu(),
             Headers::V7 => tar::Header::new_old(),
         };
-        // A `new_gnu` header is all zero bytes, and a zeroed numeric field is
-        // not a number to a reader. Every entry gets the ones that are not
-        // about what it is; only the size varies.
+        // Initialize numeric fields; zero bytes are not valid numeric field values.
         header.set_size(0);
         header.set_mtime(0);
         header.set_uid(0);
@@ -108,8 +101,8 @@ fn tar_bytes(
                 None
             }
         };
-        // Written into the header directly: `Builder::append_data` refuses a
-        // path holding `..` or starting at a root, which these archives need.
+        // Write the path directly because `append_data` rejects absolute paths and parent
+        // traversal.
         write_name(&mut header, member.path());
         header.set_cksum();
         builder
@@ -131,7 +124,7 @@ impl Member {
     }
 }
 
-/// Put a name into a tar header without asking the crate's opinion of it.
+/// Write a tar-header path directly, bypassing path validation for malformed fixtures.
 fn write_name(header: &mut tar::Header, path: &str) {
     let name = &mut header.as_old_mut().name;
     assert!(

@@ -5,9 +5,6 @@ use std::fs;
 
 use crate::support::*;
 
-// The leaf manifest. `sync` parses it before anything else, so a repository
-// without one fails there rather than at the unimplemented stub.
-
 #[test]
 fn a_repository_without_a_manifest_fails_and_names_the_file() {
     let tree = Tree::new();
@@ -37,21 +34,10 @@ fn a_malformed_manifest_names_the_file_and_where_it_broke() {
     }
 }
 
-// The rejections below never get as far as executing anything, so they run
-// everywhere. Their positive counterpart — a record using every field it
-// accepts, which has to be executed to be worth asserting — is
-// `linking::a_symlink_action_parses_with_every_field_it_accepts`.
-
-// `[vars]`: the values conditions are decided against. The section is accepted
-// and checked as the manifest is read, so the tests below are about what the
-// document will and will not take; what a condition makes of a value is
-// `conditions.rs`.
+// Variable schema validation; condition evaluation is covered in `conditions.rs`.
 
 #[test]
 fn a_vars_section_alone_changes_nothing() {
-    // Variables feed conditions and nothing else: no field of any action
-    // interpolates one. So a run over a manifest whose records carry no
-    // condition installs exactly what it would have installed without them.
     let tree = Tree::new();
     tree.write_manifest(&format!(
         r#"[vars]
@@ -74,9 +60,6 @@ empty = ""
 
 #[test]
 fn a_variable_name_follows_its_own_rule_rather_than_the_id_rule() {
-    // The two rules genuinely differ, and a manifest author holding the ID rule
-    // in mind is the one who needs telling: `oh-my-zsh` is a fine action ID and
-    // not a variable name.
     for name in ["oh-my-zsh", "1up", "has.dot"] {
         let stderr = rejected(&format!("[vars]\n\"{name}\" = \"x\"\n"));
         for expected in [name, "a variable name must start with"] {
@@ -87,8 +70,6 @@ fn a_variable_name_follows_its_own_rule_rather_than_the_id_rule() {
 
 #[test]
 fn a_name_the_expression_language_owns_is_rejected() {
-    // Reserved names keep namespace lookup unambiguous. Reject them while
-    // loading the manifest, rather than accepting names evaluation cannot use.
     for reserved in ["facts", "env", "vars", "true", "false"] {
         let stderr = rejected(&format!("[vars]\n{reserved} = \"x\"\n"));
         assert!(
@@ -100,9 +81,6 @@ fn a_name_the_expression_language_owns_is_rejected() {
 
 #[test]
 fn a_value_that_is_not_a_string_is_rejected_where_it_is_written() {
-    // Every variable value is a string, so the types a TOML author reaches for
-    // are refused rather than converted. The diagnostic is serde's, and what
-    // makes it enough is the position: it underlines the value itself.
     for (document, line) in [
         ("[vars]\nwork = true\n", "line 2"),
         ("[vars]\nrank = 3\n", "line 2"),
@@ -117,8 +95,6 @@ fn a_value_that_is_not_a_string_is_rejected_where_it_is_written() {
 
 #[test]
 fn a_malformed_dynamic_variable_declaration_is_rejected_by_line() {
-    // A table under `[vars]` is a dynamic-variable declaration, and a closed
-    // record: what is wrong with it is named, on the line it is written.
     for (document, expected) in [
         (
             "[vars.has_op]\ncommand = \"true\"\nchache = \"1h\"\n",
@@ -148,10 +124,7 @@ fn a_malformed_dynamic_variable_declaration_is_rejected_by_line() {
     }
 }
 
-// `[default-disabled]`: the candidates a bootstrap adopts. The section is
-// accepted and checked as the manifest is read, and only `clone` acts on it, so
-// every test below is about what the document takes and what `sync` makes of it
-// — which is nothing. Adoption itself is in [`super::bootstrap`].
+// Default-disabled schema validation; adoption is covered in `bootstrap.rs`.
 
 /// The two lists, written the way the format spells them.
 const CANDIDATES: &str = r#"[[default-disabled.actions]]
@@ -163,10 +136,6 @@ group = "gui"
 
 #[test]
 fn a_default_disabled_section_is_accepted_and_changes_nothing() {
-    // The closed document accepts the section. `sync` is not a bootstrap, so
-    // the run installs what it would have installed and leaves the
-    // machine-local lists alone — including by not creating the
-    // `disabled.toml` adoption writes.
     let tree = Tree::new();
     tree.write_manifest(&format!("{CANDIDATES}\n{}", one_create_dir("~/.config")));
 
@@ -184,9 +153,6 @@ fn a_default_disabled_section_is_accepted_and_changes_nothing() {
 
 #[test]
 fn a_default_disabled_candidate_does_not_disable_anything_under_sync() {
-    // The candidate names the action, and the action still runs: the section
-    // says where a machine starts, which is the bootstrap's question and not a
-    // standing setting every later run re-applies.
     let tree = Tree::new();
     tree.write_manifest(
         r#"[[default-disabled.actions]]
@@ -209,9 +175,6 @@ dest = "~/.config"
 
 #[test]
 fn a_candidate_takes_a_condition_and_still_changes_nothing_under_sync() {
-    // A candidate's condition is checked as the manifest is read and decided by
-    // the bootstrap alone, so a condition here says nothing about this run —
-    // including about the action the entry names.
     let tree = Tree::new();
     tree.write_manifest(
         r#"[[default-disabled.actions]]
@@ -239,10 +202,6 @@ dest = "~/.config"
 
 #[test]
 fn a_candidate_writing_both_conditions_is_rejected() {
-    // The rule every record carrying a condition follows, checked as the
-    // manifest is read rather than where the entry is decided: a candidate that
-    // could never mean one thing is caught on the machine that writes it, not
-    // on the one that finally bootstraps.
     for entry in [
         r#"[[default-disabled.actions]]
 id = "p10k"
@@ -279,10 +238,6 @@ when = "work &&"
 
 #[test]
 fn a_candidate_may_name_a_qualified_address() {
-    // What an entry names is never looked up, so a candidate can name an action
-    // an included remote will contribute for the same reason it can name one a
-    // later branch will introduce: there is nothing to resolve it against
-    // either way.
     let tree = Tree::new();
     fs::write(
         tree.manifest(),
@@ -314,8 +269,6 @@ fn a_candidate_naming_a_malformed_address_is_rejected() {
 
 #[test]
 fn a_candidate_without_the_field_that_names_it_is_rejected() {
-    // An entry that names nothing is a mistake rather than a candidate, and it
-    // is one the format can catch on the machine that writes it.
     for (entry, field) in [
         ("[[default-disabled.actions]]\ngroup = \"gui\"\n", "id"),
         ("[[default-disabled.groups]]\nid = \"p10k\"\n", "group"),
@@ -341,10 +294,6 @@ fn the_default_disabled_records_are_closed_like_every_other() {
 
 #[test]
 fn the_two_symlink_types_do_not_share_a_field_set() {
-    // `symlink` links one path and `symlink-dir` links a directory's children.
-    // Each record is closed, so a field belonging to the other type is an
-    // error rather than something quietly ignored — which is what borrowing
-    // one field from the wrong type would otherwise be.
     let stderr = rejected(
         r#"[[actions]]
 type = "symlink"
@@ -372,9 +321,6 @@ dest-dir = "~"
 
 #[test]
 fn a_filter_symlink_dir_does_not_have_yet_is_rejected() {
-    // `include` and `exclude` are specified in `docs/future/repoformat.md` and
-    // not built. Ignoring one would link every child while looking as though
-    // it had linked a chosen few, which is the worse of the two failures.
     let stderr = rejected(
         r#"[[actions]]
 type = "symlink-dir"
@@ -405,11 +351,6 @@ source-dir = "files"
 
 #[test]
 fn a_symlink_dirs_paths_follow_the_same_rules_as_a_symlinks() {
-    // `source-dir` is a source and `dest-dir` is a destination, so both are
-    // decided from the manifest alone by the same two checkers. The
-    // repository-root case matters more here than it does for `symlink`:
-    // it would link `batfiles.toml` and `.git` into the home rather than
-    // install one of them.
     for (source_dir, dest_dir, expected) in [
         ("../secrets", "~", "resolves outside the repository"),
         ("/etc", "~", "not relative to the repository root"),
@@ -428,9 +369,6 @@ fn a_symlink_dirs_paths_follow_the_same_rules_as_a_symlinks() {
 
 #[test]
 fn a_create_dir_has_nothing_to_install_and_so_takes_no_source() {
-    // The record is closed like every other, and this is the field someone
-    // reaches for by habit. There is no source because nothing is installed —
-    // linking a directory's contents is what the two symlink types are for.
     let stderr = rejected(
         r#"[[actions]]
 type = "create-dir"
@@ -455,8 +393,6 @@ fn a_create_dir_without_a_destination_is_rejected() {
 
 #[test]
 fn a_create_dirs_destination_follows_the_same_rules_as_a_symlinks() {
-    // Its `dest` is a destination like any other, decided from the manifest
-    // alone by the same checker.
     for (dest, expected) in [
         ("", "dest is empty"),
         ("~other/.config", "another user's home"),
@@ -471,11 +407,6 @@ fn a_create_dirs_destination_follows_the_same_rules_as_a_symlinks() {
 
 #[test]
 fn dot_prefix_is_not_a_field_a_copy_has() {
-    // What splitting `copy` from `copy-dir` buys. `dot-prefix` dots the names
-    // of a directory's children, and a `copy` writes one name it was given in
-    // full — so this is an unknown field caught while the manifest is read,
-    // rather than a run-time complaint about a source that turned out to be a
-    // file. The same holds for `symlink`, and always has.
     let stderr = rejected(
         r#"[[actions]]
 type = "copy"
@@ -492,8 +423,6 @@ dot-prefix = true
 
 #[test]
 fn the_two_copy_types_do_not_share_a_field_set() {
-    // As with the symlink pair: each record is closed, so a field belonging to
-    // the other one is an error rather than something quietly ignored.
     let stderr = rejected(
         r#"[[actions]]
 type = "copy"
@@ -521,9 +450,6 @@ dest-dir = "~"
 
 #[test]
 fn a_filter_the_copy_types_do_not_have_yet_is_rejected() {
-    // `include` and `exclude` are specified in `docs/future/repoformat.md` and
-    // not built, on both of these as on `symlink-dir`. Ignoring one would copy
-    // everything while looking as though it had copied a chosen few.
     for manifest in [
         r#"[[actions]]
 type = "copy"
@@ -576,9 +502,6 @@ fn the_copy_types_paths_follow_the_same_rules_as_every_other() {
 
 #[test]
 fn a_type_the_format_does_not_specify_is_not_an_action_at_all() {
-    // Every action type the format specifies now exists, so the only unknown
-    // type left is one nothing ever specified. It fails as the document is
-    // read, because there is no record behind the tag to check.
     let stderr = rejected(
         r#"[[actions]]
 type = "rsync"
@@ -620,10 +543,6 @@ dest = "~/.zshrc"
     }
 }
 
-// What a `source` and a `dest` may say is decided from the manifest alone, so
-// these are rejections like the ones above rather than actions that failed:
-// nothing is resolved, nothing is opened, and they run on every platform.
-
 #[test]
 fn a_source_outside_the_repository_is_rejected() {
     for source in ["../secrets", "shell/../../secrets", "/etc/hosts"] {
@@ -637,9 +556,6 @@ fn a_source_outside_the_repository_is_rejected() {
 
 #[test]
 fn a_source_naming_the_whole_repository_is_rejected() {
-    // Containment alone lets the root through, and installing it would put
-    // `batfiles.toml` and `.git` in the home. The spelling decides which
-    // diagnostic it gets, not whether it is refused.
     for (source, expected) in [
         ("", "source is empty"),
         (".", "names the whole repository"),
@@ -655,10 +571,6 @@ fn a_source_naming_the_whole_repository_is_rejected() {
 
 #[test]
 fn a_path_within_a_remote_may_not_start_the_reference_over() {
-    // `@` introduces a remote and nothing else, so a second one cannot open a
-    // path inside the first. Only the leading character is reserved;
-    // `files/@work/zshrc` is an ordinary path, which is a rule about spelling
-    // and is tested where the spelling is.
     let stderr = rejected(&format!(
         r#"[remotes.core]
 type = "git"
@@ -674,8 +586,6 @@ url = "https://git.example/core.git"
 
 #[test]
 fn an_empty_dest_is_rejected_in_favor_of_writing_the_home_out() {
-    // `~` already means the home directory itself, so the diagnostic points at
-    // that spelling rather than only refusing.
     let stderr = rejected(&one_symlink("shell/zshrc", ""));
     for expected in ["dest is empty", "write `~`"] {
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
@@ -693,8 +603,7 @@ fn a_dest_naming_another_users_home_is_rejected() {
 
 #[test]
 fn a_rejected_path_names_the_action_it_was_written_on() {
-    // One-based, so it reads against the file. Action 1 here is valid, which
-    // is what makes the number worth checking.
+    // Keep the first action valid to check that the error identifies the second.
     let stderr = rejected(&format!(
         "{}{}",
         one_symlink("shell/zshrc", "~/.zshrc"),
@@ -708,9 +617,6 @@ fn a_rejected_path_names_the_action_it_was_written_on() {
 
 #[test]
 fn a_repeated_action_id_is_rejected_and_both_uses_located() {
-    // Serde cannot see across records, so this is the rule `validate` exists
-    // for; the diagnostic points at both actions because either one could be
-    // the mistake.
     let stderr = rejected(
         r#"[[actions]]
 type = "symlink"
@@ -732,9 +638,6 @@ dest = "~/.zshrc.local"
 
 #[test]
 fn a_command_that_does_not_need_the_manifest_does_not_read_it() {
-    // Reading is the responsibility of the commands that use the manifest, so
-    // one that never looks at it is unaffected by a broken one. `vars set`
-    // writes machine-local state and does its whole job here.
     let tree = Tree::new();
     fs::write(tree.manifest(), "[[actions]\n").expect("a malformed manifest");
 

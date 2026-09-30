@@ -80,8 +80,8 @@ Keep repository source resolution in `RunContext` and filesystem classification
 in `paths.rs`. Use the documented distinction between lexical path construction
 and filesystem target resolution. Separate inspecting a node from deciding
 whether to replace it: a caller that needs only what is at a path uses
-`paths::node_at`, which never reads a symlink's target; only a caller that may
-replace a symlink uses `Occupancy::at`.
+`paths::symlink_metadata_if_present`, which never reads a symlink's target;
+only a caller that may replace a symlink uses `Occupancy::at`.
 
 **15. Install complete content.** Build seeds in staging and publish after
 completion; a refresh builds and compares complete content before it sets
@@ -102,6 +102,26 @@ path; their replacement policy differs from seeds.
   parsing, serialization support, and display. Add conversion traits as needed.
 - Modules may access the filesystem or processes when they own the operation;
   register that ownership in `tests/hygiene.rs`.
+
+### Vocabulary
+
+Code names follow these terms beside the user-facing ones:
+
+- **Action**: a configured operation, as a manifest declares it. The everyday
+  word, since users write `[[actions]]` and run `apply-action`.
+- **Record**: an action's representation in a run, and its execution
+  bookkeeping (`RunRecord`, `IncludedRecord`, `RecordName`).
+- **Item**: only what actions and groups share (`ItemId`, `ItemAddress`).
+  `ItemKind` says which of the two a name refers to, and displays as the word
+  output uses for it.
+- **Node**: whatever filesystem entry occupies a path, as
+  [safety.md](safety.md#path-resolution) defines it. A manifest entry is never
+  a node.
+- **Contributor**: the manifest a record came from, the leaf's or an
+  inclusion's, which decides how its names are qualified.
+- **Disposition**: what a run does with one record: not requested, excluded, or
+  allowed.
+- **Subject**: what selection decides a record on: its addresses and its gate.
 
 ### Execution
 
