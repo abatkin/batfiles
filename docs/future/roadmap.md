@@ -11,7 +11,7 @@ routed here.
 
 ## Slice 9 — Leaves
 
-Build on demand, in any order except that 9.2 requires 9.1.
+Complete.
 
 - **9.1** ✅ Dynamic variables, their cache, `allow-dynamic-vars`,
   `--refresh-vars`, and `vars list --no-refresh`.
@@ -19,19 +19,6 @@ Build on demand, in any order except that 9.2 requires 9.1.
 - **9.3** ✅ File and archive remotes, `file://` URLs, and `--refresh-remotes`.
 - **9.4** ✅ `--refresh-content`, backups, `--no-overwrite`, and
   `--interactive`.
-- **9.5** Address concurrent-writer safety across all actions, including the
-  inspection/removal/create sequence for symlinks and rename publication for
-  directories. Evaluate platform no-replace operations and filesystem fallbacks;
-  preserve the current [limitation](../safety.md#concurrent-writers) until all
-  action paths meet the stronger contract. Include `replace::set_aside`, which
-  checks a backup or `.batfiles-old` path and then renames into it for every
-  conflict and for the swap that replaces a remote materialization, and the
-  comparison a refresh makes before it replaces a seed.
-- **9.6** Report prospective directory creations and link removals once per run.
-  Cover repeated parent inspection under a broken `dest-dir` and multiple
-  actions sharing a destination container, such as linking and cloning plugins
-  into `~/.oh-my-zsh/custom/plugins`. Track reported paths in `RunContext` for
-  dry-run output only; do not simulate filesystem changes.
 
 ## Slice 10 — Distribution
 
@@ -56,6 +43,12 @@ carry markers and withheld options cannot refer to them as implementation steps.
   continuation, avoid repeated diagnostics for one failed parent, and specify
   final status and partial-success output. Destination conflicts already
   continue under `--no-overwrite`.
+- **Run lock.** Hold an advisory lock under the state directory for the whole
+  run, so a second batfiles invocation against the same state waits or refuses.
+  This covers the realistic [concurrent writer](../safety.md#concurrent-writers):
+  two runs started at once. It would also close the lost update that [state
+  rewrites](../state.md#writing) permit. Per-operation no-replace renames are
+  out of scope; the lock does not guard against other programs.
 - **Entry filters.** Add include/exclude filters to archives and local directory
   actions. Archive filters match paths after root stripping. There is nothing to
   share with the inclusion filters 7.3 built beyond the one-or-many spelling:
