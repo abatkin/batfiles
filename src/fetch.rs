@@ -99,6 +99,14 @@ pub(crate) fn download(
     Ok(())
 }
 
+/// Download a small document, such as a release's `VERSION`, whole into memory.
+pub(crate) fn download_to_memory(url: &str) -> Result<Vec<u8>, Error> {
+    let mut body = Vec::new();
+    // Writing to a vector cannot fail, so no diagnostic ever names `built_at`.
+    download(url, None, &mut body, Path::new(url))?;
+    Ok(body)
+}
+
 /// Copy everything `reader` holds into `into`, returning its SHA-256.
 /// `unreadable` turns a failure reading the source into the caller's error.
 fn copy_hashed(

@@ -32,7 +32,16 @@ pub(crate) struct Server {
 impl Server {
     /// Start a server answering each named path with the reply beside it.
     pub(crate) fn new(routes: &[(&'static str, Reply)]) -> Self {
-        let routes = routes.to_vec();
+        Self::serving(
+            routes
+                .iter()
+                .map(|(path, reply)| ((*path).to_owned(), reply.clone()))
+                .collect(),
+        )
+    }
+
+    /// Start a server answering each path, built at run time, with the reply beside it.
+    pub(crate) fn serving(routes: Vec<(String, Reply)>) -> Self {
         let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("a local HTTP server"));
         let address = format!("http://{}", server.server_addr());
         let requests = Arc::new(AtomicUsize::new(0));

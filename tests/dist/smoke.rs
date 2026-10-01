@@ -3,7 +3,7 @@
 
 use tempfile::TempDir;
 
-use super::support::{Tree, script, stderr_of};
+use super::support::{Tree, script, stderr_of, stdout_of};
 
 /// A tree whose latest release is 1.2.3, with 1.3.0-rc.1 published beside it.
 fn published() -> (TempDir, Tree) {
@@ -17,12 +17,14 @@ fn published() -> (TempDir, Tree) {
 #[test]
 fn a_published_release_installs_pinned_and_as_the_latest() {
     let (_dir, tree) = published();
-    script("smoke.sh", &[&tree.url(), "1.2.3", "yes"])
+    let assertion = script("smoke.sh", &[&tree.url(), "1.2.3", "yes"])
         .assert()
         .success();
-    script("smoke.sh", &[&tree.url(), "1.3.0-rc.1", "no"])
+    assert!(stdout_of(&assertion).contains("batfiles update --check finds 1.2.3"));
+    let assertion = script("smoke.sh", &[&tree.url(), "1.3.0-rc.1", "no"])
         .assert()
         .success();
+    assert!(!stdout_of(&assertion).contains("update --check"));
 }
 
 #[test]

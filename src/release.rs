@@ -1,5 +1,5 @@
 //! The release base: the URL batfiles releases are published under, compiled in and overridden
-//! at run time by `BATFILES_BASE`.
+//! at run time by `BATFILES_BASE`; and the release asset that replaces this build.
 
 use thiserror::Error as ThisError;
 
@@ -13,6 +13,26 @@ const COMPILED: &str = match option_env!("BATFILES_DEFAULT_BASE") {
     Some(base) => base,
     None => OFFICIAL,
 };
+
+/// The target triple this build was compiled for.
+pub(crate) const TARGET: &str = env!("BATFILES_TARGET");
+
+/// The release asset for a binary built for `target`: that target's own when a release
+/// publishes it, and otherwise the published one for the same operating system and
+/// architecture. Linux takes the static musl build, and Windows on any architecture the x86_64
+/// build. `None` when no release publishes anything for the platform.
+pub(crate) fn asset_for(target: &str) -> Option<&'static str> {
+    let arch = target.split('-').next().unwrap_or_default();
+    let os = |name: &str| target.split('-').skip(1).any(|part| part == name);
+    match arch {
+        "x86_64" if os("linux") => Some("batfiles-x86_64-unknown-linux-musl"),
+        "aarch64" if os("linux") => Some("batfiles-aarch64-unknown-linux-musl"),
+        "x86_64" if os("darwin") => Some("batfiles-x86_64-apple-darwin"),
+        "aarch64" if os("darwin") => Some("batfiles-aarch64-apple-darwin"),
+        "x86_64" | "aarch64" if os("windows") => Some("batfiles-x86_64-pc-windows-msvc.exe"),
+        _ => None,
+    }
+}
 
 /// A release base URL without a trailing slash, made only of characters the installers and the
 /// stub quote safely.
@@ -108,6 +128,57 @@ mod tests {
             "https://example.com/a\\b",
         ] {
             assert!(base(raw).is_err(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_published_target_updates_from_its_own_asset() {
+        for target in [
+            "x86_64-unknown-linux-musl",
+            "aarch64-unknown-linux-musl",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+        ] {
+            assert_eq!(
+                asset_for(target),
+                Some(format!("batfiles-{target}").as_str())
+            );
+        }
+        assert_eq!(
+            asset_for("x86_64-pc-windows-msvc"),
+            Some("batfiles-x86_64-pc-windows-msvc.exe")
+        );
+    }
+
+    #[test]
+    fn an_unpublished_target_updates_from_its_platforms_asset() {
+        for (target, asset) in [
+            (
+                "x86_64-unknown-linux-gnu",
+                "batfiles-x86_64-unknown-linux-musl",
+            ),
+            (
+                "aarch64-unknown-linux-gnu",
+                "batfiles-aarch64-unknown-linux-musl",
+            ),
+            (
+                "x86_64-pc-windows-gnu",
+                "batfiles-x86_64-pc-windows-msvc.exe",
+            ),
+            (
+                "aarch64-pc-windows-msvc",
+                "batfiles-x86_64-pc-windows-msvc.exe",
+            ),
+        ] {
+            assert_eq!(asset_for(target), Some(asset), "{target}");
+        }
+        for target in [
+            "x86_64-unknown-freebsd",
+            "i686-unknown-linux-gnu",
+            "armv7-unknown-linux-gnueabihf",
+            "riscv64gc-unknown-linux-gnu",
+        ] {
+            assert_eq!(asset_for(target), None, "{target}");
         }
     }
 
