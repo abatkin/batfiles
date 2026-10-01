@@ -237,7 +237,9 @@ main() {
     candidates
     bin=
     for candidate in "$on_path" "$bin_path"; do
-        [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ] || continue
+        if [ -z "$candidate" ] || [ ! -f "$candidate" ] || [ ! -x "$candidate" ]; then
+            continue
+        fi
         if ! have=$(version_of "$candidate"); then
             # What is at $bin_path is reported if a download would replace it.
             if [ "$candidate" = "$on_path" ]; then

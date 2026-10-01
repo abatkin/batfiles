@@ -15,7 +15,9 @@ die() {
     exit 1
 }
 
-[ $# -ge 1 ] && [ $# -le 2 ] || die "usage: dist/tag.sh <tag> [<main>]"
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    die "usage: dist/tag.sh <tag> [<main>]"
+fi
 tag=$1
 main=${2:-origin/main}
 # shellcheck source=dist/version.sh
