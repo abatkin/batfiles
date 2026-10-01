@@ -16,6 +16,8 @@ ownership](../AGENTS.md#documentation) defines promotion and placement.
   conflicts, backups, refresh, staging, permissions, archive validation, and Git
   updates.
 - [Local state](state.md): state schemas, lifecycle, and atomic replacement.
+- [Distribution](distribution.md): the release tree, its targets and assets,
+  and the tasks and workflow that build and publish a release.
 - [Architecture](architecture.md): the rules the implementation is written to,
   source organization, and test environments.
 

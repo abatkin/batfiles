@@ -250,12 +250,19 @@ failed partway, and `2` that it did not run at all — a usage error.
 
 ## Building
 
-No binaries are published yet, so build from source. The toolchain is pinned in
-`rust-toolchain.toml`.
+Each [GitHub release](https://github.com/abatkin/batfiles/releases) carries a
+bare binary for Linux (static, for any distribution), macOS, and Windows, with
+a `SHA256SUMS` to check it against. There is no installer yet, so download the
+one for your machine and put it on your `PATH`.
+
+To build from source instead, with the toolchain pinned in
+`rust-toolchain.toml`:
 
 ```sh
 cargo build --release   # target/release/batfiles
 ```
+
+[Distribution](docs/distribution.md) describes how a release is built.
 
 ## Not built yet
 
@@ -264,8 +271,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 9     | Concurrent-writer safety and dry-run reporting refinements          |
-| 10    | Released binaries and an `install.sh` one-liner                     |
+| 10    | An `install.sh` one-liner, a stub for a checkout, `batfiles update` |
 
 ## Documentation
 
@@ -277,6 +283,8 @@ Roughly in the order it is planned, from
 - [Local state files](docs/state.md) — `vars.toml`, `disabled.toml`, and how batfiles
   rewrites the documents it owns.
 - [Environment variables](docs/environment.md) — the inputs batfiles reads.
+- [Distribution](docs/distribution.md) — what a release contains, and how one
+  is built and published.
 - [Architecture](docs/architecture.md) — the rules the implementation is
   written to, and what its tests look like.
 

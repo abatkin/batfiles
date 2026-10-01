@@ -28,6 +28,8 @@ changing behavior and update it in the same change.
 | Manifest schema, action fields, clone-list syntax | `docs/repoformat.md` |
 | Destination safety, seed installation, archive safety, Git update policy | `docs/safety.md` |
 | State schemas, lifecycle, and atomic document replacement | `docs/state.md` |
+| Release tree, release tasks, and the release workflow | `docs/distribution.md` |
+| Cutting a release, and the repository settings it relies on | `dist/README.md` |
 | Implementation design | `docs/architecture.md` |
 | Filesystem-owner inventory | `tests/hygiene.rs` |
 | Remaining work and its acceptance | `docs/future/roadmap.md` |

@@ -1,0 +1,106 @@
+# Release management
+
+For the repository owner: the settings releases rely on, how to cut one, and
+how to build and check the pieces locally. What a release contains and what
+each task does is specified in [`docs/distribution.md`](../docs/distribution.md).
+
+## Repository setup
+
+One-time settings on GitHub. The workflows work without them, but without them
+anyone who can push a tag can publish a release, and a published release can
+be changed afterwards.
+
+- [ ] **Immutable releases.** Settings → General → Releases → *Enable release
+  immutability*. A published release's assets and tag are then locked, and its
+  tag name can never be reused, even after deleting the release. Drafts stay
+  editable, which is what `dist:publish` relies on, and the title, notes, and
+  pre-release and latest flags stay editable too. The setting covers every
+  release, pre-releases included, which is why release candidates are numbered
+  rather than retried.
+- [ ] **A tag ruleset for `v*`.** Settings → Rules → Rulesets → *New tag
+  ruleset*: target tags matching `v*`, enforcement *Active*, and the rules
+  *Restrict creations*, *Restrict updates*, and *Restrict deletions*, with
+  *Repository admin* on the bypass list. Then only you can create or move a
+  release tag.
+- [ ] **The `release` environment.** Settings → Environments → `release`
+  (created by the first release run, or create it first). Under *Deployment
+  branches and tags*, choose *Selected branches and tags* and add the tag
+  pattern `v*`. Optionally add yourself under *Required reviewers*, so each
+  publish waits for your approval on the workflow run.
+- [ ] **Read-only workflow token.** Settings → Actions → General → *Workflow
+  permissions* → *Read repository contents and packages permissions*. Each job
+  that writes asks for its own permissions.
+- [ ] **`BATFILES_BASE`, only if needed.** A repository variable, set only to
+  serve releases from somewhere other than this repository's GitHub releases.
+
+## Cutting a release
+
+`Cargo.toml` always holds `X.Y.Z`, the release being worked toward. Tags carry
+the rest; see [versions](../docs/distribution.md#versions).
+
+### A release candidate
+
+From any branch, with the commit to release checked out and nothing
+uncommitted:
+
+```sh
+task release:rc                 # tags vX.Y.Z-rc.<n>, locally
+git push origin vX.Y.Z-rc.<n>   # the command it prints
+```
+
+Then watch the *Release* workflow, and approve the `release` environment if it
+asks. A candidate is published as a pre-release and never becomes `latest`.
+
+If the run fails before publishing, delete any draft it left
+(`gh release delete vX.Y.Z-rc.<n>`), fix the problem, and run `task release:rc`
+again; it takes the next number.
+
+### A stable release
+
+1. Merge the work, with `Cargo.toml` at `X.Y.Z`, into `main`.
+2. Tag the merged commit and push the tag:
+
+   ```sh
+   git switch main && git pull
+   task release:stable             # tags vX.Y.Z, locally
+   git push origin vX.Y.Z
+   ```
+
+3. In the next change, set `Cargo.toml` to the next version. Until then, both
+   `release:` tasks refuse, since `vX.Y.Z` is taken.
+
+## Building and checking locally
+
+`task ci` runs `tests/dist.rs`, which exercises assembly, verification, and
+tagging against stand-ins. To build real binaries:
+
+```sh
+task dist:binary TARGET=x86_64-unknown-linux-musl
+task dist:binary TARGET=x86_64-pc-windows-msvc CROSS=xwin
+```
+
+The musl build needs `musl-gcc` (Fedora's `musl-gcc` package, Debian's and
+Ubuntu's `musl-tools`); the Windows one needs `cargo xwin`, as `task lint`
+does. Building for macOS needs a Mac. `VERSION=X.Y.Z-rc.<n>` builds a binary
+that reports a pre-release. Binaries accumulate in `target/assets/`, and
+assembly takes all of them, so clear it before assembling a different set.
+
+To assemble them and check the result as a release tree served from disk:
+
+```sh
+tree=$PWD/target/tree
+task dist:assemble VERSION=0.1.0 BASE="file://$tree" OUT=target/release-tree
+mkdir -p "$tree/download" "$tree/latest"
+cp -R target/release-tree "$tree/download/v0.1.0"
+cp -R target/release-tree "$tree/latest/download"
+task dist:verify URL="file://$tree" VERSION=0.1.0 LATEST=yes
+```
+
+To check a published release, and a downloaded binary's provenance:
+
+```sh
+task dist:verify URL=https://github.com/abatkin/batfiles/releases VERSION=X.Y.Z LATEST=yes
+gh attestation verify batfiles-x86_64-unknown-linux-musl --repo abatkin/batfiles
+```
+
+Use `LATEST=no` for a pre-release.

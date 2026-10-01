@@ -1,16 +1,16 @@
 # Distribution
 
-How a machine gets a `batfiles` binary: the release layout, the hosted
-installers, the stub a leaf repository carries, self-hosting, and `batfiles
-update`. None of it is built. The [product goals](../goals.md#product-model)
-state the scope; [slice 10](roadmap.md#slice-10--distribution) numbers the
-work.
+How a machine gets a `batfiles` binary: the hosted installers, the stub a leaf
+repository carries, self-hosting, and `batfiles update`. The [release
+tree](../distribution.md) they read is built; the rest is not. The [product
+goals](../goals.md#product-model) state the scope; [slice
+10](roadmap.md#slice-10--distribution) numbers the work.
 
 ## Pieces
 
 | Piece | Lives | Changes | Job |
 | --- | --- | --- | --- |
-| Release tree | A release base URL | Every release | Binaries, checksums, installers, `VERSION` |
+| [Release tree](../distribution.md#release-tree) | A release base URL | Every release | Binaries, checksums, installers, `VERSION` |
 | Hosted installer | `install.sh` and `install.ps1` in the release tree | Every release | Put a verified binary in the install directory, then optionally run it |
 | Leaf stub | `install.sh` (and `install.ps1`) in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
 | `batfiles update` | The binary | Every release | Replace the running binary with another release |
@@ -22,82 +22,25 @@ locates things, so the one way it can go stale is a change to the contracts in
 
 ## Release tree
 
-A release tree is a static directory tree under one **release base URL**, laid
-out the way GitHub Releases serves assets:
+The [release tree](../distribution.md#release-tree), its assets and targets, and
+the tasks and workflow that [build a release](../distribution.md#building-a-release)
+are implemented. What remains of the [release
+base](../distribution.md#the-release-base):
 
-```text
-<base>/latest/download/<asset>        the latest stable release
-<base>/download/v<X.Y.Z>/<asset>      one release, by tag
-```
+- **Hosted installers.** `BATFILES_BASE` in the environment overrides the
+  stamped default.
+- **The binary.** It compiles in `BATFILES_DEFAULT_BASE`, falling back to the
+  official base; `BATFILES_BASE` overrides it at run time, for
+  [`update`](#batfiles-update) and for the stub [`init`](#leaf-stub) writes. It
+  also compiles in its own target triple, so it knows its asset name.
 
-The official base is `https://github.com/abatkin/batfiles/releases`. Any static
-host that serves those two paths is a release tree; no server logic or API is
-involved. `latest` never names a pre-release.
+### GitHub Pages
 
-Every release carries these assets, with version-free names:
-
-| Asset | Contents |
-| --- | --- |
-| `batfiles-<target>` / `batfiles-<target>.exe` | The bare binary for one Rust target triple. |
-| `SHA256SUMS` | `sha256sum` format (`<hex>  <asset>`), covering the binaries only. |
-| `VERSION` | The release's version, `X.Y.Z`, and a newline. |
-| `install.sh`, `install.ps1` | The hosted installers, [stamped](#the-release-base-parameter) with the release base. |
-
-Binaries are bare rather than archived, so neither an installer nor `update`
-needs to unpack anything. `SHA256SUMS` leaves the installers out so a
-[mirror](#self-hosting) can restamp them without invalidating it.
-
-Targets:
-
-- `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`: static, so one
-  binary runs on any glibc or musl distribution. The TLS stack is rustls, so
-  there is no OpenSSL to link.
-- `x86_64-apple-darwin`, `aarch64-apple-darwin`.
-- `x86_64-pc-windows-msvc`. Windows on ARM runs it under emulation.
-
-The target list is one parameter of the release workflow, so adding a target is
-a one-line change plus whatever toolchain setup it needs.
-
-Checksums detect corruption, not a compromised host. Official releases may also
-carry build-provenance attestations, verified out of band; no installer depends
-on them.
-
-### The release base parameter
-
-The release base is the one parameter a fork or self-hoster changes, and each
-consumer takes it from one place:
-
-- **Release workflow.** A repository variable, defaulting to
-  `https://github.com/<owner>/<repo>/releases` for the repository the workflow
-  runs in. A fork's releases point at the fork with no configuration.
-- **Hosted installers.** Each has its default base on one line of a fixed form.
-  Assembling a release replaces that line; the unstamped source holds a
-  sentinel that fails with a message saying the script was never stamped. The
-  `BATFILES_BASE` environment variable overrides the stamped default.
-- **The binary.** A build-time environment variable compiles in the default
-  base, falling back to the official base. `BATFILES_BASE` overrides it at run
-  time, for [`update`](#batfiles-update) and for the stub
-  [`init`](#leaf-stub) writes. The binary also compiles in its own target
-  triple, so it knows its asset name.
-
-### Building a release
-
-`Taskfile.yml` owns every step, so CI runs nothing that cannot be run locally:
-
-- `dist:binary TARGET=<triple>` builds one release binary on a host that can
-  build it.
-- `dist:assemble VERSION=<X.Y.Z> BASE=<url> OUT=<dir>` takes binaries already
-  built, stamps the installers, and writes `VERSION` and `SHA256SUMS`: a
-  complete asset set for one release. The pristine-machine acceptance uses the
-  same task to build a local release tree from the host binary.
-- `dist:mirror` — see [self-hosting](#self-hosting).
-
-The GitHub workflow runs on a pushed `v*` tag. It refuses a tag that does not
-match the `Cargo.toml` version, runs `dist:binary` in a matrix over the target
-list (macOS targets on a macOS runner), runs `dist:assemble`, and creates the
-release. When the repository has GitHub Pages enabled, it also publishes copies
-of the two hosted installers at the site root, for a shorter one-liner; a fork
-without Pages skips that job. Everything works from the release URL alone.
+When the repository has GitHub Pages enabled, the release workflow also
+publishes copies of the two hosted installers at the site root, for a shorter
+one-liner; a fork without Pages skips that job, and everything keeps working
+from the release URL alone. Open: how the job coexists with other content on the
+same Pages site, and that only a stable release replaces the copies.
 
 ## Hosted installer
 
@@ -118,7 +61,7 @@ Inputs, all optional:
 | Variable | Meaning |
 | --- | --- |
 | `BATFILES_BASE` | The release base. Defaults to the stamped base. |
-| `BATFILES_VERSION` | A release to fetch, `X.Y.Z` or `vX.Y.Z`. Empty or `latest` means the latest release. |
+| `BATFILES_VERSION` | A release to fetch, a [version](../distribution.md#release-tree) with or without a leading `v`. Empty or `latest` means the latest release. |
 | `BATFILES_INSTALL_DIR` | Where a downloaded binary goes. Defaults to `$HOME/.local/bin`. |
 
 Because the script is piped, a variable reaches it as `curl … | BATFILES_BASE=…
@@ -174,7 +117,8 @@ batfiles by absolute path, so the bootstrap never depends on `PATH`.
 
 ### Script conventions
 
-- POSIX `sh`, checked by `shellcheck` in `task lint` and run under `dash` in the
+- POSIX `sh`, checked by `shellcheck` in `task lint` (with the other scripts
+  under `dist/` and `tests/docker/`) and run under `dash` in the
   pristine-machine container.
 - The whole body is a function called on the last line, so a truncated download
   runs nothing.
@@ -204,7 +148,7 @@ BATFILES_BASE=${BATFILES_BASE:-<base>}
 BATFILES_VERSION=${BATFILES_VERSION:-}
 ```
 
-`init` fills in `<base>` from the binary's [release base](#the-release-base-parameter),
+`init` fills in `<base>` from the binary's [release base](#release-tree),
 so a self-hoster runs `BATFILES_BASE=https://mysite/batfiles batfiles init`,
 or edits the line afterwards. Setting `BATFILES_VERSION` pins the repository to
 a release at least that new.
@@ -281,20 +225,22 @@ The Windows installer and stub mirror the Unix ones within reason:
 
 The symlink actions fail on Windows today (see the [project
 README](../../README.md#what-works-today)), which limits what a Windows bootstrap
-can install and is why this work comes last. CI checks Windows compilation but
-runs no Windows tests; that step decides whether the installer earns a Windows
-runner or stays checked by a `pwsh` parse on Linux.
+can install and is why this work comes last. Until then the release carries a
+placeholder `install.ps1`. CI checks Windows compilation but runs no Windows
+tests, and only the release workflow uses a Windows runner, to build the binary;
+that step decides whether the installer is tested on one or stays checked by a
+`pwsh` parse on Linux.
 
 ## Self-hosting
 
 A self-hoster serves a release tree from any static host:
 
-1. `task dist:mirror VERSION=<X.Y.Z> BASE=<url> OUT=<dir>` downloads an
+1. `task dist:mirror VERSION=<version> BASE=<url> OUT=<dir>` downloads an
    official release, verifies it against its `SHA256SUMS`, and restamps both
-   installers with the new base. The task wraps a POSIX script so a mirror can
-   run without Task.
-2. Upload `<dir>` to both `<url>/download/v<X.Y.Z>/` and
-   `<url>/latest/download/`.
+   installers' [stamp lines](../distribution.md#the-release-base) with the new
+   base. The task wraps a POSIX script so a mirror can run without Task.
+2. Upload `<dir>` to both `<url>/download/v<version>/` and
+   `<url>/latest/download/`, and check it with `task dist:verify URL=<url>`.
 
 After that, `<url>` works like the official base everywhere: the installer
 one-liner, stubs written with `BATFILES_BASE=<url>`, and `update` under the same
@@ -302,9 +248,8 @@ variable.
 
 ## On promotion
 
-This document becomes `docs/distribution.md`, with a row in the ownership table
-in [`AGENTS.md`](../../AGENTS.md#documentation), and the rest lands with its
-owners: `update` and the stub `init` writes in [`cmdline.md`](../cmdline.md),
+Distribution material joins [`docs/distribution.md`](../distribution.md), and the
+rest lands with its owners: `update` and the stub `init` writes in [`cmdline.md`](../cmdline.md),
 `BATFILES_BASE` as the binary reads it in
 [`environment.md`](../environment.md), the installer in the pristine-machine
 section of [`architecture.md`](../architecture.md#the-pristine-machine), and the

@@ -186,6 +186,10 @@ by responsibility. Keep realistic fixture repositories separate when they need
 different environments. Snapshot whole trees for dry-run assertions and also
 check direct evidence of work, such as HTTP request counts or `FETCH_HEAD`.
 
+The release scripts under `dist/` are tested by `tests/dist.rs`, which runs them
+with `sh` against stand-in binaries and `file://` release trees. Building real
+binaries and publishing them are left to the release workflow.
+
 Gate platform-specific execution tests together where practical. Windows
 compilation is checked by `task lint`; it is not a Windows runtime test. The
 pinned toolchain and [Taskfile](../Taskfile.yml) own toolchain setup and checks.

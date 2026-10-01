@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["Adam Batkin <adam@batkin.net>"]
-repository = "https://github.com/abatkin/batfiles-rust"
+repository = "https://github.com/abatkin/batfiles"
 rust-version = "1.94"
 
 [dependencies]
@@ -59,3 +59,11 @@ tempfile = "3"
 
 # Loopback HTTP fixtures.
 tiny_http = "0.12"
+
+# Release binaries, built by `task dist:binary`: smaller and slower to build
+# than `--release`.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = true

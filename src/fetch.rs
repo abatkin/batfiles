@@ -26,9 +26,6 @@ const BODY_TIMEOUT: Duration = Duration::from_secs(600);
 /// Maximum number of HTTP redirects to follow.
 const MAX_REDIRECTS: u32 = 5;
 
-/// How batfiles introduces itself to a server.
-const USER_AGENT: &str = concat!("batfiles/", env!("CARGO_PKG_VERSION"));
-
 /// The mode a fetched file lands with.
 #[cfg(unix)]
 const FETCHED_MODE: u32 = 0o644;
@@ -213,7 +210,7 @@ fn agent() -> ureq::Agent {
         .timeout_recv_response(Some(RESPONSE_TIMEOUT))
         .timeout_recv_body(Some(BODY_TIMEOUT))
         .max_redirects(MAX_REDIRECTS)
-        .user_agent(USER_AGENT)
+        .user_agent(format!("batfiles/{}", crate::cli::VERSION))
         // Use the OS trust store, including locally installed corporate CAs.
         .tls_config(
             TlsConfig::builder()

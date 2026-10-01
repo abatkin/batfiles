@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# Each step is a `dist:` task from Taskfile.yml; this file only chooses runners
+# and moves assets between jobs. docs/distribution.md describes the release.
+#
+# Third-party actions are pinned to a commit SHA, as in ci.yml.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  # The release base stamped into the installers and compiled into the
+  # binaries: the repository variable BATFILES_BASE, else this repository's own
+  # releases, so a fork's releases point at the fork.
+  RELEASE_BASE: ${{ vars.BATFILES_BASE || format('{0}/{1}/releases', github.server_url, github.repository) }}
+  # Where this workflow publishes, which is where it verifies the release.
+  PUBLISHED_BASE: ${{ format('{0}/{1}/releases', github.server_url, github.repository) }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      # The whole history, so dist:tag can check a stable release is on main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - name: Check the tag against Cargo.toml
+        id: tag
+        run: task --silent dist:tag TAG="$GITHUB_REF_NAME" >>"$GITHUB_OUTPUT"
+
+      # The release targets, and the runner that builds each. Adding a target
+      # is a line here, plus whatever toolchain setup its runner needs below.
+      # Linux binaries are static, so a runner's glibc never reaches them.
+      - name: List the targets
+        id: targets
+        run: |
+          jq -c . <<'EOF' | sed 's/^/targets=/' >>"$GITHUB_OUTPUT"
+          [
+            {"target": "x86_64-unknown-linux-musl",  "runner": "ubuntu-latest"},
+            {"target": "aarch64-unknown-linux-musl", "runner": "ubuntu-24.04-arm"},
+            {"target": "x86_64-apple-darwin",        "runner": "macos-latest"},
+            {"target": "aarch64-apple-darwin",       "runner": "macos-latest"},
+            {"target": "x86_64-pc-windows-msvc",     "runner": "windows-latest"}
+          ]
+          EOF
+
+  binary:
+    name: binary (${{ matrix.target }})
+    needs: plan
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      # The TLS stack compiles C, which a musl target needs musl's compiler for.
+      - name: Install musl
+        if: contains(matrix.target, '-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: task dist:binary
+        run: >-
+          task dist:binary
+          TARGET="${{ matrix.target }}"
+          BASE="$RELEASE_BASE"
+          VERSION="${{ needs.plan.outputs.version }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binary-${{ matrix.target }}
+          path: target/assets/
+          if-no-files-found: error
+
+  assemble:
+    needs: [plan, binary]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binary-*
+          path: target/assets/
+          merge-multiple: true
+
+      - name: task dist:assemble
+        run: >-
+          task dist:assemble
+          VERSION="${{ needs.plan.outputs.version }}"
+          BASE="$RELEASE_BASE"
+          OUT=target/release-tree
+          TARGETS="${{ join(fromJSON(needs.plan.outputs.targets).*.target, ' ') }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-tree
+          path: target/release-tree/
+          if-no-files-found: error
+
+  # The `release` environment is where the repository's settings can limit
+  # publishing to v* tags and require an approval; dist/README.md lists them.
+  # A repository that never configures it gets an unprotected one.
+  publish:
+    needs: [ci, plan, assemble]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-tree
+          path: target/release-tree/
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: target/release-tree/batfiles-*
+
+      - name: task dist:publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: task dist:publish VERSION="${{ needs.plan.outputs.version }}" DIR=target/release-tree
+
+  verify:
+    needs: [plan, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - name: task dist:verify
+        run: >-
+          task dist:verify
+          URL="$PUBLISHED_BASE"
+          VERSION="${{ needs.plan.outputs.version }}"
+          LATEST="${{ needs.plan.outputs.prerelease == 'true' && 'no' || 'yes' }}"
+          STAMPED="$RELEASE_BASE"

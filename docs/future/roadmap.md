@@ -22,29 +22,41 @@ Complete.
 
 ## Slice 10 — Distribution
 
-Begin after slice 8 is in real use.
+[Distribution](distribution.md) specifies what remains, and
+[`docs/distribution.md`](../distribution.md) what is built.
 
-[Distribution](distribution.md) specifies all of it.
+The whole slice is built on one branch, `slice-10`, a step at a time. A step
+may leave work open for a later step of the slice, provided that step's entry
+below names it.
 
-- **10.1** The [release tree](distribution.md#release-tree): targets, assets,
-  the [release base parameter](distribution.md#the-release-base-parameter)
-  compiled into the binary, the `dist:binary` and `dist:assemble` tasks, and the
-  tag-triggered workflow. Accepted when a tagged release publishes a complete,
-  verifiable asset set. Its installers may be unstamped sentinels until 10.2.
-- **10.2** The POSIX [hosted installer](distribution.md#hosted-installer), its
-  GitHub Pages copy, and [`dist:mirror`](distribution.md#self-hosting), with
-  `shellcheck` in `task lint`. Accepted by extending the [pristine-machine
+- **10.1** The [release tree](../distribution.md), the `dist:` and `release:`
+  tasks, and the tag-triggered release workflow, with placeholder installers.
+  Accepted when a tag from `release:rc` publishes a complete asset set that
+  `dist:verify` passes.
+- **10.2** The POSIX [hosted installer](distribution.md#hosted-installer),
+  replacing the placeholder `dist/install.sh`, and
+  [`dist:mirror`](distribution.md#self-hosting), with `shellcheck` in
+  `task lint` covering `dist/` and `tests/docker/`. Decides whether the
+  installer's unstamped source runs when `BATFILES_BASE` is set. Accepted by
+  extending the [pristine-machine
   acceptance](../architecture.md#the-pristine-machine) against a local release
   tree built by `dist:assemble`: the `clone` one-liner on a machine with no
   batfiles, an existing binary used without a download, and a checksum mismatch
-  refused.
+  refused. The host's binary is a glibc build, so the acceptance stages it under
+  the musl asset name or builds a musl one.
 - **10.3** The [leaf stub](distribution.md#leaf-stub), added to the skeleton
-  [`init`](../cmdline.md#init) lays down. Accepted in the same container: the
-  stub with no binary, with one present and the base unreachable, piped with no
-  checkout, and a pin passing over an older binary.
+  [`init`](../cmdline.md#init) lays down, and the compiled-in
+  `BATFILES_DEFAULT_BASE` it is stamped from. Accepted in the same container:
+  the stub with no binary, with one present and the base unreachable, piped
+  with no checkout, and a pin passing over an older binary.
 - **10.4** [`batfiles update`](distribution.md#batfiles-update), tested against
-  a loopback release tree.
-- **10.5** The [Windows](distribution.md#windows) installer and stub.
+  a loopback release tree. Adds a build script compiling in the target triple,
+  and decides what a build for a target with no release asset, such as
+  `x86_64-unknown-linux-gnu`, asks for.
+- **10.5** The [Windows](distribution.md#windows) installer and stub, replacing
+  the placeholder `dist/install.ps1`.
+- **10.6** The [GitHub Pages](distribution.md#github-pages) copies of the hosted
+  installers.
 
 ## Enhancements
 

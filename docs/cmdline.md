@@ -272,7 +272,9 @@ requested data, so `--quiet` leaves only warnings and errors.
 batfiles version
 ```
 
-Print the batfiles version to standard output and exit successfully. This
+Print `batfiles <version>` to standard output and exit successfully. A
+[release](distribution.md#versions) build reports its release version, including
+any pre-release suffix; any other build reports the `Cargo.toml` version. This
 command does not resolve the selected repository, home, config, or cache
 directories.
 

@@ -40,6 +40,48 @@ tasks:
     desc: Build the project (release)
     cmd: cargo build --release
 
+  # Release tasks. docs/distribution.md describes each, and the release workflow
+  # runs them in order: dist:tag, dist:binary per target, dist:assemble,
+  # dist:publish, dist:verify. dist/README.md is the procedure for cutting a
+  # release with release:rc and release:stable.
+  release:rc:
+    desc: Tag the checked-out commit as the next release candidate of the Cargo.toml version
+    cmd: sh dist/release.sh rc
+
+  release:stable:
+    desc: Tag the checked-out commit, on origin/main, as the Cargo.toml version's release
+    cmd: sh dist/release.sh stable
+
+  dist:tag:
+    desc: Check a release tag against the Cargo.toml version and origin/main (TAG=v<version>)
+    requires:
+      vars: [TAG]
+    cmd: sh dist/tag.sh {{q .TAG}}
+
+  dist:binary:
+    desc: Build one release binary into target/assets (TARGET=<triple>, optional BASE=<url>, CROSS=xwin, and VERSION=<version>)
+    requires:
+      vars: [TARGET]
+    cmd: sh dist/binary.sh {{q .TARGET}} {{q (.BASE | default "")}} {{q (.CROSS | default "")}} {{q (.VERSION | default "")}}
+
+  dist:assemble:
+    desc: Assemble one release's asset set (VERSION=<version> BASE=<url> OUT=<dir>, optional IN=<dir> and TARGETS="<triple> ...")
+    requires:
+      vars: [VERSION, BASE, OUT]
+    cmd: sh dist/assemble.sh {{q .VERSION}} {{q .BASE}} {{q .OUT}} {{q (.IN | default "")}} {{q (.TARGETS | default "")}}
+
+  dist:publish:
+    desc: Publish an assembled release as a GitHub release (VERSION=<version> DIR=<dir>)
+    requires:
+      vars: [VERSION, DIR]
+    cmd: sh dist/publish.sh {{q .VERSION}} {{q .DIR}}
+
+  dist:verify:
+    desc: Check a published release through its release tree (URL=<base> VERSION=<version> LATEST=yes|no, optional STAMPED=<base>)
+    requires:
+      vars: [URL, VERSION, LATEST]
+    cmd: sh dist/verify.sh {{q .URL}} {{q .VERSION}} {{q .LATEST}} {{q (.STAMPED | default "")}}
+
   toolchain:
     internal: true
     desc: Ensure the pinned toolchain is ready before parallel tasks race to sync it

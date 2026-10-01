@@ -37,8 +37,9 @@ A standalone `batfiles` binary performs planning and installation, and
 plain-file repositories contain the actual dotfiles and declarative
 `batfiles.toml` configuration.
 
-Getting that binary onto a machine is *intended*, and specified in
-[distribution](future/distribution.md):
+Each release publishes that binary for Linux, macOS, and Windows in a
+[release tree](distribution.md). Getting it onto a machine is *intended*, and
+specified in [distribution](future/distribution.md):
 
 1. **One command bootstraps a new machine.** A hosted installer, piped into a
    shell, uses a `batfiles` it finds or downloads a verified one to
