@@ -37,14 +37,14 @@ provided that step's entry below names it.
   `task lint`, accepted in the pristine-machine container.
 - **10.3** ✅ The leaf stub `init` writes, the compiled-in release base, and
   `sync --bootstrap`, accepted in a second, fresh container.
-- **10.4** [`batfiles update`](distribution.md#batfiles-update), tested against
-  a loopback release tree. Adds a build script compiling in the target triple,
-  and decides what a build for a target with no release asset, such as
-  `x86_64-unknown-linux-gnu`, asks for.
+- **10.4** ✅ `batfiles update`, the compiled-in target triple and the asset a
+  build without a release of its own takes, and `update --check` in
+  `dist:smoke`.
 - **10.5** The [Windows](distribution.md#windows) installer and stub, replacing
-  the placeholder `dist/install.ps1`. Adds a Windows CI job that runs the
-  installer's tests natively, as the macOS job does for `install.sh`, and a
-  Windows runner to `dist:smoke` in the release workflow.
+  the placeholder `dist/install.ps1`, and `update` replacing a running
+  `batfiles.exe`. Adds a Windows CI job that runs the installer's tests and
+  `update`'s natively, as the macOS job does for `install.sh`, and a Windows
+  runner to `dist:smoke` in the release workflow.
 - **10.6** The [GitHub Pages](distribution.md#github-pages) copies of the hosted
   installers.
 

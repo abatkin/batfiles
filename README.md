@@ -107,7 +107,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   says what a fresh machine starts with switched off; `clone`'s enable and
   disable options and the `BATFILES_*` bootstrap lists overrule it. See
   [`clone`](docs/cmdline.md#clone).
-- **Report the installed version.** `version` prints the version.
+- **Report the installed version, and update it.** `version` prints the
+  version. `update` replaces the binary with the latest release, or a named
+  one, on Linux and macOS; see [`update`](docs/cmdline.md#update).
 - **Platform support.** Symlink actions are supported only on Unix. On Windows,
   executing either symlink action fails the run with an error naming the action
   type. Directory, copy, fetching, and Git actions have Windows implementations.
@@ -271,6 +273,11 @@ rather than downloading another, and never edits a shell startup file.
 pre-release, which `latest` never is; [the hosted
 installer](docs/distribution.md#hosted-installer) has the details.
 
+Once installed, `batfiles update` replaces batfiles with the latest release, or
+`batfiles update 1.2.3` with a particular one, verified the same way; `batfiles
+update --check` says what is available. Nothing updates batfiles unless you run
+it. See [`update`](docs/cmdline.md#update).
+
 Each [GitHub release](https://github.com/abatkin/batfiles/releases) also
 carries the bare binaries, for Linux (static, for any distribution), macOS, and
 Windows. To build from source instead, with the toolchain pinned in
@@ -290,7 +297,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 10    | `batfiles update`, and a Windows installer and stub                 |
+| 10    | A Windows installer and stub, and `update` on Windows               |
 
 ## Documentation
 

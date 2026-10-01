@@ -11,8 +11,8 @@ according to the [documentation ownership](../../AGENTS.md#documentation) rules.
 - [Environment](environment.md): what remains of input precedence.
 - [Local state](state.md): the rest of `disabled.toml`.
 - [Safety](safety.md): trust for remote inclusion, and extraction budgets.
-- [Distribution](distribution.md): `batfiles update`, the Windows installer
-  and stub, and the GitHub Pages copies of the installers.
+- [Distribution](distribution.md): the Windows installer and stub, `update` on
+  Windows, and the GitHub Pages copies of the installers.
 - [Roadmap](roadmap.md): the numbered work that builds the above, and the
   unscheduled enhancements beside it.
 

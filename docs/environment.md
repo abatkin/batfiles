@@ -479,7 +479,7 @@ parsing errors.
 
 | Variable        | Effect                                                                   |
 |-----------------|--------------------------------------------------------------------------|
-| `BATFILES_BASE` | The [release base](distribution.md#the-release-base) `init` writes into the stub. |
+| `BATFILES_BASE` | The [release base](distribution.md#the-release-base) `init` writes into the stub, and [`update`](cmdline.md#update) installs from. |
 
 An absent or empty `BATFILES_BASE` is treated as unset, and the base this build
 was released from applies, which a build compiles in from

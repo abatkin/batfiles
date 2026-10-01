@@ -57,8 +57,9 @@ included, and is specified in [`docs/cmdline.md`](../cmdline.md#clone).
 
 ### `update`
 
-[`batfiles update`](distribution.md#batfiles-update) is proposed with the rest
-of distribution, as roadmap step 10.4.
+[`update`](../cmdline.md#update) is built and specified in
+[`docs/cmdline.md`](../cmdline.md#update), except on Windows, which
+[distribution](distribution.md#windows) proposes.
 
 ## Address Forms
 

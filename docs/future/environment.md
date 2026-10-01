@@ -43,9 +43,10 @@ through.
 
 ## Bootstrap use of `PATH`
 
-A generated `install.sh` uses a `batfiles` binary found on `PATH`, and the
-binary reads `BATFILES_BASE` for `init` and `update`. Both are specified in
-[distribution](../distribution.md#resolving-a-binary).
+A generated `install.sh` uses a `batfiles` binary found on `PATH`, as
+[distribution](../distribution.md#resolving-a-binary) specifies, and the binary
+reads `BATFILES_BASE` for `init` and `update`, as the [environment
+reference](../environment.md#release-base) does.
 
 ## Deliberate exclusions
 

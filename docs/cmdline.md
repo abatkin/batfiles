@@ -58,6 +58,9 @@ set](environment.md#variable-precedence), and `-vv` prints what that came to.
 that reads a variable. [`vars refresh`](#vars-refresh) runs the dynamic
 variables' commands ahead of a run, whatever the cache holds.
 
+[`update`](#update) replaces the running binary with another release, when the
+user asks and only then; like `init` and `version`, it resolves no roots.
+
 An option a command accepted but did not honor yet would fail rather than be
 ignored, ahead of everything else the command would do — see
 [unimplemented options](#unimplemented-options).
@@ -70,6 +73,7 @@ batfiles [global-options] <command> [command-options]
 Commands:
   init
   version
+  update
 
   clone
   sync
@@ -285,6 +289,64 @@ command does not resolve the selected repository, home, config, or cache
 directories.
 
 `batfiles version` and `batfiles --version` print the same line.
+
+### `update`
+
+```text
+batfiles update [<version>] [--check]
+```
+
+Replace the running binary with the latest [release](distribution.md#release-tree),
+or with `<version>`. The user runs it; batfiles never runs it, and no other
+command checks for updates. Like `version`, it resolves none of the four roots.
+
+| Argument or option | Purpose |
+|--------------------|---------|
+| `<version>`        | The release to install: a [version](distribution.md#versions), with or without a leading `v`, or `latest`, the default. One outside the grammar is a usage error. |
+| `--check`          | Print what is running and what is available, and install nothing. |
+
+Releases come from the [release base](distribution.md#the-release-base):
+`BATFILES_BASE` when it is set and not empty, otherwise the base this build was
+released from. A self-hoster sets `BATFILES_BASE` in the shell environment their
+own dotfiles install.
+
+With no `<version>`, `update` reads `<base>/latest/download/VERSION` once. A
+latest release that is not newer than the running one, by [version
+order](distribution.md#versions), is reported and nothing is downloaded, so a
+pre-release stays until a stable release passes it. When `VERSION` cannot be
+read, the error suggests naming a release, since the base may have published
+only pre-releases. A named `<version>` is installed whatever the running
+version, older or the same, which also repairs a binary.
+
+Everything else comes from `<base>/download/v<version>/`:
+
+1. Create a private file beside the running executable, with symlinks resolved,
+   so a link to batfiles stays a link and what it points at is replaced. A
+   directory this user cannot write fails here, before anything is downloaded,
+   naming it. Something already at that path, such as the file an interrupted
+   update left, is never replaced; remove it and run `update` again.
+2. Download `SHA256SUMS`, and the binary it lists for this build's
+   [asset](distribution.md#targets) into that file, verifying its digest.
+3. Make it executable and run its `version`, which must report the release.
+4. Rename it over the running executable, and report both versions and the
+   path.
+
+A failure at any step removes the file and leaves the running binary as it
+was. Replacing a running executable on Windows is not built yet: `update` fails
+there before downloading anything, and `--check` works.
+
+`--check` downloads only the one `VERSION` it needs — `latest/download/` with
+no `<version>`, that release's own otherwise, which must hold the version
+named — and prints two lines of requested data to standard output:
+
+```text
+running 1.2.0
+available 1.3.0
+```
+
+It succeeds whether or not the available release is newer; a `VERSION` that
+cannot be read or holds something other than a version is a failure. Without
+`--check`, everything `update` prints is a diagnostic on standard error.
 
 ### `clone`
 
@@ -1393,7 +1455,8 @@ Status 1 covers a command that needs a home directory and cannot determine one,
 a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
 `disabled.toml` is malformed, a `vars get` naming a variable this machine has no
 value for, a [`vars refresh`](#vars-refresh) naming a key it cannot refresh or
-whose command failed, an argument that is not a well-formed address or variable name, an
+whose command failed, an [`update`](#update) that could not read, verify, or
+install the release it chose, an argument that is not a well-formed address or variable name, an
 [`init`](#init) that refused the directory it was run in or could not put a Git
 repository around it, and an
 action that could not be carried out — a source the repository does not contain,
