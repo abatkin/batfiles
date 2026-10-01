@@ -328,3 +328,93 @@ fn sync_is_not_a_bootstrap_and_adopts_nothing() {
         "`sync` adopted the candidates the bootstrap had already offered"
     );
 }
+
+/// A checkout that arrived without `clone`, as `git clone` leaves one: the repository is in
+/// place, and this machine has no disabled state and nothing installed.
+fn checkout(tree: &Tree, origin: &BareRepo) {
+    cloning(tree, origin).assert().success();
+    if tree.disabled().exists() {
+        fs::remove_file(tree.disabled()).expect("the adopted document");
+    }
+    for name in installed(tree) {
+        fs::remove_file(tree.home(name)).expect("an installed file");
+    }
+}
+
+#[test]
+fn sync_bootstrap_adopts_as_clone_does() {
+    let tree = Tree::roots();
+    let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\n");
+    checkout(&tree, &origin);
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--bootstrap", "--disable-group", "gui"])
+        .assert()
+        .success();
+
+    assert_eq!(installed(&tree), ["zshrc"]);
+    assert_eq!(
+        tree.disabled_document(),
+        "actions = [\"p10k\"]\ngroups = [\"gui\"]\n"
+    );
+    let stderr = stderr_of(&assertion);
+    for expected in [
+        "default-disabled: disabled action `p10k`",
+        "--disable-group: disabled group `gui`",
+    ] {
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
+
+    // Offered once: the machine now has a document, so a second bootstrap adds nothing.
+    tree.write_disabled("actions = []\ngroups = []\n");
+    tree.batfiles()
+        .args(["sync", "--bootstrap"])
+        .assert()
+        .success();
+    assert_eq!(installed(&tree), ["p10k", "zshrc", "gvim"]);
+}
+
+#[test]
+fn a_dry_run_bootstrap_plans_with_the_policy_and_writes_nothing() {
+    let tree = Tree::roots();
+    let origin = origin_with("[[default-disabled.actions]]\nid = \"p10k\"\n");
+    checkout(&tree, &origin);
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--bootstrap", "--dry-run"])
+        .assert()
+        .success();
+
+    assert!(installed(&tree).is_empty());
+    assert!(!tree.disabled().exists(), "a dry run wrote disabled.toml");
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("default-disabled: would disable action `p10k`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("would copy {}", display(&tree.home("zshrc")))),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains(&format!("would copy {}", display(&tree.home("p10k")))),
+        "the dry run planned an action the bootstrap disables:\n{stderr}"
+    );
+}
+
+#[test]
+fn bootstrap_options_on_sync_need_bootstrap() {
+    let tree = Tree::roots();
+    let origin = origin_with("");
+    checkout(&tree, &origin);
+
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "--disable-group", "gui"])
+        .assert()
+        .code(2);
+    assert!(stderr_of(&assertion).contains("--bootstrap"));
+    assert!(installed(&tree).is_empty());
+}

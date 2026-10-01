@@ -86,6 +86,30 @@ version_of() {
     printf '%s\n' "$reported"
 }
 
+# Set $on_path and $bin_path, the batfiles to consider, in order.
+# BATFILES_BIN is the only one when it is set; otherwise they are the batfiles
+# on PATH and $HOME/.local/bin/batfiles, and the last is where a download goes.
+candidates() {
+    on_path=
+    if [ -n "${BATFILES_BIN:-}" ]; then
+        bin_path=$BATFILES_BIN
+        case $bin_path in /*) ;; *) bin_path=$(pwd)/$bin_path ;; esac
+    else
+        [ -n "${HOME:-}" ] || fail "HOME is not set; set BATFILES_BIN instead"
+        bin_path=$HOME/.local/bin/batfiles
+        on_path=$(command -v batfiles 2>/dev/null) || on_path=
+        # A relative PATH entry gives a relative path, anchored here since this
+        # script never changes directory; a function, alias, or builtin gives a
+        # bare name, which is not a batfiles to run.
+        case $on_path in
+        /*) ;;
+        */*) on_path=$(pwd)/$on_path ;;
+        *) on_path= ;;
+        esac
+        [ "$on_path" != "$bin_path" ] || on_path=
+    fi
+}
+
 # The release target for this machine.
 detect_target() {
     os=$(uname -s)
@@ -209,29 +233,8 @@ main() {
         fail "BATFILES_VERSION is '$BATFILES_VERSION', not a version such as 1.2.3 or 1.2.3-rc.1"
     fi
 
-    # The candidates, in order. BATFILES_BIN is the only one when it is set;
-    # otherwise they are the batfiles on PATH and $HOME/.local/bin/batfiles. The
-    # first that runs and is at least the requested version wins, and the last
-    # is where a download goes.
-    on_path=
-    if [ -n "${BATFILES_BIN:-}" ]; then
-        bin_path=$BATFILES_BIN
-        case $bin_path in /*) ;; *) bin_path=$(pwd)/$bin_path ;; esac
-    else
-        [ -n "${HOME:-}" ] || fail "HOME is not set; set BATFILES_BIN instead"
-        bin_path=$HOME/.local/bin/batfiles
-        on_path=$(command -v batfiles 2>/dev/null) || on_path=
-        # A relative PATH entry gives a relative path, anchored here since the
-        # installer never changes directory; a function, alias, or builtin
-        # gives a bare name, which is not a batfiles to run.
-        case $on_path in
-        /*) ;;
-        */*) on_path=$(pwd)/$on_path ;;
-        *) on_path= ;;
-        esac
-        [ "$on_path" != "$bin_path" ] || on_path=
-    fi
-
+    # The first candidate that runs and is at least the requested version wins.
+    candidates
     bin=
     for candidate in "$on_path" "$bin_path"; do
         [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ] || continue

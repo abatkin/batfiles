@@ -1,9 +1,9 @@
 # Distribution
 
-How a machine gets a `batfiles` binary: the stub a leaf repository carries,
-`batfiles update`, and the Windows installer. The [release
-tree](../distribution.md), the POSIX [hosted
-installer](../distribution.md#hosted-installer), and
+How a machine gets a `batfiles` binary: `batfiles update`, and the Windows
+installer and stub. The [release tree](../distribution.md), the POSIX [hosted
+installer](../distribution.md#hosted-installer), the [leaf
+stub](../distribution.md#leaf-stub), and
 [self-hosting](../distribution.md#self-hosting) are built; the rest is not.
 The [product goals](../goals.md#product-model) state the scope; [slice
 10](roadmap.md#slice-10--distribution) numbers the work.
@@ -14,13 +14,13 @@ The [product goals](../goals.md#product-model) state the scope; [slice
 | --- | --- | --- | --- |
 | [Release tree](../distribution.md#release-tree) | A release base URL | Every release | Binaries, checksums, installers, `VERSION` |
 | [Hosted installer](../distribution.md#hosted-installer) | `install.sh` and `install.ps1` in the release tree | Every release | Put a verified binary at its install location, then optionally run it |
-| Leaf stub | `install.sh` (and `install.ps1`) in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
+| [Leaf stub](../distribution.md#leaf-stub) | `install.sh` (and `install.ps1`) in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
 | `batfiles update` | The binary | Every release | Replace the running binary with another release |
 
 All logic that follows releases — platform detection, asset names, checksum
 verification — lives in the hosted installer and the binary. The stub only
 locates things, so the one way it can go stale is a change to the contracts in
-[stub stability](#stability), which are frozen.
+[stub stability](../distribution.md#stability), which are frozen.
 
 ## Release tree
 
@@ -29,10 +29,9 @@ the tasks and workflow that [build a release](../distribution.md#building-a-rele
 are implemented. What remains of the [release
 base](../distribution.md#the-release-base):
 
-- **The binary.** It compiles in `BATFILES_DEFAULT_BASE`, falling back to the
-  official base; `BATFILES_BASE` overrides it at run time, for
-  [`update`](#batfiles-update) and for the stub [`init`](#leaf-stub) writes. It
-  also compiles in its own target triple, so it knows its asset name.
+- **The binary.** [`update`](#batfiles-update) reads the same base
+  `init` does. The binary also compiles in its own target triple, so it knows
+  its asset name.
 
 ### GitHub Pages
 
@@ -41,62 +40,6 @@ publishes copies of the two hosted installers at the site root, for a shorter
 one-liner; a fork without Pages skips that job, and everything keeps working
 from the release URL alone. Open: how the job coexists with other content on the
 same Pages site, and that only a stable release replaces the copies.
-
-## Leaf stub
-
-[`init`](../cmdline.md#init) writes `install.sh` as the last entry of its
-skeleton, executable, and under the same rule as the rest of the skeleton: an
-existing path is left alone. It is for a machine that already has a checkout:
-
-```sh
-git clone https://github.com/me/dotfiles ~/dotfiles && ~/dotfiles/install.sh
-```
-
-A new machine with no checkout uses the hosted installer's `clone` one-liner
-instead.
-
-The stub opens with a marker line, `# batfiles-stub 1`, and two settings; the
-rest is fixed text:
-
-```sh
-BATFILES_BASE=${BATFILES_BASE:-<base>}
-BATFILES_VERSION=${BATFILES_VERSION:-}
-```
-
-`init` fills in `<base>` from the binary's [release base](#release-tree),
-so a self-hoster runs `BATFILES_BASE=https://mysite/batfiles batfiles init`,
-or edits the line afterwards. Setting `BATFILES_VERSION` pins the repository to
-a release at least that new.
-
-Run, the stub:
-
-1. Finds its own directory, and refuses — pointing at the `clone` one-liner —
-   when there is no `batfiles.toml` there. That is what happens when the stub
-   is piped into `sh` instead of run from a checkout.
-2. [Resolves a binary](../distribution.md#resolving-a-binary). Only when that
-   would download does it fetch the hosted installer — from
-   `<base>/download/v<version>/` when pinned, so the installer matches the
-   binary, and from `latest` otherwise — and run it with its settings exported.
-3. `exec`s `batfiles sync --batfiles-dir <its directory>` with its own arguments
-   appended, so `./install.sh --dry-run` works and a checkout outside the
-   default location is still the one synchronized.
-
-An installed binary makes the stub work offline.
-
-### Stability
-
-The stub depends on four contracts, and each is frozen:
-
-- the release tree layout;
-- the installer's input variables;
-- the `batfiles <version>` form of `batfiles version`; and
-- `sync --batfiles-dir`.
-
-Nothing inspects or rewrites a stub in a repository: `sync` writes nothing in
-the leaf but [`remotes/`](../repoformat.md#materialization), and a tracked file
-it changed would dirty the user's working tree. The marker line exists so that a
-second stub format, should one ever be needed, can be recognized and regenerated
-by an explicit command added then.
 
 ## `batfiles update`
 
@@ -151,6 +94,5 @@ installer works on Windows.
 ## On promotion
 
 Distribution material joins [`docs/distribution.md`](../distribution.md), and
-the rest lands with its owners: `update` and the stub `init` writes in
-[`cmdline.md`](../cmdline.md), and `BATFILES_BASE` as the binary reads it in
-[`environment.md`](../environment.md).
+`update` lands in [`cmdline.md`](../cmdline.md), with whatever it reads from the
+environment in [`environment.md`](../environment.md).

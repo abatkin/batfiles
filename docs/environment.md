@@ -2,7 +2,7 @@
 
 The environment inputs batfiles reads today: the four location variables that
 select where it works, the two run-only skip lists, the four bootstrap lists,
-the one-shot user variables, and the color selection; and the environment a
+the one-shot user variables, the color selection, and the release base; and the environment a
 [dynamic variable](#how-dynamic-commands-are-run)'s command runs in. There is
 also one family it deliberately does *not* pass on to Git, covered at the end.
 
@@ -66,10 +66,10 @@ $ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
 
 All four are comma-separated lists read the same way the run-only skips are:
 items trimmed, empty items discarded. They are honored **only by a bootstrap
-command that accepts the matching options**, which today means
-[`clone`](cmdline.md#clone) alone. They are meant for generated installers and
-fresh-machine automation rather than as ambient controls, so a later `sync` in a
-shell that still exports them is unaffected.
+that accepts the matching options**: [`clone`](cmdline.md#clone), and
+[`sync --bootstrap`](cmdline.md#sync). They are meant for generated installers
+and fresh-machine automation rather than as ambient controls, so a later `sync`
+without `--bootstrap` in a shell that still exports them is unaffected.
 
 Unlike the run-only skips, what these decide is written down: a bootstrap
 persists the outcome in [`disabled.toml`](state.md), where it stands until an
@@ -474,6 +474,19 @@ handed the mode untouched and applies clap's own terminal detection.
 
 The selected color mode also applies to help, version output, and argument
 parsing errors.
+
+## Release base
+
+| Variable        | Effect                                                                   |
+|-----------------|--------------------------------------------------------------------------|
+| `BATFILES_BASE` | The [release base](distribution.md#the-release-base) `init` writes into the stub. |
+
+An absent or empty `BATFILES_BASE` is treated as unset, and the base this build
+was released from applies, which a build compiles in from
+`BATFILES_DEFAULT_BASE` and otherwise takes to be the official one. A value that
+is not a URL made of the characters the installers quote is an error for the
+command that reads it. The hosted installer and the stub read the same variable
+on their own; see [distribution](distribution.md).
 
 ## Variables passed on to `git`
 

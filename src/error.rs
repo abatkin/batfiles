@@ -14,6 +14,7 @@ use crate::init;
 use crate::item::{ItemAddress, ItemAddressError, ItemId, ItemKind};
 use crate::manifest;
 use crate::paths::ExistingNode;
+use crate::release;
 use crate::remotes;
 use crate::var::{VarName, VarNameError};
 
@@ -297,6 +298,10 @@ pub(crate) enum Error {
     /// Initialization refused the directory or failed to initialize Git.
     #[error(transparent)]
     Init(#[from] init::InitError),
+
+    /// The release base the stub would be written with is unusable.
+    #[error(transparent)]
+    ReleaseBase(#[from] release::ReleaseBaseError),
 
     // Bringing a repository onto a machine.
     /// The destination for the leaf repository clone is already occupied.

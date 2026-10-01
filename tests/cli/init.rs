@@ -8,7 +8,7 @@ use assert_cmd::Command;
 use super::support::{Tree, batfiles, display, entries, stderr_of};
 
 /// What a fresh `init` leaves behind, sorted as [`entries`] returns it.
-const SKELETON: [&str; 4] = [".gitignore", "batfiles.toml", "bin", "files"];
+const SKELETON: [&str; 5] = [".gitignore", "batfiles.toml", "bin", "files", "install.sh"];
 
 /// An isolated working directory and sibling home for initialization tests.
 struct Workspace {
@@ -70,7 +70,7 @@ fn an_empty_directory_gets_the_whole_skeleton() {
         "unexpected stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("created batfiles.toml, .gitignore, bin/, files/"),
+        stderr.contains("created batfiles.toml, .gitignore, bin/, files/, install.sh"),
         "the created line is not what was created:\n{stderr}"
     );
 }
@@ -212,7 +212,7 @@ fn an_existing_path_of_the_right_kind_is_left_alone() {
     assert_eq!(entries(&bin), ["batgrep"]);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("created batfiles.toml, .gitignore, files/"),
+        stderr.contains("created batfiles.toml, .gitignore, files/, install.sh"),
         "`bin/` was reported as created:\n{stderr}"
     );
 }
@@ -233,4 +233,101 @@ fn an_exclusion_list_that_does_not_cover_remotes_is_reported() {
         stderr.contains("does not ignore the tool-owned `remotes/` tree"),
         "unexpected stderr:\n{stderr}"
     );
+}
+
+/// The official release base, which a test build compiles in.
+const OFFICIAL_BASE: &str = "https://github.com/abatkin/batfiles/releases";
+
+#[test]
+fn the_stub_is_executable_and_stamped_with_the_release_base() {
+    let workspace = Workspace::new();
+    workspace.init().arg("--no-git-init").assert().success();
+
+    let stub = fs::read_to_string(workspace.path("install.sh")).expect("the stub");
+    let mut lines = stub.lines();
+    assert_eq!(lines.next(), Some("#!/bin/sh"));
+    assert_eq!(lines.next(), Some("# batfiles-stub 1"));
+    assert_eq!(
+        lines.next().map(str::to_owned),
+        Some(format!(
+            "BATFILES_BASE=${{BATFILES_BASE:-'{OFFICIAL_BASE}'}}"
+        ))
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = fs::metadata(workspace.path("install.sh"))
+            .expect("the stub")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+}
+
+#[test]
+fn batfiles_base_chooses_the_base_the_stub_carries() {
+    let workspace = Workspace::new();
+    workspace
+        .init()
+        .arg("--no-git-init")
+        .env("BATFILES_BASE", "https://example.com/mine/")
+        .assert()
+        .success();
+
+    let stub = fs::read_to_string(workspace.path("install.sh")).expect("the stub");
+    assert!(
+        stub.contains("\nBATFILES_BASE=${BATFILES_BASE:-'https://example.com/mine'}\n"),
+        "{stub}"
+    );
+}
+
+#[test]
+fn a_base_the_stub_cannot_quote_is_refused_before_anything_is_created() {
+    let workspace = Workspace::new();
+    let assertion = workspace
+        .init()
+        .arg("--no-git-init")
+        .env("BATFILES_BASE", "https://example.com/it's")
+        .assert()
+        .code(1);
+    assert!(stderr_of(&assertion).contains("check BATFILES_BASE"));
+    assert!(entries(&workspace.dir()).is_empty());
+}
+
+#[test]
+fn an_install_script_of_the_repositorys_own_is_kept_with_a_warning() {
+    let workspace = Workspace::new();
+    fs::write(workspace.path("install.sh"), "#!/bin/sh\necho mine\n").expect("a script");
+
+    let assertion = workspace.init().arg("--no-git-init").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(workspace.path("install.sh")).expect("the script"),
+        "#!/bin/sh\necho mine\n"
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("install.sh is not a batfiles stub"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("created batfiles.toml, .gitignore, bin/, files/\n"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_existing_stub_is_kept_without_a_warning() {
+    let workspace = Workspace::new();
+    let stub =
+        "#!/bin/sh\n# batfiles-stub 1\nBATFILES_BASE=${BATFILES_BASE:-'https://old.example.com'}\n";
+    fs::write(workspace.path("install.sh"), stub).expect("a stub");
+
+    let assertion = workspace.init().arg("--no-git-init").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(workspace.path("install.sh")).expect("the stub"),
+        stub
+    );
+    assert!(!stderr_of(&assertion).contains("not a batfiles stub"));
 }

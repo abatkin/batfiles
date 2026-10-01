@@ -2,7 +2,7 @@
 //! `apply-group`. All four take the shared action-execution options and apply
 //! actions with the same semantics.
 
-use clap::Args;
+use clap::{ArgGroup, Args};
 
 use super::options::{BootstrapOptions, ExecutionOptions, SkipActionOptions, SkipOptions};
 
@@ -25,7 +25,14 @@ pub(crate) struct CloneArgs {
 // Declare command options before flattened groups: clap's `next_help_heading` also affects
 // subsequent arguments.
 
+/// Arguments for `sync`. The bootstrap options are accepted only with `--bootstrap`.
 #[derive(Debug, Args)]
+#[command(group(
+    ArgGroup::new("bootstrap_decisions")
+        .args(["enable_actions", "disable_actions", "enable_groups", "disable_groups"])
+        .multiple(true)
+        .requires("bootstrap")
+))]
 pub(crate) struct SyncArgs {
     /// Report the action plan without executing it
     #[arg(long, conflicts_with_all = ["refresh_remotes", "interactive"])]
@@ -35,11 +42,18 @@ pub(crate) struct SyncArgs {
     #[arg(long)]
     pub refresh_remotes: bool,
 
+    /// First adopt the bootstrap policy, as `clone` does
+    #[arg(long)]
+    pub bootstrap: bool,
+
     #[command(flatten)]
     pub action: ExecutionOptions,
 
     #[command(flatten)]
     pub selection: SkipOptions,
+
+    #[command(flatten)]
+    pub bootstrap_options: BootstrapOptions,
 }
 
 #[derive(Debug, Args)]

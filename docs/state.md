@@ -75,8 +75,9 @@ honors these lists and how they combine with run-only skips.
 
 ### Bootstrap adoption
 
-The document's other writer. [`clone`](cmdline.md#clone) settles this machine's
-starting point before its first action, from the leaf's [default-disabled
+The document's other writer. A bootstrap — [`clone`](cmdline.md#clone), or
+[`sync --bootstrap`](cmdline.md#sync) — settles this machine's starting point
+before its first action, from the leaf's [default-disabled
 candidates](repoformat.md#default-disabled-bootstrap-entries), the four
 `BATFILES_*` bootstrap lists, and its own enable and disable options, in the
 [adoption precedence](environment.md#bootstrap-adoption-precedence) the

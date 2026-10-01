@@ -25,9 +25,9 @@ Complete.
 [Distribution](distribution.md) specifies what remains, and
 [`docs/distribution.md`](../distribution.md) what is built.
 
-The whole slice is built on one branch, `slice-10`, a step at a time. A step
-may leave work open for a later step of the slice, provided that step's entry
-below names it.
+The slice is built a step at a time on a `slice-10` branch, which may merge
+between steps. A step may leave work open for a later step of the slice,
+provided that step's entry below names it.
 
 - **10.1** The [release tree](../distribution.md), the `dist:` and `release:`
   tasks, and the tag-triggered release workflow, with placeholder installers.
@@ -35,11 +35,8 @@ below names it.
   `dist:verify` passes.
 - **10.2** ✅ The POSIX hosted installer, `dist:mirror`, and `shellcheck` in
   `task lint`, accepted in the pristine-machine container.
-- **10.3** The [leaf stub](distribution.md#leaf-stub), added to the skeleton
-  [`init`](../cmdline.md#init) lays down, and the compiled-in
-  `BATFILES_DEFAULT_BASE` it is stamped from. Accepted in the same container:
-  the stub with no binary, with one present and the base unreachable, piped
-  with no checkout, and a pin passing over an older binary.
+- **10.3** ✅ The leaf stub `init` writes, the compiled-in release base, and
+  `sync --bootstrap`, accepted in a second, fresh container.
 - **10.4** [`batfiles update`](distribution.md#batfiles-update), tested against
   a loopback release tree. Adds a build script compiling in the target triple,
   and decides what a build for a target with no release asset, such as

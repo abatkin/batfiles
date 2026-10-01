@@ -66,6 +66,7 @@ RUN set -eu; \
     rm -rf /tmp/release /tmp/assets
 
 COPY scenario.sh /usr/local/bin/scenario
+COPY stub-scenario.sh /usr/local/bin/stub-scenario
 
 USER dev
 WORKDIR /home/dev

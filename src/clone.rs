@@ -44,5 +44,11 @@ pub(crate) fn run(
         return Err(Error::ClonedWithoutManifest { path: dest.clone() });
     }
 
-    execute::bootstrap(invocation, &bootstrap, skip_actions, skip_groups)
+    execute::sync(
+        invocation,
+        skip_actions,
+        skip_groups,
+        false,
+        Some(&bootstrap),
+    )
 }

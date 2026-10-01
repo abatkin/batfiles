@@ -95,9 +95,11 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   [`vars refresh`](docs/cmdline.md#vars-refresh).
 - **Validate declarations.** Invalid manifests fail when read, under the
   [manifest validation rules](docs/repoformat.md#reading-the-manifest).
-- **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`, and
-  `files/` into the current directory and runs `git init`, refusing rather than
-  overwriting anything already there. See [`init`](docs/cmdline.md#init).
+- **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`,
+  `files/`, and an `install.sh` that installs a checkout into the current
+  directory and runs `git init`, refusing rather than overwriting anything
+  already there. See [`init`](docs/cmdline.md#init) and [the leaf
+  stub](docs/distribution.md#leaf-stub).
 - **Set up a new machine.** `clone <url>` clones a repository into the selected
   batfiles directory — which must not already exist — and synchronizes it in the
   same command. A repository's
@@ -129,6 +131,7 @@ dotfiles/
 │   └── lua/plugins.lua
 ├── files/{ackrc,curlrc,inputrc}
 ├── git/{gitconfig,gitignore}
+├── install.sh
 └── shell/{zshrc,zshenv,aliases.zsh}
 ```
 
@@ -257,7 +260,11 @@ your dotfiles onto the machine:
 curl -fsSL https://github.com/abatkin/batfiles/releases/latest/download/install.sh | sh -s -- clone https://github.com/me/dotfiles
 ```
 
-Without `-s -- clone …` it only installs batfiles. It verifies the download
+Without `-s -- clone …` it only installs batfiles. On a machine that already
+has a checkout, the `install.sh` that `batfiles init` writes into every new
+repository does the same for it: `~/dotfiles/install.sh` gets batfiles if the
+machine has none, then synchronizes the checkout, starting the machine with
+whatever the repository's `[default-disabled]` switches off. It verifies the download
 against the release's `SHA256SUMS`, uses a batfiles already on the machine
 rather than downloading another, and never edits a shell startup file.
 `BATFILES_VERSION=1.2.3` asks for a particular release, including a
@@ -283,7 +290,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 10    | A stub for a checkout, `batfiles update`, a Windows installer       |
+| 10    | `batfiles update`, and a Windows installer and stub                 |
 
 ## Documentation
 

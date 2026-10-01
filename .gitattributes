@@ -1,0 +1,4 @@
+# Every text file is checked out with LF endings, on Windows too. The shell
+# scripts under dist/ run under sh on the Windows release runner, and a
+# Windows-built batfiles embeds src/stub.sh, which must stay a Unix script.
+* text=auto eol=lf

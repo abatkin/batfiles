@@ -1629,14 +1629,15 @@ nothing more: the moment a machine has an opinion of its own, recorded in
 opinion is the one that counts. Nothing in the section can switch an action off
 again on a machine that has already enabled it.
 
-**One command reads the section: [`clone`](cmdline.md#clone).** It is the
-bootstrap that sets a machine up for the first time, and adopting the candidates
-is something it does once, before its first action, writing the outcome to
-[`disabled.toml`](state.md). The candidates are the lowest layer of the
-[adoption precedence](environment.md#bootstrap-adoption-precedence): the
-`BATFILES_*` bootstrap lists and `clone`'s own enable and disable options are
-applied over them, so whatever a repository proposes, the invocation setting the
-machine up can overturn it.
+**Only a bootstrap reads the section: [`clone`](cmdline.md#clone), or
+[`sync --bootstrap`](cmdline.md#sync) for a checkout that arrived another
+way.** A bootstrap sets a machine up for the first time, and adopting the
+candidates is something it does once, before its first action, writing the
+outcome to [`disabled.toml`](state.md). The candidates are the lowest layer of
+the [adoption precedence](environment.md#bootstrap-adoption-precedence): the
+`BATFILES_*` bootstrap lists and the bootstrap's own enable and disable options
+are applied over them, so whatever a repository proposes, the invocation
+setting the machine up can overturn it.
 
 A candidate is offered only to a machine with no `disabled.toml` at all, which
 is the rule above read from the other side: the document existing is the machine

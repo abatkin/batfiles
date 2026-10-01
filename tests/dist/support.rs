@@ -149,6 +149,101 @@ impl Tree {
     }
 }
 
+/// A machine with no batfiles, a release tree whose latest release is 1.2.3, and `uname` and
+/// `sysctl` answering as the test says.
+pub(crate) struct Machine {
+    dir: TempDir,
+    pub(crate) tree: Tree,
+}
+
+impl Machine {
+    pub(crate) fn new() -> Self {
+        let dir = TempDir::new().expect("a scratch directory");
+        let tree = Tree::new(dir.path().join("tree"));
+        tree.release("1.2.3", true);
+        for sub in ["home", "fakes", "on-path"] {
+            fs::create_dir(dir.path().join(sub)).expect("a directory");
+        }
+        executable(
+            &dir.path().join("fakes/uname"),
+            "case $1 in -s) echo \"$FAKE_OS\" ;; -m) echo \"$FAKE_ARCH\" ;; *) exit 1 ;; esac\n",
+        );
+        executable(
+            &dir.path().join("fakes/sysctl"),
+            "[ -n \"${FAKE_ARM64:-}\" ] || exit 1\necho \"$FAKE_ARM64\"\n",
+        );
+        Self { dir, tree }
+    }
+
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
+        self.dir.path().join(relative)
+    }
+
+    pub(crate) fn install_dir(&self) -> PathBuf {
+        self.path("home/.local/bin")
+    }
+
+    /// The directory on `PATH` where a test can put a batfiles of its own.
+    pub(crate) fn on_path(&self) -> PathBuf {
+        self.path("on-path")
+    }
+
+    /// The installer as the one-liner runs it: piped into `sh -s --`, which takes any further
+    /// arguments the command is given. The environment is only what a fresh shell would have.
+    pub(crate) fn installer(&self) -> Command {
+        self.piped(&fs::read(self.tree.path("latest/download/install.sh")).expect("installer"))
+    }
+
+    pub(crate) fn piped(&self, script: &[u8]) -> Command {
+        // By absolute path, since a test may leave no `sh` on PATH.
+        self.piped_into(Path::new("/bin/sh"), script)
+    }
+
+    /// The installer piped into `shell` rather than `/bin/sh`.
+    pub(crate) fn piped_into(&self, shell: &Path, script: &[u8]) -> Command {
+        let mut command = self.shell(shell);
+        command.args(["-s", "--"]).write_stdin(script.to_vec());
+        command
+    }
+
+    /// `shell`, in only the environment a fresh shell on this machine would have.
+    pub(crate) fn shell(&self, shell: &Path) -> Command {
+        let mut command = Command::new(shell);
+        command
+            .env_clear()
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}:/usr/bin:/bin",
+                    self.path("fakes").display(),
+                    self.on_path().display()
+                ),
+            )
+            .env("HOME", self.path("home"))
+            .env("FAKE_OS", "Linux")
+            .env("FAKE_ARCH", "x86_64");
+        command
+    }
+
+    /// What the installer left in its install directory.
+    pub(crate) fn installed(&self) -> Vec<String> {
+        if self.install_dir().exists() {
+            entries(&self.install_dir())
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// Whether `path` is the stand-in for `target` at `version`.
+pub(crate) fn is_stand_in(path: &Path, target: &str, version: &str) -> bool {
+    let output = std::process::Command::new(path)
+        .arg("probe")
+        .output()
+        .expect("the stand-in runs");
+    String::from_utf8_lossy(&output.stdout) == format!("{target} {version} ran: probe\n")
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) use file_server::FileServer;
 

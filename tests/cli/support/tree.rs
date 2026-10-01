@@ -10,7 +10,11 @@ use tempfile::TempDir;
 
 /// Temporary repository, home, config, and cache roots for CLI tests.
 pub(crate) struct Tree {
-    dir: TempDir,
+    /// Held so the directory lives as long as the tree.
+    _dir: TempDir,
+    /// The directory's canonical path, which is how batfiles and the shell report a working
+    /// directory reached through a symlink, such as macOS's `/var`.
+    root: PathBuf,
 }
 
 impl Tree {
@@ -31,20 +35,24 @@ impl Tree {
     /// Create home, config, and cache directories, leaving the repository path absent.
     pub(crate) fn roots() -> Self {
         let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir
+            .path()
+            .canonicalize()
+            .expect("a canonical temporary directory");
         for name in ["home", "config", "cache"] {
-            fs::create_dir(dir.path().join(name)).expect("a root directory");
+            fs::create_dir(root.join(name)).expect("a root directory");
         }
-        Self { dir }
+        Self { _dir: dir, root }
     }
 
     pub(crate) fn path(&self, relative: &str) -> PathBuf {
-        self.dir.path().join(relative)
+        self.root.join(relative)
     }
 
     /// The tree the four roots sit in, for the cases that run from inside it.
     #[cfg(unix)]
     pub(crate) fn root(&self) -> &Path {
-        self.dir.path()
+        &self.root
     }
 
     /// Create a repository directory holding an empty manifest, and return it.

@@ -27,8 +27,11 @@ use assert_cmd::Command;
 /// Build a batfiles command with color, variable-override, and proxy environment inputs cleared.
 pub(crate) fn batfiles() -> Command {
     let mut command = Command::cargo_bin("batfiles").expect("the batfiles binary should be built");
-    // The tests must not inherit the developer's own color environment.
-    command.env_remove("BATFILES_COLOR").env_remove("NO_COLOR");
+    // The tests must not inherit the developer's own color environment or release base.
+    command
+        .env_remove("BATFILES_COLOR")
+        .env_remove("NO_COLOR")
+        .env_remove("BATFILES_BASE");
     // Remove inherited overrides, including non-UTF-8 variables.
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("BATFILES_VAR_") {

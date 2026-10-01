@@ -41,14 +41,16 @@ pub(crate) struct Invocation<'a> {
     pub reporter: &'a Reporter,
 }
 
-/// `sync`: bring the home directory to the state the whole manifest describes.
-/// `refresh_remotes` fetches every file and archive remote again, current or
-/// not.
+/// `sync`, and `clone`'s synchronization: bring the home directory to the state the whole
+/// manifest describes. `refresh_remotes` fetches every file and archive remote again, current or
+/// not. `bootstrap` first adopts the leaf's bootstrap policy, saving it unless the run is a dry
+/// run, which plans with it instead.
 pub(crate) fn sync(
     invocation: &Invocation<'_>,
     skip_actions: &[String],
     skip_groups: &[String],
     refresh_remotes: bool,
+    bootstrap: Option<&BootstrapDecisions>,
 ) -> Result<(), Error> {
     run(
         Target::Everything,
@@ -56,27 +58,10 @@ pub(crate) fn sync(
             actions: skip_actions,
             groups: skip_groups,
         },
-        RunKind::Sync { refresh_remotes },
-        invocation,
-    )?;
-    Ok(())
-}
-
-/// `clone`'s synchronization: a `sync` that first adopts the cloned manifest's
-/// bootstrap policy.
-pub(crate) fn bootstrap(
-    invocation: &Invocation<'_>,
-    bootstrap: &BootstrapDecisions,
-    skip_actions: &[String],
-    skip_groups: &[String],
-) -> Result<(), Error> {
-    run(
-        Target::Everything,
-        Skips {
-            actions: skip_actions,
-            groups: skip_groups,
+        RunKind::Sync {
+            refresh_remotes,
+            bootstrap,
         },
-        RunKind::Clone(bootstrap),
         invocation,
     )?;
     Ok(())
@@ -92,11 +77,13 @@ struct Skips<'a> {
 /// The command a run serves. Decides whether remotes are materialized before
 /// assembly and whether a bootstrap writes `disabled.toml` before it is read.
 enum RunKind<'a> {
-    /// `sync`: materializes, fetching every file and archive remote again
-    /// where `refresh_remotes` says to; adopts nothing.
-    Sync { refresh_remotes: bool },
-    /// `clone`: adopts the bootstrap policy, then materializes.
-    Clone(&'a BootstrapDecisions),
+    /// `sync` and `clone`: adopts the bootstrap policy where there is one, then
+    /// materializes, fetching every file and archive remote again where
+    /// `refresh_remotes` says to.
+    Sync {
+        refresh_remotes: bool,
+        bootstrap: Option<&'a BootstrapDecisions>,
+    },
     /// `apply-action` and `apply-group`: use existing materializations and fetch
     /// nothing.
     Apply,
@@ -113,9 +100,18 @@ impl RunKind<'_> {
         matches!(
             self,
             Self::Sync {
-                refresh_remotes: true
+                refresh_remotes: true,
+                ..
             }
         )
+    }
+
+    /// The bootstrap policy to adopt before reading disabled state, if any.
+    fn bootstrap(&self) -> Option<&BootstrapDecisions> {
+        match self {
+            Self::Sync { bootstrap, .. } => *bootstrap,
+            Self::Apply => None,
+        }
     }
 }
 
@@ -334,21 +330,23 @@ fn run(
     let bindings = Bindings::new(&scope, &host);
 
     // Bootstrap defaults come only from the leaf manifest.
-    if let RunKind::Clone(bootstrap) = kind {
-        bootstrap.adopt(
+    let disabled = match kind.bootstrap() {
+        Some(bootstrap) => bootstrap.adopt(
             &manifest.default_disabled,
             &bindings,
             &invocation.roots.state,
+            invocation.mode,
             reporter,
-        )?;
-    }
+        )?,
+        None => DisabledItems::load(&invocation.roots.state.disabled_path())?,
+    };
 
     let selection = Selection::new(
         target,
         skips.actions,
         skips.groups,
         invocation.env,
-        DisabledItems::load(&invocation.roots.state.disabled_path())?,
+        disabled,
         reporter,
     );
 

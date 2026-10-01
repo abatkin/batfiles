@@ -72,7 +72,7 @@ fn parse_var(raw: &str) -> Result<(VarName, String), String> {
     }
 }
 
-/// Bootstrap-only enable/disable adoption, honored by `clone`.
+/// Bootstrap-only enable/disable adoption, honored by `clone` and `sync --bootstrap`.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Bootstrap Options")]
 pub(crate) struct BootstrapOptions {

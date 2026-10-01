@@ -27,6 +27,7 @@ mod manifest;
 mod mode;
 mod output;
 mod paths;
+mod release;
 mod remotes;
 mod replace;
 mod repo_path;

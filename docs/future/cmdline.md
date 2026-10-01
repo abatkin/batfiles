@@ -55,14 +55,6 @@ too.
 and disable options, and the shared action-execution options it forwards
 included, and is specified in [`docs/cmdline.md`](../cmdline.md#clone).
 
-### The `init` skeleton
-
-[`init`](../cmdline.md#init) is built. What it does not lay down yet is
-`install.sh`, the [leaf stub](distribution.md#leaf-stub) that installs a
-checkout on a machine without batfiles, which roadmap step 10.3 adds. Until then
-a new repository is synchronized with `batfiles sync`, and `init` creates no
-script that only reports it cannot do that.
-
 ### `update`
 
 [`batfiles update`](distribution.md#batfiles-update) is proposed with the rest

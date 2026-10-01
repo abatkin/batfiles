@@ -10,4 +10,5 @@ mod install;
 mod mirror;
 mod release;
 mod smoke;
+mod stub;
 mod verify;

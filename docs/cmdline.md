@@ -231,8 +231,12 @@ on where the skeleton lands.
 |-----------------|-----------------------------------------------------------------------------------------------------------|
 | `--no-git-init` | Do not run `git init`. Batfiles also skips `git init` automatically when already inside a Git repository. |
 
-The layout is `batfiles.toml`, `.gitignore`, `bin/`, and `files/`, created in
-that order. The generated [`remotes/`](repoformat.md#materialization) tree is
+The layout is `batfiles.toml`, `.gitignore`, `bin/`, `files/`, and the
+executable [leaf stub](distribution.md#leaf-stub) `install.sh`, created in that
+order. The stub carries the [release base](distribution.md#the-release-base):
+`BATFILES_BASE` when it is set and not empty, otherwise the base this build was
+released from. A base that is not a URL made of the characters the installers
+quote fails `init` before it creates anything. The generated [`remotes/`](repoformat.md#materialization) tree is
 not created; the written `.gitignore` excludes it instead. An existing path of
 the expected kind is left exactly as it is, including its contents and
 permissions, and is not named in the line reporting what was created.
@@ -261,7 +265,9 @@ unwind a partial layout. Use `--no-git-init` to initialize without Git.
 
 A `.gitignore` that was already there and does not appear to cover the
 `remotes/` tree is reported as a warning. The file belongs to the repository's
-owner, so `init` does not edit one it did not write.
+owner, so `init` does not edit one it did not write. An `install.sh` that was
+already there and is not a batfiles stub is reported the same way, and left
+alone.
 
 Everything `init` prints is a diagnostic on standard error. It produces no
 requested data, so `--quiet` leaves only warnings and errors.
@@ -381,6 +387,8 @@ and the rest of that list still applies.
 
 ```text
 batfiles sync [--dry-run | --refresh-remotes] [--skip-action <id>]... [--skip-group <group>]...
+    [--bootstrap [--enable-action <id>]... [--disable-action <id>]...
+                 [--enable-group <group>]... [--disable-group <group>]...]
 ```
 
 Read the leaf repository's [manifest](repoformat.md#reading-the-manifest) and
@@ -463,6 +471,20 @@ load](#selection-by-command).
 | `--refresh-remotes`    | Fetch every file and archive remote again, current or not.               |
 | `--skip-action <id>`   | Leave one action out of this run. Repeatable.                            |
 | `--skip-group <group>` | Leave every action in one group out of this run. Repeatable.             |
+| `--bootstrap`          | First settle this machine's starting point, as `clone` does.             |
+
+**`--bootstrap` makes this run the bootstrap of a checkout that arrived without
+`clone`**, such as by `git clone`: before the first action, it decides exactly
+what [`clone`'s bootstrap](#what-the-bootstrap-decides) decides, from the same
+inputs, and writes the outcome to [`disabled.toml`](state.md) the same way. The
+four bootstrap options — `--enable-action`, `--disable-action`,
+`--enable-group`, and `--disable-group` — mean what they mean to `clone`, and
+`sync` accepts them only with `--bootstrap`; without it, giving one is a usage
+error. The repository's candidates are offered only to a machine with no
+`disabled.toml`, so running `sync --bootstrap` again adds nothing they propose.
+With `--dry-run` the bootstrap decides the same things, reports what it would
+enable and disable, and the plan is made with that outcome, but nothing is
+written. The [leaf stub](distribution.md#leaf-stub) runs `sync --bootstrap`.
 
 **`--refresh-remotes` fetches every file and archive remote again**, including
 one whose [stamp](repoformat.md#materialization) says it is current, and

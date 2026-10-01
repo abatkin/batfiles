@@ -1,9 +1,10 @@
 # Distribution
 
 How a batfiles release is laid out, built, and published; how the hosted
-installer puts a release on a machine; and how to serve releases from another
-site. The stub a leaf repository carries, `batfiles update`, and the Windows
-installer are [proposed](future/distribution.md) and not yet built.
+installer puts a release on a machine, and the stub a leaf repository carries
+installs a checkout; and how to serve releases from another site. `batfiles
+update` and the Windows installer are [proposed](future/distribution.md) and
+not yet built.
 
 ## Release tree
 
@@ -90,8 +91,10 @@ The release base is the one parameter a fork or self-hoster changes:
   `$BatfilesStampedBase = '<base>'` in `install.ps1`. Assembling a release
   replaces that line. The unstamped source in `dist/` holds the value
   `unstamped`, and runs only when `BATFILES_BASE` supplies a base.
-- **Binaries.** `dist:binary` exports the base to the build as
-  `BATFILES_DEFAULT_BASE`.
+- **Binaries.** `dist:binary` compiles the base in as `BATFILES_DEFAULT_BASE`;
+  a build without it takes the official base. At run time `BATFILES_BASE`
+  overrides it, for the [stub](#leaf-stub) `init` writes; see
+  [environment](environment.md#release-base).
 
 A base is a URL with no trailing slash (one given is dropped), made of
 characters the installers quote safely: letters, digits, and
@@ -224,7 +227,7 @@ repository that needs 1.4 accepts 1.5 without downgrading it, and a machine
 still holding 1.2 gets 1.4.
 
 A candidate's version is read from `batfiles version`, whose output (`batfiles
-<version>`) is a [frozen contract](future/distribution.md#stability), and
+<version>`) is a [frozen contract](#stability), and
 versions compare as [versions](#versions) order. A candidate that fails to run,
 prints something else, or reports a version outside the grammar is passed over,
 and the installer says so.
@@ -274,6 +277,83 @@ batfiles by absolute path, so the bootstrap never depends on `PATH`.
   owns standard output. They are ASCII, like everything else batfiles prints.
 - Its own failures exit 1. Once it `exec`s batfiles, the exit status is
   batfiles'.
+
+## Leaf stub
+
+[`init`](cmdline.md#init) writes `install.sh`, executable, as the last entry of
+its skeleton. It is for a machine that already has a checkout:
+
+```sh
+git clone https://github.com/me/dotfiles ~/dotfiles && ~/dotfiles/install.sh
+```
+
+A new machine with no checkout uses the hosted installer's `clone` one-liner
+instead.
+
+The stub's first line is `#!/bin/sh`, its second the marker `# batfiles-stub 1`,
+and then two settings; the rest is fixed text, its body a function called on
+the last line like the installer's:
+
+```sh
+BATFILES_BASE=${BATFILES_BASE:-'<base>'}
+BATFILES_VERSION=${BATFILES_VERSION:-}
+```
+
+`init` fills in `<base>` from the [release base](#the-release-base), so a
+self-hoster runs `BATFILES_BASE=https://mysite/batfiles batfiles init`, or edits
+the line afterwards. Setting `BATFILES_VERSION` pins the repository to a release
+at least that new. `BATFILES_BIN` chooses the batfiles to use or install, as it
+does for the installer.
+
+Run, the stub:
+
+1. Finds its own directory from `$0`, and refuses — printing the `clone`
+   one-liner — when `$0` is not a file or there is no `batfiles.toml` beside
+   it. That is what happens when the stub is piped into `sh` instead of run
+   from a checkout.
+2. Looks for a binary among the installer's
+   [candidates](#resolving-a-binary), taking the first that reports
+   `batfiles <version>` in the [version grammar](#versions).
+   - **No pin, and one found:** it is used, and nothing touches the network.
+   - **Otherwise** — nothing found, or a pin, whose comparison the stub leaves
+     to the installer — it fetches the hosted installer, from
+     `<base>/download/v<version>/` when pinned so the installer matches the
+     binary and from `latest` otherwise, pipes it into `sh` with its settings
+     exported and the `sync` command below as its arguments, and exits with its
+     status. The installer resolves, installs if it must, and `exec`s.
+   - **The installer cannot be fetched:** a pinned stub that found a binary
+     uses it, warning that the pin went unchecked; otherwise it fails.
+3. `exec`s `batfiles sync --bootstrap --batfiles-dir <its directory>` with its
+   own arguments appended, so `./install.sh --dry-run` works, a checkout
+   outside the default location is still the one synchronized, and
+   `./install.sh --disable-group gui` starts the machine as `clone` would. See
+   [`sync --bootstrap`](cmdline.md#sync).
+
+An installed binary makes an unpinned stub work offline. The stub carries no
+version comparison, so nothing about version ordering is frozen into
+repositories; it stays in the hosted installer, which changes with each
+release. The parts the stub does share with the installer — the version
+grammar, reading a candidate's version, and the candidates themselves — are the
+same text in both, which `tests/dist` checks.
+
+### Stability
+
+The stub depends on five contracts, and each is frozen:
+
+- the release tree layout;
+- the installer's input variables, and its running its arguments as a
+  batfiles command;
+- the `batfiles <version>` form of `batfiles version`, in the [version
+  grammar](#versions);
+- the binary candidates and their order; and
+- `sync --bootstrap --batfiles-dir`, with the enable and disable options.
+
+Nothing inspects or rewrites a stub in a repository: `sync` writes nothing in
+the leaf but [`remotes/`](repoformat.md#materialization), and a tracked file it
+changed would dirty the user's working tree. `init` leaves an existing
+`install.sh` alone, warning when it lacks the marker line. The marker exists so
+that a second stub format, should one ever be needed, can be recognized and
+regenerated by an explicit command added then.
 
 ## Self-hosting
 

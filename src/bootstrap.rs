@@ -1,4 +1,4 @@
-//! Bootstrap disabled state for `clone`. Apply eligible `[default-disabled]` entries only when
+//! Bootstrap disabled state for `clone` and `sync --bootstrap`. Apply eligible `[default-disabled]` entries only when
 //! `disabled.toml` is absent, then apply environment and CLI decisions in [precedence
 //! order](../docs/environment.md#bootstrap-enable-and-disable-lists).
 
@@ -10,6 +10,7 @@ use crate::error::Error;
 use crate::item::{ItemAddress, ItemKind};
 use crate::location::StateRoots;
 use crate::manifest::default_disabled::DefaultDisabled;
+use crate::mode::RunMode;
 use crate::output::Reporter;
 use crate::paths;
 
@@ -19,7 +20,7 @@ const NOT_DISABLED: &str = "it is left enabled";
 /// The origin reported for a candidate the repository declared.
 const DECLARED: &str = "default-disabled";
 
-/// Explicit enable/disable decisions for `clone`, in precedence order.
+/// Explicit enable/disable decisions for a bootstrap, in precedence order.
 #[derive(Debug)]
 pub(crate) struct BootstrapDecisions {
     decisions: Vec<Decision>,
@@ -88,14 +89,16 @@ impl BootstrapDecisions {
         Ok(Self { decisions })
     }
 
-    /// Apply bootstrap decisions and report each one. Save disabled state only when it changes.
+    /// Apply bootstrap decisions, report each one, and return the disabled state the run
+    /// selects with. Save it only when it changes and `mode` performs.
     pub fn adopt(
         &self,
         candidates: &DefaultDisabled,
         bindings: &Bindings<'_>,
         roots: &StateRoots,
+        mode: RunMode,
         reporter: &Reporter,
-    ) -> Result<(), Error> {
+    ) -> Result<DisabledItems, Error> {
         let path = roots.disabled_path();
         // An existing empty document still means bootstrap defaults were already considered.
         let offered = !paths::occupied(&path)?;
@@ -114,7 +117,7 @@ impl BootstrapDecisions {
                 }
                 let moved = apply(disabled.list_mut(kind), Change::Disable, name);
                 changed |= moved;
-                lines.push(line(kind, Change::Disable, name, moved, DECLARED));
+                lines.push(line(kind, Change::Disable, name, moved, DECLARED, mode));
             }
         }
 
@@ -131,16 +134,17 @@ impl BootstrapDecisions {
                 &decision.name,
                 moved,
                 decision.origin,
+                mode,
             ));
         }
 
-        if changed {
+        if changed && mode == RunMode::Perform {
             disabled.save(&path)?;
         }
         for line in &lines {
             reporter.info(line);
         }
-        Ok(())
+        Ok(disabled)
     }
 }
 
@@ -164,15 +168,23 @@ fn heading(kind: ItemKind, name: &ItemAddress) -> String {
     format!("candidate {kind} `{name}`")
 }
 
-/// Format a decision with its origin and outcome.
+/// Format a decision with its origin and outcome, as `mode` would carry it out.
 fn line(
     kind: ItemKind,
     change: Change,
     name: &ItemAddress,
     moved: bool,
     origin: &'static str,
+    mode: RunMode,
 ) -> String {
-    format!("{origin}: {}", outcome(kind, change, name, moved))
+    let outcome = match (mode, change, moved) {
+        (RunMode::DryRun, Change::Disable, true) => format!("would disable {kind} `{name}`"),
+        (RunMode::DryRun, Change::Enable, true) => {
+            format!("would enable {kind} `{name}`, which is disabled")
+        }
+        _ => outcome(kind, change, name, moved),
+    };
+    format!("{origin}: {outcome}")
 }
 
 #[cfg(test)]
@@ -255,6 +267,18 @@ mod tests {
         vars: &[(&str, &str)],
         dir: &tempfile::TempDir,
     ) -> Option<DisabledItems> {
+        adopt_in(bootstrap, candidates, vars, dir, RunMode::Perform).1
+    }
+
+    /// Adopt in `mode`, answering with the state the run selects with and the document left
+    /// behind.
+    fn adopt_in(
+        bootstrap: &BootstrapDecisions,
+        candidates: &DefaultDisabled,
+        vars: &[(&str, &str)],
+        dir: &tempfile::TempDir,
+        mode: RunMode,
+    ) -> (DisabledItems, Option<DisabledItems>) {
         let values: BTreeMap<_, _> = vars
             .iter()
             .map(|(name, value)| {
@@ -267,18 +291,20 @@ mod tests {
         let variables = Rc::new(VarSet::stack(values, BTreeMap::new(), BTreeMap::new(), &[]));
         let host = HostNamespaces::capture(&env([]));
         let roots = machine(dir);
-        bootstrap
+        let adopted = bootstrap
             .adopt(
                 candidates,
                 &Bindings::new(&variables, &host),
                 &roots,
+                mode,
                 &quiet(),
             )
             .expect("adoption should succeed");
-        roots
+        let written = roots
             .disabled_path()
             .exists()
-            .then(|| DisabledItems::load(&roots.disabled_path()).expect("the written document"))
+            .then(|| DisabledItems::load(&roots.disabled_path()).expect("the written document"));
+        (adopted, written)
     }
 
     fn temp() -> tempfile::TempDir {
@@ -461,10 +487,28 @@ mod tests {
     }
 
     #[test]
+    fn a_dry_run_adopts_for_the_run_and_writes_nothing() {
+        let dir = temp();
+        let candidates = candidates("[[default-disabled.actions]]\nid = \"p10k\"\n");
+        let bootstrap =
+            BootstrapDecisions::read(&options([]), &env([]), &quiet()).expect("no decisions");
+        let (adopted, written) = adopt_in(&bootstrap, &candidates, &[], &dir, RunMode::DryRun);
+        assert_eq!(names(&adopted.actions), ["p10k"]);
+        assert!(written.is_none(), "a dry run wrote disabled.toml");
+    }
+
+    #[test]
     fn every_line_names_what_asked_for_the_change() {
         let name = ItemAddress::try_from("p10k".to_owned()).expect("valid address");
         assert_eq!(
-            line(ItemKind::Action, Change::Disable, &name, true, DECLARED),
+            line(
+                ItemKind::Action,
+                Change::Disable,
+                &name,
+                true,
+                DECLARED,
+                RunMode::Perform
+            ),
             "default-disabled: disabled action `p10k`"
         );
         assert_eq!(
@@ -473,9 +517,32 @@ mod tests {
                 Change::Enable,
                 &name,
                 false,
-                "--enable-action"
+                "--enable-action",
+                RunMode::Perform
             ),
             "--enable-action: action `p10k` was already enabled"
+        );
+        assert_eq!(
+            line(
+                ItemKind::Action,
+                Change::Disable,
+                &name,
+                true,
+                DECLARED,
+                RunMode::DryRun
+            ),
+            "default-disabled: would disable action `p10k`"
+        );
+        assert_eq!(
+            line(
+                ItemKind::Group,
+                Change::Enable,
+                &name,
+                true,
+                "--enable-group",
+                RunMode::DryRun
+            ),
+            "--enable-group: would enable group `p10k`, which is disabled"
         );
         assert_eq!(heading(ItemKind::Group, &name), "candidate group `p10k`");
     }

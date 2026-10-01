@@ -61,7 +61,7 @@ context=$(mktemp -d)
 trap 'rm -rf "$context"' EXIT
 
 install -m 0644 "$here/Dockerfile" "$here/overlay.toml" "$context/"
-install -m 0755 "$here/origins.sh" "$here/scenario.sh" "$context/"
+install -m 0755 "$here/origins.sh" "$here/scenario.sh" "$here/stub-scenario.sh" "$context/"
 mkdir "$context/fixtures"
 cp -R "$root/tests/fixtures/leaf" "$root/tests/fixtures/corporate" "$context/fixtures/"
 mkdir "$context/dist"
@@ -88,13 +88,16 @@ esac
     --build-arg "BINARY=$binary_source" \
     --tag "$image" "$context"
 
-if ! "$runtime" run --rm "$image"; then
-    # A binary from this machine also has to load on the image's older libraries,
-    # which is the one failure whose cause is not in the scenario's own output.
-    if [ "$binary_source" = host ]; then
-        echo "test:docker: the scenario failed under $base." >&2
-        echo "test:docker: if the binary would not load, the image is older than this" >&2
-        echo "test:docker: machine - set BATFILES_DOCKER_BASE to an image at least as new." >&2
+# Each scenario gets a machine of its own: the one-liner's, and the stub's.
+for scenario in scenario stub-scenario; do
+    if ! "$runtime" run --rm "$image" sh -c "origins && exec $scenario"; then
+        # A binary from this machine also has to load on the image's older libraries,
+        # which is the one failure whose cause is not in the scenario's own output.
+        if [ "$binary_source" = host ]; then
+            echo "test:docker: $scenario failed under $base." >&2
+            echo "test:docker: if the binary would not load, the image is older than this" >&2
+            echo "test:docker: machine - set BATFILES_DOCKER_BASE to an image at least as new." >&2
+        fi
+        exit 1
     fi
-    exit 1
-fi
+done

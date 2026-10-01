@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
 use crate::action::DestinationOptions;
+use crate::bootstrap::BootstrapDecisions;
 use crate::cli::{Cli, Command, ExecutionOptions, GlobalOptions, VarsCommand, color};
 use crate::clone;
 use crate::disabled::{self, Change};
@@ -71,7 +72,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
             Ok(ExitCode::SUCCESS)
         }
         Command::Init(args) => {
-            init::run(args, reporter)?;
+            init::run(args, env, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Clone(args) => {
@@ -87,12 +88,23 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
             Ok(ExitCode::SUCCESS)
         }
         Command::Sync(args) => {
+            // Validate bootstrap options before resolving anything.
+            let bootstrap = if args.bootstrap {
+                Some(BootstrapDecisions::read(
+                    &args.bootstrap_options,
+                    env,
+                    reporter,
+                )?)
+            } else {
+                None
+            };
             let roots = locate_repository(cli, env, reporter)?;
             execute::sync(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
                 args.refresh_remotes,
+                bootstrap.as_ref(),
             )?;
             Ok(ExitCode::SUCCESS)
         }

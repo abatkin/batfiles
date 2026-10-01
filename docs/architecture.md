@@ -142,8 +142,9 @@ A run proceeds in this order:
 
 1. Load the leaf manifest, resolve variables — running the leaf's dynamic
    variables and saving what they captured — and capture host inputs.
-2. For `clone`, [adopt](state.md#bootstrap-adoption) the bootstrap policy,
-   which writes `disabled.toml` before it is read.
+2. For `clone` and `sync --bootstrap`, [adopt](state.md#bootstrap-adoption)
+   the bootstrap policy, which writes `disabled.toml` before it is read, or
+   under `--dry-run` hands the run the lists it would have written.
 3. Capture the selection, decide remote conditions, and build the `RunContext`.
 4. For `sync` and `clone`, [materialize](repoformat.md#materialization) remotes.
    Apply commands use the trees already present.
@@ -211,14 +212,17 @@ What only a whole machine can answer belongs in `tests/docker/`, which
 `task test:docker` builds and runs and `task ci` includes. The tests under
 `tests/cli/` pin all four roots at a temporary directory, so the container is
 where batfiles decides for itself: a real `$HOME`, XDG defaults, and no state of
-any kind. Keep it to acceptance -- one scenario end to end, over the fixture
+any kind. Keep it to acceptance -- end-to-end scenarios over the fixture
 repositories above, with the container-only additions to a manifest in an
-overlay beside the Dockerfile.
+overlay beside the Dockerfile. Each scenario runs in a fresh container of the
+same image: `scenario.sh` sets a machine up with the hosted installer's `clone`
+one-liner, and `stub-scenario.sh` with a plain `git clone` and the
+[leaf stub](distribution.md#leaf-stub) the leaf fixture carries.
 
 The machine starts with no batfiles. The image assembles its binary into a
 release tree under `/srv/releases` with `dist/assemble.sh`, named as the
 [hosted installer](distribution.md#hosted-installer) asks for it on that
-architecture, and the scenario begins with the installer's one-liner under
+architecture, and each scenario gets batfiles from there, the one-liner's under
 `dash`. The binary is a Linux one whatever the machine running the test is: a
 Linux host hands over the one `task build` produced, and a host that builds
 something a container cannot execute has the image build batfiles itself,
