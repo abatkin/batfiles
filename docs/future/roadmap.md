@@ -33,17 +33,8 @@ below names it.
   tasks, and the tag-triggered release workflow, with placeholder installers.
   Accepted when a tag from `release:rc` publishes a complete asset set that
   `dist:verify` passes.
-- **10.2** The POSIX [hosted installer](distribution.md#hosted-installer),
-  replacing the placeholder `dist/install.sh`, and
-  [`dist:mirror`](distribution.md#self-hosting), with `shellcheck` in
-  `task lint` covering `dist/` and `tests/docker/`. Decides whether the
-  installer's unstamped source runs when `BATFILES_BASE` is set. Accepted by
-  extending the [pristine-machine
-  acceptance](../architecture.md#the-pristine-machine) against a local release
-  tree built by `dist:assemble`: the `clone` one-liner on a machine with no
-  batfiles, an existing binary used without a download, and a checksum mismatch
-  refused. The host's binary is a glibc build, so the acceptance stages it under
-  the musl asset name or builds a musl one.
+- **10.2** ✅ The POSIX hosted installer, `dist:mirror`, and `shellcheck` in
+  `task lint`, accepted in the pristine-machine container.
 - **10.3** The [leaf stub](distribution.md#leaf-stub), added to the skeleton
   [`init`](../cmdline.md#init) lays down, and the compiled-in
   `BATFILES_DEFAULT_BASE` it is stamped from. Accepted in the same container:
@@ -54,7 +45,9 @@ below names it.
   and decides what a build for a target with no release asset, such as
   `x86_64-unknown-linux-gnu`, asks for.
 - **10.5** The [Windows](distribution.md#windows) installer and stub, replacing
-  the placeholder `dist/install.ps1`.
+  the placeholder `dist/install.ps1`. Adds a Windows CI job that runs the
+  installer's tests natively, as the macOS job does for `install.sh`, and a
+  Windows runner to `dist:smoke` in the release workflow.
 - **10.6** The [GitHub Pages](distribution.md#github-pages) copies of the hosted
   installers.
 

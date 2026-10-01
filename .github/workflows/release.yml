@@ -182,3 +182,26 @@ jobs:
           VERSION="${{ needs.plan.outputs.version }}"
           LATEST="${{ needs.plan.outputs.prerelease == 'true' && 'no' || 'yes' }}"
           STAMPED="$RELEASE_BASE"
+
+  # The published release, installed by its own one-liner on real machines:
+  # each runner's own shell and tools, which the tests only stand in for.
+  smoke:
+    name: smoke (${{ matrix.runner }})
+    needs: [plan, publish]
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - name: task dist:smoke
+        run: >-
+          task dist:smoke
+          URL="$PUBLISHED_BASE"
+          VERSION="${{ needs.plan.outputs.version }}"
+          LATEST="${{ needs.plan.outputs.prerelease == 'true' && 'no' || 'yes' }}"

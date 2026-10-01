@@ -24,7 +24,7 @@ tag=v$version
 
 case $version in
 *-*) kind="--prerelease" latest="--latest=false" ;;
-*) kind= latest="--latest" ;;
+*) kind='' latest="--latest" ;;
 esac
 
 # shellcheck disable=SC2086 # $kind is empty or one flag.

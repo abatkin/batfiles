@@ -30,7 +30,8 @@ FROM batfiles-${BINARY} AS binary
 FROM ${BASE}
 
 # Git is the one thing a leaf repository needs the machine to already have.
-RUN dnf -y install git-core && dnf clean all
+# dash is what the hosted installer runs under, as the strictest common sh.
+RUN dnf -y install git-core dash && dnf clean all
 
 # The user the scenario runs as. Nothing below writes to its home: what batfiles
 # finds there is the image's own skeleton and nothing else.
@@ -47,7 +48,23 @@ COPY overlay.toml /usr/local/share/
 COPY origins.sh /usr/local/bin/origins
 RUN chown dev:dev /srv
 
-COPY --from=binary /batfiles /usr/local/bin/batfiles
+# No batfiles on PATH: the machine gets one from a release tree under /srv,
+# assembled by the script a real release is, with the binary named as the
+# installer asks for it on this architecture. It is a glibc build rather than a
+# static one, which this image runs either way.
+COPY dist /usr/local/share/batfiles-dist
+COPY --from=binary /batfiles /tmp/batfiles
+RUN set -eu; \
+    version=$(/tmp/batfiles version); version=${version#batfiles }; \
+    mkdir /tmp/assets; \
+    mv /tmp/batfiles "/tmp/assets/batfiles-$(uname -m)-unknown-linux-musl"; \
+    sh /usr/local/share/batfiles-dist/assemble.sh \
+        "$version" file:///srv/releases /tmp/release /tmp/assets; \
+    mkdir -p /srv/releases/download /srv/releases/latest; \
+    cp -R /tmp/release "/srv/releases/download/v$version"; \
+    cp -R /tmp/release /srv/releases/latest/download; \
+    rm -rf /tmp/release /tmp/assets
+
 COPY scenario.sh /usr/local/bin/scenario
 
 USER dev

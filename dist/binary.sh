@@ -27,6 +27,8 @@ cross=${3:-}
 release=${4:-}
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=dist/version.sh
+. "$root/dist/version.sh"
 target_dir=${CARGO_TARGET_DIR:-$root/target}
 host=$(rustc -vV | sed -n 's/^host: //p')
 cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -n 1)
@@ -35,6 +37,8 @@ case $version in
 "$cargo" | "$cargo"-*) ;;
 *) die "version $version is neither the Cargo.toml version $cargo nor a pre-release of it" ;;
 esac
+is_version "$version" ||
+    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>; see docs/distribution.md#versions"
 
 case $target in
 *-windows-*) exe=.exe ;;

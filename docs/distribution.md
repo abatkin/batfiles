@@ -1,8 +1,9 @@
 # Distribution
 
-How a batfiles release is laid out, built, and published. The installers that
-read a release, the stub a leaf repository carries, and `batfiles update` are
-[proposed](future/distribution.md) and not yet built.
+How a batfiles release is laid out, built, and published; how the hosted
+installer puts a release on a machine; and how to serve releases from another
+site. The stub a leaf repository carries, `batfiles update`, and the Windows
+installer are [proposed](future/distribution.md) and not yet built.
 
 ## Release tree
 
@@ -27,9 +28,27 @@ involved.
 - `X.Y.Z-<pre-release>`, a pre-release of it, such as `X.Y.Z-rc.2`, from any
   commit.
 
-A release build compiles its version in as `BATFILES_RELEASE_VERSION`, so
-[`batfiles version`](cmdline.md#version) reports exactly the release, suffix
-included. `latest` never names a pre-release.
+A version is [SemVer](https://semver.org/) without build metadata:
+
+- `X`, `Y`, and `Z` are numbers without leading zeros.
+- A pre-release is one or more identifiers separated by dots. Each is a number
+  without leading zeros, or letters, digits, and hyphens with at least one
+  letter or hyphen. `rc.2`, `beta`, and `alpha.1.x-2` are pre-releases; `rc..2`,
+  `rc.02`, and `rc_2` are not.
+- Nothing follows with `+`.
+
+Versions order by SemVer precedence: `X`, `Y`, and `Z` numerically; a
+pre-release below the release it precedes; and pre-release identifiers in turn,
+numbers numerically and below any non-number, non-numbers as ASCII strings, and
+a shorter list below a longer one it begins. So `1.2.3-rc.2` precedes
+`1.2.3-rc.10`, which precedes `1.2.3`. Numbers compare exactly, at any length.
+
+Every release script and the installer accept exactly this grammar, from one
+pattern in `dist/version.sh` that `install.sh` repeats, so nothing is published
+that the installer cannot order. A release build compiles its version in as
+`BATFILES_RELEASE_VERSION`, so [`batfiles version`](cmdline.md#version)
+reports exactly the release, suffix included. `latest` never names a
+pre-release.
 
 Every release carries these assets, with version-free names:
 
@@ -46,9 +65,9 @@ not invalidate it. Checksums detect corruption, not a compromised host. The
 official workflow also publishes a build-provenance attestation for each binary,
 which `gh attestation verify` checks; nothing depends on it.
 
-Until the [hosted installers](future/distribution.md#hosted-installer) are
-built, `install.sh` and `install.ps1` are placeholders that install nothing:
-each names its base's `latest/download/` and exits 1.
+Until the [Windows installer](future/distribution.md#windows) is built,
+`install.ps1` is a placeholder that installs nothing: it names its base's
+`latest/download/` and fails.
 
 ### Targets
 
@@ -70,7 +89,7 @@ The release base is the one parameter a fork or self-hoster changes:
   `batfiles_stamped_base='<base>'` in `install.sh`, and
   `$BatfilesStampedBase = '<base>'` in `install.ps1`. Assembling a release
   replaces that line. The unstamped source in `dist/` holds the value
-  `unstamped`, and fails saying it was never stamped.
+  `unstamped`, and runs only when `BATFILES_BASE` supplies a base.
 - **Binaries.** `dist:binary` exports the base to the build as
   `BATFILES_DEFAULT_BASE`.
 
@@ -90,8 +109,10 @@ workflow runs nothing that cannot be run locally:
 | `dist:tag TAG=v<version>` | Refuses a tag that is not a [version](#versions) the `Cargo.toml` version allows, and a stable one whose commit is not on `origin/main`. Prints `version=` and `prerelease=` lines. |
 | `dist:binary TARGET=<triple> [BASE=<url>] [CROSS=xwin] [VERSION=<version>]` | Builds the `dist` profile for one target, reporting `VERSION` (by default the `Cargo.toml` version), and stages it as `target/assets/batfiles-<triple>[.exe]`. `CROSS=xwin` builds a Windows target with `cargo xwin`. |
 | `dist:assemble VERSION=<version> BASE=<url> OUT=<dir> [IN=<dir>] [TARGETS="<triple> ..."]` | Writes one release's complete asset set from the staged binaries. |
+| `dist:mirror VERSION=<version>\|latest BASE=<url> OUT=<dir> [FROM=<base>]` | Copies a published release for [another base](#self-hosting). |
 | `dist:publish VERSION=<version> DIR=<dir>` | Publishes an assembled set as the GitHub release for the existing tag. |
 | `dist:verify URL=<base> VERSION=<version> LATEST=yes\|no [STAMPED=<base>]` | Checks a published release through its release tree. |
+| `dist:smoke URL=<base> VERSION=<version> LATEST=yes\|no` | Installs a published release on this machine with its own one-liner, and checks what it installed. |
 
 Both `release:` tasks refuse uncommitted changes and a version whose stable
 release is already tagged, and check the tag as `dist:tag` does; pushing the
@@ -117,6 +138,12 @@ then publishes it, so `latest/download/` never serves part of a release. A
 pre-release is published as a pre-release and not marked latest. A tag that
 already has a release is refused.
 
+`dist:smoke` pipes `<base>/download/v<version>/install.sh` into `sh` with that
+version requested, installing to a scratch path that leaves any batfiles on
+the machine alone, and requires the result to report the version. With
+`LATEST=yes` it does the same through `<base>/latest/download/install.sh` with
+no version requested.
+
 `dist:verify` fetches `<base>/download/v<version>/`: `VERSION` must hold the
 version, every binary `SHA256SUMS` lists must match it, and both installers must
 carry the stamped base, `STAMPED` or else `URL`. With `LATEST=yes`,
@@ -140,5 +167,128 @@ carry the stamped base, `STAMPED` or else `URL`. With `LATEST=yes`,
    approval.
 5. `dist:verify` checks the published release at this repository's releases
    URL, including `latest` for a stable release.
+6. `dist:smoke` installs it with its own one-liner on Linux x86_64 and aarch64
+   and on macOS runners, again including `latest` for a stable release.
 
 A failure before publishing leaves no release, or at most a draft to delete.
+
+## Hosted installer
+
+### Invocation
+
+```sh
+curl -fsSL <base>/latest/download/install.sh | sh
+curl -fsSL <base>/latest/download/install.sh | sh -s -- clone https://github.com/me/dotfiles
+```
+
+With no arguments it ensures a binary and exits. With arguments it ensures a
+binary and then `exec`s it with those arguments, which makes the second form
+the one-command bootstrap of a new machine: [`clone`](cmdline.md#clone) does
+the rest. When its standard input is not a terminal, as when it is piped into
+`sh`, and the process has a controlling terminal, batfiles gets `/dev/tty` as
+standard input, so a command such as `clone --interactive` can still ask.
+
+Inputs, all optional:
+
+| Variable | Meaning |
+| --- | --- |
+| `BATFILES_BASE` | The release base. Defaults to the stamped base. |
+| `BATFILES_VERSION` | A release to fetch, a [version](#versions) with or without a leading `v`. Empty or `latest` means the latest release. |
+| `BATFILES_BIN` | The path of the one batfiles to use, or to install. A relative path is taken from the working directory. Unset, the installer searches as [resolving a binary](#resolving-a-binary) describes. |
+
+Because the script is piped, a variable reaches it as `curl … | BATFILES_BASE=…
+sh`. `latest` never names a pre-release, so installing one takes
+`BATFILES_VERSION`.
+
+### Resolving a binary
+
+With `BATFILES_BIN` set, it is the only candidate, and where a download goes.
+Otherwise the candidates, in order, are the `batfiles` found on `PATH` and
+`$HOME/.local/bin/batfiles`, and a download goes to the second. Either way, the
+last candidate is the **install location**.
+
+- **No version requested:** the first candidate that runs is used, and nothing
+  is downloaded. Upgrading an existing binary is what
+  [`update`](future/distribution.md#batfiles-update) is for; an installer run
+  with no arguments reports which binary it found and suggests
+  `batfiles update`.
+- **`BATFILES_VERSION` set:** it names exactly what is downloaded, and is a
+  floor for what is accepted. The first candidate whose version is at least the
+  requested one is used. If none is, the requested release is installed at the
+  install location, replacing an older batfiles there, and used by its
+  absolute path. A candidate on `PATH` that was passed over is named in a
+  warning and never modified.
+
+A floor rather than an exact match keeps a pin from fighting `update`: a
+repository that needs 1.4 accepts 1.5 without downgrading it, and a machine
+still holding 1.2 gets 1.4.
+
+A candidate's version is read from `batfiles version`, whose output (`batfiles
+<version>`) is a [frozen contract](future/distribution.md#stability), and
+versions compare as [versions](#versions) order. A candidate that fails to run,
+prints something else, or reports a version outside the grammar is passed over,
+and the installer says so.
+
+### Installing
+
+The installer only ever writes in the directory holding the install location,
+creating it if needed. It never replaces something there that is not batfiles:
+a file at the install location that does not report a batfiles version, or a
+directory, stops the installer before it downloads anything, naming the path.
+Otherwise:
+
+1. Map `uname -s` and `uname -m` to a target: `Linux` to musl, `Darwin` to
+   Apple; `x86_64`/`amd64` and `aarch64`/`arm64`. An x86_64 shell on Apple
+   silicon (Rosetta, reported by `sysctl hw.optional.arm64`) gets the aarch64
+   binary. An unmapped platform fails, naming what was detected.
+2. Choose the release: the requested version, or else the one
+   `<base>/latest/download/VERSION` names, read once so that a release
+   published meanwhile cannot mix two. When that cannot be read, the installer
+   suggests requesting a pre-release, since the base may have no stable release
+   yet. Everything else comes from `<base>/download/v<version>/`.
+3. Download the binary to a temporary file beside the install location, and
+   `SHA256SUMS` beside it, with `curl`, falling back to `wget`.
+4. Verify the digest with `sha256sum`, falling back to `shasum -a 256`. With
+   neither available, or on a mismatch, stop without installing anything.
+5. Make it executable and run its `version`, which catches a binary the machine
+   cannot execute. It must report the chosen release.
+6. Rename it to the install location, and report the version and the path.
+
+Any failure removes the temporary files and leaves the directory as it was,
+apart from creating it.
+
+**The installer never edits a shell startup file.** The first `sync` is about to
+install the user's own `.bashrc` or `.zshrc`; an installer that had just edited
+one would put a file in the way of the repository's first action. When the
+install location's directory is not on `PATH`, the installer says so and moves
+on. It runs
+batfiles by absolute path, so the bootstrap never depends on `PATH`.
+
+### Script conventions
+
+- POSIX `sh`, checked by `shellcheck` in `task lint` and run under `dash` in
+  the [pristine-machine](architecture.md#the-pristine-machine) container.
+- The whole body is a function called on the last line, so a truncated download
+  runs nothing.
+- The installer's own messages go to standard error, so a command it `exec`s
+  owns standard output. They are ASCII, like everything else batfiles prints.
+- Its own failures exit 1. Once it `exec`s batfiles, the exit status is
+  batfiles'.
+
+## Self-hosting
+
+A self-hoster serves a release tree from any static host:
+
+1. `task dist:mirror VERSION=<version> BASE=<url> OUT=<dir>` downloads a
+   release from `FROM`, by default the official base, verifies every binary
+   against its `SHA256SUMS`, and writes it to `<dir>` with both installers'
+   [stamp lines](#the-release-base) restamped with `<url>`. `VERSION=latest`
+   mirrors the latest release. The task runs `dist/mirror.sh`, which a mirror
+   can run without Task.
+2. Upload `<dir>` to `<url>/download/v<version>/`, and for the latest release
+   also to `<url>/latest/download/`. Both are needed: the installer reads only
+   `VERSION` from `latest/download/` and downloads the rest from the release's
+   own directory. `task dist:verify URL=<url>
+   VERSION=<version> LATEST=yes` checks the result.
+
+After that, `<url>` works like the official base for the installer one-liner.

@@ -186,11 +186,14 @@ by responsibility. Keep realistic fixture repositories separate when they need
 different environments. Snapshot whole trees for dry-run assertions and also
 check direct evidence of work, such as HTTP request counts or `FETCH_HEAD`.
 
-The release scripts under `dist/` are tested by `tests/dist.rs`, which runs them
-with `sh` against stand-in binaries and `file://` release trees. Building real
-binaries and publishing them are left to the release workflow.
+The release scripts under `dist/` are tested by the `tests/dist/` target, which
+runs them with `sh` against stand-in binaries and `file://` or loopback release
+trees. Building real binaries and publishing them are left to the release
+workflow.
 
-Gate platform-specific execution tests together where practical. Windows
+Gate platform-specific execution tests together where practical. CI runs
+`task ci` on Linux and `task test` on macOS, so the test suite, including the
+installer's tests, also runs against BSD tools and macOS's shell. Windows
 compilation is checked by `task lint`; it is not a Windows runtime test. The
 pinned toolchain and [Taskfile](../Taskfile.yml) own toolchain setup and checks.
 
@@ -212,10 +215,14 @@ any kind. Keep it to acceptance -- one scenario end to end, over the fixture
 repositories above, with the container-only additions to a manifest in an
 overlay beside the Dockerfile.
 
-The image runs a Linux binary whatever the machine running the test is: a Linux
-host hands over the one `task build` produced, and a host that builds something
-a container cannot execute has the image build batfiles itself, against the
-pinned toolchain. The task is part of `task ci`, so it must not fail for being
+The machine starts with no batfiles. The image assembles its binary into a
+release tree under `/srv/releases` with `dist/assemble.sh`, named as the
+[hosted installer](distribution.md#hosted-installer) asks for it on that
+architecture, and the scenario begins with the installer's one-liner under
+`dash`. The binary is a Linux one whatever the machine running the test is: a
+Linux host hands over the one `task build` produced, and a host that builds
+something a container cannot execute has the image build batfiles itself,
+against the pinned toolchain. The task is part of `task ci`, so it must not fail for being
 run somewhere unusual -- a host with no working container runtime reports that
 it did not run.
 

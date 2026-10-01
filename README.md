@@ -248,21 +248,33 @@ linked /home/you/.gitconfig -> /home/you/dotfiles/git/gitconfig
 An exit status of `0` means the command did what was asked, `1` that it ran and
 failed partway, and `2` that it did not run at all — a usage error.
 
-## Building
+## Installing
 
-Each [GitHub release](https://github.com/abatkin/batfiles/releases) carries a
-bare binary for Linux (static, for any distribution), macOS, and Windows, with
-a `SHA256SUMS` to check it against. There is no installer yet, so download the
-one for your machine and put it on your `PATH`.
+On Linux or macOS, one command installs batfiles to `~/.local/bin` and clones
+your dotfiles onto the machine:
 
-To build from source instead, with the toolchain pinned in
+```sh
+curl -fsSL https://github.com/abatkin/batfiles/releases/latest/download/install.sh | sh -s -- clone https://github.com/me/dotfiles
+```
+
+Without `-s -- clone …` it only installs batfiles. It verifies the download
+against the release's `SHA256SUMS`, uses a batfiles already on the machine
+rather than downloading another, and never edits a shell startup file.
+`BATFILES_VERSION=1.2.3` asks for a particular release, including a
+pre-release, which `latest` never is; [the hosted
+installer](docs/distribution.md#hosted-installer) has the details.
+
+Each [GitHub release](https://github.com/abatkin/batfiles/releases) also
+carries the bare binaries, for Linux (static, for any distribution), macOS, and
+Windows. To build from source instead, with the toolchain pinned in
 `rust-toolchain.toml`:
 
 ```sh
 cargo build --release   # target/release/batfiles
 ```
 
-[Distribution](docs/distribution.md) describes how a release is built.
+[Distribution](docs/distribution.md) describes how a release is built, and how
+to serve releases from a site of your own.
 
 ## Not built yet
 
@@ -271,7 +283,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 10    | An `install.sh` one-liner, a stub for a checkout, `batfiles update` |
+| 10    | A stub for a checkout, `batfiles update`, a Windows installer       |
 
 ## Documentation
 
@@ -302,7 +314,7 @@ task ci           # fmt + lint + test + test:docker + deny + builds (what CI run
 task test         # project tests
 task test:docker  # the acceptance, on a pristine machine in a container
 task fmt          # formatting check
-task lint         # clippy with warnings denied, for the host and for Windows
+task lint         # clippy, for the host and for Windows, and shellcheck
 task build        # debug build
 ```
 
@@ -313,7 +325,9 @@ On macOS and Windows, where `task build` produces a binary no Linux container
 can execute, the image builds batfiles itself.
 
 Two cargo subcommands are needed beyond the pinned toolchain: `cargo install
-cargo-deny cargo-xwin --locked`. The second is what lets an ubuntu machine run
+cargo-deny cargo-xwin --locked`, and `task lint` needs
+[ShellCheck](https://www.shellcheck.net/) for the scripts under `dist/` and
+`tests/docker/`. The second is what lets an ubuntu machine run
 clippy against Windows — the TLS stack under `fetch-file` compiles C, so that
 check needs headers targeting MSVC, which `cargo xwin` fetches and caches.
 

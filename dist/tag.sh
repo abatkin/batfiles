@@ -18,11 +18,14 @@ die() {
 [ $# -ge 1 ] && [ $# -le 2 ] || die "usage: dist/tag.sh <tag> [<main>]"
 tag=$1
 main=${2:-origin/main}
+# shellcheck source=dist/version.sh
+. "$(cd "$(dirname "$0")" && pwd)/version.sh"
 root=$(git rev-parse --show-toplevel) || die "not in a Git repository"
 cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -n 1)
 
-printf '%s\n' "$cargo" | grep -Eqx '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)' ||
+if ! is_version "$cargo" || [ "${cargo#*-}" != "$cargo" ]; then
     die "the Cargo.toml version '$cargo' is not X.Y.Z; a pre-release takes its suffix from the tag"
+fi
 
 case $tag in
 "v$cargo")
@@ -36,8 +39,8 @@ case $tag in
 "v$cargo"-*)
     version=${tag#v}
     prerelease=true
-    printf '%s\n' "${version#"$cargo"-}" | grep -Eqx '[0-9A-Za-z.-]+' ||
-        die "'$tag' has a malformed pre-release suffix"
+    is_version "$version" ||
+        die "'$tag' has a malformed pre-release suffix; see docs/distribution.md#versions"
     ;;
 *)
     die "tag '$tag' is neither v$cargo nor v$cargo-<pre-release>, as the Cargo.toml version allows"

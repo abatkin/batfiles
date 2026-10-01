@@ -49,7 +49,15 @@ git push origin vX.Y.Z-rc.<n>   # the command it prints
 ```
 
 Then watch the *Release* workflow, and approve the `release` environment if it
-asks. A candidate is published as a pre-release and never becomes `latest`.
+asks. After publishing, its `verify` job checks the release's checksums and
+stamps, and its `smoke` jobs install it with its own one-liner on Linux x86_64,
+Linux aarch64, and macOS. A candidate is published as a pre-release and never becomes `latest`, so
+trying its installer takes the version:
+
+```sh
+curl -fsSL https://github.com/abatkin/batfiles/releases/download/vX.Y.Z-rc.<n>/install.sh |
+    BATFILES_VERSION=X.Y.Z-rc.<n> sh
+```
 
 If the run fails before publishing, delete any draft it left
 (`gh release delete vX.Y.Z-rc.<n>`), fix the problem, and run `task release:rc`
@@ -71,8 +79,11 @@ again; it takes the next number.
 
 ## Building and checking locally
 
-`task ci` runs `tests/dist.rs`, which exercises assembly, verification, and
-tagging against stand-ins. To build real binaries:
+`task ci` runs the `tests/dist/` target, which exercises every script but
+`dist:binary` and `dist:publish` against stand-in binaries, and the
+pristine-machine container, which installs a real binary with the one-liner
+under `dash`. CI also runs `task test` on macOS, against the real BSD tools.
+`task lint` needs `shellcheck`. To build real binaries:
 
 ```sh
 task dist:binary TARGET=x86_64-unknown-linux-musl
@@ -104,3 +115,10 @@ gh attestation verify batfiles-x86_64-unknown-linux-musl --repo abatkin/batfiles
 ```
 
 Use `LATEST=no` for a pre-release.
+
+To try the installer against the local tree above without touching your own
+`~/.local/bin`:
+
+```sh
+BATFILES_BIN=/tmp/try-batfiles/batfiles sh target/tree/latest/download/install.sh
+```

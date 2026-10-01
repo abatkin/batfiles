@@ -38,8 +38,10 @@ plain-file repositories contain the actual dotfiles and declarative
 `batfiles.toml` configuration.
 
 Each release publishes that binary for Linux, macOS, and Windows in a
-[release tree](distribution.md). Getting it onto a machine is *intended*, and
-specified in [distribution](future/distribution.md):
+[release tree](distribution.md), and a [hosted
+installer](distribution.md#hosted-installer) puts it on a Linux or macOS
+machine. The rest of getting it onto a machine is *intended*, and specified in
+[distribution](future/distribution.md):
 
 1. **One command bootstraps a new machine.** A hosted installer, piped into a
    shell, uses a `batfiles` it finds or downloads a verified one to

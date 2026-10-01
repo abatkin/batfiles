@@ -45,7 +45,7 @@ through.
 
 A generated `install.sh` uses a `batfiles` binary found on `PATH`, and the
 binary reads `BATFILES_BASE` for `init` and `update`. Both are specified in
-[distribution](distribution.md#resolving-a-binary).
+[distribution](../distribution.md#resolving-a-binary).
 
 ## Deliberate exclusions
 

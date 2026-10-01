@@ -2,7 +2,12 @@
 # The pristine-machine acceptance: one command turns a URL into a set-up
 # machine, and a second run over that machine changes nothing it should not.
 #
-# Nothing here sets a BATFILES_* or XDG_* variable, which is the whole point.
+# The one command is the hosted installer's one-liner, run under dash against
+# the release tree the image assembled under /srv/releases: the machine starts
+# with no batfiles at all.
+#
+# Nothing here sets an XDG_* variable or a BATFILES_* variable batfiles reads,
+# which is the whole point.
 # Every test under `tests/cli/` pins all four roots at a temporary directory, so
 # what a real machine does -- clone into $HOME/dotfiles, write
 # $HOME/.config/batfiles/disabled.toml, create the ~/.config and ~/.cache
@@ -11,6 +16,9 @@ set -euo pipefail
 
 repo=$HOME/dotfiles
 remote=$repo/remotes/corporate
+installer=file:///srv/releases/latest/download/install.sh
+batfiles=$HOME/.local/bin/batfiles
+target=$(uname -m)-unknown-linux-musl
 checks=0
 
 fail() {
@@ -75,12 +83,22 @@ reported() {
     contains "$1" "$2" "the run did not report it"
 }
 
+# Pipe the hosted installer into dash with the arguments given, keeping its
+# output in the log named first, and report whether it succeeded.
+one_liner() {
+    local log=$1 status=0
+    shift
+    curl -fsSL "$installer" | dash -s -- "$@" >"$log" 2>&1 || status=$?
+    cat "$log"
+    return "$status"
+}
+
 # Run batfiles, keeping the output for the assertions that read it and showing
 # it either way: a failure here is read from the log rather than reproduced.
 run() {
     local log=$1
     shift
-    if ! batfiles "$@" >"$log" 2>&1; then
+    if ! "$batfiles" "$@" >"$log" 2>&1; then
         cat "$log" >&2
         fail "batfiles $* did not succeed"
     fi
@@ -93,12 +111,37 @@ for path in "$repo" "$HOME/.config" "$HOME/.cache" "$HOME/.local" \
     "$HOME/.gitconfig" "$HOME/.zshrc"; do
     absent "$path" "this machine is supposed to be pristine"
 done
+if command -v batfiles >/dev/null; then
+    fail "batfiles is on PATH: this machine is supposed to be pristine"
+fi
+ok
 
-step "clone: one command brings the repository down and sets the machine up"
+step "a download that fails its checksum installs nothing and runs nothing"
+
+# The installer reads the latest version from latest/download/VERSION and
+# downloads from that release's own directory, so that is the copy to tamper.
+cp -R /srv/releases /srv/corrupt
+for binary in /srv/corrupt/download/v*/"batfiles-$target"; do
+    printf 'tampered' >>"$binary"
+done
+log=$(mktemp)
+if BATFILES_BASE=file:///srv/corrupt one_liner "$log" clone /srv/personal.git; then
+    fail "the installer accepted a binary that does not match SHA256SUMS"
+fi
+reported "$log" "does not match"
+absent "$batfiles" "a binary that failed its checksum was installed"
+[ -z "$(ls -A "$HOME/.local/bin")" ] ||
+    fail "the refused download left $(ls -A "$HOME/.local/bin") behind"
+ok
+absent "$repo" "the clone ran without a verified binary"
+
+step "clone: one command installs batfiles, brings the repository down, and sets the machine up"
 
 log=$(mktemp)
-run "$log" clone /srv/personal.git
+one_liner "$log" clone /srv/personal.git || fail "the one-liner did not succeed"
 
+reported "$log" "installed batfiles $("$batfiles" version | sed 's/^batfiles //') as $batfiles"
+reported "$log" "is not on PATH"
 reported "$log" "cloned $repo from /srv/personal.git"
 
 is_dir "$repo/.git" "the clone left no git directory"
@@ -160,12 +203,15 @@ is_file "$disabled" "the adoption wrote no document under the XDG default"
 groups = ["editor"]' ] || fail "the document says: $(cat "$disabled")"
 ok
 
+# The backticks are batfiles' own quoting, not command substitution.
+# shellcheck disable=SC2016
 reported "$log" 'default-disabled: disabled action `batgrep`'
+# shellcheck disable=SC2016
 reported "$log" 'default-disabled: disabled group `editor`'
 
 # What the document switched off was never installed, which is the half only a
 # run on a machine with no state of its own can show.
-absent "$HOME/.local" "a disabled action creates none of its parents either"
+absent "$HOME/.local/bin/batgrep" "the disabled action was not installed"
 absent "$HOME/.config/nvim" "the editor group was disabled"
 
 # What it did not switch off was installed: the gitconfig candidate is one this
@@ -189,8 +235,17 @@ contains "$HOME/.config/git/local" "edited on this machine" \
     "the second run overwrote an edit made on this machine"
 
 # The machine's own state outlives the bootstrap that wrote it.
-absent "$HOME/.local" "the disabled action ran on the second pass"
+absent "$HOME/.local/bin/batgrep" "the disabled action ran on the second pass"
 absent "$HOME/.config/nvim" "the disabled group ran on the second pass"
 links_to "$HOME/.zshrc" "$repo/shell/zshrc" "the second run disturbed a link"
+
+step "the installer, run again, uses the batfiles it installed"
+
+# A base that answers nothing: the installer has nothing to download.
+again=$(mktemp)
+BATFILES_BASE=file:///nonexistent one_liner "$again" version ||
+    fail "the installer needed a download to run a batfiles it had installed"
+reported "$again" "using batfiles"
+contains "$again" "$("$batfiles" version)" "the installed batfiles did not run"
 
 echo "pristine-machine acceptance: $checks checks passed"

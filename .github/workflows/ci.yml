@@ -37,6 +37,10 @@ jobs:
         with:
           version: 3.x
 
+      # `task lint` checks the shell scripts. The runner image normally has it.
+      - name: Install shellcheck
+        run: command -v shellcheck || (sudo apt-get update && sudo apt-get install -y shellcheck)
+
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
@@ -49,3 +53,25 @@ jobs:
 
       - name: task ci
         run: task ci
+
+  # The test suite on macOS, where the installer's tests meet BSD awk, mktemp,
+  # shasum, and macOS's /bin/sh rather than stand-ins for them. The container
+  # test and the Windows cross-lint in `task ci` need Linux, so this runs
+  # `task test`.
+  test-macos:
+    name: task test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+
+      - name: task test
+        run: task test

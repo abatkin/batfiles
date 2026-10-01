@@ -1,13 +1,15 @@
 #!/bin/sh
 # Assemble one release's complete asset set from binaries already built.
 #
-# Usage: dist/assemble.sh <version> <base> <out> [<in>] [<targets>]
+# Usage: dist/assemble.sh <version> <base> <out> [<in>] [<targets>] [<installers>]
 #
 # Copies every batfiles-<target>[.exe] in <in> to <out>, writes VERSION and
 # SHA256SUMS, and stamps <base> into the hosted installers. An empty or omitted
 # <in> is where `dist/binary.sh` stages binaries. <out> must be absent or empty,
 # and is written only once the set is complete. <targets>, a space-separated
-# list, requires the binaries in <in> to be exactly those targets.
+# list, requires the binaries in <in> to be exactly those targets. The installers
+# are stamped from install.sh and install.ps1 in <installers>, by default
+# `dist/`; a stamped copy is restamped.
 set -eu
 
 die() {
@@ -15,18 +17,20 @@ die() {
     exit 1
 }
 
-[ $# -ge 3 ] && [ $# -le 5 ] ||
-    die "usage: dist/assemble.sh <version> <base> <out> [<in>] [<targets>]"
+[ $# -ge 3 ] && [ $# -le 6 ] ||
+    die "usage: dist/assemble.sh <version> <base> <out> [<in>] [<targets>] [<installers>]"
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=dist/version.sh
+. "$here/version.sh"
 version=$1
 base=${2%/}
 out=${3%/}
 in=${4:-${CARGO_TARGET_DIR:-$here/../target}/assets}
 targets=${5:-}
+installers=${6:-$here}
 
-printf '%s\n' "$version" |
-    grep -Eqx '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?' ||
-    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>"
+is_version "$version" ||
+    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>; see docs/distribution.md#versions"
 # Every character the stamped installers quote safely.
 printf '%s\n' "$base" |
     grep -Eqx "[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9._~:/@%+=,;!*()-]+" ||
@@ -88,9 +92,9 @@ stamp() {
         END { if (n != 1) exit 3 }
     ' "$1" >"$2" || die "$1 does not have exactly one line beginning '$3'"
 }
-stamp "$here/install.sh" "$stage/install.sh" \
+stamp "$installers/install.sh" "$stage/install.sh" \
     "batfiles_stamped_base=" "batfiles_stamped_base='$base'"
-stamp "$here/install.ps1" "$stage/install.ps1" \
+stamp "$installers/install.ps1" "$stage/install.ps1" \
     "\$BatfilesStampedBase = " "\$BatfilesStampedBase = '$base'"
 chmod 0644 "$stage/VERSION" "$stage/SHA256SUMS" "$stage/install.sh" "$stage/install.ps1"
 chmod 0755 "$stage"

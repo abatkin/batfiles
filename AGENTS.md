@@ -105,7 +105,8 @@ files under `src/` and `tests/`.
   `task ci` and not of `task test`; a machine with no working container runtime
   says so and passes.
 - `task fmt`: formatting check.
-- `task lint`: clippy with warnings denied, including the Windows target.
+- `task lint`: clippy with warnings denied, including the Windows target, and
+  `shellcheck` over the shell scripts.
 - `task build`: debug build.
 - `task build:release`: release build.
 

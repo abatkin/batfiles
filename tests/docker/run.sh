@@ -54,8 +54,9 @@ fi
 
 # The context is staged rather than taken from the repository, so that the whole
 # of target/ is not a build context. It holds the image's own files, the two
-# fixture trees the origins are built from, and both possible binaries: the
-# host's, and the sources the image would compile instead.
+# fixture trees the origins are built from, the release scripts that turn the
+# binary into a release tree, and both possible binaries: the host's, and the
+# sources the image would compile instead.
 context=$(mktemp -d)
 trap 'rm -rf "$context"' EXIT
 
@@ -63,6 +64,10 @@ install -m 0644 "$here/Dockerfile" "$here/overlay.toml" "$context/"
 install -m 0755 "$here/origins.sh" "$here/scenario.sh" "$context/"
 mkdir "$context/fixtures"
 cp -R "$root/tests/fixtures/leaf" "$root/tests/fixtures/corporate" "$context/fixtures/"
+mkdir "$context/dist"
+install -m 0644 "$root/dist/assemble.sh" "$root/dist/version.sh" "$root/dist/install.sh" \
+    "$root/dist/install.ps1" \
+    "$context/dist/"
 mkdir "$context/source"
 cp -R "$root/src" "$context/source/src"
 install -m 0644 "$root/Cargo.toml" "$root/Cargo.lock" "$root/rust-toolchain.toml" \
