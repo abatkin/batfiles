@@ -20,7 +20,9 @@ die() {
     exit 1
 }
 
-[ $# -ge 1 ] && [ $# -le 4 ] || die "usage: dist/binary.sh <target> [<base>] [xwin] [<version>]"
+if [ $# -lt 1 ] || [ $# -gt 4 ]; then
+    die "usage: dist/binary.sh <target> [<base>] [xwin] [<version>]"
+fi
 target=$1
 base=${2:-}
 cross=${3:-}

@@ -96,7 +96,9 @@ main() {
     candidates
     found=
     for candidate in "$on_path" "$bin_path"; do
-        [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ] || continue
+        if [ -z "$candidate" ] || [ ! -f "$candidate" ] || [ ! -x "$candidate" ]; then
+            continue
+        fi
         if version_of "$candidate" >/dev/null; then
             found=$candidate
             break

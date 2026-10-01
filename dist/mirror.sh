@@ -15,8 +15,9 @@ die() {
     exit 1
 }
 
-[ $# -ge 3 ] && [ $# -le 4 ] ||
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
     die "usage: dist/mirror.sh <version> <base> <out> [<from>]"
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 version=${1#v}
 base=$2

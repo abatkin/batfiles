@@ -17,8 +17,9 @@ die() {
     exit 1
 }
 
-[ $# -ge 3 ] && [ $# -le 6 ] ||
+if [ $# -lt 3 ] || [ $# -gt 6 ]; then
     die "usage: dist/assemble.sh <version> <base> <out> [<in>] [<targets>] [<installers>]"
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=dist/version.sh
 . "$here/version.sh"

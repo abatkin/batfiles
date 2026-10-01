@@ -37,9 +37,9 @@ jobs:
         with:
           version: 3.x
 
-      # `task lint` checks the shell scripts. The runner image normally has it.
-      - name: Install shellcheck
-        run: command -v shellcheck || (sudo apt-get update && sudo apt-get install -y shellcheck)
+      # Keep the linter version fixed across runner-image updates.
+      - name: Install ShellCheck 0.9.0
+        run: sudo apt-get update && sudo apt-get install -y --allow-downgrades shellcheck=0.9.0-1
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked

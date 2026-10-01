@@ -19,8 +19,9 @@ die() {
 version=$1
 dir=${2%/}
 tag=v$version
-[ -f "$dir/VERSION" ] && [ "$(cat "$dir/VERSION")" = "$version" ] ||
+if [ ! -f "$dir/VERSION" ] || [ "$(cat "$dir/VERSION")" != "$version" ]; then
     die "$dir is not an assembled release of $version"
+fi
 
 case $version in
 *-*) kind="--prerelease" latest="--latest=false" ;;
