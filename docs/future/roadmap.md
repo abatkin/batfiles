@@ -40,7 +40,7 @@ provided that step's entry below names it.
 - **10.4** ✅ `batfiles update`, the compiled-in target triple and the asset a
   build without a release of its own takes, and `update --check` in
   `dist:smoke`.
-- **10.5** The Windows installer and stub, `init --stubs`, `update` replacing a
+- **10.5** ✅ The Windows installer and stub, `init --stubs`, `update` replacing a
   running `batfiles.exe`, `task test` on a Windows runner, and a Windows runner
   in `dist:smoke`.
 - **10.6** The [GitHub Pages](distribution.md#github-pages) copies of the hosted
