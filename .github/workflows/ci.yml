@@ -37,9 +37,17 @@ jobs:
         with:
           version: 3.x
 
-      # Keep the linter version fixed across runner-image updates.
-      - name: Install ShellCheck 0.9.0
-        run: sudo apt-get update && sudo apt-get install -y --allow-downgrades shellcheck=0.9.0-1
+      # Keep the linter version fixed across runner-image updates, from the
+      # upstream release, checked against its pinned digest. /usr/local/bin
+      # comes before any shellcheck the image has in /usr/bin.
+      - name: Install ShellCheck 0.11.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked

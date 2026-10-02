@@ -28,8 +28,9 @@ site=${3:-$here/../site}
 
 [ -d "$site" ] || die "no site directory $site"
 for name in install.sh install.ps1; do
-    [ ! -e "$site/$name" ] && [ ! -L "$site/$name" ] ||
+    if [ -e "$site/$name" ] || [ -L "$site/$name" ]; then
         die "$site/$name would be replaced by the release's installer"
+    fi
 done
 if [ -e "$out" ]; then
     [ -d "$out" ] || die "$out exists and is not a directory"
