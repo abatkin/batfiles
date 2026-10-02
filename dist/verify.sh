@@ -1,12 +1,15 @@
 #!/bin/sh
 # Check a published release through the release tree that serves it.
 #
-# Usage: dist/verify.sh <url> <version> <latest> [<stamped-base>]
+# Usage: dist/verify.sh <url> <version> <latest> [<stamped-base>] [<pages>]
 #
 # Fetches <url>/download/v<version>/: VERSION must hold <version>, every binary
 # SHA256SUMS lists must match it, and both installers must be stamped with
 # <stamped-base>, which defaults to <url>. With <latest> `yes`,
-# <url>/latest/download/ must serve the same VERSION and SHA256SUMS.
+# <url>/latest/download/ must serve the same VERSION and SHA256SUMS, and a
+# Pages site at <pages> must serve at its root the installers that directory
+# does. The Pages check retries for PAGES_WAIT seconds, by default 600, which
+# outlasts what Pages caches.
 set -eu
 
 die() {
@@ -14,28 +17,37 @@ die() {
     exit 1
 }
 
-if [ $# -lt 3 ] || [ $# -gt 4 ]; then
-    die "usage: dist/verify.sh <url> <version> <yes|no> [<stamped-base>]"
+if [ $# -lt 3 ] || [ $# -gt 5 ]; then
+    die "usage: dist/verify.sh <url> <version> <yes|no> [<stamped-base>] [<pages>]"
 fi
 url=${1%/}
 version=$2
 latest=$3
 stamped=${4:-$url}
 stamped=${stamped%/}
+pages=${5:-}
+pages=${pages%/}
+wait=${PAGES_WAIT:-600}
 case $latest in yes | no) ;; *) die "<latest> is '$latest', not yes or no" ;; esac
+[ -z "$pages" ] || [ "$latest" = yes ] || die "a Pages site serves only the latest release"
+case $wait in '' | *[!0-9]*) die "PAGES_WAIT is '$wait', not a number of seconds" ;; esac
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Download <url> to <file>, failing on any HTTP error.
-fetch() {
+# Download <url> to <file>, returning nonzero on any HTTP error.
+get() {
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 -o "$2" "$1" || die "cannot fetch $1"
+        curl -fsSL --retry 3 -o "$2" "$1"
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$2" "$1" || die "cannot fetch $1"
+        wget -q -O "$2" "$1"
     else
         die "neither curl nor wget is available"
     fi
+}
+
+fetch() {
+    get "$1" "$2" || die "cannot fetch $1"
 }
 
 release=$url/download/v$version
@@ -76,6 +88,31 @@ if [ "$latest" = yes ]; then
         die "$url/latest/download/ serves version $(cat "$work/latest/VERSION"), not $version"
     cmp -s "$work/release/SHA256SUMS" "$work/latest/SHA256SUMS" ||
         die "$url/latest/download/SHA256SUMS differs from the one for v$version"
+fi
+
+# Whether <pages> serves the installers <url>/latest/download/ does, naming the
+# first difference in `differs` when it does not.
+pages_match() {
+    for name in install.sh install.ps1; do
+        differs="$pages/$name cannot be fetched"
+        get "$pages/$name" "$work/pages/$name" || return 1
+        differs="$pages/$name differs from $url/latest/download/$name"
+        cmp -s "$work/latest/$name" "$work/pages/$name" || return 1
+    done
+}
+
+if [ -n "$pages" ]; then
+    mkdir "$work/pages"
+    fetch "$url/latest/download/install.sh" "$work/latest/install.sh"
+    fetch "$url/latest/download/install.ps1" "$work/latest/install.ps1"
+    tries=$((wait / 30))
+    until pages_match; do
+        [ "$tries" -gt 0 ] || die "$differs"
+        echo "dist:verify: $differs; retrying in 30 seconds" >&2
+        tries=$((tries - 1))
+        sleep 30
+    done
+    echo "dist:verify: $pages serves the installers of $version"
 fi
 
 echo "dist:verify: $release: $(echo "$names" | wc -w | tr -d ' ') binaries verified"

@@ -261,10 +261,13 @@ On Linux or macOS, one command installs batfiles to `~/.local/bin` and clones
 your dotfiles onto the machine:
 
 ```sh
-curl -fsSL https://github.com/abatkin/batfiles/releases/latest/download/install.sh | sh -s -- clone https://github.com/me/dotfiles
+curl -fsSL https://batfiles.dev/install.sh | sh -s -- clone https://github.com/me/dotfiles
 ```
 
-Without `-s -- clone …` it only installs batfiles. On a machine that already
+Without `-s -- clone …` it only installs batfiles. The script at
+`batfiles.dev` is a copy of the latest release's own installer, which works the
+same from the release itself:
+`https://github.com/abatkin/batfiles/releases/latest/download/install.sh`. On a machine that already
 has a checkout, the `install.sh` that `batfiles init` writes into every new
 repository does the same for it: `~/dotfiles/install.sh` gets batfiles if the
 machine has none, then synchronizes the checkout, starting the machine with
@@ -278,11 +281,11 @@ installer](docs/distribution.md#hosted-installer) has the details.
 On Windows, in PowerShell 7 (`pwsh`), the same one-liner is:
 
 ```powershell
-& ([scriptblock]::Create((irm https://github.com/abatkin/batfiles/releases/latest/download/install.ps1))) clone https://github.com/me/dotfiles
+& ([scriptblock]::Create((irm https://batfiles.dev/install.ps1))) clone https://github.com/me/dotfiles
 ```
 
 It installs to `%LOCALAPPDATA%\Programs\batfiles`, and `irm …/install.ps1 |
-iex` only installs. A checkout's `install.ps1`, which `init` writes beside
+iex` only installs. `install.ps1` is beside `install.sh` in the release, too. A checkout's `install.ps1`, which `init` writes beside
 `install.sh`, does what `install.sh` does; `batfiles init --stubs` adds it to a
 repository made before it existed. Symlink actions do not run on Windows yet,
 which limits what a Windows machine can install.
@@ -303,15 +306,6 @@ cargo build --release   # target/release/batfiles
 
 [Distribution](docs/distribution.md) describes how a release is built, and how
 to serve releases from a site of your own.
-
-## Not built yet
-
-Roughly in the order it is planned, from
-[the roadmap](docs/future/roadmap.md):
-
-| Slice | What arrives                                                        |
-|-------|---------------------------------------------------------------------|
-| 10    | GitHub Pages copies of the hosted installers                        |
 
 ## Documentation
 

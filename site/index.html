@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>batfiles</title>
+<meta name="description" content="A dotfiles manager built around plain files and explicit composition.">
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fdfdfc; --muted: #5f6368; --code: #f1f1ee; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e6; --bg: #161616; --muted: #a0a0a0; --code: #242424; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 3rem 1rem; }
+  h1 { font-size: 2rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.05rem; margin: 2rem 0 0.5rem; }
+  p { margin: 0.5rem 0; }
+  .lede { color: var(--muted); margin-bottom: 2rem; }
+  pre { background: var(--code); padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
+  code { font: 0.9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>batfiles</h1>
+  <p class="lede">A dotfiles manager built around plain files and explicit composition.</p>
+
+  <h2>Linux and macOS</h2>
+  <pre><code>curl -fsSL https://batfiles.dev/install.sh | sh -s -- clone https://github.com/me/dotfiles</code></pre>
+
+  <h2>Windows, in PowerShell 7</h2>
+  <pre><code>&amp; ([scriptblock]::Create((irm https://batfiles.dev/install.ps1))) clone https://github.com/me/dotfiles</code></pre>
+
+  <p>Without <code>clone</code> and its URL, either one only installs batfiles.</p>
+  <p><a href="https://github.com/abatkin/batfiles">Documentation and source on GitHub</a></p>
+</main>
+</body>
+</html>

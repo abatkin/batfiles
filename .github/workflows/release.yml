@@ -183,6 +183,17 @@ jobs:
           LATEST="${{ needs.plan.outputs.prerelease == 'true' && 'no' || 'yes' }}"
           STAMPED="$RELEASE_BASE"
 
+  # A stable release replaces the Pages site's copies of the installers, where
+  # the repository has such a site.
+  pages:
+    needs: [plan, verify]
+    if: needs.plan.outputs.prerelease == 'false'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+
   # The published release, installed by its own one-liner on real machines:
   # each runner's own shell and tools, which the tests only stand in for.
   smoke:

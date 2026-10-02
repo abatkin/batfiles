@@ -16,6 +16,8 @@ mod install;
 #[cfg(unix)]
 mod mirror;
 #[cfg(unix)]
+mod pages;
+#[cfg(unix)]
 mod release;
 #[cfg(unix)]
 mod smoke;

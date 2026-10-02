@@ -10,28 +10,58 @@ One-time settings on GitHub. The workflows work without them, but without them
 anyone who can push a tag can publish a release, and a published release can
 be changed afterwards.
 
-- [ ] **Immutable releases.** Settings → General → Releases → *Enable release
+- [X] **Immutable releases.** Settings → General → Releases → *Enable release
   immutability*. A published release's assets and tag are then locked, and its
   tag name can never be reused, even after deleting the release. Drafts stay
   editable, which is what `dist:publish` relies on, and the title, notes, and
   pre-release and latest flags stay editable too. The setting covers every
   release, pre-releases included, which is why release candidates are numbered
   rather than retried.
-- [ ] **A tag ruleset for `v*`.** Settings → Rules → Rulesets → *New tag
+- [X] **A tag ruleset for `v*`.** Settings → Rules → Rulesets → *New tag
   ruleset*: target tags matching `v*`, enforcement *Active*, and the rules
   *Restrict creations*, *Restrict updates*, and *Restrict deletions*, with
   *Repository admin* on the bypass list. Then only you can create or move a
   release tag.
-- [ ] **The `release` environment.** Settings → Environments → `release`
+- [X] **The `release` environment.** Settings → Environments → `release`
   (created by the first release run, or create it first). Under *Deployment
   branches and tags*, choose *Selected branches and tags* and add the tag
   pattern `v*`. Optionally add yourself under *Required reviewers*, so each
   publish waits for your approval on the workflow run.
-- [ ] **Read-only workflow token.** Settings → Actions → General → *Workflow
+- [X] **Read-only workflow token.** Settings → Actions → General → *Workflow
   permissions* → *Read repository contents and packages permissions*. Each job
   that writes asks for its own permissions.
 - [ ] **`BATFILES_BASE`, only if needed.** A repository variable, set only to
   serve releases from somewhere other than this repository's GitHub releases.
+
+The [Pages site](../docs/distribution.md#github-pages) needs two more; without
+them, the Pages workflow deploys nothing and says so:
+
+- [X] **Pages source.** Settings → Pages → *Build and deployment* → *Source*:
+  *GitHub Actions*.
+- [X] **The `github-pages` environment.** Settings → Environments →
+  `github-pages`, which choosing the source creates. By default it accepts
+  deployments from the default branch only. Under *Deployment branches and
+  tags*, add the tag pattern `v*`, so that the release workflow can deploy.
+
+The rest put the site at `batfiles.dev`, in this order:
+
+- [X] **Verify the domain.** Your profile's Settings → Pages → *Add a domain*:
+  `batfiles.dev`. Create the TXT record it shows,
+  `_github-pages-challenge-abatkin.batfiles.dev`, then *Verify*. Keep the
+  record; it stops another account from claiming the domain while the site
+  is down.
+- [X] **DNS.** At the apex, `A` records for `185.199.108.153`,
+  `185.199.109.153`, `185.199.110.153`, and `185.199.111.153`, and `AAAA`
+  records for `2606:50c0:8000::153`, `2606:50c0:8001::153`,
+  `2606:50c0:8002::153`, and `2606:50c0:8003::153`, with any other apex `A` or
+  `AAAA` records, such as a registrar's parking page, removed. Optionally a
+  `CNAME` for `www` to `abatkin.github.io`, which Pages then redirects to the
+  apex. If the domain has `CAA` records, one must allow `letsencrypt.org`.
+- [X] **Custom domain.** Settings → Pages → *Custom domain*: `batfiles.dev`,
+  then *Save*. No `CNAME` file is involved; an Actions-built site ignores one.
+- [X] **HTTPS.** Once the DNS check passes and the certificate is issued, which
+  can take up to an hour, tick *Enforce HTTPS*. `.dev` is HTTPS-only in every
+  browser, so the site is unreachable from one until then.
 
 ## Cutting a release
 
@@ -75,7 +105,11 @@ again; it takes the next number.
    git push origin vX.Y.Z
    ```
 
-3. In the next change, set `Cargo.toml` to the next version. Until then, both
+3. Watch the *Release* workflow as for a candidate. After `verify`, its `pages`
+   job deploys the Pages site with the new installers and checks that
+   `https://batfiles.dev` serves them. A site change on `main` deploys on its
+   own, and *Run workflow* on the *Pages* workflow redeploys by hand.
+4. In the next change, set `Cargo.toml` to the next version. Until then, both
    `release:` tasks refuse, since `vX.Y.Z` is taken.
 
 ## Building and checking locally
@@ -116,6 +150,12 @@ gh attestation verify batfiles-x86_64-unknown-linux-musl --repo abatkin/batfiles
 ```
 
 Use `LATEST=no` for a pre-release.
+
+To build the Pages site from it:
+
+```sh
+task dist:pages OUT=target/site FROM="file://$tree"
+```
 
 To try the installer against the local tree above without touching your own
 `~/.local/bin`:

@@ -22,17 +22,15 @@ Complete.
 
 ## Slice 10 — Distribution
 
-[Distribution](distribution.md) specifies what remains, and
-[`docs/distribution.md`](../distribution.md) what is built.
+[`docs/distribution.md`](../distribution.md) specifies it. What remains is
+acceptance against real releases.
 
 The slice is built a step at a time on a `slice-10` branch, which may merge
 between steps. A step may leave work open for a later step of the slice,
 provided that step's entry below names it.
 
-- **10.1** The [release tree](../distribution.md), the `dist:` and `release:`
-  tasks, and the tag-triggered release workflow, with placeholder installers.
-  Accepted when a tag from `release:rc` publishes a complete asset set that
-  `dist:verify` passes.
+- **10.1** ✅ The [release tree](../distribution.md), the `dist:` and `release:`
+  tasks, and the tag-triggered release workflow, accepted by `v0.1.0-rc.1`.
 - **10.2** ✅ The POSIX hosted installer, `dist:mirror`, and `shellcheck` in
   `task lint`, accepted in the pristine-machine container.
 - **10.3** ✅ The leaf stub `init` writes, the compiled-in release base, and
@@ -43,8 +41,10 @@ provided that step's entry below names it.
 - **10.5** ✅ The Windows installer and stub, `init --stubs`, `update` replacing a
   running `batfiles.exe`, `task test` on a Windows runner, and a Windows runner
   in `dist:smoke`.
-- **10.6** The [GitHub Pages](distribution.md#github-pages) copies of the hosted
-  installers.
+- **10.6** The [GitHub Pages](../distribution.md#github-pages) copies of the
+  hosted installers: `site/`, `dist:pages`, the Pages workflow, and
+  `dist:verify PAGES=`. Accepted when the first stable release's Pages deploy
+  passes `dist:verify` against `https://batfiles.dev`.
 
 ## Enhancements
 

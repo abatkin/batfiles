@@ -2,14 +2,16 @@
 
 How a batfiles release is laid out, built, and published; how the hosted
 installer puts a release on a machine, and the stub a leaf repository carries
-installs a checkout, on Unix and on Windows; and how to serve releases from
-another site. [`batfiles update`](cmdline.md#update) replaces an installed
+installs a checkout, on Unix and on Windows; how a repository's Pages site
+serves the installers at a shorter URL; and how to serve releases from another
+site. [`batfiles update`](cmdline.md#update) replaces an installed
 binary with another release.
 
 | Piece | Lives | Changes | Job |
 | --- | --- | --- | --- |
 | [Release tree](#release-tree) | A release base URL | Every release | Binaries, checksums, installers, `VERSION` |
 | [Hosted installer](#hosted-installer) | `install.sh` and `install.ps1` in the release tree | Every release | Put a verified binary at its install location, then optionally run it |
+| [Pages site](#github-pages) | `site/` and the installers, at the repository's GitHub Pages site | Every stable release | Serve the hosted installers at a shorter URL |
 | [Leaf stub](#leaf-stub) | `install.sh` and `install.ps1` in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
 | [`batfiles update`](cmdline.md#update) | The binary | Every release | Replace the running binary with another release |
 
@@ -128,8 +130,9 @@ workflow runs nothing that cannot be run locally:
 | `dist:binary TARGET=<triple> [BASE=<url>] [CROSS=xwin] [VERSION=<version>]` | Builds the `dist` profile for one target, reporting `VERSION` (by default the `Cargo.toml` version), and stages it as `target/assets/batfiles-<triple>[.exe]`. `CROSS=xwin` builds a Windows target with `cargo xwin`. |
 | `dist:assemble VERSION=<version> BASE=<url> OUT=<dir> [IN=<dir>] [TARGETS="<triple> ..."]` | Writes one release's complete asset set from the staged binaries. |
 | `dist:mirror VERSION=<version>\|latest BASE=<url> OUT=<dir> [FROM=<base>]` | Copies a published release for [another base](#self-hosting). |
+| `dist:pages OUT=<dir> [FROM=<base>]` | Builds the [Pages site](#the-site) from `site/` and the latest stable release's installers. |
 | `dist:publish VERSION=<version> DIR=<dir>` | Publishes an assembled set as the GitHub release for the existing tag. |
-| `dist:verify URL=<base> VERSION=<version> LATEST=yes\|no [STAMPED=<base>]` | Checks a published release through its release tree. |
+| `dist:verify URL=<base> VERSION=<version> LATEST=yes\|no [STAMPED=<base>] [PAGES=<url>]` | Checks a published release through its release tree, and a Pages site's copies of its installers. |
 | `dist:smoke URL=<base> VERSION=<version> LATEST=yes\|no` | Installs a published release on this machine with its own one-liner, and checks what it installed and, for the latest, what its `update --check` finds. |
 
 Both `release:` tasks refuse uncommitted changes and a version whose stable
@@ -168,7 +171,11 @@ the requested version, and `irm | iex` for the latest.
 `dist:verify` fetches `<base>/download/v<version>/`: `VERSION` must hold the
 version, every binary `SHA256SUMS` lists must match it, and both installers must
 carry the stamped base, `STAMPED` or else `URL`. With `LATEST=yes`,
-`<base>/latest/download/` must serve the same `VERSION` and `SHA256SUMS`.
+`<base>/latest/download/` must serve the same `VERSION` and `SHA256SUMS`, and
+`PAGES`, when given, must serve at its root the same `install.sh` and
+`install.ps1` as that directory, byte for byte. Pages caches what it serves for
+up to ten minutes, so that check retries for `PAGES_WAIT` seconds, by default
+600, before failing.
 
 ## The release workflow
 
@@ -191,6 +198,9 @@ carry the stamped base, `STAMPED` or else `URL`. With `LATEST=yes`,
 6. `dist:smoke` installs it with its own one-liner on Linux x86_64 and aarch64,
    macOS, and Windows runners, again including `latest` for a stable release,
    where the installed binary's `update --check` must find it.
+7. For a stable release, after `verify`, the [Pages
+   workflow](#the-pages-workflow) replaces the Pages site's copies of the
+   installers.
 
 A failure before publishing leaves no release, or at most a draft to delete.
 
@@ -202,6 +212,10 @@ A failure before publishing leaves no release, or at most a draft to delete.
 curl -fsSL <base>/latest/download/install.sh | sh
 curl -fsSL <base>/latest/download/install.sh | sh -s -- clone https://github.com/me/dotfiles
 ```
+
+The official installers are also at `https://batfiles.dev/install.sh` and
+`https://batfiles.dev/install.ps1`, [copies](#github-pages) of the latest stable
+release's.
 
 With no arguments it ensures a binary and exits. With arguments it ensures a
 binary and then `exec`s it with those arguments, which makes the second form
@@ -459,3 +473,66 @@ A self-hoster serves a release tree from any static host:
    VERSION=<version> LATEST=yes` checks the result.
 
 After that, `<url>` works like the official base for the installer one-liner.
+
+## GitHub Pages
+
+When a repository's Pages site is built by GitHub Actions, it serves copies of
+the latest stable release's hosted installers at its root, for a shorter
+one-liner:
+
+```sh
+curl -fsSL https://batfiles.dev/install.sh | sh -s -- clone https://github.com/me/dotfiles
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://batfiles.dev/install.ps1))) clone https://github.com/me/dotfiles
+```
+
+The official site is `https://batfiles.dev`, the custom domain of this
+repository's Pages site. A fork's site is at its own Pages address, or its own
+domain; nothing in the build names a domain.
+
+The copies are the release's own installers, byte for byte. Still stamped with
+the [release base](#the-release-base), they read `VERSION` and download
+binaries from the release tree as before; the site serves only the entry point.
+A repository without such a site loses nothing: the release URL one-liner works
+everywhere.
+
+### The site
+
+`site/` holds the rest of the Pages site, copied as it is, and may not hold an
+`install.sh` or `install.ps1` at its root.
+
+`dist:pages OUT=<dir> [FROM=<base>]` builds the site:
+
+1. Read `<from>/latest/download/VERSION` once, so that a release published
+   meanwhile cannot mix two. `FROM` defaults to the official base.
+2. Fetch both installers from `<from>/download/v<version>/`.
+3. Write `site/` and the two installers to `<dir>`, which must be absent or
+   empty. Nothing appears there until the site is complete.
+4. Print `version=<version>`.
+
+It fails, writing nothing, when `latest` cannot be read, as before a first
+stable release; when it names a pre-release; and when `site/` holds an
+installer. Because it copies only `latest`, a pre-release never reaches the
+site, whatever started the build.
+
+### The Pages workflow
+
+`.github/workflows/pages.yml` builds and deploys the site. It runs:
+
+- on a push to `main` that changes `site/`;
+- on demand, from the Actions tab; and
+- from the [release workflow](#the-release-workflow), after `verify` passes for
+  a stable release.
+
+Its first job reads the repository's Pages configuration. Unless Pages is
+enabled with *GitHub Actions* as its source, the workflow says so and succeeds
+without deploying, so a fork without Pages, or one serving Pages from a branch,
+is left alone. Otherwise one job runs `dist:pages` with `FROM` set to the
+repository's releases URL, deploys the result to the `github-pages`
+environment, and runs `dist:verify` with `PAGES` set to the deployed site.
+
+That job's runs are serialized and never cancel one in progress, so the last
+deploy copies a `latest` at least as new as any deploy before it. The settings
+the site needs are in [`dist/README.md`](../dist/README.md#repository-setup).
