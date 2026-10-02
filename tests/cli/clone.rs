@@ -288,6 +288,104 @@ remote = "core"
     );
 }
 
+/// `clone` at `git_ref`.
+fn cloning_at(tree: &Tree, origin: &BareRepo, git_ref: &str) -> Command {
+    let mut command = cloning(tree, origin);
+    command.args(["--ref", git_ref]);
+    command
+}
+
+#[test]
+fn a_ref_names_the_branch_the_leaf_is_cloned_on() {
+    let tree = Tree::roots();
+    // Only `laptop` is a batfiles repository; `main` holds nothing but a README.
+    let origin = BareRepo::new();
+    origin.publish_on("laptop", "files/gitconfig", GITCONFIG, "a file to install");
+    origin.publish_on(
+        "laptop",
+        "batfiles.toml",
+        &one_copy("files/gitconfig", "~/.gitconfig"),
+        "declare what to install",
+    );
+
+    let assertion = cloning_at(&tree, &origin, "laptop").assert().success();
+
+    let repo = tree.path("repo");
+    assert_eq!(branch_of(&repo), "laptop");
+    assert_eq!(
+        git(&repo, &["rev-parse", "--abbrev-ref", "laptop@{upstream}"]),
+        "origin/laptop",
+        "the branch does not track the one upstream publishes"
+    );
+    assert_eq!(
+        fs::read_to_string(tree.home(".gitconfig")).expect("the installed file"),
+        GITCONFIG
+    );
+    let stderr = stderr_of(&assertion);
+    let cloned = format!(
+        "cloned {} from {} at laptop",
+        display(&repo),
+        display(&origin.origin())
+    );
+    assert!(stderr.contains(&cloned), "no `{cloned}` in:\n{stderr}");
+}
+
+#[test]
+fn a_ref_that_is_a_tag_leaves_the_leaf_detached_there() {
+    let tree = Tree::roots();
+    let origin = origin();
+    origin.tag("v1");
+    origin.publish("files/after", "after the tag\n", "after the tag");
+
+    cloning_at(&tree, &origin, "v1").assert().success();
+
+    let repo = tree.path("repo");
+    assert_eq!(branch_of(&repo), "HEAD", "the leaf is not detached");
+    assert!(
+        !repo.join("files/after").exists(),
+        "the leaf took a commit published after the tag"
+    );
+    assert_eq!(
+        fs::read_to_string(tree.home(".gitconfig")).expect("the installed file"),
+        GITCONFIG
+    );
+}
+
+#[test]
+fn a_ref_that_resolves_to_nothing_fails_and_keeps_the_clone() {
+    let tree = Tree::roots();
+    let origin = origin();
+
+    let assertion = cloning_at(&tree, &origin, "no-such-branch")
+        .assert()
+        .failure()
+        .code(1);
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("cannot follow `no-such-branch`"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        tree.path("repo").join(".git").is_dir(),
+        "the clone was removed"
+    );
+    assert!(
+        !tree.home(".gitconfig").exists(),
+        "a clone at the wrong ref was installed from"
+    );
+}
+
+#[test]
+fn an_empty_ref_is_a_usage_error() {
+    let tree = Tree::roots();
+    let origin = origin();
+
+    cloning_at(&tree, &origin, "").assert().failure().code(2);
+
+    assert!(!tree.path("repo").exists(), "an empty ref cloned anyway");
+}
+
 #[test]
 fn a_url_that_cannot_be_cloned_leaves_no_repository() {
     let tree = Tree::roots();

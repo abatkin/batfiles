@@ -85,6 +85,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
             clone::run(
                 &invocation(&roots, false, &args.action, env, reporter),
                 &args.url,
+                args.git_ref.as_deref(),
                 &args.bootstrap,
                 env,
                 &args.selection.actions.skip_actions,

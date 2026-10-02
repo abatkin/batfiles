@@ -15,7 +15,7 @@ pub(crate) use filesystem::link_target;
 pub(crate) use filesystem::{
     backup_of, backups_of, canonical, copy_tree, display, entries, fixture_tree, snapshot, written,
 };
-pub(crate) use git::{BareRepo, git};
+pub(crate) use git::{BareRepo, branch_of, git};
 pub(crate) use http::{Reply, Server, server_that_hangs_up};
 #[cfg(unix)]
 pub(crate) use manifests::LEAF_ORDERED_PAIR;

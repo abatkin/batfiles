@@ -158,10 +158,7 @@ fn clone(
         return Ok(());
     }
     if mode.writes() {
-        clone_repository(url, dest)?;
-        if let Some(git_ref) = git_ref {
-            follow(dest, git_ref, reporter)?;
-        }
+        clone_repository(url, dest, git_ref, reporter)?;
     }
     reporter.info(&format!(
         "{} {} from {url}{}",
@@ -172,9 +169,15 @@ fn clone(
     Ok(())
 }
 
-/// Clone into a vacant destination without reporting progress. Git creates missing parents.
-/// This function always runs Git and does not check `RunMode`.
-pub(crate) fn clone_repository(url: &str, dest: &Path) -> Result<(), Error> {
+/// Clone into a vacant destination and follow `git_ref` where one is given, without reporting
+/// the clone. Git creates missing parents. A ref that cannot be followed fails and leaves the
+/// clone in place. This function always runs Git and does not check `RunMode`.
+pub(crate) fn clone_repository(
+    url: &str,
+    dest: &Path,
+    git_ref: Option<&str>,
+    reporter: &Reporter,
+) -> Result<(), Error> {
     run(
         None,
         "clone",
@@ -187,11 +190,14 @@ pub(crate) fn clone_repository(url: &str, dest: &Path) -> Result<(), Error> {
         ],
         dest,
     )?;
+    if let Some(git_ref) = git_ref {
+        follow(dest, git_ref, reporter)?;
+    }
     Ok(())
 }
 
 /// ` at <ref>`, or nothing where none was declared.
-fn at(git_ref: Option<&str>) -> String {
+pub(crate) fn at(git_ref: Option<&str>) -> String {
     git_ref.map(|it| format!(" at {it}")).unwrap_or_default()
 }
 

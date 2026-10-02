@@ -103,7 +103,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   stub](docs/distribution.md#leaf-stub).
 - **Set up a new machine.** `clone <url>` clones a repository into the selected
   batfiles directory — which must not already exist — and synchronizes it in the
-  same command. A repository's
+  same command; `--ref` checks out another branch, a tag, or a commit first. A
+  repository's
   [`[default-disabled]`](docs/repoformat.md#default-disabled-bootstrap-entries)
   says what a fresh machine starts with switched off; `clone`'s enable and
   disable options and the `BATFILES_*` bootstrap lists overrule it. See

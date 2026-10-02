@@ -139,6 +139,11 @@ fn heads(branch: &str) -> String {
     format!("refs/heads/{branch}")
 }
 
+/// What a checkout is on: a branch by name, or `HEAD` where it is detached.
+pub(crate) fn branch_of(clone: &Path) -> String {
+    git(clone, &["rev-parse", "--abbrev-ref", "HEAD"])
+}
+
 /// Run a fixture Git command and return whether it succeeded.
 pub(crate) fn git_succeeds(dir: &Path, args: &[&str]) -> bool {
     run_git(dir, args).status.success()

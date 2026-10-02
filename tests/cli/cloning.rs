@@ -609,11 +609,6 @@ ref = "{git_ref}"
     tree
 }
 
-/// What a checkout is on: a branch by name, or `HEAD` where it is detached.
-fn branch_of(clone: &std::path::Path) -> String {
-    git(clone, &["rev-parse", "--abbrev-ref", "HEAD"])
-}
-
 #[test]
 fn a_ref_names_the_branch_a_clone_is_put_on() {
     let origin = BareRepo::new();

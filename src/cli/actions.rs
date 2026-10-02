@@ -2,6 +2,7 @@
 //! `apply-group`. All four take the shared action-execution options and apply
 //! actions with the same semantics.
 
+use clap::builder::NonEmptyStringValueParser;
 use clap::{ArgGroup, Args};
 
 use super::options::{BootstrapOptions, ExecutionOptions, SkipActionOptions, SkipOptions};
@@ -11,6 +12,10 @@ use super::options::{BootstrapOptions, ExecutionOptions, SkipActionOptions, Skip
 pub(crate) struct CloneArgs {
     /// Repository URL to clone into the selected batfiles directory
     pub url: String,
+
+    /// Branch, tag, or commit to check out after cloning
+    #[arg(long = "ref", value_name = "REF", value_parser = NonEmptyStringValueParser::new())]
+    pub git_ref: Option<String>,
 
     #[command(flatten)]
     pub action: ExecutionOptions,
@@ -230,6 +235,8 @@ mod tests {
             "batfiles",
             "clone",
             "https://example.invalid/dotfiles.git",
+            "--ref",
+            "work",
             "--disable-group",
             "gui",
             "--enable-action",
@@ -242,6 +249,7 @@ mod tests {
             panic!("expected clone");
         };
         assert_eq!(args.url, "https://example.invalid/dotfiles.git");
+        assert_eq!(args.git_ref.as_deref(), Some("work"));
         assert!(args.action.refresh_vars);
         assert_eq!(args.selection.groups.skip_groups, vec!["fonts".to_owned()]);
         assert_eq!(args.bootstrap.disable_groups, vec!["gui".to_owned()]);

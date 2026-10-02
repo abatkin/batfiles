@@ -374,7 +374,7 @@ cannot be read or holds something other than a version is a failure. Without
 ### `clone`
 
 ```text
-batfiles clone <url> [--skip-action <id>]... [--skip-group <group>]...
+batfiles clone <url> [--ref <ref>] [--skip-action <id>]... [--skip-group <group>]...
     [--enable-action <id>]... [--disable-action <id>]...
     [--enable-group <group>]... [--disable-group <group>]...
 ```
@@ -401,6 +401,7 @@ are created with it.
 
 | Option                    | Purpose                                                        |
 |---------------------------|----------------------------------------------------------------|
+| `--ref <ref>`             | Check out this branch, tag, or commit. Never empty.            |
 | `--skip-action <id>`      | Leave one action out of the synchronization. Repeatable.       |
 | `--skip-group <group>`    | Leave one group out of the synchronization. Repeatable.        |
 | `--disable-action <id>`   | Start this machine with one action switched off. Repeatable.   |
@@ -414,10 +415,20 @@ rather than refusing them for now: a machine with no repository has no plan to
 describe, and a fresh clone materializes its remotes during the synchronization
 that follows. Use `sync --dry-run` afterwards to inspect later plans.
 
-The two halves of the table are different in kind. A skip leaves something out
-of *this run*; an enable or disable decides what this *machine* starts with and
-is written to [`disabled.toml`](state.md), where it stands until an enable or
-disable command changes it.
+**`--ref` means what a manifest's [`ref`](repoformat.md#ref-following-one-branch-tag-or-commit)
+means.** A branch the origin publishes is checked out as a local branch tracking
+it, so a later `git pull` in the repository follows that branch; a tag, a
+commit, or anything else that resolves is checked out detached. Without it the
+clone is on whatever branch the origin's `HEAD` names. The checkout happens
+before anything else looks at the clone, so the manifest that is read — and
+the bootstrap policy it declares — is the one on that ref. Nothing records the
+ref: batfiles never updates the leaf repository itself, so the checkout is all
+there is to remember.
+
+The rest of the table falls into two halves, different in kind. A skip leaves
+something out of *this run*; an enable or disable decides what this *machine*
+starts with and is written to [`disabled.toml`](state.md), where it stands
+until an enable or disable command changes it.
 
 #### What the bootstrap decides
 
@@ -456,6 +467,10 @@ expected exclusion.
 Once a clone succeeds nothing is unwound. The repository is kept whether or not
 the rest of the command gets anywhere with it:
 
+- A `--ref` that resolves to nothing in the clone fails, naming the ref, before
+  the manifest is looked for. The clone stays on the origin's default branch,
+  and nothing is installed from it. Check out the intended ref with `git` and
+  run [`sync --bootstrap`](#sync), or remove the directory and clone again.
 - A repository holding no `batfiles.toml` fails before the bootstrap starts,
   saying that what was cloned is a Git repository but not a batfiles one. The
   mistake is the URL rather than a missing file.

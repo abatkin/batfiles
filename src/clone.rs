@@ -11,13 +11,15 @@ use crate::mode::RunMode;
 use crate::output::Verb;
 use crate::paths;
 
-/// Clone `url` into the selected leaf repository and synchronize it.
+/// Clone `url` into the selected leaf repository, following `git_ref` where one is given, and
+/// synchronize it.
 ///
-/// Validate the destination and bootstrap options before cloning. Keep the clone if
-/// synchronization fails.
+/// Validate the destination and bootstrap options before cloning. Keep the clone if the ref
+/// cannot be followed or synchronization fails.
 pub(crate) fn run(
     invocation: &Invocation<'_>,
     url: &str,
+    git_ref: Option<&str>,
     options: &BootstrapOptions,
     env: &Environment,
     skip_actions: &[String],
@@ -32,11 +34,12 @@ pub(crate) fn run(
         return Err(Error::CloneDestinationExists { path: dest.clone() });
     }
 
-    git::clone_repository(url, dest)?;
+    git::clone_repository(url, dest, git_ref, invocation.reporter)?;
     invocation.reporter.info(&format!(
-        "{} {} from {url}",
+        "{} {} from {url}{}",
         Verb::Clone.for_mode(RunMode::Perform),
-        dest.display()
+        dest.display(),
+        git::at(git_ref)
     ));
 
     // Report a missing manifest as a clone error before entering synchronization.
