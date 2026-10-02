@@ -118,7 +118,8 @@ function Install-Checkout {
         & $found @sync
         exit $LASTEXITCODE
     }
-    Fail "cannot fetch $from/install.ps1, and this machine has no batfiles to use instead"
+    Say "cannot fetch $from/install.ps1"
+    Fail 'this machine has no batfiles to use instead'
 }
 
 Install-Checkout @args

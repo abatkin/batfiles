@@ -43,7 +43,7 @@ impl Tree {
     }
 
     pub(crate) fn path(&self, relative: &str) -> PathBuf {
-        self.root.join(relative)
+        self.root.join(native(relative))
     }
 
     /// The tree the four roots sit in, for the cases that run from inside it.
@@ -79,6 +79,7 @@ impl Tree {
         self.fill_in("origin", &display(&origin.origin()));
     }
 
+    #[cfg(unix)]
     /// Replace a named manifest placeholder with the bare repository path.
     pub(crate) fn point_remote_at(&self, placeholder: &str, origin: &BareRepo) {
         self.fill_in(placeholder, &display(&origin.origin()));
@@ -95,7 +96,7 @@ impl Tree {
     }
 
     fn fill_in_file(&self, relative: &str, placeholder: &str, value: &str) {
-        let path = self.path("repo").join(relative);
+        let path = self.path("repo").join(native(relative));
         let text = fs::read_to_string(&path).expect("the fixture file");
         let written = format!("{{{placeholder}}}");
         assert!(
@@ -107,7 +108,7 @@ impl Tree {
 
     /// Put a file in the leaf repository, and return where it landed.
     pub(crate) fn repo_file(&self, relative: &str, contents: &str) -> PathBuf {
-        let path = self.path("repo").join(relative);
+        let path = self.path("repo").join(native(relative));
         fs::create_dir_all(path.parent().expect("a parent")).expect("a source directory");
         fs::write(&path, contents).expect("a source file");
         path
@@ -115,7 +116,7 @@ impl Tree {
 
     /// A path inside the selected home, which need not exist.
     pub(crate) fn home(&self, relative: &str) -> PathBuf {
-        self.path("home").join(relative)
+        self.path("home").join(native(relative))
     }
 
     /// The machine-local disabled lists, which need not exist.
@@ -162,4 +163,10 @@ impl Tree {
             .env_remove("XDG_CACHE_HOME");
         command
     }
+}
+
+/// A relative path a test writes with `/`, in this platform's separators, so a path built from it
+/// reads as batfiles prints one.
+fn native(relative: &str) -> String {
+    relative.replace('/', std::path::MAIN_SEPARATOR_STR)
 }

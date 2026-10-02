@@ -121,10 +121,12 @@ work = "false"
 
     let assertion = tree.batfiles().args(["sync", "-v"]).assert().success();
 
-    assert_eq!(
-        entries(&tree.home(".plugins")),
-        ["everywhere", "not-on-windows"]
-    );
+    let expected: &[&str] = if cfg!(windows) {
+        &["everywhere"]
+    } else {
+        &["everywhere", "not-on-windows"]
+    };
+    assert_eq!(entries(&tree.home(".plugins")), expected);
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&format!(

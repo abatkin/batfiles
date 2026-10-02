@@ -107,6 +107,7 @@ pub(crate) const LEAF_SEEDS: [(&str, &str); 4] = [
     ("zsh-local/prompt.zsh", ".config/zsh/local/prompt.zsh"),
 ];
 
+#[cfg(unix)]
 /// Source paths and shared destination for the leaf fixture's ordered seed pair, as `(winner,
 /// loser, destination)`.
 pub(crate) const LEAF_ORDERED_PAIR: (&str, &str, &str) = (

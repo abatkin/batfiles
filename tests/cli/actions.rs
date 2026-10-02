@@ -737,6 +737,8 @@ fn a_source_the_manifest_named_through_a_link_is_followed() {
 
 /// When two seeds share a destination, the first declared seed supplies its content.
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn the_first_of_two_seeds_naming_one_destination_is_the_one_that_lands() {
     let (winner, loser, dest) = LEAF_ORDERED_PAIR;
     let tree = Tree::fixture("leaf");

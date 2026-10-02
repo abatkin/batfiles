@@ -552,7 +552,7 @@ fn a_list_held_by_a_remote_is_named_the_way_the_manifest_wrote_it() {
     let tree = Tree::new();
     origin.publish(
         "plugins.txt",
-        &format!("{}\n", display(&tree.path("nowhere.git"))),
+        &format!("{}\n", written(&tree.path("nowhere.git"))),
         "add a list naming nothing",
     );
     tree.write_manifest(&declaring(

@@ -260,7 +260,8 @@ fn remove_once_exited(aside: &Path, env: &Environment, reporter: &Reporter) {
          Remove-Item -LiteralPath $env:BATFILES_SET_ASIDE -Force -ErrorAction SilentlyContinue; \
          Start-Sleep -Milliseconds 250 }";
 
-    let root = env.get("SystemRoot").unwrap_or(r"C:\Windows");
+    // Windows names are uppercased at capture.
+    let root = env.get("SYSTEMROOT").unwrap_or(r"C:\Windows");
     let powershell = Path::new(root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
     let started = Command::new(&powershell)
         .args([

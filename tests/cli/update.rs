@@ -193,12 +193,21 @@ impl Machine {
     /// Nothing is left beside the binary but the binary, once whatever Windows set aside is
     /// gone, which the process `update` left to remove it does soon after `update` exits.
     fn assert_alone(&self) {
+        self.assert_alone_after("");
+    }
+
+    /// [`Self::assert_alone`], after an `update` that said `said`.
+    fn assert_alone_after(&self, said: &str) {
         let alone = [format!("batfiles{}", std::env::consts::EXE_SUFFIX)];
         let deadline = Instant::now() + Duration::from_secs(30);
         while entries(&self.bin_dir()) != alone && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
-        assert_eq!(entries(&self.bin_dir()), alone);
+        assert_eq!(
+            entries(&self.bin_dir()),
+            alone,
+            "after update said:\n{said}"
+        );
     }
 }
 
@@ -206,7 +215,11 @@ impl Machine {
 fn a_newer_release_replaces_the_running_binary() {
     let server = serve(&[Release::of(NEWER).latest()]);
     let machine = Machine::new();
-    let assertion = machine.update(server.address()).assert().success();
+    let assertion = machine
+        .update(server.address())
+        .arg("-v")
+        .assert()
+        .success();
     let stderr = stderr_of(&assertion);
     assert!(
         stderr.contains(&format!(
@@ -230,7 +243,7 @@ fn a_newer_release_replaces_the_running_binary() {
             .mode();
         assert_eq!(mode & 0o7777, 0o755);
     }
-    machine.assert_alone();
+    machine.assert_alone_after(&stderr);
     Command::new(machine.exe())
         .arg("version")
         .assert()
@@ -496,10 +509,11 @@ fn what_an_earlier_update_set_aside_is_removed_by_the_next() {
         .arg("-v")
         .assert()
         .success();
-    assert!(stderr_of(&assertion).contains("left by an earlier update"));
+    let stderr = stderr_of(&assertion);
+    assert!(stderr.contains("left by an earlier update"), "{stderr}");
     assert_eq!(
         fs::read(machine.exe()).expect("the binary"),
         stand_in(NEWER)
     );
-    machine.assert_alone();
+    machine.assert_alone_after(&stderr);
 }

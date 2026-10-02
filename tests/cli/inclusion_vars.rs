@@ -190,6 +190,8 @@ remote = "corporate"
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn the_machine_the_environment_and_the_command_line_all_beat_an_override() {
     for (what, machine, env, args) in [
         ("vars.toml", "profile = \"personal\"\n", None, Vec::new()),
@@ -476,6 +478,8 @@ fn a_remotes_own_vars_decide_its_records_where_nothing_overrides_them() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn the_leaf_the_inclusion_and_this_machine_all_beat_a_remotes_own_vars() {
     for (what, leaf_vars, record, machine, env, args) in [
         (

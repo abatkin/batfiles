@@ -17,10 +17,12 @@ pub(crate) use filesystem::{
 };
 pub(crate) use git::{BareRepo, git};
 pub(crate) use http::{Reply, Server, server_that_hangs_up};
+#[cfg(unix)]
+pub(crate) use manifests::LEAF_ORDERED_PAIR;
 pub(crate) use manifests::{
-    CORPORATE_ACTIONS, CorporateAction, LEAF_ORDERED_PAIR, assert_leaf_portable_actions,
-    installed_corporate, one_copy, one_copy_dir, one_create_dir, one_symlink, one_symlink_dir,
-    rejected, seeded_repository_in_the_home,
+    CORPORATE_ACTIONS, CorporateAction, assert_leaf_portable_actions, installed_corporate,
+    one_copy, one_copy_dir, one_create_dir, one_symlink, one_symlink_dir, rejected,
+    seeded_repository_in_the_home,
 };
 pub(crate) use stand_in::stand_in as compiled_stand_in;
 pub(crate) use tree::Tree;
@@ -39,7 +41,10 @@ pub(crate) fn batfiles_at(program: &std::path::Path) -> Command {
     command
         .env_remove("BATFILES_COLOR")
         .env_remove("NO_COLOR")
-        .env_remove("BATFILES_BASE");
+        .env_remove("BATFILES_BASE")
+        // Git's system configuration, such as the `core.autocrlf` a Windows runner sets, would
+        // change what a clone checks out.
+        .env("GIT_CONFIG_NOSYSTEM", "1");
     // Remove inherited overrides, including non-UTF-8 variables.
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("BATFILES_VAR_") {
