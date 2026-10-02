@@ -12,8 +12,8 @@ use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
 use crate::support::{
-    Reply, Server, batfiles, batfiles_at, compiled_stand_in, entries, file_url, stderr_of,
-    stdout_of,
+    Reply, Server, batfiles, batfiles_at, canonical, compiled_stand_in, entries, file_url,
+    stderr_of, stdout_of,
 };
 
 /// A release newer than any this crate builds.
@@ -54,15 +54,6 @@ const STAGED: &str = if cfg!(windows) {
 /// The name of the executable Windows sets aside.
 #[cfg(windows)]
 const SET_ASIDE: &str = "batfiles.exe.batfiles-old";
-
-/// `path` as batfiles names an executable it found: canonical, and on Windows without the
-/// `\\?\` prefix.
-fn canonical(path: &Path) -> String {
-    let resolved = fs::canonicalize(path).expect("a canonical path");
-    let text = resolved.display().to_string();
-    text.strip_prefix(r"\\?\")
-        .map_or(text.clone(), str::to_owned)
-}
 
 fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -157,8 +148,14 @@ impl Machine {
             original: fs::read(&built).expect("the binary"),
         };
         fs::create_dir(machine.bin_dir()).expect("a bin directory");
-        // `update` renames over the link, which leaves the built binary alone.
-        fs::hard_link(&built, machine.exe()).expect("a link to the binary");
+        // `update` renames over the link, which leaves the built binary alone. Windows holds a
+        // file open under every name while it runs, so a link to the binary the other tests run
+        // could never be removed once set aside; a copy is written and closed instead.
+        if cfg!(windows) {
+            fs::copy(&built, machine.exe()).expect("a copy of the binary");
+        } else {
+            fs::hard_link(&built, machine.exe()).expect("a link to the binary");
+        }
         machine
     }
 
@@ -214,7 +211,7 @@ fn a_newer_release_replaces_the_running_binary() {
     assert!(
         stderr.contains(&format!(
             "installed batfiles {NEWER} at {}, replacing batfiles {}",
-            canonical(&machine.exe()),
+            canonical(&machine.exe()).display(),
             running()
         )),
         "{stderr}"
@@ -460,7 +457,7 @@ fn a_staged_file_left_in_the_way_is_never_replaced() {
     let assertion = machine.update(server.address()).assert().code(1);
     assert!(stderr_of(&assertion).contains(&format!(
         "{}{}{STAGED}",
-        canonical(&machine.bin_dir()),
+        canonical(&machine.bin_dir()).display(),
         std::path::MAIN_SEPARATOR
     )));
     assert_eq!(server.requests(), 0);

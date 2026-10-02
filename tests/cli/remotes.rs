@@ -122,7 +122,7 @@ type = "git"
 url = "{}"
 
 {}"#,
-        display(&tree.path("nowhere.git")),
+        written(&tree.path("nowhere.git")),
         one_create_dir("~/.cache/zsh")
     ));
 

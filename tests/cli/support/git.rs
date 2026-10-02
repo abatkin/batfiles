@@ -131,11 +131,7 @@ impl BareRepo {
 /// which Git and Windows both accept, which a TOML string holds without escapes, and after
 /// which a clone list derives a clone's name.
 fn as_written(path: PathBuf) -> PathBuf {
-    if cfg!(windows) {
-        PathBuf::from(display(&path).replace('\\', "/"))
-    } else {
-        path
-    }
+    PathBuf::from(super::written(&path))
 }
 
 /// Return the full `refs/heads/<branch>` name.

@@ -54,6 +54,19 @@ pub(crate) fn entries(dir: &Path) -> Vec<String> {
     names
 }
 
+/// `path` in its long form, as `$PSScriptRoot` names it, without the `\\?\` prefix
+/// canonicalizing gives it.
+pub(crate) fn long(path: &Path) -> PathBuf {
+    let resolved = fs::canonicalize(path).expect("a canonical path");
+    match resolved
+        .to_str()
+        .and_then(|text| text.strip_prefix(r"\\?\"))
+    {
+        Some(plain) => PathBuf::from(plain),
+        None => resolved,
+    }
+}
+
 /// Write a stand-in batfiles at `path` that reports `version`.
 pub(crate) fn put_stand_in(path: &Path, version: &str) {
     fs::create_dir_all(path.parent().expect("a parent")).expect("its directory");

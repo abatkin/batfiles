@@ -4,10 +4,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::support::{Machine, WINDOWS, put_stand_in, quoted, stderr_of, stdout_of};
+use super::support::{Machine, WINDOWS, long, put_stand_in, quoted, stderr_of, stdout_of};
 
 /// A machine with a checkout at `dotfiles\`, initialized with stubs whose base is the machine's
-/// release tree.
+/// release tree. The checkout's path is long, as `$PSScriptRoot` names it where the temporary
+/// directory's own path holds a short name such as `RUNNER~1`.
 fn checkout() -> (Machine, PathBuf) {
     let machine = Machine::new();
     let dir = machine.path("dotfiles");
@@ -19,6 +20,7 @@ fn checkout() -> (Machine, PathBuf) {
         .args(["--quiet", "init", "--no-git-init"])
         .assert()
         .success();
+    let dir = long(&dir);
     (machine, dir)
 }
 

@@ -13,7 +13,7 @@ pub(crate) use archive::{Member, multi_member_tarball, plain_tarball, tarball, v
 #[cfg(unix)]
 pub(crate) use filesystem::link_target;
 pub(crate) use filesystem::{
-    backup_of, backups_of, copy_tree, display, entries, fixture_tree, snapshot,
+    backup_of, backups_of, canonical, copy_tree, display, entries, fixture_tree, snapshot, written,
 };
 pub(crate) use git::{BareRepo, git};
 pub(crate) use http::{Reply, Server, server_that_hangs_up};

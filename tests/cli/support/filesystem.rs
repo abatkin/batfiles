@@ -7,6 +7,30 @@ pub(crate) fn display(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// `path` as a manifest writes it: on Windows with forward slashes, which Windows and Git
+/// accept and a TOML string holds without escapes.
+pub(crate) fn written(path: &Path) -> String {
+    let shown = path.display().to_string();
+    if cfg!(windows) {
+        shown.replace('\\', "/")
+    } else {
+        shown
+    }
+}
+
+/// `path` resolved as batfiles resolves one: canonical, and on Windows without the `\\?\`
+/// prefix, which Git refuses and batfiles drops.
+pub(crate) fn canonical(path: &Path) -> PathBuf {
+    let resolved = fs::canonicalize(path).expect("a canonical path");
+    match resolved
+        .to_str()
+        .and_then(|text| text.strip_prefix(r"\\?\"))
+    {
+        Some(plain) => PathBuf::from(plain),
+        None => resolved,
+    }
+}
+
 /// Return the path to a committed fixture repository.
 pub(crate) fn fixture_tree(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

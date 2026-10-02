@@ -1,6 +1,6 @@
 //! Temporary repository, home, config, and cache roots.
 
-use super::{BareRepo, Server, batfiles, copy_tree, display, fixture_tree};
+use super::{BareRepo, Server, batfiles, canonical, copy_tree, display, fixture_tree};
 use assert_cmd::Command;
 use std::fs;
 #[cfg(unix)]
@@ -35,10 +35,7 @@ impl Tree {
     /// Create home, config, and cache directories, leaving the repository path absent.
     pub(crate) fn roots() -> Self {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let root = dir
-            .path()
-            .canonicalize()
-            .expect("a canonical temporary directory");
+        let root = canonical(dir.path());
         for name in ["home", "config", "cache"] {
             fs::create_dir(root.join(name)).expect("a root directory");
         }
