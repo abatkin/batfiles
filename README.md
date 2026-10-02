@@ -96,9 +96,10 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
 - **Validate declarations.** Invalid manifests fail when read, under the
   [manifest validation rules](docs/repoformat.md#reading-the-manifest).
 - **Start a repository.** `init` lays `batfiles.toml`, `.gitignore`, `bin/`,
-  `files/`, and an `install.sh` that installs a checkout into the current
-  directory and runs `git init`, refusing rather than overwriting anything
-  already there. See [`init`](docs/cmdline.md#init) and [the leaf
+  `files/`, and the `install.sh` and `install.ps1` that install a checkout into
+  the current directory and runs `git init`, refusing rather than overwriting
+  anything already there; `init --stubs` adds a missing stub to an existing
+  repository. See [`init`](docs/cmdline.md#init) and [the leaf
   stub](docs/distribution.md#leaf-stub).
 - **Set up a new machine.** `clone <url>` clones a repository into the selected
   batfiles directory — which must not already exist — and synchronizes it in the
@@ -109,11 +110,12 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   [`clone`](docs/cmdline.md#clone).
 - **Report the installed version, and update it.** `version` prints the
   version. `update` replaces the binary with the latest release, or a named
-  one, on Linux and macOS; see [`update`](docs/cmdline.md#update).
+  one; see [`update`](docs/cmdline.md#update).
 - **Platform support.** Symlink actions are supported only on Unix. On Windows,
   executing either symlink action fails the run with an error naming the action
-  type. Directory, copy, fetching, and Git actions have Windows implementations.
-  CI checks Windows compilation, but does not run Windows tests.
+  type. Directory, copy, fetching, and Git actions have Windows implementations,
+  and CI runs the test suite on Windows as well as Linux and macOS, apart from
+  what needs symlinks or a Unix shell.
 
 Every command works, and every option it accepts is honored.
 
@@ -273,6 +275,18 @@ rather than downloading another, and never edits a shell startup file.
 pre-release, which `latest` never is; [the hosted
 installer](docs/distribution.md#hosted-installer) has the details.
 
+On Windows, in PowerShell 7 (`pwsh`), the same one-liner is:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/abatkin/batfiles/releases/latest/download/install.ps1))) clone https://github.com/me/dotfiles
+```
+
+It installs to `%LOCALAPPDATA%\Programs\batfiles`, and `irm …/install.ps1 |
+iex` only installs. A checkout's `install.ps1`, which `init` writes beside
+`install.sh`, does what `install.sh` does; `batfiles init --stubs` adds it to a
+repository made before it existed. Symlink actions do not run on Windows yet,
+which limits what a Windows machine can install.
+
 Once installed, `batfiles update` replaces batfiles with the latest release, or
 `batfiles update 1.2.3` with a particular one, verified the same way; `batfiles
 update --check` says what is available. Nothing updates batfiles unless you run
@@ -297,7 +311,7 @@ Roughly in the order it is planned, from
 
 | Slice | What arrives                                                        |
 |-------|---------------------------------------------------------------------|
-| 10    | A Windows installer and stub, and `update` on Windows               |
+| 10    | GitHub Pages copies of the hosted installers                        |
 
 ## Documentation
 
@@ -328,7 +342,7 @@ task ci           # fmt + lint + test + test:docker + deny + builds (what CI run
 task test         # project tests
 task test:docker  # the acceptance, on a pristine machine in a container
 task fmt          # formatting check
-task lint         # clippy, for the host and for Windows, and shellcheck
+task lint         # clippy, for the host and for Windows, shellcheck, and PSScriptAnalyzer
 task build        # debug build
 ```
 
@@ -341,7 +355,9 @@ can execute, the image builds batfiles itself.
 Two cargo subcommands are needed beyond the pinned toolchain: `cargo install
 cargo-deny cargo-xwin --locked`, and `task lint` needs
 [ShellCheck](https://www.shellcheck.net/) for the scripts under `dist/` and
-`tests/docker/`. The second is what lets an ubuntu machine run
+`tests/docker/`, and PSScriptAnalyzer under `pwsh` for the PowerShell
+installer and stub, a step it skips where `pwsh` is not installed. The second
+cargo subcommand is what lets an ubuntu machine run
 clippy against Windows — the TLS stack under `fetch-file` compiles C, so that
 check needs headers targeting MSVC, which `cargo xwin` fetches and caches.
 

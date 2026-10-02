@@ -40,11 +40,9 @@ provided that step's entry below names it.
 - **10.4** ✅ `batfiles update`, the compiled-in target triple and the asset a
   build without a release of its own takes, and `update --check` in
   `dist:smoke`.
-- **10.5** The [Windows](distribution.md#windows) installer and stub, replacing
-  the placeholder `dist/install.ps1`, and `update` replacing a running
-  `batfiles.exe`. Adds a Windows CI job that runs the installer's tests and
-  `update`'s natively, as the macOS job does for `install.sh`, and a Windows
-  runner to `dist:smoke` in the release workflow.
+- **10.5** The Windows installer and stub, `init --stubs`, `update` replacing a
+  running `batfiles.exe`, `task test` on a Windows runner, and a Windows runner
+  in `dist:smoke`.
 - **10.6** The [GitHub Pages](distribution.md#github-pages) copies of the hosted
   installers.
 

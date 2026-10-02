@@ -223,21 +223,25 @@ commands are run](environment.md#how-dynamic-commands-are-run).
 ### `init`
 
 ```text
-batfiles init [--no-git-init]
+batfiles init [--no-git-init | --stubs]
 ```
 
 Lay the conventional leaf-repository layout into the current directory, without
-overwriting anything already there. `init` works on that directory alone and
+overwriting anything already there, or with `--stubs` add only its stubs to a
+repository already there. `init` works on that directory alone and
 resolves none of the four roots, so `--batfiles-dir` and the rest have no effect
 on where the skeleton lands.
 
 | Option          | Purpose                                                                                                   |
 |-----------------|-----------------------------------------------------------------------------------------------------------|
 | `--no-git-init` | Do not run `git init`. Batfiles also skips `git init` automatically when already inside a Git repository. |
+| `--stubs`       | Write only the stubs a repository in the current directory lacks; see [below](#adding-the-stubs-to-a-repository). |
 
-The layout is `batfiles.toml`, `.gitignore`, `bin/`, `files/`, and the
-executable [leaf stub](distribution.md#leaf-stub) `install.sh`, created in that
-order. The stub carries the [release base](distribution.md#the-release-base):
+The layout is `batfiles.toml`, `.gitignore`, `bin/`, `files/`, the executable
+[leaf stub](distribution.md#leaf-stub) `install.sh`, and its [Windows
+counterpart](distribution.md#the-windows-stub) `install.ps1`, created in that
+order on every platform, since one repository serves both. Each stub carries
+the [release base](distribution.md#the-release-base):
 `BATFILES_BASE` when it is set and not empty, otherwise the base this build was
 released from. A base that is not a URL made of the characters the installers
 quote fails `init` before it creates anything. The generated [`remotes/`](repoformat.md#materialization) tree is
@@ -270,11 +274,22 @@ unwind a partial layout. Use `--no-git-init` to initialize without Git.
 A `.gitignore` that was already there and does not appear to cover the
 `remotes/` tree is reported as a warning. The file belongs to the repository's
 owner, so `init` does not edit one it did not write. An `install.sh` that was
-already there and is not a batfiles stub is reported the same way, and left
-alone.
+or `install.ps1` already there and not a batfiles stub is reported the same
+way, and left alone.
 
 Everything `init` prints is a diagnostic on standard error. It produces no
 requested data, so `--quiet` leaves only warnings and errors.
+
+#### Adding the stubs to a repository
+
+`init --stubs` is how a repository made before a stub existed gets it. In the
+current directory, which must hold a `batfiles.toml` file, it writes each stub
+that is missing, stamped as above, and touches nothing else: it creates no other
+part of the layout and runs no `git init`, so it cannot be combined with
+`--no-git-init`. A stub already there is left alone, with the same warning when
+it is not a batfiles stub, and one of the wrong kind of node refuses the command
+before anything is written. Its one line of output says which stubs it created,
+or that the repository already had every one.
 
 ### `version`
 
@@ -332,8 +347,16 @@ Everything else comes from `<base>/download/v<version>/`:
    path.
 
 A failure at any step removes the file and leaves the running binary as it
-was. Replacing a running executable on Windows is not built yet: `update` fails
-there before downloading anything, and `--check` works.
+was.
+
+Windows will not rename over, or remove, an executable while it runs, so there
+the staged file's name ends in `.exe` and the last step takes two renames: the
+running `batfiles.exe` aside to `batfiles.exe.batfiles-old`, then the release
+into its place, with the first put back if the second fails. A hidden Windows
+PowerShell, `powershell.exe` under `%SystemRoot%`, waits for `update` to exit
+and then removes the set-aside file. One it could not remove, because another
+batfiles from that file was still running, is removed by the next `update`
+before it starts, which says so at `-v` and warns if it cannot.
 
 `--check` downloads only the one `VERSION` it needs — `latest/download/` with
 no `<version>`, that release's own otherwise, which must hold the version
@@ -1456,7 +1479,7 @@ a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
 `disabled.toml` is malformed, a `vars get` naming a variable this machine has no
 value for, a [`vars refresh`](#vars-refresh) naming a key it cannot refresh or
 whose command failed, an [`update`](#update) that could not read, verify, or
-install the release it chose, an argument that is not a well-formed address or variable name, an
+install the release it chose, an [`init --stubs`](#adding-the-stubs-to-a-repository) with no repository to add to, an argument that is not a well-formed address or variable name, an
 [`init`](#init) that refused the directory it was run in or could not put a Git
 repository around it, and an
 action that could not be carried out — a source the repository does not contain,

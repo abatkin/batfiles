@@ -41,7 +41,8 @@ and SSH agent. Keep Git's subprocess launch and environment handling in
 `git.rs`. The supported environment is specified in
 [environment.md](environment.md#variables-passed-on-to-git). The only other
 subprocesses are a dynamic variable's command, launched in `dynamic/run.rs`, and
-the `version` of a release `update` has downloaded, launched in `update.rs`.
+in `update.rs` the `version` of a release `update` has downloaded and, on
+Windows, the detached PowerShell that removes the executable it set aside.
 
 **7. Dry-run never simulates a filesystem.** Use the same action implementations
 in both modes, with writes gated at helpers. See [Dry-run](#dry-run).
@@ -190,14 +191,18 @@ check direct evidence of work, such as HTTP request counts or `FETCH_HEAD`.
 
 The release scripts under `dist/` are tested by the `tests/dist/` target, which
 runs them with `sh` against stand-in binaries and `file://` or loopback release
-trees. Building real binaries and publishing them are left to the release
-workflow.
+trees, and on Windows runs the PowerShell installer and stub with `pwsh` over
+loopback HTTP. Building real binaries and publishing them are left to the
+release workflow. Where a stand-in must be a real executable, as on Windows, the
+tests compile one from `tests/common/` once per run, and it reads the version it
+plays from a trailer appended to its own file.
 
-Gate platform-specific execution tests together where practical. CI runs
-`task ci` on Linux and `task test` on macOS, so the test suite, including the
-installer's tests, also runs against BSD tools and macOS's shell. Windows
-compilation is checked by `task lint`; it is not a Windows runtime test. The
-pinned toolchain and [Taskfile](../Taskfile.yml) own toolchain setup and checks.
+Gate platform-specific execution tests together where practical; a test that
+needs symlink actions or a Unix shell is Unix-only. CI runs `task ci` on Linux
+and `task test` on macOS and on Windows, so the test suite, including the
+installers' tests, also runs against BSD tools, macOS's shell, and Windows
+itself. The pinned toolchain and [Taskfile](../Taskfile.yml) own toolchain setup
+and checks.
 
 ### Acceptance repositories
 

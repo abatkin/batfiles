@@ -100,13 +100,14 @@ files under `src/` and `tests/`.
 `Taskfile.yml` is the single source of truth. CI runs the same entry point.
 
 - `task ci`: format, lint, test, dependency checks, debug and release builds.
-- `task test`: project test suite.
+- `task test`: project test suite; arguments after `--` go to `cargo test`.
 - `task test:docker`: the pristine-machine acceptance, in a container. Part of
   `task ci` and not of `task test`; a machine with no working container runtime
   says so and passes.
 - `task fmt`: formatting check.
-- `task lint`: clippy with warnings denied, including the Windows target, and
-  `shellcheck` over the shell scripts.
+- `task lint`: clippy with warnings denied, including the Windows target,
+  `shellcheck` over the shell scripts, and PSScriptAnalyzer over the PowerShell
+  scripts where `pwsh` is installed.
 - `task build`: debug build.
 - `task build:release`: release build.
 
