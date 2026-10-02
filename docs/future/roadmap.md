@@ -22,12 +22,7 @@ Complete.
 
 ## Slice 10 — Distribution
 
-[`docs/distribution.md`](../distribution.md) specifies it. What remains is
-acceptance against real releases.
-
-The slice is built a step at a time on a `slice-10` branch, which may merge
-between steps. A step may leave work open for a later step of the slice,
-provided that step's entry below names it.
+Complete. [`docs/distribution.md`](../distribution.md) specifies it.
 
 - **10.1** ✅ The [release tree](../distribution.md), the `dist:` and `release:`
   tasks, and the tag-triggered release workflow, accepted by `v0.1.0-rc.1`.
@@ -41,10 +36,8 @@ provided that step's entry below names it.
 - **10.5** ✅ The Windows installer and stub, `init --stubs`, `update` replacing a
   running `batfiles.exe`, `task test` on a Windows runner, and a Windows runner
   in `dist:smoke`.
-- **10.6** The [GitHub Pages](../distribution.md#github-pages) copies of the
-  hosted installers: `site/`, `dist:pages`, the Pages workflow, and
-  `dist:verify PAGES=`. Accepted when the first stable release's Pages deploy
-  passes `dist:verify` against `https://batfiles.dev`.
+- **10.6** ✅ The [GitHub Pages](../distribution.md#github-pages) copies of the
+  hosted installers, accepted by `v0.1.0` deploying `https://batfiles.dev`.
 
 ## Enhancements
 
