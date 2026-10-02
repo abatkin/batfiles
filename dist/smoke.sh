@@ -8,7 +8,9 @@
 # requested. With <latest> `yes`, also pipes <url>/latest/download/install.sh
 # with no version requested, which must install the same release, and whose
 # `batfiles update --check` must report it available. Each install goes to a
-# scratch path, never touching a batfiles already on the machine.
+# scratch path, never touching a batfiles already on the machine. On Windows,
+# under Git Bash, the same checks run install.ps1 with pwsh instead, by its two
+# one-liners: the scriptblock form running `version`, and `irm | iex`.
 set -eu
 
 die() {
@@ -36,11 +38,37 @@ try() {
     echo "dist:smoke: $1 installed batfiles $version on $(uname -s) $(uname -m)"
 }
 
-try "$url/download/v$version/install.sh" pinned "$version"
+# Run the Windows installer at $1 with pwsh, installing to $work/$2, with
+# BATFILES_VERSION set to $3, and check `batfiles version`: through the
+# scriptblock one-liner when a version is requested, and otherwise through
+# `irm | iex` followed by the installed batfiles' own `version`.
+try_windows() {
+    bin=$(cygpath -w "$work/$2/batfiles.exe")
+    if [ -n "$3" ]; then
+        command="& ([scriptblock]::Create((irm '$1'))) version; exit \$LASTEXITCODE"
+    else
+        command="irm '$1' | iex; & '$bin' version; exit \$LASTEXITCODE"
+    fi
+    reported=$(BATFILES_BASE=$url BATFILES_VERSION=$3 BATFILES_BIN=$bin \
+        pwsh -NoLogo -NoProfile -NonInteractive -Command "$command") ||
+        die "installing with $1 failed"
+    reported=$(printf '%s' "$reported" | tr -d '\r')
+    [ "$reported" = "batfiles $version" ] ||
+        die "installing with $1 gave '$reported', not 'batfiles $version'"
+    echo "dist:smoke: $1 installed batfiles $version on Windows $(uname -m)"
+}
+
+case $(uname -s) in
+MINGW* | MSYS* | CYGWIN*) installer=install.ps1 attempt=try_windows exe=.exe ;;
+*) installer=install.sh attempt=try exe= ;;
+esac
+
+$attempt "$url/download/v$version/$installer" pinned "$version"
 if [ "$latest" = yes ]; then
-    try "$url/latest/download/install.sh" latest ""
-    check=$(BATFILES_BASE=$url "$work/latest/batfiles" update --check) ||
+    $attempt "$url/latest/download/$installer" latest ""
+    check=$(BATFILES_BASE=$url "$work/latest/batfiles$exe" update --check) ||
         die "batfiles update --check failed"
+    check=$(printf '%s' "$check" | tr -d '\r')
     printf '%s\n' "$check" | grep -qx "available $version" ||
         die "batfiles update --check reported '$check', not 'available $version'"
     echo "dist:smoke: batfiles update --check finds $version"
