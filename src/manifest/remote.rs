@@ -220,7 +220,13 @@ mod tests {
     #[test]
     fn a_file_remote_takes_a_url_a_digest_and_one_condition() {
         assert!(checked(&format!("type = \"file\"\nurl = \"https://e.example/a.vim\"\nsha256 = \"{SHA}\"\nwhen = \"work\"\n")).is_ok());
-        assert!(checked("type = \"file\"\nurl = \"file:///srv/a.vim\"\n").is_ok());
+        // An absolute path on Windows starts with its drive.
+        let local = if cfg!(windows) {
+            "file:///C:/srv/a.vim"
+        } else {
+            "file:///srv/a.vim"
+        };
+        assert!(checked(&format!("type = \"file\"\nurl = \"{local}\"\n")).is_ok());
         let message = refused("type = \"file\"\nurl = \"e.example/a.vim\"\n");
         assert!(
             message.contains("remote `core`: url `e.example/a.vim`"),

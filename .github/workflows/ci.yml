@@ -94,5 +94,6 @@ jobs:
         with:
           version: 3.x
 
+      # Every failing test target, not only the first.
       - name: task test
-        run: task test
+        run: task test -- --no-fail-fast

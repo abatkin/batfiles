@@ -21,8 +21,8 @@ tasks:
       - shellcheck -x dist/*.sh src/*.sh tests/docker/*.sh
 
   test:
-    desc: Run the project test suite
-    cmd: cargo test
+    desc: Run the project test suite (arguments after `--` go to cargo test)
+    cmd: cargo test {{.CLI_ARGS}}
 
   test:docker:
     desc: Run the pristine-machine acceptance in a container
