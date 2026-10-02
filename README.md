@@ -356,7 +356,8 @@ Two cargo subcommands are needed beyond the pinned toolchain: `cargo install
 cargo-deny cargo-xwin --locked`, and `task lint` needs
 [ShellCheck](https://www.shellcheck.net/) for the scripts under `dist/` and
 `tests/docker/`, and PSScriptAnalyzer under `pwsh` for the PowerShell
-installer and stub, a step it skips where `pwsh` is not installed. The second
+installer and stub, a step it skips where `pwsh` is not installed and fails
+where `pwsh` cannot load PSScriptAnalyzer. The second
 cargo subcommand is what lets an ubuntu machine run
 clippy against Windows — the TLS stack under `fetch-file` compiles C, so that
 check needs headers targeting MSVC, which `cargo xwin` fetches and caches.

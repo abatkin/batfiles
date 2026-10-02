@@ -108,10 +108,24 @@ function Install-Checkout {
         $installer = $null
     }
     if ($installer) {
-        $env:BATFILES_BASE = $BatfilesBase
-        $env:BATFILES_VERSION = $BatfilesVersion
-        & ([scriptblock]::Create($installer)) @sync
-        exit $LASTEXITCODE
+        # The installer reads the settings from the environment, which outlives this script in
+        # the session that ran it, so what was there before is put back.
+        $saved = @{ BATFILES_BASE = $env:BATFILES_BASE; BATFILES_VERSION = $env:BATFILES_VERSION }
+        try {
+            $env:BATFILES_BASE = $BatfilesBase
+            $env:BATFILES_VERSION = $BatfilesVersion
+            & ([scriptblock]::Create($installer)) @sync
+            $status = $LASTEXITCODE
+        } finally {
+            foreach ($name in $saved.Keys) {
+                if ($null -eq $saved[$name]) {
+                    Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+                } else {
+                    Set-Item -LiteralPath "Env:$name" -Value $saved[$name]
+                }
+            }
+        }
+        exit $status
     }
     if ($found) {
         Say "warning: cannot fetch $from/install.ps1 to check $found against BATFILES_VERSION=$BatfilesVersion; using it unchecked"

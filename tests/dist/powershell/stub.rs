@@ -125,3 +125,32 @@ fn a_stub_that_is_not_run_from_a_checkout_names_the_clone_one_liner() {
         .assert()
         .code(1);
 }
+
+#[test]
+fn a_stub_run_in_a_session_leaves_its_environment_as_it_found_it() {
+    let (machine, dir) = checkout();
+    // Pinned in the file, as a repository pins it, so the installer is fetched and given the
+    // stub's settings through the environment.
+    let stub = dir.join("install.ps1");
+    let text = fs::read_to_string(&stub).expect("the stub");
+    let pinned =
+        "$BatfilesVersion = if ($env:BATFILES_VERSION) { $env:BATFILES_VERSION } else { '' }";
+    assert!(text.contains(pinned), "{text}");
+    fs::write(
+        &stub,
+        text.replace(pinned, &pinned.replace("else { '' }", "else { '1.2.3' }")),
+    )
+    .expect("a pinned stub");
+
+    let assertion = machine
+        .pwsh(&format!(
+            "& {}; \"after: [$env:BATFILES_BASE] [$env:BATFILES_VERSION]\"",
+            quoted(&stub.display().to_string())
+        ))
+        .assert()
+        .success();
+    assert_eq!(
+        stdout_of(&assertion),
+        format!("{}after: [] []\n", synced("1.2.3", &dir, ""))
+    );
+}

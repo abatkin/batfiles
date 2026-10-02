@@ -107,7 +107,7 @@ files under `src/` and `tests/`.
 - `task fmt`: formatting check.
 - `task lint`: clippy with warnings denied, including the Windows target,
   `shellcheck` over the shell scripts, and PSScriptAnalyzer over the PowerShell
-  scripts where `pwsh` is installed.
+  scripts where `pwsh` is installed, failing if `pwsh` cannot load it.
 - `task build`: debug build.
 - `task build:release`: release build.
 
