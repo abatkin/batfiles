@@ -1,4 +1,5 @@
-//! `init`: laying the conventional skeleton into the directory it was run in.
+//! `init`: laying the conventional skeleton into the directory it was run in, or only its stubs
+//! into a repository already there.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,14 @@ use assert_cmd::Command;
 use super::support::{Tree, batfiles, display, entries, stderr_of};
 
 /// What a fresh `init` leaves behind, sorted as [`entries`] returns it.
-const SKELETON: [&str; 5] = [".gitignore", "batfiles.toml", "bin", "files", "install.sh"];
+const SKELETON: [&str; 6] = [
+    ".gitignore",
+    "batfiles.toml",
+    "bin",
+    "files",
+    "install.ps1",
+    "install.sh",
+];
 
 /// An isolated working directory and sibling home for initialization tests.
 struct Workspace {
@@ -70,7 +78,7 @@ fn an_empty_directory_gets_the_whole_skeleton() {
         "unexpected stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("created batfiles.toml, .gitignore, bin/, files/, install.sh"),
+        stderr.contains("created batfiles.toml, .gitignore, bin/, files/, install.sh, install.ps1"),
         "the created line is not what was created:\n{stderr}"
     );
 }
@@ -212,7 +220,7 @@ fn an_existing_path_of_the_right_kind_is_left_alone() {
     assert_eq!(entries(&bin), ["batgrep"]);
     let stderr = stderr_of(&assertion);
     assert!(
-        stderr.contains("created batfiles.toml, .gitignore, files/, install.sh"),
+        stderr.contains("created batfiles.toml, .gitignore, files/, install.sh, install.ps1"),
         "`bin/` was reported as created:\n{stderr}"
     );
 }
@@ -265,6 +273,24 @@ fn the_stub_is_executable_and_stamped_with_the_release_base() {
 }
 
 #[test]
+fn the_powershell_stub_is_stamped_with_the_release_base() {
+    let workspace = Workspace::new();
+    workspace.init().arg("--no-git-init").assert().success();
+
+    let stub = fs::read_to_string(workspace.path("install.ps1")).expect("the stub");
+    let mut lines = stub.lines();
+    assert_eq!(lines.next(), Some("#Requires -Version 7.0"));
+    assert_eq!(lines.next(), Some("# batfiles-stub 1"));
+    assert_eq!(
+        lines.next().map(str::to_owned),
+        Some(format!(
+            "$BatfilesBase = if ($env:BATFILES_BASE) {{ $env:BATFILES_BASE }} else {{ \
+             '{OFFICIAL_BASE}' }}"
+        ))
+    );
+}
+
+#[test]
 fn batfiles_base_chooses_the_base_the_stub_carries() {
     let workspace = Workspace::new();
     workspace
@@ -277,6 +303,11 @@ fn batfiles_base_chooses_the_base_the_stub_carries() {
     let stub = fs::read_to_string(workspace.path("install.sh")).expect("the stub");
     assert!(
         stub.contains("\nBATFILES_BASE=${BATFILES_BASE:-'https://example.com/mine'}\n"),
+        "{stub}"
+    );
+    let stub = fs::read_to_string(workspace.path("install.ps1")).expect("the stub");
+    assert!(
+        stub.contains("else { 'https://example.com/mine' }\n"),
         "{stub}"
     );
 }
@@ -311,7 +342,7 @@ fn an_install_script_of_the_repositorys_own_is_kept_with_a_warning() {
         "{stderr}"
     );
     assert!(
-        stderr.contains("created batfiles.toml, .gitignore, bin/, files/\n"),
+        stderr.contains("created batfiles.toml, .gitignore, bin/, files/, install.ps1\n"),
         "{stderr}"
     );
 }
@@ -330,4 +361,127 @@ fn an_existing_stub_is_kept_without_a_warning() {
         stub
     );
     assert!(!stderr_of(&assertion).contains("not a batfiles stub"));
+}
+
+#[test]
+fn a_powershell_script_of_the_repositorys_own_is_kept_with_a_warning() {
+    let workspace = Workspace::new();
+    fs::write(workspace.path("install.ps1"), "Write-Output mine\n").expect("a script");
+
+    let assertion = workspace.init().arg("--no-git-init").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(workspace.path("install.ps1")).expect("the script"),
+        "Write-Output mine\n"
+    );
+    assert!(stderr_of(&assertion).contains("install.ps1 is not a batfiles stub"));
+}
+
+/// A repository from before `init` wrote `install.ps1`: everything but that stub.
+fn repository_without_the_powershell_stub(workspace: &Workspace) {
+    workspace.init().arg("--no-git-init").assert().success();
+    fs::remove_file(workspace.path("install.ps1")).expect("an older repository");
+    fs::write(workspace.path("batfiles.toml"), "# mine\n").expect("its own manifest");
+}
+
+#[test]
+fn stubs_adds_only_the_stubs_a_repository_lacks() {
+    let workspace = Workspace::new();
+    repository_without_the_powershell_stub(&workspace);
+    let shell = fs::read_to_string(workspace.path("install.sh")).expect("the stub");
+
+    let assertion = workspace
+        .init()
+        .arg("--stubs")
+        .env("BATFILES_BASE", "https://example.com/mine")
+        .assert()
+        .success();
+
+    assert_eq!(
+        entries(&workspace.dir()),
+        SKELETON,
+        "no Git repository is created"
+    );
+    let stub = fs::read_to_string(workspace.path("install.ps1")).expect("the stub");
+    assert!(
+        stub.contains("else { 'https://example.com/mine' }\n"),
+        "{stub}"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.path("install.sh")).expect("the stub"),
+        shell
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.path("batfiles.toml")).expect("the manifest"),
+        "# mine\n"
+    );
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "in {}, created install.ps1",
+            display(&workspace.dir())
+        )),
+        "{stderr}"
+    );
+
+    let assertion = workspace.init().arg("--stubs").assert().success();
+    assert!(stderr_of(&assertion).contains("already has every stub; nothing was added"));
+}
+
+#[test]
+fn stubs_keeps_a_script_of_the_repositorys_own_with_a_warning() {
+    let workspace = Workspace::new();
+    repository_without_the_powershell_stub(&workspace);
+    fs::write(workspace.path("install.sh"), "#!/bin/sh\necho mine\n").expect("a script");
+
+    let assertion = workspace.init().arg("--stubs").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(workspace.path("install.sh")).expect("the script"),
+        "#!/bin/sh\necho mine\n"
+    );
+    assert!(workspace.path("install.ps1").is_file());
+    assert!(stderr_of(&assertion).contains("install.sh is not a batfiles stub"));
+}
+
+#[test]
+fn stubs_needs_a_repository() {
+    let workspace = Workspace::new();
+    let assertion = workspace.init().arg("--stubs").assert().code(1);
+    assert!(stderr_of(&assertion).contains("`init --stubs` adds the stubs to an existing"));
+    assert!(entries(&workspace.dir()).is_empty());
+
+    fs::create_dir(workspace.path("batfiles.toml")).expect("a directory in the way");
+    workspace.init().arg("--stubs").assert().code(1);
+    assert_eq!(entries(&workspace.dir()), ["batfiles.toml"]);
+
+    workspace
+        .init()
+        .args(["--stubs", "--no-git-init"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn stubs_refuses_a_stub_path_of_the_wrong_kind() {
+    let workspace = Workspace::new();
+    repository_without_the_powershell_stub(&workspace);
+    fs::create_dir(workspace.path("install.ps1")).expect("a directory in the way");
+
+    let assertion = workspace.init().arg("--stubs").assert().code(1);
+    assert!(stderr_of(&assertion).contains("install.ps1 exists and is not a regular file"));
+}
+
+#[test]
+fn the_leaf_fixture_carries_the_stubs_init_writes() {
+    let workspace = Workspace::new();
+    workspace.init().arg("--no-git-init").assert().success();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/leaf");
+    for stub in ["install.sh", "install.ps1"] {
+        assert_eq!(
+            fs::read_to_string(fixture.join(stub)).expect("the fixture's stub"),
+            fs::read_to_string(workspace.path(stub)).expect("the written stub"),
+            "regenerate tests/fixtures/leaf/{stub} with `batfiles init --stubs`"
+        );
+    }
 }

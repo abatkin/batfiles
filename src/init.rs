@@ -1,6 +1,7 @@
 //! Initialize the conventional leaf-repository layout in the current directory, ending with the
-//! stub that installs a checkout of it. Reject the invoking user's OS home and validate existing
-//! paths before writing. Keep existing entries of the expected kind.
+//! stubs that install a checkout of it, or add only the stubs to an existing repository. Reject
+//! the invoking user's OS home and validate existing paths before writing. Keep existing entries
+//! of the expected kind.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,26 +21,58 @@ use crate::remotes;
 /// Git's exclusion list, which is where the tool-owned `remotes/` tree belongs.
 const GITIGNORE: &str = ".gitignore";
 
-/// The stub that installs a checkout, last in the skeleton.
-const STUB: &str = "install.sh";
-
-/// The stub's template, whose base line holds [`STUB_BASE`].
-const STUB_TEMPLATE: &str = include_str!("stub.sh");
-
-/// What [`stub`] replaces with the release base.
+/// What [`Stub::render`] replaces with the release base.
 const STUB_BASE: &str = "@BATFILES_BASE@";
 
-/// The stub's second line, which identifies its format.
+/// Each stub's second line, which identifies its format.
 const STUB_MARKER: &str = "# batfiles-stub 1";
 
-/// Initialize the current directory, stamping the stub with the release base `env` selects.
+/// A stub that installs a checkout, last in the skeleton.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stub {
+    /// `install.sh`, for a Unix shell.
+    Shell,
+    /// `install.ps1`, for PowerShell on Windows.
+    PowerShell,
+}
+
+impl Stub {
+    /// Every stub, in creation order.
+    const ALL: [Self; 2] = [Self::Shell, Self::PowerShell];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Shell => "install.sh",
+            Self::PowerShell => "install.ps1",
+        }
+    }
+
+    /// The template, whose base line holds [`STUB_BASE`].
+    fn template(self) -> &'static str {
+        match self {
+            Self::Shell => include_str!("stub.sh"),
+            Self::PowerShell => include_str!("stub.ps1"),
+        }
+    }
+
+    /// The stub, stamped with `base`.
+    fn render(self, base: &ReleaseBase) -> String {
+        self.template().replacen(STUB_BASE, base.as_str(), 1)
+    }
+}
+
+/// Initialize the current directory, stamping the stubs with the release base `env` selects.
+/// With `--stubs`, add only the stubs a repository there lacks.
 pub(crate) fn run(args: &InitArgs, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
     let base = ReleaseBase::from_env(env)?;
     let dir = std::env::current_dir().map_err(|source| Error::WorkingDirectory { source })?;
+    if args.stubs {
+        return add_stubs(&dir, &base, reporter);
+    }
 
     // Validate before writing; layout creation is not transactional.
     let missing = validate(&dir, crate::location::detect_os_home)?;
-    create(&dir, &missing, &stub(&base))?;
+    create(&dir, &missing, &base)?;
 
     reporter.info(&format!(
         "initialized batfiles repository in {}",
@@ -47,7 +80,7 @@ pub(crate) fn run(args: &InitArgs, env: &Environment, reporter: &Reporter) -> Re
     ));
     reporter.info(&created_line(&missing));
     warn_unignored_remotes(&dir, &missing, reporter);
-    warn_foreign_stub(&dir, &missing, reporter);
+    warn_foreign_stubs(&dir, &missing, reporter);
 
     if !args.no_git_init {
         reporter.info(if git::init_repository(&dir).map_err(InitError::from)? {
@@ -61,6 +94,28 @@ pub(crate) fn run(args: &InitArgs, env: &Environment, reporter: &Reporter) -> Re
     Ok(())
 }
 
+/// Write the stubs a repository in `dir` lacks, leaving everything else as it is.
+fn add_stubs(dir: &Path, base: &ReleaseBase, reporter: &Reporter) -> Result<(), Error> {
+    let manifest = dir.join(Manifest::FILE_NAME);
+    if occupant(&manifest, SkeletonKind::File)? != Occupant::Matching {
+        return Err(InitError::NotARepository { path: manifest }.into());
+    }
+    let stubs = Stub::ALL.map(SkeletonEntry::Stub);
+    let missing = missing_from(dir, &stubs)?;
+    create(dir, &missing, base)?;
+
+    if missing.is_empty() {
+        reporter.info(&format!(
+            "{} already has every stub; nothing was added",
+            dir.display()
+        ));
+    } else {
+        reporter.info(&format!("in {}, {}", dir.display(), created_line(&missing)));
+    }
+    warn_foreign_stubs(dir, &missing, reporter);
+    Ok(())
+}
+
 /// A file or directory in the initial repository layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SkeletonEntry {
@@ -71,13 +126,13 @@ enum SkeletonEntry {
     Directory {
         name: &'static str,
     },
-    /// The executable stub, whose content carries the release base.
-    Stub,
+    /// A stub, whose content carries the release base.
+    Stub(Stub),
 }
 
 /// Initial repository entries in creation order. `remotes/` is created on materialization and
 /// excluded by `.gitignore`.
-const SKELETON: [SkeletonEntry; 5] = [
+const SKELETON: [SkeletonEntry; 6] = [
     SkeletonEntry::File {
         name: Manifest::FILE_NAME,
         content: BATFILES_TOML,
@@ -88,20 +143,21 @@ const SKELETON: [SkeletonEntry; 5] = [
     },
     SkeletonEntry::Directory { name: "bin" },
     SkeletonEntry::Directory { name: "files" },
-    SkeletonEntry::Stub,
+    SkeletonEntry::Stub(Stub::Shell),
+    SkeletonEntry::Stub(Stub::PowerShell),
 ];
 
 impl SkeletonEntry {
     fn name(self) -> &'static str {
         match self {
             Self::File { name, .. } | Self::Directory { name } => name,
-            Self::Stub => STUB,
+            Self::Stub(stub) => stub.name(),
         }
     }
 
     fn kind(self) -> SkeletonKind {
         match self {
-            Self::File { .. } | Self::Stub => SkeletonKind::File,
+            Self::File { .. } | Self::Stub(_) => SkeletonKind::File,
             Self::Directory { .. } => SkeletonKind::Directory,
         }
     }
@@ -109,7 +165,7 @@ impl SkeletonEntry {
     /// Return the entry name, with a trailing slash for directories.
     fn label(self) -> String {
         match self {
-            Self::File { .. } | Self::Stub => self.name().to_owned(),
+            Self::File { .. } | Self::Stub(_) => self.name().to_owned(),
             Self::Directory { name } => format!("{name}/"),
         }
     }
@@ -157,8 +213,13 @@ fn validate(
         .into());
     }
 
+    missing_from(dir, &SKELETON)
+}
+
+/// The `entries` nothing occupies in `dir`, failing on one occupied by the wrong kind of node.
+fn missing_from(dir: &Path, entries: &[SkeletonEntry]) -> Result<Vec<SkeletonEntry>, Error> {
     let mut missing = Vec::new();
-    for entry in SKELETON {
+    for &entry in entries {
         let path = dir.join(entry.name());
         match occupant(&path, entry.kind())? {
             Occupant::Absent => missing.push(entry),
@@ -207,8 +268,8 @@ fn is_os_home(dir: &Path, os_home: impl FnOnce() -> Result<PathBuf, Error>) -> b
     }
 }
 
-/// Create the missing entries, in order, writing `stub` as the stub.
-fn create(dir: &Path, missing: &[SkeletonEntry], stub: &str) -> Result<(), Error> {
+/// Create the missing entries, in order, stamping each stub with `base`.
+fn create(dir: &Path, missing: &[SkeletonEntry], base: &ReleaseBase) -> Result<(), Error> {
     for entry in missing {
         let path = dir.join(entry.name());
         let failed = |source| Error::Write {
@@ -218,18 +279,15 @@ fn create(dir: &Path, missing: &[SkeletonEntry], stub: &str) -> Result<(), Error
         match entry {
             SkeletonEntry::Directory { .. } => fs::create_dir(&path).map_err(failed)?,
             SkeletonEntry::File { content, .. } => fs::write(&path, content).map_err(failed)?,
-            SkeletonEntry::Stub => {
-                fs::write(&path, stub).map_err(failed)?;
-                make_executable(&path).map_err(failed)?;
+            SkeletonEntry::Stub(stub) => {
+                fs::write(&path, stub.render(base)).map_err(failed)?;
+                if *stub == Stub::Shell {
+                    make_executable(&path).map_err(failed)?;
+                }
             }
         }
     }
     Ok(())
-}
-
-/// The stub, stamped with `base`.
-fn stub(base: &ReleaseBase) -> String {
-    STUB_TEMPLATE.replacen(STUB_BASE, base.as_str(), 1)
 }
 
 #[cfg(unix)]
@@ -244,20 +302,24 @@ fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Warn if an existing `install.sh` is not a batfiles stub. Leave the file unchanged.
-fn warn_foreign_stub(dir: &Path, missing: &[SkeletonEntry], reporter: &Reporter) {
-    if missing.contains(&SkeletonEntry::Stub) {
-        return;
-    }
-    let Ok(document) = fs::read_to_string(dir.join(STUB)) else {
-        // An unreadable file is reported nowhere else either; it does not block initialization.
-        return;
-    };
-    if document.lines().nth(1) != Some(STUB_MARKER) {
-        reporter.warn(&format!(
-            "{STUB} is not a batfiles stub, so it is left as it is; a checkout of this \
-             repository is installed with `batfiles sync --bootstrap` instead"
-        ));
+/// Warn about each existing stub that is not a batfiles stub. Leave the files unchanged.
+fn warn_foreign_stubs(dir: &Path, missing: &[SkeletonEntry], reporter: &Reporter) {
+    for stub in Stub::ALL {
+        if missing.contains(&SkeletonEntry::Stub(stub)) {
+            continue;
+        }
+        let Ok(document) = fs::read_to_string(dir.join(stub.name())) else {
+            // An unreadable file is reported nowhere else either; it does not block
+            // initialization.
+            continue;
+        };
+        if document.lines().nth(1) != Some(STUB_MARKER) {
+            reporter.warn(&format!(
+                "{} is not a batfiles stub, so it is left as it is; a checkout of this \
+                 repository is installed with `batfiles sync --bootstrap` instead",
+                stub.name()
+            ));
+        }
     }
 }
 
@@ -302,6 +364,14 @@ pub(crate) enum InitError {
     /// Something named `batfiles.toml` is already here.
     #[error("{} already exists; this is already a batfiles repository", .path.display())]
     AlreadyInitialized { path: PathBuf },
+
+    /// `--stubs` was given somewhere with no repository to add them to.
+    #[error(
+        "{} is not a file; `init --stubs` adds the stubs to an existing batfiles repository, \
+         and plain `init` creates one",
+        .path.display()
+    )]
+    NotARepository { path: PathBuf },
 
     /// The current directory is the invoking user's OS home.
     #[error(
@@ -408,22 +478,38 @@ mod tests {
         fs::write(dir.path().join(GITIGNORE), "*.swp\nremotes/\n").expect("fixture");
 
         let missing = validate(dir.path(), os_home).expect("valid");
-        assert_eq!(names(&missing), [Manifest::FILE_NAME, "bin", STUB]);
+        assert_eq!(
+            names(&missing),
+            [Manifest::FILE_NAME, "bin", "install.sh", "install.ps1"]
+        );
     }
 
     #[test]
-    fn the_stub_template_has_its_marker_and_one_base_to_stamp() {
-        assert_eq!(STUB_TEMPLATE.lines().nth(1), Some(STUB_MARKER));
-        // A Unix script, whatever the checkout it was built from.
-        assert!(!STUB_TEMPLATE.contains('\r'));
-        assert_eq!(STUB_TEMPLATE.matches(STUB_BASE).count(), 1);
-
+    fn each_stub_template_has_its_marker_and_one_base_to_stamp() {
         let base = ReleaseBase::try_from("https://example.com/batfiles").expect("valid");
-        let stub = stub(&base);
-        assert!(
-            stub.contains("\nBATFILES_BASE=${BATFILES_BASE:-'https://example.com/batfiles'}\n")
-        );
-        assert!(!stub.contains(STUB_BASE));
+        for (stub, stamped) in [
+            (
+                Stub::Shell,
+                "\nBATFILES_BASE=${BATFILES_BASE:-'https://example.com/batfiles'}\n",
+            ),
+            (
+                Stub::PowerShell,
+                "\n$BatfilesBase = if ($env:BATFILES_BASE) { $env:BATFILES_BASE } else { \
+                 'https://example.com/batfiles' }\n",
+            ),
+        ] {
+            let template = stub.template();
+            assert_eq!(template.lines().nth(1), Some(STUB_MARKER), "{stub:?}");
+            // LF endings and ASCII, whatever the checkout it was built from: Windows
+            // PowerShell reads a file without a byte-order mark in the system code page.
+            assert!(!template.contains('\r'), "{stub:?}");
+            assert!(template.is_ascii(), "{stub:?}");
+            assert_eq!(template.matches(STUB_BASE).count(), 1, "{stub:?}");
+
+            let rendered = stub.render(&base);
+            assert!(rendered.contains(stamped), "{stub:?}:\n{rendered}");
+            assert!(!rendered.contains(STUB_BASE), "{stub:?}");
+        }
     }
 
     #[test]
