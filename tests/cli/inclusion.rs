@@ -15,7 +15,7 @@ fn including() -> (BareRepo, Tree) {
 
 /// Where the included manifest lands once the remote is materialized.
 fn included_manifest(tree: &Tree) -> String {
-    display(&tree.path("repo").join("remotes/corporate/batfiles.toml"))
+    display(&tree.path("repo/remotes/corporate/batfiles.toml"))
 }
 
 #[cfg(unix)]
@@ -69,7 +69,7 @@ fn a_materialized_inclusion_contributes_its_actions_to_the_run() {
 
     assert_eq!(
         fs::read_link(tree.home(".zshrc.corporate")).expect("the link the inclusion installed"),
-        tree.path("repo").join("remotes/corporate/files/zshrc"),
+        tree.path("repo/remotes/corporate/files/zshrc"),
         "the included source was not read from the materialization"
     );
 
@@ -275,9 +275,7 @@ remote = "core"
         "the refusal did not name the remote:\n{stderr}"
     );
     assert!(
-        stderr.contains(&display(
-            &tree.path("repo").join("remotes/core/batfiles.toml")
-        )),
+        stderr.contains(&display(&tree.path("repo/remotes/core/batfiles.toml"))),
         "the refusal did not say where it looked:\n{stderr}"
     );
 }
@@ -420,7 +418,7 @@ remote = "shared"
         "the included action beside the nested inclusion did not run"
     );
     assert!(
-        !tree.path("repo").join("remotes/shared").exists(),
+        !tree.path("repo/remotes/shared").exists(),
         "a nested inclusion's remote was materialized"
     );
 }

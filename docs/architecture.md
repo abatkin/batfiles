@@ -42,7 +42,7 @@ and SSH agent. Keep Git's subprocess launch and environment handling in
 [environment.md](environment.md#variables-passed-on-to-git). The only other
 subprocesses are a dynamic variable's command, launched in `dynamic/run.rs`, and
 in `update.rs` the `version` of a release `update` has downloaded and, on
-Windows, the detached PowerShell that removes the executable it set aside.
+Windows, the hidden PowerShell that removes the executable it set aside.
 
 **7. Dry-run never simulates a filesystem.** Use the same action implementations
 in both modes, with writes gated at helpers. See [Dry-run](#dry-run).

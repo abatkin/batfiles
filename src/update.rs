@@ -243,17 +243,16 @@ fn replace(staged: &Path, exe: &Path, env: &Environment, reporter: &Reporter) ->
     Ok(())
 }
 
-/// Start a hidden, detached Windows PowerShell that waits for this process to exit and then
+/// Start a hidden Windows PowerShell that waits for this process to exit and then
 /// removes `aside`, with no standard streams, so nothing waiting on this process's output waits
 /// on it too. Failing to start it leaves `aside` for the next update.
 #[cfg(windows)]
 fn remove_once_exited(aside: &Path, env: &Environment, reporter: &Reporter) {
     use std::os::windows::process::CommandExt as _;
 
-    /// No console, so no window: `DETACHED_PROCESS`.
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    /// Out of reach of the console's Ctrl+C: `CREATE_NEW_PROCESS_GROUP`.
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    /// A console of its own that shows no window, out of reach of the user's Ctrl+C:
+    /// `CREATE_NO_WINDOW`. Windows PowerShell does not run with no console at all.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     /// Retries for an image Windows releases a moment after its process exits.
     const SCRIPT: &str = "Wait-Process -Id $env:BATFILES_UPDATED_PID -ErrorAction SilentlyContinue; \
          for ($i = 0; $i -lt 40 -and (Test-Path -LiteralPath $env:BATFILES_SET_ASIDE); $i++) { \
@@ -276,7 +275,7 @@ fn remove_once_exited(aside: &Path, env: &Environment, reporter: &Reporter) {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn();
     match started {
         Ok(_) => reporter.detail(
