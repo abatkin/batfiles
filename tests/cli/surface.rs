@@ -28,6 +28,7 @@ fn help_lists_every_documented_command() {
     for command in [
         "init",
         "version",
+        "update",
         "clone",
         "sync",
         "disable-action",

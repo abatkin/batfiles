@@ -51,7 +51,8 @@ git push origin vX.Y.Z-rc.<n>   # the command it prints
 Then watch the *Release* workflow, and approve the `release` environment if it
 asks. After publishing, its `verify` job checks the release's checksums and
 stamps, and its `smoke` jobs install it with its own one-liner on Linux x86_64,
-Linux aarch64, and macOS. A candidate is published as a pre-release and never becomes `latest`, so
+Linux aarch64, and macOS, where a stable release must also be what the installed
+binary's `update --check` finds. A candidate is published as a pre-release and never becomes `latest`, so
 trying its installer takes the version:
 
 ```sh

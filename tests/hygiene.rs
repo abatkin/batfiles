@@ -68,7 +68,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 13] = [
+const FILESYSTEM_OWNERS: [Owner; 14] = [
     Owner {
         path: "src/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -134,6 +134,12 @@ const FILESYSTEM_OWNERS: [Owner; 13] = [
         path: "src/init.rs",
         kind: Kind::Standalone,
         reason: "lays the leaf-repository skeleton into the directory `init` was run in",
+    },
+    Owner {
+        path: "src/update.rs",
+        kind: Kind::Standalone,
+        reason: "stages a release beside the running executable, runs its `version`, and renames \
+                 it over that executable",
     },
 ];
 

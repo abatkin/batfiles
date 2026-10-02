@@ -40,7 +40,8 @@ where rendering requires it.
 and SSH agent. Keep Git's subprocess launch and environment handling in
 `git.rs`. The supported environment is specified in
 [environment.md](environment.md#variables-passed-on-to-git). The only other
-subprocess is a dynamic variable's command, launched in `dynamic/run.rs`.
+subprocesses are a dynamic variable's command, launched in `dynamic/run.rs`, and
+the `version` of a release `update` has downloaded, launched in `update.rs`.
 
 **7. Dry-run never simulates a filesystem.** Use the same action implementations
 in both modes, with writes gated at helpers. See [Dry-run](#dry-run).

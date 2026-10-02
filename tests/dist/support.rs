@@ -62,13 +62,19 @@ pub(crate) fn executable(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("its mode");
 }
 
-/// Write a stand-in for batfiles `version` of `target`: it reports that version, and otherwise
-/// prints its target, version, and arguments.
+/// Write a stand-in for batfiles `version` of `target`: it reports that version, answers
+/// `update --check` from `$BATFILES_BASE`, and otherwise prints its target, version, and
+/// arguments.
 pub(crate) fn stand_in(path: &Path, target: &str, version: &str) {
     executable(
         path,
         &format!(
             "if [ \"$1\" = version ]; then echo \"batfiles {version}\"; exit 0; fi\n\
+             if [ \"$1 $2\" = 'update --check' ]; then\n\
+             echo 'running {version}'\n\
+             printf 'available %s\\n' \"$(curl -fsS \"$BATFILES_BASE/latest/download/VERSION\")\"\n\
+             exit 0\n\
+             fi\n\
              echo \"{target} {version} ran: $*\"\n"
         ),
     );

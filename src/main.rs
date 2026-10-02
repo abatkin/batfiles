@@ -33,8 +33,10 @@ mod replace;
 mod repo_path;
 mod selection;
 mod tomlfile;
+mod update;
 mod var;
 mod var_set;
+mod version;
 
 use std::process::ExitCode;
 

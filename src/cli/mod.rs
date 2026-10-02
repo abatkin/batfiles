@@ -4,6 +4,7 @@ mod actions;
 mod disabled;
 mod init;
 mod options;
+mod update;
 mod vars;
 
 pub(crate) mod color;
@@ -12,6 +13,7 @@ pub(crate) use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
 pub(crate) use disabled::{ActionAddresses, GroupAddresses};
 pub(crate) use init::InitArgs;
 pub(crate) use options::{BootstrapOptions, ExecutionOptions};
+pub(crate) use update::UpdateArgs;
 pub(crate) use vars::VarsCommand;
 
 use std::path::PathBuf;
@@ -38,8 +40,8 @@ pub(crate) struct Cli {
 
 /// Options accepted by every command, before or after the command name.
 ///
-/// A command uses only the locations relevant to its work; `init` and
-/// `version` resolve no roots at all.
+/// A command uses only the locations relevant to its work; `init`,
+/// `version`, and `update` resolve no roots at all.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Global Options")]
 pub(crate) struct GlobalOptions {
@@ -80,6 +82,9 @@ pub(crate) enum Command {
 
     /// Print the batfiles version
     Version,
+
+    /// Replace this batfiles with the latest release, or with another one
+    Update(UpdateArgs),
 
     /// Clone a leaf repository, adopt its bootstrap policy, then synchronize
     Clone(CloneArgs),

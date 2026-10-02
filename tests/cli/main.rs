@@ -39,4 +39,6 @@ mod fetched_remotes;
 #[cfg(unix)]
 mod linking;
 #[cfg(unix)]
+mod update;
+#[cfg(unix)]
 mod vars_refresh;

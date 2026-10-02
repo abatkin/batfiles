@@ -26,6 +26,7 @@ use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
 use crate::replace::ConflictPolicy;
+use crate::update;
 use crate::var_set;
 
 /// A command that ran and failed.
@@ -69,6 +70,10 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
     match &cli.command {
         Command::Version => {
             print!("{}", Cli::command().render_version());
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Update(args) => {
+            update::run(&args.version, args.check, env, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Init(args) => {

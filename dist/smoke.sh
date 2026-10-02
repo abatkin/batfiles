@@ -6,8 +6,9 @@
 #
 # Pipes <url>/download/v<version>/install.sh into sh with that version
 # requested. With <latest> `yes`, also pipes <url>/latest/download/install.sh
-# with no version requested, which must install the same release. Each install
-# goes to a scratch path, never touching a batfiles already on the machine.
+# with no version requested, which must install the same release, and whose
+# `batfiles update --check` must report it available. Each install goes to a
+# scratch path, never touching a batfiles already on the machine.
 set -eu
 
 die() {
@@ -38,4 +39,9 @@ try() {
 try "$url/download/v$version/install.sh" pinned "$version"
 if [ "$latest" = yes ]; then
     try "$url/latest/download/install.sh" latest ""
+    check=$(BATFILES_BASE=$url "$work/latest/batfiles" update --check) ||
+        die "batfiles update --check failed"
+    printf '%s\n' "$check" | grep -qx "available $version" ||
+        die "batfiles update --check reported '$check', not 'available $version'"
+    echo "dist:smoke: batfiles update --check finds $version"
 fi

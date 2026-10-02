@@ -2,9 +2,22 @@
 
 How a batfiles release is laid out, built, and published; how the hosted
 installer puts a release on a machine, and the stub a leaf repository carries
-installs a checkout; and how to serve releases from another site. `batfiles
-update` and the Windows installer are [proposed](future/distribution.md) and
-not yet built.
+installs a checkout; and how to serve releases from another site. The Windows
+installer is [proposed](future/distribution.md) and not yet built.
+[`batfiles update`](cmdline.md#update) replaces an installed binary with
+another release.
+
+| Piece | Lives | Changes | Job |
+| --- | --- | --- | --- |
+| [Release tree](#release-tree) | A release base URL | Every release | Binaries, checksums, installers, `VERSION` |
+| [Hosted installer](#hosted-installer) | `install.sh` and `install.ps1` in the release tree | Every release | Put a verified binary at its install location, then optionally run it |
+| [Leaf stub](#leaf-stub) | `install.sh` in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
+| [`batfiles update`](cmdline.md#update) | The binary | Every release | Replace the running binary with another release |
+
+All logic that follows releases — platform detection, asset names, checksum
+verification — lives in the hosted installer and the binary. The stub only
+locates things, so the one way it can go stale is a change to the contracts in
+[stub stability](#stability), which are frozen.
 
 ## Release tree
 
@@ -79,6 +92,13 @@ Until the [Windows installer](future/distribution.md#windows) is built,
 - `x86_64-pc-windows-msvc`, with the C runtime linked statically. Windows on ARM
   runs it under emulation.
 
+A build compiles in the target triple it is built for, as `BATFILES_TARGET`,
+and [`update`](cmdline.md#update) downloads that target's asset. A build for a
+target no release publishes takes its platform's: a Linux build of either
+architecture the musl asset of that architecture, whatever its C library, and
+a Windows build of either architecture the x86_64 one. A build for any other
+platform, such as FreeBSD, has no asset, and `update` fails naming its target.
+
 ## The release base
 
 The release base is the one parameter a fork or self-hoster changes:
@@ -93,8 +113,8 @@ The release base is the one parameter a fork or self-hoster changes:
   `unstamped`, and runs only when `BATFILES_BASE` supplies a base.
 - **Binaries.** `dist:binary` compiles the base in as `BATFILES_DEFAULT_BASE`;
   a build without it takes the official base. At run time `BATFILES_BASE`
-  overrides it, for the [stub](#leaf-stub) `init` writes; see
-  [environment](environment.md#release-base).
+  overrides it, for the [stub](#leaf-stub) `init` writes and for
+  [`update`](cmdline.md#update); see [environment](environment.md#release-base).
 
 A base is a URL with no trailing slash (one given is dropped), made of
 characters the installers quote safely: letters, digits, and
@@ -115,7 +135,7 @@ workflow runs nothing that cannot be run locally:
 | `dist:mirror VERSION=<version>\|latest BASE=<url> OUT=<dir> [FROM=<base>]` | Copies a published release for [another base](#self-hosting). |
 | `dist:publish VERSION=<version> DIR=<dir>` | Publishes an assembled set as the GitHub release for the existing tag. |
 | `dist:verify URL=<base> VERSION=<version> LATEST=yes\|no [STAMPED=<base>]` | Checks a published release through its release tree. |
-| `dist:smoke URL=<base> VERSION=<version> LATEST=yes\|no` | Installs a published release on this machine with its own one-liner, and checks what it installed. |
+| `dist:smoke URL=<base> VERSION=<version> LATEST=yes\|no` | Installs a published release on this machine with its own one-liner, and checks what it installed and, for the latest, what its `update --check` finds. |
 
 Both `release:` tasks refuse uncommitted changes and a version whose stable
 release is already tagged, and check the tag as `dist:tag` does; pushing the
@@ -145,7 +165,8 @@ already has a release is refused.
 version requested, installing to a scratch path that leaves any batfiles on
 the machine alone, and requires the result to report the version. With
 `LATEST=yes` it does the same through `<base>/latest/download/install.sh` with
-no version requested.
+no version requested, and then requires that binary's `update --check`, with
+`BATFILES_BASE` set to `URL`, to report the version available.
 
 `dist:verify` fetches `<base>/download/v<version>/`: `VERSION` must hold the
 version, every binary `SHA256SUMS` lists must match it, and both installers must
@@ -171,7 +192,8 @@ carry the stamped base, `STAMPED` or else `URL`. With `LATEST=yes`,
 5. `dist:verify` checks the published release at this repository's releases
    URL, including `latest` for a stable release.
 6. `dist:smoke` installs it with its own one-liner on Linux x86_64 and aarch64
-   and on macOS runners, again including `latest` for a stable release.
+   and on macOS runners, again including `latest` for a stable release, where
+   the installed binary's `update --check` must find it.
 
 A failure before publishing leaves no release, or at most a draft to delete.
 
@@ -212,7 +234,7 @@ last candidate is the **install location**.
 
 - **No version requested:** the first candidate that runs is used, and nothing
   is downloaded. Upgrading an existing binary is what
-  [`update`](future/distribution.md#batfiles-update) is for; an installer run
+  [`update`](cmdline.md#update) is for; an installer run
   with no arguments reports which binary it found and suggests
   `batfiles update`.
 - **`BATFILES_VERSION` set:** it names exactly what is downloaded, and is a

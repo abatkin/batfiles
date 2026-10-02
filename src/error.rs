@@ -16,6 +16,7 @@ use crate::manifest;
 use crate::paths::ExistingNode;
 use crate::release;
 use crate::remotes;
+use crate::update;
 use crate::var::{VarName, VarNameError};
 
 #[derive(Debug, Error)]
@@ -299,9 +300,14 @@ pub(crate) enum Error {
     #[error(transparent)]
     Init(#[from] init::InitError),
 
-    /// The release base the stub would be written with is unusable.
+    /// The release base the stub or `update` would use is unusable.
     #[error(transparent)]
     ReleaseBase(#[from] release::ReleaseBaseError),
+
+    // Replacing the binary.
+    /// `update` could not install a release.
+    #[error(transparent)]
+    Update(#[from] update::UpdateError),
 
     // Bringing a repository onto a machine.
     /// The destination for the leaf repository clone is already occupied.
