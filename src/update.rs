@@ -72,21 +72,21 @@ pub(crate) fn run(
         return Ok(());
     }
 
-    platform_can_replace()?;
     let asset = release::asset_for(release::TARGET).ok_or(UpdateError::NoAsset {
         target: release::TARGET,
     })?;
     let exe = running_executable()?;
     reporter.detail(1, &format!("{:<12}{}", "replacing:", exe.display()));
+    #[cfg(windows)]
+    remove_set_aside(&exe, reporter);
 
     // Creating the staged file first is what refuses a directory this user cannot write, before
     // anything is downloaded.
-    let staged = paths::beside(&exe, ".batfiles-update");
+    let staged = paths::beside(&exe, STAGED_SUFFIX);
     let file = create_staged(&staged, &exe)?;
     let installed = choose(wanted, &base, &running, reporter).and_then(|chosen| match chosen {
-        Some(chosen) => {
-            install(&base, &chosen, asset, file, &staged, &exe, reporter).map(|()| Some(chosen))
-        }
+        Some(chosen) => install(&base, &chosen, asset, file, &staged, &exe, env, reporter)
+            .map(|()| Some(chosen)),
         None => Ok(None),
     });
     // An installed release has already been renamed away.
@@ -124,7 +124,8 @@ fn choose(
 }
 
 /// Download `asset` of `chosen` into the staged `file`, verify it against the release's
-/// `SHA256SUMS`, check that it runs and reports `chosen`, and rename it over `exe`.
+/// `SHA256SUMS`, check that it runs and reports `chosen`, and put it in place of `exe`.
+#[expect(clippy::too_many_arguments, reason = "one call, from `run`")]
 fn install(
     base: &ReleaseBase,
     chosen: &Version,
@@ -132,6 +133,7 @@ fn install(
     mut file: fs::File,
     staged: &Path,
     exe: &Path,
+    env: &Environment,
     reporter: &Reporter,
 ) -> Result<(), Error> {
     let from = release_dir(base, chosen);
@@ -182,10 +184,127 @@ fn install(
         .into());
     }
 
+    replace(staged, exe, env, reporter)
+}
+
+/// What the staged release is named for: its executable's name with this appended. Windows runs
+/// only a file whose name ends in `.exe`.
+#[cfg(unix)]
+const STAGED_SUFFIX: &str = ".batfiles-update";
+#[cfg(windows)]
+const STAGED_SUFFIX: &str = ".batfiles-update.exe";
+
+/// Rename the staged release over the running executable.
+#[cfg(unix)]
+fn replace(
+    staged: &Path,
+    exe: &Path,
+    _env: &Environment,
+    _reporter: &Reporter,
+) -> Result<(), Error> {
     fs::rename(staged, exe).map_err(|source| Error::Write {
         path: exe.to_path_buf(),
         source,
     })
+}
+
+/// Where Windows' running executable is set aside, since nothing may replace or remove it while
+/// it runs.
+#[cfg(windows)]
+fn set_aside_path(exe: &Path) -> PathBuf {
+    paths::beside(exe, ".batfiles-old")
+}
+
+/// Rename the running executable aside, then the staged release into its place, putting the
+/// executable back if that fails. Leave a detached process to remove what was set aside once
+/// this one exits.
+#[cfg(windows)]
+fn replace(staged: &Path, exe: &Path, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
+    let aside = set_aside_path(exe);
+    fs::rename(exe, &aside).map_err(|source| UpdateError::SetAside {
+        exe: exe.to_path_buf(),
+        aside: aside.clone(),
+        source,
+    })?;
+    if let Err(source) = fs::rename(staged, exe) {
+        if let Err(error) = fs::rename(&aside, exe) {
+            reporter.warn(&format!(
+                "could not put {} back from {}: {error}",
+                exe.display(),
+                aside.display()
+            ));
+        }
+        return Err(Error::Write {
+            path: exe.to_path_buf(),
+            source,
+        });
+    }
+    remove_once_exited(&aside, env, reporter);
+    Ok(())
+}
+
+/// Start a hidden, detached Windows PowerShell that waits for this process to exit and then
+/// removes `aside`, with no standard streams, so nothing waiting on this process's output waits
+/// on it too. Failing to start it leaves `aside` for the next update.
+#[cfg(windows)]
+fn remove_once_exited(aside: &Path, env: &Environment, reporter: &Reporter) {
+    use std::os::windows::process::CommandExt as _;
+
+    /// No console, so no window: `DETACHED_PROCESS`.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    /// Out of reach of the console's Ctrl+C: `CREATE_NEW_PROCESS_GROUP`.
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    /// Retries for an image Windows releases a moment after its process exits.
+    const SCRIPT: &str = "Wait-Process -Id $env:BATFILES_UPDATED_PID -ErrorAction SilentlyContinue; \
+         for ($i = 0; $i -lt 40 -and (Test-Path -LiteralPath $env:BATFILES_SET_ASIDE); $i++) { \
+         Remove-Item -LiteralPath $env:BATFILES_SET_ASIDE -Force -ErrorAction SilentlyContinue; \
+         Start-Sleep -Milliseconds 250 }";
+
+    let root = env.get("SystemRoot").unwrap_or(r"C:\Windows");
+    let powershell = Path::new(root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    let started = Command::new(&powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            SCRIPT,
+        ])
+        .env("BATFILES_UPDATED_PID", std::process::id().to_string())
+        .env("BATFILES_SET_ASIDE", aside)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .spawn();
+    match started {
+        Ok(_) => reporter.detail(
+            1,
+            &format!("{} is removed once this batfiles exits", aside.display()),
+        ),
+        Err(error) => reporter.warn(&format!(
+            "could not start removing {}, which the next update removes instead: {error}",
+            aside.display()
+        )),
+    }
+}
+
+/// Remove the executable an earlier update set aside, if the process it left to do so could
+/// not.
+#[cfg(windows)]
+fn remove_set_aside(exe: &Path, reporter: &Reporter) {
+    let aside = set_aside_path(exe);
+    match fs::remove_file(&aside) {
+        Ok(()) => reporter.detail(
+            1,
+            &format!("removed {}, left by an earlier update", aside.display()),
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => reporter.warn(&format!(
+            "could not remove {}, left by an earlier update: {error}",
+            aside.display()
+        )),
+    }
 }
 
 /// The version `<base>/latest/download/VERSION` names.
@@ -233,8 +352,9 @@ fn digest_for<'a>(sums: &'a str, asset: &str) -> Option<&'a str> {
 /// is left alone and what it points at is replaced.
 fn running_executable() -> Result<PathBuf, Error> {
     let exe = std::env::current_exe().map_err(|source| UpdateError::NoExecutable { source })?;
-    fs::canonicalize(&exe).map_err(|source| Error::Read { path: exe, source })
+    paths::canonicalize(&exe).map_err(|source| Error::Read { path: exe, source })
 }
+
 
 /// Create the private file a release is downloaded into, failing if anything is already there.
 fn create_staged(staged: &Path, exe: &Path) -> Result<fs::File, Error> {
@@ -274,18 +394,6 @@ fn make_executable(file: &fs::File, staged: &Path) -> Result<(), Error> {
 #[cfg(not(unix))]
 fn make_executable(_file: &fs::File, _staged: &Path) -> Result<(), Error> {
     Ok(())
-}
-
-/// Whether this platform can replace the executable it is running from yet.
-#[cfg(unix)]
-fn platform_can_replace() -> Result<(), UpdateError> {
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn platform_can_replace() -> Result<(), UpdateError> {
-    // CARRY(10.5): rename the running executable aside, then rename the staged one into place.
-    Err(UpdateError::NotOnThisPlatform)
 }
 
 /// Remove the staged file, saying so if it cannot be.
@@ -363,9 +471,18 @@ pub(crate) enum UpdateError {
         reported: String,
     },
 
-    #[cfg(not(unix))]
-    #[error("`update` cannot replace a running batfiles on this platform yet")]
-    NotOnThisPlatform,
+    #[cfg(windows)]
+    #[error(
+        "cannot set {} aside as {} to replace it: {source}; if a batfiles from that file is \
+         still running, let it finish and run `update` again",
+        .exe.display(),
+        .aside.display()
+    )]
+    SetAside {
+        exe: PathBuf,
+        aside: PathBuf,
+        source: io::Error,
+    },
 }
 
 #[cfg(test)]

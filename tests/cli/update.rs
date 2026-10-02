@@ -1,15 +1,19 @@
-//! `update`: a link to the built binary, replaced from a loopback release tree.
+//! `update`: a link to the built binary, replaced from a loopback release tree of compiled
+//! stand-ins.
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
 use crate::support::{
-    Reply, Server, batfiles, batfiles_at, entries, file_url, stderr_of, stdout_of,
+    Reply, Server, batfiles, batfiles_at, compiled_stand_in, entries, file_url, stderr_of,
+    stdout_of,
 };
 
 /// A release newer than any this crate builds.
@@ -18,20 +22,46 @@ const NEWER: &str = "99.0.0";
 /// A release older than any this crate builds.
 const OLDER: &str = "0.0.1";
 
-/// The asset a release publishes for this machine, worked out independently of batfiles: Linux
-/// takes the static musl build.
-fn asset() -> String {
-    let os = match std::env::consts::OS {
-        "linux" => "unknown-linux-musl",
-        "macos" => "apple-darwin",
+/// The release target whose asset this machine takes, worked out independently of batfiles:
+/// Linux takes the static musl build, and Windows the x86_64 one.
+fn target() -> String {
+    let arch = std::env::consts::ARCH;
+    match std::env::consts::OS {
+        "linux" => format!("{arch}-unknown-linux-musl"),
+        "macos" => format!("{arch}-apple-darwin"),
+        "windows" => "x86_64-pc-windows-msvc".to_owned(),
         other => panic!("no release asset for {other}"),
-    };
-    format!("batfiles-{}-{os}", std::env::consts::ARCH)
+    }
 }
 
-/// A stand-in release binary that reports `version` whatever it is asked.
+/// The asset a release publishes for this machine.
+fn asset() -> String {
+    format!("batfiles-{}{}", target(), std::env::consts::EXE_SUFFIX)
+}
+
+/// A stand-in release binary that reports `version`.
 fn stand_in(version: &str) -> Vec<u8> {
-    format!("#!/bin/sh\necho 'batfiles {version}'\n").into_bytes()
+    compiled_stand_in(&target(), version)
+}
+
+/// The name `update` stages a release under, beside the executable.
+const STAGED: &str = if cfg!(windows) {
+    "batfiles.exe.batfiles-update.exe"
+} else {
+    "batfiles.batfiles-update"
+};
+
+/// The name of the executable Windows sets aside.
+#[cfg(windows)]
+const SET_ASIDE: &str = "batfiles.exe.batfiles-old";
+
+/// `path` as batfiles names an executable it found: canonical, and on Windows without the
+/// `\\?\` prefix.
+fn canonical(path: &Path) -> String {
+    let resolved = fs::canonicalize(path).expect("a canonical path");
+    let text = resolved.display().to_string();
+    text.strip_prefix(r"\\?\")
+        .map_or(text.clone(), str::to_owned)
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -137,7 +167,8 @@ impl Machine {
     }
 
     fn exe(&self) -> PathBuf {
-        self.bin_dir().join("batfiles")
+        self.bin_dir()
+            .join(format!("batfiles{}", std::env::consts::EXE_SUFFIX))
     }
 
     /// Its `update` against `base`, with every root left unresolvable.
@@ -162,9 +193,15 @@ impl Machine {
         fs::read(self.exe()).expect("the installed binary") == self.original
     }
 
-    /// Nothing is left beside the binary but the binary.
+    /// Nothing is left beside the binary but the binary, once whatever Windows set aside is
+    /// gone, which the process `update` left to remove it does soon after `update` exits.
     fn assert_alone(&self) {
-        assert_eq!(entries(&self.bin_dir()), ["batfiles"]);
+        let alone = [format!("batfiles{}", std::env::consts::EXE_SUFFIX)];
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while entries(&self.bin_dir()) != alone && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(entries(&self.bin_dir()), alone);
     }
 }
 
@@ -177,7 +214,7 @@ fn a_newer_release_replaces_the_running_binary() {
     assert!(
         stderr.contains(&format!(
             "installed batfiles {NEWER} at {}, replacing batfiles {}",
-            machine.exe().display(),
+            canonical(&machine.exe()),
             running()
         )),
         "{stderr}"
@@ -188,11 +225,14 @@ fn a_newer_release_replaces_the_running_binary() {
         fs::read(machine.exe()).expect("the binary"),
         stand_in(NEWER)
     );
-    let mode = fs::metadata(machine.exe())
-        .expect("its metadata")
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o7777, 0o755);
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(machine.exe())
+            .expect("its metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o755);
+    }
     machine.assert_alone();
     Command::new(machine.exe())
         .arg("version")
@@ -321,6 +361,7 @@ fn a_binary_that_does_not_report_its_release_is_not_installed() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_directory_that_cannot_be_written_fails_before_anything_is_downloaded() {
     let server = serve(&[Release::of(NEWER).latest()]);
     let machine = Machine::new();
@@ -393,6 +434,7 @@ fn a_file_url_base_is_a_release_tree_too() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_symlink_to_batfiles_stays_a_link_to_the_replaced_binary() {
     let server = serve(&[Release::of(NEWER).latest()]);
     let machine = Machine::new();
@@ -413,10 +455,14 @@ fn a_symlink_to_batfiles_stays_a_link_to_the_replaced_binary() {
 fn a_staged_file_left_in_the_way_is_never_replaced() {
     let server = serve(&[Release::of(NEWER).latest()]);
     let machine = Machine::new();
-    let leftover = machine.bin_dir().join("batfiles.batfiles-update");
+    let leftover = machine.bin_dir().join(STAGED);
     fs::write(&leftover, "an interrupted update").expect("a leftover");
     let assertion = machine.update(server.address()).assert().code(1);
-    assert!(stderr_of(&assertion).contains(&leftover.display().to_string()));
+    assert!(stderr_of(&assertion).contains(&format!(
+        "{}{}{STAGED}",
+        canonical(&machine.bin_dir()),
+        std::path::MAIN_SEPARATOR
+    )));
     assert_eq!(server.requests(), 0);
     assert_eq!(
         fs::read_to_string(&leftover).expect("the leftover"),
@@ -440,4 +486,23 @@ fn a_malformed_version_or_base_is_refused() {
         .code(1);
     assert!(stderr_of(&assertion).contains("check BATFILES_BASE"));
     assert!(machine.unchanged());
+}
+
+#[test]
+#[cfg(windows)]
+fn what_an_earlier_update_set_aside_is_removed_by_the_next() {
+    let server = serve(&[Release::of(NEWER).latest()]);
+    let machine = Machine::new();
+    fs::write(machine.bin_dir().join(SET_ASIDE), "an earlier batfiles").expect("a leftover");
+    let assertion = machine
+        .update(server.address())
+        .arg("-v")
+        .assert()
+        .success();
+    assert!(stderr_of(&assertion).contains("left by an earlier update"));
+    assert_eq!(
+        fs::read(machine.exe()).expect("the binary"),
+        stand_in(NEWER)
+    );
+    machine.assert_alone();
 }

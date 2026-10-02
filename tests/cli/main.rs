@@ -26,6 +26,7 @@ mod refreshing;
 mod remotes;
 mod selection;
 mod surface;
+mod update;
 mod vars;
 
 #[cfg(unix)]
@@ -38,7 +39,5 @@ mod dynamic_vars;
 mod fetched_remotes;
 #[cfg(unix)]
 mod linking;
-#[cfg(unix)]
-mod update;
 #[cfg(unix)]
 mod vars_refresh;

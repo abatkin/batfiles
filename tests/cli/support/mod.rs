@@ -5,6 +5,8 @@ mod filesystem;
 mod git;
 mod http;
 mod manifests;
+#[path = "../../common/stand_in.rs"]
+mod stand_in;
 mod tree;
 
 pub(crate) use archive::{Member, multi_member_tarball, plain_tarball, tarball, v7_tarball};
@@ -20,6 +22,7 @@ pub(crate) use manifests::{
     installed_corporate, one_copy, one_copy_dir, one_create_dir, one_symlink, one_symlink_dir,
     rejected, seeded_repository_in_the_home,
 };
+pub(crate) use stand_in::stand_in as compiled_stand_in;
 pub(crate) use tree::Tree;
 
 use assert_cmd::Command;
@@ -60,6 +63,8 @@ pub(crate) fn batfiles_at(program: &std::path::Path) -> Command {
 /// Encode `path` as a `file://` URL, escaping percent signs, spaces, `#`, and `?`.
 pub(crate) fn file_url(path: &std::path::Path) -> String {
     let path = path.to_str().expect("fixture paths are UTF-8");
+    // A canonical Windows path's `\\?\` prefix names the same file without it.
+    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
     let mut url = String::from("file://");
     // On Windows an absolute path starts with its drive, and a URL path with `/`.
     if !path.starts_with('/') {
