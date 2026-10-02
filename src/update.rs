@@ -355,7 +355,6 @@ fn running_executable() -> Result<PathBuf, Error> {
     paths::canonicalize(&exe).map_err(|source| Error::Read { path: exe, source })
 }
 
-
 /// Create the private file a release is downloaded into, failing if anything is already there.
 fn create_staged(staged: &Path, exe: &Path) -> Result<fs::File, Error> {
     let mut options = fs::OpenOptions::new();
