@@ -372,8 +372,9 @@ dest = "~/.vim/autoload/pathogen.vim"
     let assertion = tree.batfiles().arg("sync").assert().failure();
     let stderr = stderr_of(&assertion);
 
+    // The path the URL names, in its separators.
     assert!(
-        stderr.contains(&format!("could not read {}", missing.display())),
+        stderr.contains(&format!("could not read {}", written(&missing))),
         "{stderr}"
     );
     assert!(
@@ -627,7 +628,14 @@ fn an_entry_that_would_be_written_outside_the_destination_installs_nothing() {
             !tree.home(".local/tool").exists(),
             "{what} was installed anyway"
         );
-        assert!(said.contains("would be written outside"), "{what}: {said}");
+        // Windows refuses an archive symlink before asking where it points.
+        let unsupported = cfg!(windows)
+            && matches!(members[0], Member::Symlink(..))
+            && said.contains("symlinks are not supported on this platform");
+        assert!(
+            said.contains("would be written outside") || unsupported,
+            "{what}: {said}"
+        );
         assert!(
             !tree.home(".local").exists() || entries(&tree.home(".local")).is_empty(),
             "{what} left something beside the destination"

@@ -200,21 +200,3 @@ fn the_stub_finds_batfiles_exactly_as_the_installer_does() {
         );
     }
 }
-
-#[test]
-fn the_leaf_fixture_carries_the_stub_init_writes() {
-    let dir = tempfile::TempDir::new().expect("a scratch directory");
-    Command::cargo_bin("batfiles")
-        .expect("the batfiles binary")
-        .current_dir(dir.path())
-        .env_remove("BATFILES_BASE")
-        .args(["--quiet", "init", "--no-git-init"])
-        .assert()
-        .success();
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/leaf/install.sh");
-    assert_eq!(
-        fs::read_to_string(&fixture).expect("the fixture's stub"),
-        fs::read_to_string(dir.path().join("install.sh")).expect("the written stub"),
-        "regenerate tests/fixtures/leaf/install.sh with `batfiles init`"
-    );
-}

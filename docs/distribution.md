@@ -2,16 +2,15 @@
 
 How a batfiles release is laid out, built, and published; how the hosted
 installer puts a release on a machine, and the stub a leaf repository carries
-installs a checkout; and how to serve releases from another site. The Windows
-installer is [proposed](future/distribution.md) and not yet built.
-[`batfiles update`](cmdline.md#update) replaces an installed binary with
-another release.
+installs a checkout, on Unix and on Windows; and how to serve releases from
+another site. [`batfiles update`](cmdline.md#update) replaces an installed
+binary with another release.
 
 | Piece | Lives | Changes | Job |
 | --- | --- | --- | --- |
 | [Release tree](#release-tree) | A release base URL | Every release | Binaries, checksums, installers, `VERSION` |
 | [Hosted installer](#hosted-installer) | `install.sh` and `install.ps1` in the release tree | Every release | Put a verified binary at its install location, then optionally run it |
-| [Leaf stub](#leaf-stub) | `install.sh` in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
+| [Leaf stub](#leaf-stub) | `install.sh` and `install.ps1` in a leaf repository | Frozen | Find or fetch `batfiles`, then `sync` its own checkout |
 | [`batfiles update`](cmdline.md#update) | The binary | Every release | Replace the running binary with another release |
 
 All logic that follows releases — platform detection, asset names, checksum
@@ -78,10 +77,6 @@ unpack it. `SHA256SUMS` leaves the installers out so that restamping them does
 not invalidate it. Checksums detect corruption, not a compromised host. The
 official workflow also publishes a build-provenance attestation for each binary,
 which `gh attestation verify` checks; nothing depends on it.
-
-Until the [Windows installer](future/distribution.md#windows) is built,
-`install.ps1` is a placeholder that installs nothing: it names its base's
-`latest/download/` and fails.
 
 ### Targets
 
@@ -166,7 +161,9 @@ version requested, installing to a scratch path that leaves any batfiles on
 the machine alone, and requires the result to report the version. With
 `LATEST=yes` it does the same through `<base>/latest/download/install.sh` with
 no version requested, and then requires that binary's `update --check`, with
-`BATFILES_BASE` set to `URL`, to report the version available.
+`BATFILES_BASE` set to `URL`, to report the version available. Under Git Bash on
+Windows it runs `install.ps1` with `pwsh` instead: the scriptblock one-liner for
+the requested version, and `irm | iex` for the latest.
 
 `dist:verify` fetches `<base>/download/v<version>/`: `VERSION` must hold the
 version, every binary `SHA256SUMS` lists must match it, and both installers must
@@ -191,9 +188,9 @@ carry the stamped base, `STAMPED` or else `URL`. With `LATEST=yes`,
    approval.
 5. `dist:verify` checks the published release at this repository's releases
    URL, including `latest` for a stable release.
-6. `dist:smoke` installs it with its own one-liner on Linux x86_64 and aarch64
-   and on macOS runners, again including `latest` for a stable release, where
-   the installed binary's `update --check` must find it.
+6. `dist:smoke` installs it with its own one-liner on Linux x86_64 and aarch64,
+   macOS, and Windows runners, again including `latest` for a stable release,
+   where the installed binary's `update --check` must find it.
 
 A failure before publishing leaves no release, or at most a draft to delete.
 
@@ -300,10 +297,52 @@ batfiles by absolute path, so the bootstrap never depends on `PATH`.
 - Its own failures exit 1. Once it `exec`s batfiles, the exit status is
   batfiles'.
 
+### On Windows
+
+`install.ps1` is the same installer for PowerShell 7 or later:
+
+```powershell
+irm <base>/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm <base>/latest/download/install.ps1))) clone https://github.com/me/dotfiles
+```
+
+The first form ensures a binary; the second ensures one and then runs it with
+the arguments after the scriptblock. It takes the same [three
+variables](#invocation), set beforehand as `$env:BATFILES_VERSION = '1.2.3'`,
+and differs from `install.sh` only where Windows does:
+
+- **Candidates:** the `batfiles` that `Get-Command` finds on `PATH`, then
+  `$env:LOCALAPPDATA\Programs\batfiles\batfiles.exe`, the install location.
+  `BATFILES_BIN` replaces both, as [it does on Unix](#resolving-a-binary), and
+  the same floor applies to `BATFILES_VERSION`.
+- **Target:** `PROCESSOR_ARCHITECTURE`, or `PROCESSOR_ARCHITEW6432` in a 32-bit
+  PowerShell on a 64-bit Windows, chooses it. `AMD64` and `ARM64` both get
+  `x86_64-pc-windows-msvc`, which Windows on ARM runs under emulation; any other
+  architecture fails, naming it. On Linux or macOS it refuses, naming
+  `install.sh`.
+- **Downloads** use `Invoke-WebRequest`, and `Get-FileHash` verifies the
+  digest. The staged file's name ends in `.exe`, so that Windows will run its
+  `version`.
+- **`PATH`** is never changed. When the install directory is not on it, the
+  installer prints the `[Environment]::SetEnvironmentVariable` command that
+  would add it for the current user.
+- **Failures** are terminating errors rather than `exit`, which inside `irm |
+  iex` would close the session it ran in; under `pwsh -Command` or `-File` the
+  status is 1. Batfiles' own status is left in `$LASTEXITCODE`.
+- **Windows PowerShell 5.1**, which every Windows has, is refused with the
+  `winget install Microsoft.PowerShell` that provides PowerShell 7. The script
+  stays parseable by 5.1 so that it can say so.
+
+It is ASCII, its body a function called on the last line, and its messages go
+to standard error with an `install.ps1:` prefix. `task lint` runs
+PSScriptAnalyzer over it where `pwsh` is installed.
+
 ## Leaf stub
 
-[`init`](cmdline.md#init) writes `install.sh`, executable, as the last entry of
-its skeleton. It is for a machine that already has a checkout:
+[`init`](cmdline.md#init) writes `install.sh`, executable, and its [Windows
+counterpart](#the-windows-stub) `install.ps1`, as the last entries of its
+skeleton; [`init --stubs`](cmdline.md#init) adds either to a repository that
+lacks it. They are for a machine that already has a checkout:
 
 ```sh
 git clone https://github.com/me/dotfiles ~/dotfiles && ~/dotfiles/install.sh
@@ -358,6 +397,31 @@ release. The parts the stub does share with the installer — the version
 grammar, reading a candidate's version, and the candidates themselves — are the
 same text in both, which `tests/dist` checks.
 
+### The Windows stub
+
+`install.ps1` does the same for PowerShell 7 or later, from a checkout:
+
+```powershell
+git clone https://github.com/me/dotfiles $HOME\dotfiles; & $HOME\dotfiles\install.ps1
+```
+
+Its first line is `#Requires -Version 7.0`, its second the same marker, and
+then its two settings:
+
+```powershell
+$BatfilesBase = if ($env:BATFILES_BASE) { $env:BATFILES_BASE } else { '<base>' }
+$BatfilesVersion = if ($env:BATFILES_VERSION) { $env:BATFILES_VERSION } else { '' }
+```
+
+A pin is written in the second line's `''`. Run, it follows the steps above with
+the [Windows installer](#on-windows)'s candidates: it finds its directory from
+`$PSScriptRoot`, refusing with the `clone` one-liner when it is not run from a
+file beside a `batfiles.toml`; fetches `install.ps1` and runs it as a
+scriptblock with the `sync` command as its arguments; and exits with batfiles'
+status. The text it shares with the Windows installer is checked the same way.
+A machine whose execution policy refuses local scripts runs it as `pwsh
+-ExecutionPolicy Bypass -File .\install.ps1`.
+
 ### Stability
 
 The stub depends on five contracts, and each is frozen:
@@ -367,15 +431,16 @@ The stub depends on five contracts, and each is frozen:
   batfiles command;
 - the `batfiles <version>` form of `batfiles version`, in the [version
   grammar](#versions);
-- the binary candidates and their order; and
+- the binary candidates and their order, on each platform; and
 - `sync --bootstrap --batfiles-dir`, with the enable and disable options.
 
 Nothing inspects or rewrites a stub in a repository: `sync` writes nothing in
 the leaf but [`remotes/`](repoformat.md#materialization), and a tracked file it
-changed would dirty the user's working tree. `init` leaves an existing
-`install.sh` alone, warning when it lacks the marker line. The marker exists so
-that a second stub format, should one ever be needed, can be recognized and
-regenerated by an explicit command added then.
+changed would dirty the user's working tree. `init`, with or without
+`--stubs`, leaves an existing stub alone, warning when it lacks the marker
+line, and only writes one that is missing. The marker exists so that a second
+stub format, should one ever be needed, can be recognized and regenerated by an
+explicit command added then.
 
 ## Self-hosting
 

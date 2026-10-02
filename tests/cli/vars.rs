@@ -364,6 +364,8 @@ dest = "~/.cache/zsh"
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn every_layer_overrides_the_one_below_it() {
     let tree = with_two_documents();
     let assertion = tree
@@ -456,6 +458,8 @@ fn a_run_with_no_variables_anywhere_shows_nothing() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn an_unusable_environment_name_is_warned_about_and_the_run_goes_on() {
     let tree = with_two_documents();
     let assertion = tree
@@ -479,6 +483,8 @@ fn an_unusable_environment_name_is_warned_about_and_the_run_goes_on() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn a_warning_about_an_environment_name_never_echoes_its_value() {
     let tree = Tree::new();
     let assertion = tree
@@ -497,6 +503,8 @@ fn a_warning_about_an_environment_name_never_echoes_its_value() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn a_value_cannot_forge_a_line_of_batfiles_own() {
     let tree = Tree::new();
     tree.write_manifest("[vars]\nmischief = \"ok\\nerror: forged\"\n");
@@ -526,6 +534,8 @@ fn a_value_cannot_forge_a_line_of_batfiles_own() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn a_rejected_environment_name_cannot_forge_one_either() {
     let tree = Tree::new();
     let assertion = tree
@@ -558,6 +568,8 @@ fn a_malformed_machine_document_fails_a_run_that_merges_it() {
 // The listing.
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn a_listing_shows_every_layer_with_the_value_in_force_first() {
     let tree = with_two_documents();
     let assertion = tree
@@ -664,6 +676,8 @@ fn a_listing_with_nothing_to_show_writes_no_data() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn an_unusable_environment_name_warns_without_disturbing_the_listing() {
     let tree = with_two_documents();
     let assertion = tree

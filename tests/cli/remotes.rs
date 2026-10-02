@@ -20,7 +20,7 @@ url = "{}"
 
 /// What the materialization of `core` holds at `name`.
 fn materialized(tree: &Tree, name: &str) -> String {
-    let path = tree.path("repo").join("remotes/core").join(name);
+    let path = tree.path("repo/remotes/core").join(name);
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", display(&path)))
 }
 
@@ -34,13 +34,13 @@ fn a_declared_remote_is_cloned_into_the_repository() {
 
     assert_eq!(materialized(&tree, "README.md"), "a plugin\n");
     assert!(
-        tree.path("repo").join("remotes/core/.git").is_dir(),
+        tree.path("repo/remotes/core/.git").is_dir(),
         "the materialization is not a clone"
     );
     assert!(
         stderr_of(&assertion).contains(&format!(
             "cloned {} from {}",
-            display(&tree.path("repo").join("remotes/core")),
+            display(&tree.path("repo/remotes/core")),
             display(&origin.origin())
         )),
         "the clone was not reported:\n{}",
@@ -63,7 +63,7 @@ fn a_later_sync_updates_the_materialization() {
     assert!(
         stderr_of(&assertion).contains(&format!(
             "updated {}",
-            display(&tree.path("repo").join("remotes/core"))
+            display(&tree.path("repo/remotes/core"))
         )),
         "the update was not reported:\n{}",
         stderr_of(&assertion)
@@ -122,7 +122,7 @@ type = "git"
 url = "{}"
 
 {}"#,
-        display(&tree.path("nowhere.git")),
+        written(&tree.path("nowhere.git")),
         one_create_dir("~/.cache/zsh")
     ));
 
@@ -449,7 +449,7 @@ fn a_symlink_may_point_into_a_materialization() {
 
     assert_eq!(
         link_target(&tree.home(".zshrc")),
-        tree.path("repo").join("remotes/core/files/zshrc")
+        tree.path("repo/remotes/core/files/zshrc")
     );
     assert!(
         fs::read_to_string(tree.home(".zshrc"))
@@ -477,7 +477,7 @@ dest = "~/.zshrc"
 
     assert_eq!(
         link_target(&tree.home(".zshrc")),
-        tree.path("repo").join("remotes/core/files/zshrc")
+        tree.path("repo/remotes/core/files/zshrc")
     );
 }
 
@@ -552,7 +552,7 @@ fn a_list_held_by_a_remote_is_named_the_way_the_manifest_wrote_it() {
     let tree = Tree::new();
     origin.publish(
         "plugins.txt",
-        &format!("{}\n", display(&tree.path("nowhere.git"))),
+        &format!("{}\n", written(&tree.path("nowhere.git"))),
         "add a list naming nothing",
     );
     tree.write_manifest(&declaring(
@@ -677,7 +677,7 @@ fn a_materialization_left_by_an_earlier_run_is_kept_and_not_read() {
 
 /// Where the materialization of `core` is, whether or not anything is there.
 fn materialization(tree: &Tree) -> std::path::PathBuf {
-    tree.path("repo").join("remotes/core")
+    tree.path("repo/remotes/core")
 }
 
 #[test]

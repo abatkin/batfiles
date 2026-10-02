@@ -16,7 +16,6 @@ mod groups;
 mod inclusion;
 mod inclusion_addresses;
 mod inclusion_clone_lists;
-mod inclusion_composition;
 mod inclusion_filters;
 mod inclusion_vars;
 mod init;
@@ -26,6 +25,7 @@ mod refreshing;
 mod remotes;
 mod selection;
 mod surface;
+mod update;
 mod vars;
 
 #[cfg(unix)]
@@ -36,9 +36,10 @@ mod dry_run;
 mod dynamic_vars;
 #[cfg(unix)]
 mod fetched_remotes;
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
+mod inclusion_composition;
 #[cfg(unix)]
 mod linking;
-#[cfg(unix)]
-mod update;
 #[cfg(unix)]
 mod vars_refresh;

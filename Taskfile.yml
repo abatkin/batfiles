@@ -10,7 +10,7 @@ tasks:
     cmd: cargo fmt --all -- --check
 
   lint:
-    desc: Run clippy with warnings denied, for the host and for Windows, and shellcheck
+    desc: Run clippy with warnings denied, for the host and for Windows, shellcheck, and PSScriptAnalyzer
     cmds:
       - cargo clippy --all-targets -- -D warnings
       # cargo-xwin supplies Windows SDK headers and libraries for cross-target lint.
@@ -19,10 +19,19 @@ tasks:
       # tests/docker/.
       # -x follows the sourced dist/version.sh.
       - shellcheck -x dist/*.sh src/*.sh tests/docker/*.sh
+      # PSScriptAnalyzer over the PowerShell installer and stub, where pwsh is installed, as on
+      # the CI runner; elsewhere the step says it did not run. A pwsh that cannot load or run the
+      # analyzer fails, rather than finding nothing.
+      - |
+        if command -v pwsh >/dev/null 2>&1; then
+          pwsh -NoLogo -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Import-Module PSScriptAnalyzer; $scripts = "dist/install.ps1", "src/stub.ps1"; $found = @($scripts | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ }); if ($found) { $found | Format-Table -AutoSize ScriptName, Line, RuleName, Message -Wrap | Out-String -Width 200; exit 1 }; "lint: PSScriptAnalyzer found nothing in $($scripts -join " and ")"'
+        else
+          echo "lint: pwsh is not installed, so the PowerShell scripts were not analyzed"
+        fi
 
   test:
-    desc: Run the project test suite
-    cmd: cargo test
+    desc: Run the project test suite (arguments after `--` go to cargo test)
+    cmd: cargo test {{.CLI_ARGS}}
 
   test:docker:
     desc: Run the pristine-machine acceptance in a container

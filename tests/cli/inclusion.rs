@@ -15,9 +15,10 @@ fn including() -> (BareRepo, Tree) {
 
 /// Where the included manifest lands once the remote is materialized.
 fn included_manifest(tree: &Tree) -> String {
-    display(&tree.path("repo").join("remotes/corporate/batfiles.toml"))
+    display(&tree.path("repo/remotes/corporate/batfiles.toml"))
 }
 
+#[cfg(unix)]
 /// The three actions the `corporate` fixture declares, as a report names them:
 /// under the `corp` inclusion that contributed them, in declaration order.
 const INCLUDED_ACTIONS: [&str; 3] = [
@@ -26,6 +27,7 @@ const INCLUDED_ACTIONS: [&str; 3] = [
     "copy-dir corp.seeds",
 ];
 
+#[cfg(unix)]
 fn assert_included_ran(tree: &Tree) {
     for CorporateAction { dest, .. } in CORPORATE_ACTIONS {
         assert!(
@@ -45,6 +47,8 @@ fn assert_nothing_included_ran(tree: &Tree) {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_materialized_inclusion_contributes_its_actions_to_the_run() {
     let (_origin, tree) = including();
 
@@ -65,7 +69,7 @@ fn a_materialized_inclusion_contributes_its_actions_to_the_run() {
 
     assert_eq!(
         fs::read_link(tree.home(".zshrc.corporate")).expect("the link the inclusion installed"),
-        tree.path("repo").join("remotes/corporate/files/zshrc"),
+        tree.path("repo/remotes/corporate/files/zshrc"),
         "the included source was not read from the materialization"
     );
 
@@ -76,6 +80,8 @@ fn a_materialized_inclusion_contributes_its_actions_to_the_run() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_inclusion_contributes_at_its_position_in_the_list() {
     let (_origin, tree) = including();
 
@@ -101,6 +107,8 @@ fn an_inclusion_contributes_at_its_position_in_the_list() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_dry_run_describes_the_materialization_it_finds_however_stale() {
     let (origin, tree) = including();
     tree.batfiles().arg("sync").assert().success();
@@ -267,9 +275,7 @@ remote = "core"
         "the refusal did not name the remote:\n{stderr}"
     );
     assert!(
-        stderr.contains(&display(
-            &tree.path("repo").join("remotes/core/batfiles.toml")
-        )),
+        stderr.contains(&display(&tree.path("repo/remotes/core/batfiles.toml"))),
         "the refusal did not say where it looked:\n{stderr}"
     );
 }
@@ -412,7 +418,7 @@ remote = "shared"
         "the included action beside the nested inclusion did not run"
     );
     assert!(
-        !tree.path("repo").join("remotes/shared").exists(),
+        !tree.path("repo/remotes/shared").exists(),
         "a nested inclusion's remote was materialized"
     );
 }
@@ -534,6 +540,8 @@ dest = "~/.cache/corp"
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_inclusion_cannot_be_applied_on_its_own() {
     let (_origin, tree) = including();
     tree.batfiles().arg("sync").assert().success();
@@ -557,6 +565,8 @@ fn an_inclusion_cannot_be_applied_on_its_own() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn two_inclusions_of_one_remote_written_without_ids_are_told_apart() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();

@@ -21,7 +21,7 @@ impl RepositoryRoot {
     /// Anchor and resolve a selected repository root.
     pub fn at(path: &Path) -> Result<Self, Error> {
         let anchored = anchor(path)?;
-        let canonical = fs::canonicalize(&anchored).unwrap_or_else(|_| anchored.clone());
+        let canonical = canonicalize(&anchored).unwrap_or_else(|_| anchored.clone());
         Ok(Self {
             anchored,
             canonical,
@@ -270,7 +270,7 @@ pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     let mut trailing = Vec::new();
     let mut ancestor = path;
     loop {
-        if let Ok(canonical) = fs::canonicalize(ancestor) {
+        if let Ok(canonical) = canonicalize(ancestor) {
             let mut result = canonical;
             result.extend(trailing.iter().rev());
             return result;
@@ -283,16 +283,63 @@ pub(crate) fn will_resolve_to(path: &Path) -> PathBuf {
     }
 }
 
+/// The canonical form of `path`, as [`fs::canonicalize`] resolves it. On Windows, the `\\?\`
+/// prefix that gives it is dropped wherever the path means the same without it, so the path
+/// reads as users write it and Git, which refuses such a path, can be handed it.
+pub(crate) fn canonicalize(path: &Path) -> io::Result<PathBuf> {
+    let canonical = fs::canonicalize(path)?;
+    if cfg!(windows)
+        && let Some(plain) = canonical.to_str().and_then(without_verbatim_prefix)
+    {
+        return Ok(PathBuf::from(plain));
+    }
+    Ok(canonical)
+}
+
+/// A verbatim Windows path, `\\?\C:\...` or `\\?\UNC\server\share\...`, as the path that means
+/// the same without the prefix, or `None` where none does: one too long for the prefix-less
+/// form, or with a component Windows would rewrite, such as a device name or a trailing dot.
+fn without_verbatim_prefix(verbatim: &str) -> Option<String> {
+    /// The longest path the prefix-less form reaches.
+    const MAX_PATH: usize = 260;
+    let plain = if let Some(unc) = verbatim.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        let rest = verbatim.strip_prefix(r"\\?\")?;
+        let drive = rest.as_bytes();
+        if drive.len() < 3 || !drive[0].is_ascii_alphabetic() || &drive[1..3] != br":\" {
+            return None;
+        }
+        rest.to_owned()
+    };
+    let rewritten = |part: &str| {
+        let stem = part.split('.').next().unwrap_or_default().trim_end();
+        let device = ["CON", "PRN", "AUX", "NUL"]
+            .iter()
+            .any(|name| stem.eq_ignore_ascii_case(name))
+            || (stem.len() == 4
+                && stem.get(..3).is_some_and(|prefix| {
+                    ["COM", "LPT"]
+                        .iter()
+                        .any(|name| prefix.eq_ignore_ascii_case(name))
+                })
+                && stem.as_bytes()[3].is_ascii_digit());
+        device || part.ends_with('.') || part.ends_with(' ')
+    };
+    let components = plain.split('\\').skip(1).filter(|part| !part.is_empty());
+    (plain.len() < MAX_PATH && !components.clone().any(rewritten)).then_some(plain)
+}
+
 /// Canonicalize a path, falling back to lexical normalization on failure. The fallback resolves
 /// `..` textually and may differ from filesystem resolution through symlinks.
 pub(crate) fn canonicalize_or_normalize(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| normalize_lexically(path))
+    canonicalize(path).unwrap_or_else(|_| normalize_lexically(path))
 }
 
 /// Where an existing symlink points, as the operating system would read it.
 fn target_of(link: &Path, written: &Path) -> PathBuf {
     let directory = match link.parent() {
-        Some(parent) => fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()),
+        Some(parent) => canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()),
         None => PathBuf::new(),
     };
     let joined = if written.is_relative() {
@@ -358,6 +405,40 @@ pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_verbatim_path_loses_its_prefix_where_it_means_the_same_without_it() {
+        let plain = |verbatim: &str| without_verbatim_prefix(verbatim);
+        assert_eq!(
+            plain(r"\\?\C:\Users\me\dotfiles").as_deref(),
+            Some(r"C:\Users\me\dotfiles")
+        );
+        assert_eq!(plain(r"\\?\D:\").as_deref(), Some(r"D:\"));
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\dotfiles").as_deref(),
+            Some(r"\\server\share\dotfiles")
+        );
+        for kept in [
+            r"C:\Users\me",
+            r"\\?\Volume{0-1}\dotfiles",
+            r"\\?\C:\Users\con\dotfiles",
+            r"\\?\C:\Users\nul.txt",
+            r"\\?\C:\Users\COM1",
+            r"\\?\C:\Users\trailing.",
+            r"\\?\C:\Users\trailing ",
+        ] {
+            assert_eq!(plain(kept), None, "{kept}");
+        }
+        assert_eq!(
+            plain(&format!(r"\\?\C:\{}", "a".repeat(300))),
+            None,
+            "too long without the prefix"
+        );
+        assert_eq!(
+            plain(r"\\?\C:\Users\console").as_deref(),
+            Some(r"C:\Users\console")
+        );
+    }
 
     #[test]
     fn normalizing_cancels_only_what_it_can() {

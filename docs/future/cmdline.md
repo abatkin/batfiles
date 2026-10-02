@@ -58,8 +58,7 @@ included, and is specified in [`docs/cmdline.md`](../cmdline.md#clone).
 ### `update`
 
 [`update`](../cmdline.md#update) is built and specified in
-[`docs/cmdline.md`](../cmdline.md#update), except on Windows, which
-[distribution](distribution.md#windows) proposes.
+[`docs/cmdline.md`](../cmdline.md#update).
 
 ## Address Forms
 

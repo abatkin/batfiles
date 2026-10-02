@@ -59,6 +59,8 @@ fn a_record_with_no_condition_is_reached_by_nothing_here() {
 }
 
 #[test]
+// Lowercase `BATFILES_VAR_*` names, which Windows uppercases at capture.
+#[cfg(unix)]
 fn every_variable_layer_reaches_a_condition() {
     let tree = Tree::new();
     gated(&tree, "when", "work", "[vars]\nwork = \"false\"\n\n");

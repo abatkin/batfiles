@@ -24,6 +24,8 @@ remote = "corporate"
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_inclusion_writing_no_filter_takes_the_whole_manifest() {
     let (_origin, tree) = filtering("");
 
@@ -33,6 +35,8 @@ fn an_inclusion_writing_no_filter_takes_the_whole_manifest() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_allow_list_takes_what_it_names_and_leaves_the_rest() {
     let (_origin, tree) = filtering("install-groups = [\"shell\"]\n");
 
@@ -47,6 +51,8 @@ fn an_allow_list_takes_what_it_names_and_leaves_the_rest() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_deny_list_leaves_out_what_it_names_and_takes_the_rest() {
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
 
@@ -56,6 +62,8 @@ fn a_deny_list_leaves_out_what_it_names_and_takes_the_rest() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn excluded_actions_narrow_what_a_group_filter_selected() {
     let (_origin, tree) =
         filtering("exclude-groups = [\"prompt\"]\nexclude-actions = [\"seeds\"]\n");
@@ -83,6 +91,8 @@ fn an_empty_allow_list_takes_nothing_and_is_not_an_absent_one() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_record_the_filters_left_out_says_so_rather_than_going_unmentioned() {
     let (_origin, tree) = filtering("install-groups = [\"shell\"]\n");
 
@@ -101,6 +111,8 @@ fn a_record_the_filters_left_out_says_so_rather_than_going_unmentioned() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_inclusion_with_no_id_is_named_by_where_it_was_written() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
@@ -128,6 +140,8 @@ exclude-actions = ["p10k"]
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn naming_a_record_the_filters_left_out_does_not_bring_it_back() {
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
     tree.batfiles().arg("sync").assert().success();
@@ -150,6 +164,8 @@ fn naming_a_record_the_filters_left_out_does_not_bring_it_back() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_command_that_named_one_record_says_when_it_carried_nothing_out() {
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
     tree.batfiles().arg("sync").assert().success();
@@ -168,6 +184,8 @@ fn a_command_that_named_one_record_says_when_it_carried_nothing_out() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_skip_naming_a_record_the_filters_left_out_matched_something() {
     let (_origin, tree) = filtering("exclude-actions = [\"p10k\"]\n");
 
@@ -185,6 +203,8 @@ fn a_skip_naming_a_record_the_filters_left_out_matched_something() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_filter_name_the_remote_does_not_declare_warns_and_the_run_carries_on() {
     let (_origin, tree) = filtering("install-actions = [\"zshrc\", \"nowhere\"]\n");
 
@@ -205,6 +225,8 @@ fn a_filter_name_the_remote_does_not_declare_warns_and_the_run_carries_on() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_group_filter_is_answered_by_a_group_and_not_by_an_action_of_that_name() {
     let (_origin, tree) = filtering("exclude-groups = [\"zshrc\"]\n");
 

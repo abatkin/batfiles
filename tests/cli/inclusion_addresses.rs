@@ -11,6 +11,7 @@ fn including_unmaterialized() -> (BareRepo, Tree) {
     (origin, tree)
 }
 
+#[cfg(unix)]
 /// Create and synchronize the inclusion fixture.
 fn synchronized() -> (BareRepo, Tree) {
     let (origin, tree) = including_unmaterialized();
@@ -18,6 +19,7 @@ fn synchronized() -> (BareRepo, Tree) {
     (origin, tree)
 }
 
+#[cfg(unix)]
 /// Create the synchronized fixture, then remove its installed corporate content.
 fn ready() -> (BareRepo, Tree) {
     let (origin, tree) = synchronized();
@@ -32,6 +34,7 @@ fn ready() -> (BareRepo, Tree) {
     (origin, tree)
 }
 
+#[cfg(unix)]
 /// Return whether the included `zshrc` and `seeds` actions are installed.
 fn installed(tree: &Tree) -> (bool, bool) {
     let installed = installed_corporate(tree);
@@ -39,6 +42,8 @@ fn installed(tree: &Tree) -> (bool, bool) {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_qualified_address_applies_one_contributed_action() {
     let (_origin, tree) = ready();
 
@@ -55,6 +60,8 @@ fn a_qualified_address_applies_one_contributed_action() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_qualified_group_applies_what_the_inclusion_declared_under_it() {
     let (_origin, tree) = ready();
 
@@ -71,6 +78,8 @@ fn a_qualified_group_applies_what_the_inclusion_declared_under_it() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn asking_for_the_inclusion_asks_for_everything_it_contributed() {
     let (_origin, tree) = ready();
 
@@ -87,6 +96,8 @@ fn asking_for_the_inclusion_asks_for_everything_it_contributed() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_unqualified_name_reaches_the_leaf_repository_alone() {
     let (_origin, tree) = ready();
 
@@ -116,6 +127,8 @@ fn an_unqualified_name_reaches_the_leaf_repository_alone() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_qualified_skip_leaves_out_one_contributed_action() {
     let (_origin, tree) = ready();
 
@@ -144,6 +157,8 @@ fn a_qualified_skip_leaves_out_one_contributed_action() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_qualified_disable_leaves_out_one_contributed_action() {
     let (_origin, tree) = ready();
 
@@ -161,6 +176,8 @@ fn a_qualified_disable_leaves_out_one_contributed_action() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn excluding_the_inclusion_leaves_its_manifest_unread() {
     let (_origin, tree) = ready();
 
@@ -188,6 +205,8 @@ fn excluding_the_inclusion_leaves_its_manifest_unread() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_skip_qualified_by_an_unopened_inclusion_is_not_reported_as_matching_nothing() {
     let (_origin, tree) = ready();
 
@@ -217,6 +236,8 @@ fn a_skip_qualified_by_an_unopened_inclusion_is_not_reported_as_matching_nothing
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_skip_qualified_by_an_inclusion_with_nothing_to_read_is_treated_the_same_way() {
     let origin = BareRepo::from_fixture("corporate");
 
@@ -276,6 +297,8 @@ fn a_skip_qualified_by_an_inclusion_that_was_read_and_holds_nothing_is_reported(
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_inclusion_opened_to_reach_a_group_is_not_an_applied_action() {
     let (_origin, tree) = ready();
 
@@ -325,6 +348,8 @@ fn a_group_whose_inclusion_brought_nothing_in_says_so_without_blaming_a_skip() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn a_qualified_address_that_names_nothing_is_a_failure_like_any_other() {
     let (_origin, tree) = ready();
 
@@ -347,6 +372,7 @@ fn a_qualified_address_that_names_nothing_is_a_failure_like_any_other() {
     );
 }
 
+#[cfg(unix)]
 /// Rewrite the leaf manifest, replacing `from` with `to` once.
 fn edit_manifest(tree: &Tree, from: &str, to: &str) {
     let manifest = std::fs::read_to_string(tree.manifest()).expect("the leaf manifest");
@@ -354,6 +380,7 @@ fn edit_manifest(tree: &Tree, from: &str, to: &str) {
     tree.write_manifest(&manifest.replacen(from, to, 1));
 }
 
+#[cfg(unix)]
 /// One way to exclude `corp` on this machine.
 struct Excluding {
     case: &'static str,
@@ -363,6 +390,7 @@ struct Excluding {
     reason: &'static str,
 }
 
+#[cfg(unix)]
 /// Each way to exclude `corp` on this machine.
 const EXCLUDING_CORP: [Excluding; 4] = [
     Excluding {
@@ -418,6 +446,8 @@ const EXCLUDING_CORP: [Excluding; 4] = [
 ];
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn naming_an_included_action_does_not_waive_its_inclusions_exclusions() {
     for Excluding {
         case,
@@ -445,6 +475,8 @@ fn naming_an_included_action_does_not_waive_its_inclusions_exclusions() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn naming_an_included_group_does_not_waive_its_inclusions_exclusions() {
     let (_origin, tree) = ready();
     tree.batfiles()
@@ -471,6 +503,8 @@ fn naming_an_included_group_does_not_waive_its_inclusions_exclusions() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn naming_the_inclusions_own_group_still_waives_it() {
     let (_origin, tree) = ready();
     tree.batfiles()
@@ -509,6 +543,8 @@ fn naming_an_action_in_an_unmaterialized_inclusion_says_to_synchronize() {
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn two_inclusions_of_one_remote_are_two_sets_of_records() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
@@ -558,6 +594,8 @@ remote = "corporate"
 }
 
 #[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn an_inclusion_written_without_an_id_runs_and_answers_to_nothing() {
     let origin = BareRepo::from_fixture("corporate");
     let tree = Tree::new();
