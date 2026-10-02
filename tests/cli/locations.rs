@@ -206,6 +206,8 @@ fn a_command_that_does_not_use_the_repository_resolves_only_its_own_state() {
 }
 
 #[test]
+// Unix paths, which Windows would join with `\\`.
+#[cfg(unix)]
 fn config_and_cache_do_not_follow_the_selected_home() {
     let tree = Tree::new();
     let assertion = tree

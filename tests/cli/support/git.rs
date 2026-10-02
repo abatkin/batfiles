@@ -109,7 +109,7 @@ impl BareRepo {
 
     /// The bare repository, which is what a manifest names as a `source`.
     pub(crate) fn origin(&self) -> PathBuf {
-        self.dir.path().join("origin.git")
+        as_written(self.dir.path().join("origin.git"))
     }
 
     /// A second bare repository beside the first, for a list that has to name
@@ -117,13 +117,24 @@ impl BareRepo {
     pub(crate) fn another(&self, name: &str) -> PathBuf {
         let bare = format!("{name}.git");
         git(self.dir.path(), &["init", "--bare", "-b", "main", &bare]);
-        let origin = self.dir.path().join(&bare);
+        let origin = as_written(self.dir.path().join(&bare));
         git(&self.work(), &["push", &display(&origin), "main"]);
         origin
     }
 
     fn work(&self) -> PathBuf {
         self.dir.path().join("work")
+    }
+}
+
+/// `path` as a manifest or clone list writes a repository: on Windows with forward slashes,
+/// which Git and Windows both accept, which a TOML string holds without escapes, and after
+/// which a clone list derives a clone's name.
+fn as_written(path: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(display(&path).replace('\\', "/"))
+    } else {
+        path
     }
 }
 
