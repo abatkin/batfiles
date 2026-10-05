@@ -121,6 +121,29 @@ fn a_directory_seed_is_replaced_whole_and_what_only_it_held_goes_with_the_backup
 }
 
 #[test]
+fn a_refresh_compares_only_what_the_filters_select() {
+    let tree = Tree::new();
+    tree.repo_file("seed/nvim/init.lua", "-- init\n");
+    tree.repo_file("seed/nvim/local.lua", "-- the repository's own\n");
+    tree.write_manifest(&format!(
+        "{}exclude = \"local.lua\"\n",
+        one_copy("seed/nvim", "~/.config/nvim")
+    ));
+    tree.batfiles().arg("sync").assert().success();
+    let dest = tree.home(".config/nvim");
+    assert_eq!(entries(&dest), ["init.lua"]);
+
+    let assertion = refresh(&tree, &["-v"]).success();
+
+    assert!(backups_of(&dest).is_empty());
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!("unchanged {}", display(&dest))),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn copy_dir_refreshes_each_child_on_its_own() {
     let tree = Tree::new();
     tree.repo_file("seed/same", "same\n");

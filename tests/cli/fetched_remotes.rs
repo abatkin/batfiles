@@ -544,13 +544,64 @@ remote = "fzf"
 }
 
 #[test]
-fn an_archive_remote_has_no_entry_filters() {
-    let stderr = rejected(
-        r#"[remotes.fzf]
-type = "archive"
-url = "https://e.example/fzf.tar.gz"
-include = "bin/*"
-"#,
+fn an_archive_remote_is_unpacked_through_its_filters() {
+    let server = Server::new(&[("/fzf.tar.gz", Reply::Bytes(tarball(FZF_WITH_DOCS)))]);
+    let tree = Tree::new();
+    tree.write_manifest(&linking_a_filtered_archive(&server, "exclude = \"*.md\"\n"));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(entries(&materialization(&tree, "fzf")), ["bin"]);
+    assert!(tree.home("bin/fzf").exists());
+    let stamp = fs::read_to_string(stamp(&tree, "fzf")).expect("the stamp");
+    assert!(stamp.contains("exclude = [\"*.md\"]"), "{stamp}");
+}
+
+#[test]
+fn a_changed_filter_is_a_changed_declaration() {
+    let server = Server::new(&[("/fzf.tar.gz", Reply::Bytes(tarball(FZF_WITH_DOCS)))]);
+    let tree = Tree::new();
+    tree.write_manifest(&linking_a_filtered_archive(&server, "exclude = \"*.md\"\n"));
+    tree.batfiles().arg("sync").assert().success();
+
+    tree.write_manifest(&linking_a_filtered_archive(
+        &server,
+        "exclude = [\"*.md\"]\n",
+    ));
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(server.requests(), 1, "one spelling of a filter for another");
+
+    tree.write_manifest(&linking_a_filtered_archive(&server, ""));
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert_eq!(server.requests(), 2);
+    assert_eq!(
+        entries(&materialization(&tree, "fzf")),
+        ["README.md", "bin"]
     );
-    assert!(stderr.contains("unknown field `include`"), "{stderr}");
+    assert!(
+        stderr_of(&assertion).contains("refetched"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+/// [`FZF`] with documentation beside the program.
+const FZF_WITH_DOCS: &[Member] = &[
+    Member::Directory("fzf-0.1.0", 0o755),
+    Member::Directory("fzf-0.1.0/bin", 0o755),
+    Member::File("fzf-0.1.0/bin/fzf", 0o755, "#!/bin/sh\necho fzf\n"),
+    Member::File("fzf-0.1.0/README.md", 0o644, "# fzf\n"),
+];
+
+/// A manifest declaring the archive remote `fzf` with `filters`, and linking its executable.
+fn linking_a_filtered_archive(server: &Server, filters: &str) -> String {
+    linking_an_archive(server).replacen(
+        "archive-root = \"*\"\n",
+        &format!("archive-root = \"*\"\n{filters}"),
+        1,
+    )
 }

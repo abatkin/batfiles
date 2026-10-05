@@ -214,6 +214,14 @@ pub(crate) enum Error {
     )]
     StagingPathTaken { path: PathBuf },
 
+    /// A `copy` with entry filters whose source is a file, with no entries to choose among.
+    #[error(
+        "cannot copy {}: it is a file, and `include` and `exclude` choose entries within a \
+         directory",
+        .path.display()
+    )]
+    FilteredSourceIsAFile { path: PathBuf },
+
     /// A copy source is neither a regular file nor a directory.
     #[error(
         "cannot copy {}: it is neither a regular file nor a directory",

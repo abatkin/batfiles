@@ -41,7 +41,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
 
 - **Install local files and directories.** `symlink` and `symlink-dir` create
   links; `copy` and `copy-dir` seed editable copies; `create-dir` creates a
-  container. See the [action reference](docs/repoformat.md#actions) and
+  container. `symlink-dir`, `copy`, and `copy-dir` take `include` and `exclude`
+  globs choosing what they install; see [entry filters](docs/repoformat.md#entry-filters).
+  See the [action reference](docs/repoformat.md#actions) and
   [destination policy](docs/safety.md#replacing-what-is-already-there).
 - **Keep what is in the way.** Something already at a destination is renamed to
   a timestamped backup beside it before it is replaced; `--no-overwrite` skips it
@@ -52,7 +54,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   `fetch-archive` unpacks a plain or gzipped tarball, from an `http://`,
   `https://`, or `file://` URL, optionally checking a SHA-256 digest. Both install only at vacant destinations, unless refreshed, using
   [staging and publication](docs/safety.md#staging-and-publication).
-  Archives follow the [extraction safety rules](docs/safety.md#archive-extraction).
+  Archives follow the [extraction safety rules](docs/safety.md#archive-extraction),
+  and `include` and `exclude` choose which of their entries are unpacked.
 - **Manage Git repositories and plugin lists.** `git-clone` clones or updates a
   repository; `git-clone-list` processes a text list of repositories. Both use
   the [conservative Git update policy](docs/safety.md#git-updates), with optional

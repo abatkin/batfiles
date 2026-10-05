@@ -532,6 +532,129 @@ fn dot_prefix_dots_every_installed_name_and_nothing_else() {
     );
 }
 
+/// A `symlink-dir` over `files` into `~/installed`, with filter fields appended.
+fn filtered_symlink_dir(filters: &str) -> String {
+    format!(
+        "{}{filters}\n",
+        one_symlink_dir("files", "~/installed", false)
+    )
+}
+
+#[test]
+fn include_links_only_the_children_it_matches() {
+    let tree = Tree::new();
+    with_children(&tree);
+    tree.write_manifest(&filtered_symlink_dir(r#"include = ["*rc", "config"]"#));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(
+        entries(&tree.home("installed")),
+        ["ackrc", "config", "zshrc"]
+    );
+
+    tree.write_manifest(&filtered_symlink_dir(r#"include = "z*""#));
+    fs::remove_dir_all(tree.home("installed")).expect("a fresh destination");
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&tree.home("installed")), ["zshrc"]);
+}
+
+#[test]
+fn exclude_leaves_out_the_children_it_matches_and_beats_include() {
+    let tree = Tree::new();
+    with_children(&tree);
+    tree.repo_file("files/.hidden", "# dotted\n");
+    tree.write_manifest(&filtered_symlink_dir(
+        "include = \"*\"\nexclude = [\"config\", \"a*\"]",
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&tree.home("installed")), [".hidden", "zshrc"]);
+}
+
+#[test]
+fn a_filter_matches_the_source_name_before_dot_prefix() {
+    let tree = Tree::new();
+    with_children(&tree);
+    tree.write_manifest(&format!(
+        "{}include = \"zshrc\"\n",
+        one_symlink_dir("files", "~", true)
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&tree.path("home")), [".zshrc"]);
+}
+
+#[test]
+fn a_pattern_that_matched_nothing_is_said_at_verbose_only() {
+    let tree = Tree::new();
+    with_children(&tree);
+    tree.write_manifest(&filtered_symlink_dir(r#"exclude = ["config", "*.bak"]"#));
+
+    let quiet = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert!(
+        !stderr_of(&quiet).contains("matched nothing"),
+        "{}",
+        stderr_of(&quiet)
+    );
+
+    let verbose = tree
+        .batfiles()
+        .args(["--color", "never", "-v", "sync"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&verbose);
+    assert!(
+        stderr.contains(&format!(
+            "exclude pattern `*.bak` matched nothing in {}",
+            display(&tree.path("repo").join("files"))
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("`config` matched nothing"), "{stderr}");
+}
+
+#[test]
+fn filters_that_select_no_child_still_make_the_destination() {
+    let tree = Tree::new();
+    with_children(&tree);
+    tree.write_manifest(&filtered_symlink_dir("include = []"));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "-v", "sync"])
+        .assert()
+        .success();
+    assert!(tree.home("installed").is_dir());
+    assert!(entries(&tree.home("installed")).is_empty());
+    assert!(
+        stderr_of(&assertion).contains("no selected children to link in"),
+        "{}",
+        stderr_of(&assertion)
+    );
+}
+
+#[test]
+fn a_dry_run_reports_only_the_children_a_filter_selects() {
+    let tree = Tree::new();
+    with_children(&tree);
+    tree.write_manifest(&filtered_symlink_dir(r#"exclude = "config""#));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync", "--dry-run"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(stderr.contains("would link"), "{stderr}");
+    assert!(stderr.contains("installed/zshrc"), "{stderr}");
+    assert!(!stderr.contains("installed/config"), "{stderr}");
+    assert!(!tree.home("installed").exists());
+}
+
 #[test]
 fn the_children_are_linked_in_a_stable_order() {
     let tree = Tree::new();

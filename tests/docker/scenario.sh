@@ -160,6 +160,7 @@ links_to "$HOME/.config/git/ignore" "$repo/git/gitignore" "git is not configured
 for name in ackrc curlrc inputrc; do
     links_to "$HOME/.$name" "$repo/files/$name" "the rc files are not linked"
 done
+absent "$HOME/.README.md" "the exclude filter left the directory's README out"
 
 is_dir "$HOME/.cache/zsh" "the history directory was not created"
 absent "$HOME/.cache/work-tools" "the work variable is false, so this was gated off"

@@ -446,24 +446,6 @@ dest = "~/.local/tool"
     }
 }
 
-/// Reject unsupported archive-entry filters.
-#[test]
-fn the_entry_filters_are_not_built_yet() {
-    let tree = Tree::new();
-    for field in ["include = [\"bin/*\"]", "exclude = [\"*.md\"]"] {
-        tree.write_manifest(&format!(
-            r#"[[actions]]
-type = "fetch-archive"
-source = "https://e.example/a.tar.gz"
-dest = "~/.local/tool"
-{field}
-"#,
-        ));
-
-        tree.batfiles().arg("sync").assert().failure();
-    }
-}
-
 #[test]
 fn an_archive_is_unpacked_where_nothing_is() {
     let server = Server::new(&routes());
@@ -568,6 +550,159 @@ fn a_named_root_selects_what_is_under_it_and_leaves_the_rest() {
         fs::read_to_string(tree.home(".local/tool/tool")).expect("the selected program"),
         "run\n"
     );
+}
+
+/// A release tarball with more in it than a tool: documentation beside the
+/// program, and a library directory with a backup in it.
+const RELEASE: &[Member] = &[
+    Member::Directory("tool-1.0", 0o755),
+    Member::File("tool-1.0/README.md", 0o644, "# tool\n"),
+    Member::Directory("tool-1.0/bin", 0o750),
+    Member::File("tool-1.0/bin/tool", 0o755, "run\n"),
+    Member::Directory("tool-1.0/lib", 0o755),
+    Member::File("tool-1.0/lib/core", 0o644, "core\n"),
+    Member::File("tool-1.0/lib/core.bak", 0o644, "old\n"),
+];
+
+#[test]
+fn filters_match_what_is_left_once_the_root_is_stripped() {
+    let server = serving(RELEASE);
+    let tree = one_archive(
+        &server,
+        "archive-root = \"*\"\ninclude = [\"bin\", \"lib\"]\nexclude = \"**/*.bak\"\n",
+    );
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(entries(&tree.home(".local/tool")), ["bin", "lib"]);
+    assert_eq!(entries(&tree.home(".local/tool/lib")), ["core"]);
+    assert_eq!(
+        fs::read_to_string(tree.home(".local/tool/bin/tool")).expect("the program"),
+        "run\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_entry_holding_what_is_selected_keeps_its_own_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = serving(RELEASE);
+    let tree = one_archive(&server, "archive-root = \"*\"\ninclude = \"bin/tool\"\n");
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(entries(&tree.home(".local/tool")), ["bin"]);
+    let mode = fs::metadata(tree.home(".local/tool/bin"))
+        .expect("the directory")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o750);
+}
+
+#[test]
+fn filters_that_leave_nothing_install_nothing() {
+    let server = serving(RELEASE);
+    let tree = one_archive(&server, "archive-root = \"*\"\ninclude = \"share\"\n");
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .failure();
+
+    assert!(
+        stderr_of(&assertion).contains("has nothing that `include` and `exclude` select"),
+        "{}",
+        stderr_of(&assertion)
+    );
+    assert!(!tree.home(".local/tool").exists());
+}
+
+#[test]
+fn a_hard_link_to_an_entry_the_filters_leave_out_installs_nothing() {
+    let server = serving(&[
+        Member::File("lib/core", 0o644, "core\n"),
+        Member::Hardlink("bin/core", "lib/core"),
+    ]);
+    let tree = one_archive(&server, "include = \"bin\"\n");
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .failure();
+
+    assert!(
+        stderr_of(&assertion).contains(
+            "has the hard link `bin/core` to `lib/core`, which `include` and `exclude` leave out"
+        ),
+        "{}",
+        stderr_of(&assertion)
+    );
+    assert!(!tree.home(".local/tool").exists());
+}
+
+#[test]
+fn a_hard_link_to_an_entry_the_filters_keep_is_installed() {
+    let server = serving(&[
+        Member::File("lib/core", 0o644, "core\n"),
+        Member::Hardlink("lib/alias", "lib/core"),
+        Member::File("doc/core.md", 0o644, "# core\n"),
+    ]);
+    let tree = one_archive(&server, "exclude = \"doc\"\n");
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(entries(&tree.home(".local/tool")), ["lib"]);
+    assert_eq!(
+        fs::read_to_string(tree.home(".local/tool/lib/alias")).expect("the link"),
+        "core\n"
+    );
+}
+
+#[test]
+fn an_entry_a_filter_leaves_out_must_still_have_a_safe_path() {
+    let server = serving(&[
+        Member::File("bin/tool", 0o755, "run\n"),
+        Member::File("../escape", 0o644, "x\n"),
+    ]);
+    let tree = one_archive(&server, "include = \"bin\"\n");
+
+    let assertion = tree.batfiles().arg("sync").assert().failure();
+
+    assert!(
+        stderr_of(&assertion).contains("would be written outside it"),
+        "{}",
+        stderr_of(&assertion)
+    );
+    assert!(!tree.home(".local/tool").exists());
+}
+
+#[test]
+fn an_archive_filter_that_matched_nothing_is_said_at_verbose() {
+    let server = serving(RELEASE);
+    let tree = one_archive(
+        &server,
+        "archive-root = \"*\"\nexclude = [\"README.md\", \"*.txt\"]\n",
+    );
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "-v", "sync"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "exclude pattern `*.txt` matched nothing in {}/tool.tar.gz",
+            server.address()
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("`README.md` matched nothing"), "{stderr}");
+    assert_eq!(entries(&tree.home(".local/tool")), ["bin", "lib"]);
 }
 
 /// Keep an existing destination directory without fetching or merging archive content.

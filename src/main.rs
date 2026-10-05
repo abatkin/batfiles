@@ -11,6 +11,7 @@ mod condition;
 mod directory;
 mod disabled;
 mod dynamic;
+mod entry_filter;
 mod env;
 mod env_overrides;
 mod error;

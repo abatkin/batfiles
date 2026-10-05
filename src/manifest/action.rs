@@ -6,12 +6,13 @@ use serde::Deserialize;
 
 use super::ReadAs;
 use super::check::{
-    ManifestError, RecordName, SourceShape, check_archive_root, check_dest, check_digest,
-    check_git_ref, check_git_source, check_inclusion_filters, check_inclusion_remote, check_source,
-    check_url,
+    ManifestError, RecordName, SourceShape, check_archive_root, check_child_filter, check_dest,
+    check_digest, check_git_ref, check_git_source, check_inclusion_filters, check_inclusion_remote,
+    check_source, check_url,
 };
 use super::remote::Remote;
 use crate::condition::{Condition, Gate};
+use crate::entry_filter::GlobFilter;
 use crate::item::{ItemAddress, ItemId, ItemIdList};
 use crate::repo_path::RepoPath;
 use crate::var::VarName;
@@ -72,6 +73,8 @@ impl Action {
             }
             Self::SymlinkDir(action) => {
                 check_source(&action.source_dir, SourceShape::Directory, record, remotes)?;
+                check_child_filter("include", action.include.as_ref(), record)?;
+                check_child_filter("exclude", action.exclude.as_ref(), record)?;
                 check_dest(&action.dest_dir, record)
             }
             Self::CreateDir(action) => check_dest(&action.dest, record),
@@ -268,6 +271,10 @@ pub(crate) struct SymlinkDirAction {
     /// Whether to prepend `.` to each installed link name.
     #[serde(default)]
     pub dot_prefix: bool,
+    /// Direct child names to link; absent, every child.
+    pub include: Option<GlobFilter>,
+    /// Direct child names not to link.
+    pub exclude: Option<GlobFilter>,
 }
 
 /// `create-dir`: ensure a destination directory exists.
@@ -296,6 +303,10 @@ pub(crate) struct CopyAction {
     pub source: RepoPath,
     /// Exact destination path, resolved against the selected home at execution.
     pub dest: String,
+    /// Entries of a directory source to copy; absent, every entry.
+    pub include: Option<GlobFilter>,
+    /// Entries of a directory source not to copy.
+    pub exclude: Option<GlobFilter>,
 }
 
 /// `copy-dir`: one copy per direct child of a directory, all of them into one
@@ -316,6 +327,10 @@ pub(crate) struct CopyDirAction {
     /// Whether to prepend `.` to each installed child name.
     #[serde(default)]
     pub dot_prefix: bool,
+    /// Entries under `source-dir` to copy, at any depth; absent, every entry.
+    pub include: Option<GlobFilter>,
+    /// Entries under `source-dir` not to copy, at any depth.
+    pub exclude: Option<GlobFilter>,
 }
 
 /// `fetch-file`: seed a destination with a downloaded file.
@@ -351,6 +366,10 @@ pub(crate) struct FetchArchiveAction {
     pub sha256: Option<String>,
     /// Prefix to strip from entry paths, or `*` to detect a single top-level directory.
     pub archive_root: Option<String>,
+    /// Entries to unpack, by their path with the root stripped; absent, every entry.
+    pub include: Option<GlobFilter>,
+    /// Entries not to unpack, by their path with the root stripped.
+    pub exclude: Option<GlobFilter>,
 }
 
 /// `git-clone`: clone a repository or update an existing clone.

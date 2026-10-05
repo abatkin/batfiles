@@ -259,11 +259,16 @@ entry fails the action; it is not silently skipped.
   selected archive root.
 - Nothing may be installed beneath a symlink declared by the archive.
 - Hardlink targets must remain inside the selected tree and must not traverse an
-  archive symlink. The target must already exist when its entry is unpacked.
+  archive symlink. The target must already exist when its entry is unpacked, and
+  [entry filters](repoformat.md#entry-filters) must not leave it out.
 - Symlink targets must remain within the extraction tree. They may use `..` to
   climb past a directory, but may not cancel a component declared as a symlink.
 - Files, directories, symlinks, and hardlinks are supported. Device nodes and
   FIFOs are refused. Archive metadata records are not installed as content.
+- Entry filters never relax these checks. An entry they leave out is treated as
+  one outside the archive root: its path is still checked, and its link target is
+  not, since nothing is installed for it. A symlink they leave out still forbids
+  installing anything beneath its path.
 
 For example, `bin/tool -> ../lib/tool` is allowed. A target of
 `a/b/../../outside` is refused when `a/b` is a symlink, even if lexical

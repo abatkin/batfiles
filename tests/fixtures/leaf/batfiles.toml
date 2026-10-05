@@ -127,6 +127,7 @@ dest = "~/.local/bin/batgrep"
 # The whole of `files/` in one entry: adding a dotfile there needs no manifest
 # change, which is the reason this exists rather than three more `symlink`
 # records. The names are undotted in the repository and dotted in the home.
+# The directory's own README explains that, and is no dotfile.
 [[actions]]
 type = "symlink-dir"
 id = "rcfiles"
@@ -134,3 +135,4 @@ group = "shell"
 source-dir = "files"
 dest-dir = "~"
 dot-prefix = true
+exclude = "README.md"

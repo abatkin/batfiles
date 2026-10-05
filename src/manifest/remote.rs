@@ -7,6 +7,7 @@ use super::check::{
     check_url,
 };
 use crate::condition::{Condition, Gate};
+use crate::entry_filter::GlobFilter;
 use crate::item::ItemId;
 
 /// A remote declaration, selected by its required `type` field and identified by its map key.
@@ -127,6 +128,10 @@ pub(crate) struct ArchiveRemote {
     pub sha256: Option<String>,
     /// Prefix to strip from entry paths, or `*` for the archive's single top-level directory.
     pub archive_root: Option<String>,
+    /// Entries to unpack, by their path with the root stripped; absent, every entry.
+    pub include: Option<GlobFilter>,
+    /// Entries not to unpack, by their path with the root stripped.
+    pub exclude: Option<GlobFilter>,
 
     /// The condition under which this machine materializes the remote at all.
     pub when: Option<Condition>,
@@ -300,8 +305,12 @@ mod tests {
                 "archive-root",
             ),
             (
-                "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\ninclude = \"bin/*\"\n",
+                "type = \"file\"\nurl = \"https://e.example/a\"\ninclude = \"bin/*\"\n",
                 "include",
+            ),
+            (
+                "type = \"git\"\nurl = \"https://e.example/a.git\"\nexclude = \"*.md\"\n",
+                "exclude",
             ),
         ] {
             let error = parse(document).expect_err("a closed record should reject the field");

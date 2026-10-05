@@ -9,6 +9,7 @@ use std::os::unix::fs::symlink;
 use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
 use crate::directory;
+use crate::entry_filter::EntryFilter;
 use crate::error::Error;
 use crate::item::ItemId;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
@@ -47,7 +48,8 @@ pub(super) fn link_dir(
     let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
-    for_each_child(
+    let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());
+    let enumerated = for_each_child(
         context,
         &ChildInstall {
             source_dir: &source_dir,
@@ -55,8 +57,17 @@ pub(super) fn link_dir(
             dot_prefix: action.dot_prefix,
             verb: Verb::Link,
         },
+        |child| {
+            filter
+                .as_mut()
+                .is_none_or(|filter| filter.selects(Path::new(child)))
+        },
         |source, dest| link_one(source, dest, context),
-    )
+    )?;
+    if let Some(filter) = filter.as_ref().filter(|_| enumerated) {
+        filter.report_unmatched(&source_dir.display().to_string(), context.reporter());
+    }
+    Ok(())
 }
 
 /// Refuse an action type that makes symlinks where batfiles cannot make one.

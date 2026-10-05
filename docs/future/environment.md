@@ -26,7 +26,7 @@ The four `BATFILES_*` bootstrap lists and the
 part in are built, and are specified in
 [`docs/environment.md`](../environment.md#bootstrap-enable-and-disable-lists).
 Nothing about them is outstanding; what they resolve against is, at
-[default-disabled entries](repoformat.md#default-disabled-bootstrap-entries).
+[default-disabled entries](../repoformat.md#default-disabled-bootstrap-entries).
 
 ## Color
 

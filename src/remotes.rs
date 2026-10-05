@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::RunContext;
 use crate::archive;
 use crate::condition::{Bindings, Exclusion};
+use crate::entry_filter::{EntryFilter, GlobFilter};
 use crate::error::Error;
 use crate::fetch;
 use crate::git;
@@ -84,9 +85,12 @@ pub(crate) fn materialize(
                     tomlfile::remove(&stamp_path(&dest))?;
                 }
             }
-            Remote::File(remote) => fetch(id, Stamp::file(remote), &dest, refresh, context)?,
+            Remote::File(remote) => {
+                fetch(id, Stamp::file(remote), None, &dest, refresh, context)?;
+            }
             Remote::Archive(remote) => {
-                fetch(id, Stamp::archive(remote), &dest, refresh, context)?;
+                let filter = EntryFilter::new(remote.include.as_ref(), remote.exclude.as_ref());
+                fetch(id, Stamp::archive(remote), filter, &dest, refresh, context)?;
             }
         }
     }
@@ -98,6 +102,7 @@ pub(crate) fn materialize(
 fn fetch(
     id: &ItemId,
     wanted: Stamp,
+    mut filter: Option<EntryFilter<'_>>,
     dest: &Path,
     refresh: bool,
     context: &RunContext<'_>,
@@ -124,6 +129,7 @@ fn fetch(
     };
 
     let url = wanted.url();
+    let mut extracted = false;
     match &wanted {
         Stamp::File { sha256, .. } => {
             install::rebuild_file(dest, &context.tool_owned(), |file, at| {
@@ -138,7 +144,14 @@ fn fetch(
             install::with_scratch(dest, reporter, |scratch| {
                 let at = scratch.path().to_path_buf();
                 fetch::download(url, sha256.as_deref(), scratch, &at)?;
-                archive::extract(scratch.file(), staging, archive_root.as_deref(), url)
+                extracted = true;
+                archive::extract(
+                    scratch.file(),
+                    staging,
+                    archive_root.as_deref(),
+                    filter.as_mut(),
+                    url,
+                )
             })
         })?,
     }
@@ -160,6 +173,9 @@ fn fetch(
         verb.for_mode(mode),
         dest.display()
     ));
+    if let Some(filter) = filter.as_ref().filter(|_| extracted) {
+        filter.report_unmatched(url, reporter);
+    }
     Ok(())
 }
 
@@ -200,6 +216,8 @@ enum Stamp {
         url: String,
         sha256: Option<String>,
         archive_root: Option<String>,
+        include: Option<Vec<String>>,
+        exclude: Option<Vec<String>>,
     },
 }
 
@@ -218,6 +236,8 @@ impl Stamp {
             url: remote.url.clone(),
             sha256: digest(remote.sha256.as_deref()),
             archive_root: remote.archive_root.clone(),
+            include: written(remote.include.as_ref()),
+            exclude: written(remote.exclude.as_ref()),
         }
     }
 
@@ -235,6 +255,18 @@ impl Stamp {
                 | (Self::Archive { .. }, FilesystemEntryKind::Directory)
         )
     }
+}
+
+/// A declared filter's patterns as a stamp records them: a list, however the manifest
+/// spelled it.
+fn written(filter: Option<&GlobFilter>) -> Option<Vec<String>> {
+    filter.map(|filter| {
+        filter
+            .as_slice()
+            .iter()
+            .map(|pattern| pattern.as_str().to_owned())
+            .collect()
+    })
 }
 
 /// A declared digest as a stamp records it.
@@ -332,6 +364,8 @@ mod tests {
             url: url.to_owned(),
             sha256: None,
             archive_root: Some("*".to_owned()),
+            include: None,
+            exclude: None,
         }
     }
 
@@ -442,8 +476,33 @@ mod tests {
     }
 
     #[test]
+    fn a_stamp_records_filters_as_lists_however_the_manifest_spelled_them() {
+        let one: ArchiveRemote =
+            toml::from_str("url = \"https://e.example/a.tar.gz\"\ninclude = \"bin\"\n")
+                .expect("a well-formed remote");
+        let listed: ArchiveRemote =
+            toml::from_str("url = \"https://e.example/a.tar.gz\"\ninclude = [\"bin\"]\n")
+                .expect("a well-formed remote");
+        assert_eq!(Stamp::archive(&one), Stamp::archive(&listed));
+        assert_ne!(Stamp::archive(&one), archive("https://e.example/a.tar.gz"));
+    }
+
+    #[test]
+    fn a_stamp_without_filters_does_not_mention_them() {
+        let written = toml::to_string(&archive("https://e.example/a.tar.gz")).expect("a stamp");
+        assert!(!written.contains("include"), "{written}");
+        assert!(!written.contains("exclude"), "{written}");
+    }
+
+    #[test]
     fn a_stamp_reads_back_as_it_was_written() {
-        let stamp = archive("https://e.example/a.tar.gz");
+        let stamp = Stamp::Archive {
+            url: "https://e.example/a.tar.gz".to_owned(),
+            sha256: None,
+            archive_root: Some("*".to_owned()),
+            include: Some(vec!["bin/*".to_owned()]),
+            exclude: Some(vec![]),
+        };
         let written = toml::to_string(&stamp).expect("a stamp serializes");
         assert!(written.contains("archive-root = \"*\""), "{written}");
         assert_eq!(

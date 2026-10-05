@@ -4,7 +4,6 @@ These documents describe unbuilt features and bind no implementation. Use them
 as context when a current task requires the behavior. Promote completed sections
 according to the [documentation ownership](../../AGENTS.md#documentation) rules.
 
-- [Repository format](repoformat.md): entry filters.
 - [Command-line surface](cmdline.md): whether `vars list` should show what an
   inclusion's scope holds.
 - [Environment](environment.md): what remains of input precedence.

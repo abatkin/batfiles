@@ -12,6 +12,7 @@ use thiserror::Error;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
+use crate::entry_filter::EntryFilter;
 use crate::error::Error;
 
 /// The first bytes of a gzip stream.
@@ -94,6 +95,17 @@ pub(crate) enum ArchiveError {
     #[error("is empty")]
     Empty,
 
+    /// Entry filters that leave nothing of the archive to install.
+    #[error("has nothing that `include` and `exclude` select")]
+    NothingSelected,
+
+    /// A hardlink entry the filters select, to an entry they leave out.
+    #[error(
+        "has the hard link `{entry}` to `{target}`, which `include` and `exclude` leave out; \
+         select both or neither"
+    )]
+    LinkTargetLeftOut { entry: String, target: String },
+
     /// A second read of the archive that did not line up with the first.
     #[error("changed while it was being unpacked")]
     Changed,
@@ -101,15 +113,17 @@ pub(crate) enum ArchiveError {
 
 /// Validate an archive and unpack selected entries into an owned staging directory.
 /// The file must contain the complete, verified download. `root` must already
-/// pass manifest validation. Failure may leave partial content inside `into`.
+/// pass manifest validation. `filter` decides entries by their path with the root
+/// stripped. Failure may leave partial content inside `into`.
 pub(crate) fn extract(
     archive: &fs::File,
     into: &Path,
     root: Option<&str>,
+    filter: Option<&mut EntryFilter>,
     url: &str,
 ) -> Result<(), Error> {
     let tarball = Tarball::identify(archive, url)?;
-    let records = plan(&tarball, root)?;
+    let records = plan(&tarball, root, filter)?;
     unpack(&tarball, &records, into)
 }
 
@@ -191,13 +205,15 @@ enum Placement {
     Root,
     /// Outside a named `archive-root`, and therefore not installed at all.
     NotInstalled,
+    /// Under the root at this path, and left out by the entry filters.
+    LeftOut(PathBuf),
 }
 
 impl Placement {
     fn path(&self) -> Option<&Path> {
         match self {
             Self::At(path) => Some(path),
-            Self::Root | Self::NotInstalled => None,
+            Self::Root | Self::NotInstalled | Self::LeftOut(_) => None,
         }
     }
 }
@@ -290,8 +306,13 @@ fn rewound(file: &fs::File) -> io::Result<fs::File> {
     Ok(own)
 }
 
-/// Validate archive entries and compute their destinations after stripping the selected root.
-fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<EntryPlan>, Error> {
+/// Validate archive entries and compute their destinations after stripping the selected root
+/// and applying the entry filters.
+fn plan(
+    tarball: &Tarball<'_>,
+    root: Option<&str>,
+    filter: Option<&mut EntryFilter>,
+) -> Result<Vec<EntryPlan>, Error> {
     let mut declared: Vec<(PathBuf, EntryKind)> = Vec::new();
     for_each_entry(tarball, |entry| {
         let as_written = path_of(entry, tarball)?;
@@ -321,21 +342,7 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<EntryPlan>, Err
         })
         .collect();
 
-    // Collect all symlinks before validating paths; later entries can change how `..` resolves.
-    let links: BTreeSet<PathBuf> = records
-        .iter()
-        .filter(|record| matches!(record.kind, EntryKind::Symlink(_)))
-        .filter_map(|record| record.placement.path().map(Path::to_path_buf))
-        .collect();
-
-    for record in &mut records {
-        check_and_resolve(record, strip.as_deref(), &links, tarball)?;
-    }
-
-    if !records
-        .iter()
-        .any(|record| matches!(record.placement, Placement::At(_)))
-    {
+    if !installs_anything(&records) {
         return Err(tarball.fault(match strip {
             Some(root) => ArchiveError::EmptyRoot {
                 root: display(&root),
@@ -343,14 +350,72 @@ fn plan(tarball: &Tarball<'_>, root: Option<&str>) -> Result<Vec<EntryPlan>, Err
             None => ArchiveError::Empty,
         }));
     }
+
+    // Collect all symlinks under the root before validating paths or filtering; later entries
+    // can change how `..` resolves, and a filter does not change what is safe.
+    let links: BTreeSet<PathBuf> = records
+        .iter()
+        .filter(|record| matches!(record.kind, EntryKind::Symlink(_)))
+        .filter_map(|record| record.placement.path().map(Path::to_path_buf))
+        .collect();
+
+    if let Some(filter) = filter {
+        leave_out(&mut records, filter);
+        if !installs_anything(&records) {
+            return Err(tarball.fault(ArchiveError::NothingSelected));
+        }
+    }
+
+    let left_out: BTreeSet<PathBuf> = records
+        .iter()
+        .filter_map(|record| match &record.placement {
+            Placement::LeftOut(path) => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    for record in &mut records {
+        check_and_resolve(record, strip.as_deref(), &links, &left_out, tarball)?;
+    }
     Ok(records)
 }
 
-/// Check an entry that is going to be installed, and settle where a link points.
+/// Whether any entry is placed in the tree.
+fn installs_anything(records: &[EntryPlan]) -> bool {
+    records
+        .iter()
+        .any(|record| matches!(record.placement, Placement::At(_)))
+}
+
+/// Mark what `filter` does not select as left out, keeping a directory entry that holds
+/// something it does.
+fn leave_out(records: &mut [EntryPlan], filter: &mut EntryFilter) {
+    let mut selected = BTreeSet::new();
+    let mut holding = BTreeSet::new();
+    for record in records.iter() {
+        if let Placement::At(path) = &record.placement
+            && filter.selects(path)
+        {
+            selected.insert(path.clone());
+            holding.extend(path.ancestors().skip(1).map(Path::to_path_buf));
+        }
+    }
+    for record in records.iter_mut() {
+        if let Placement::At(path) = &record.placement {
+            let held = matches!(record.kind, EntryKind::Directory) && holding.contains(path);
+            if !selected.contains(path) && !held {
+                record.placement = Placement::LeftOut(path.clone());
+            }
+        }
+    }
+}
+
+/// Check an entry that is going to be installed, and settle where a link points. A hardlink
+/// may not point at an entry in `left_out`.
 fn check_and_resolve(
     record: &mut EntryPlan,
     strip: Option<&Path>,
     links: &BTreeSet<PathBuf>,
+    left_out: &BTreeSet<PathBuf>,
     tarball: &Tarball<'_>,
 ) -> Result<(), Error> {
     let Some(inside) = record.placement.path() else {
@@ -375,11 +440,18 @@ fn check_and_resolve(
             }
         }
         EntryKind::Hardlink(target) => {
-            *target = entry_path(target)
+            let resolved = entry_path(target)
                 .map(|named| place(&named, strip))
                 .and_then(|placement| placement.path().map(Path::to_path_buf))
                 .filter(|resolved| !walks_through_a_link(resolved, links))
                 .ok_or_else(|| tarball.escaping(&record.archive_path))?;
+            if left_out.contains(&resolved) {
+                return Err(tarball.fault(ArchiveError::LinkTargetLeftOut {
+                    entry: display(&record.archive_path),
+                    target: display(target),
+                }));
+            }
+            *target = resolved;
             Ok(())
         }
     }
@@ -488,7 +560,7 @@ fn unpack(tarball: &Tarball<'_>, records: &[EntryPlan], into: &Path) -> Result<(
                 }
                 return Ok(());
             }
-            Placement::NotInstalled => return Ok(()),
+            Placement::NotInstalled | Placement::LeftOut(_) => return Ok(()),
         };
 
         match &record.kind {
@@ -711,7 +783,7 @@ mod tests {
         let strip = Some(Path::new("tool-1.0"));
         let at = |path: &str| match place(Path::new(path), strip) {
             Placement::At(inside) => Some(inside),
-            Placement::Root | Placement::NotInstalled => None,
+            Placement::Root | Placement::NotInstalled | Placement::LeftOut(_) => None,
         };
         assert_eq!(at("tool-1.0/bin/tool"), Some(PathBuf::from("bin/tool")));
         assert_eq!(at("other/x"), None);

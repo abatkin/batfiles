@@ -320,19 +320,37 @@ dest-dir = "~"
 }
 
 #[test]
-fn a_filter_symlink_dir_does_not_have_yet_is_rejected() {
+fn a_symlink_dir_filter_matches_child_names_and_so_refuses_a_slash() {
     let stderr = rejected(
         r#"[[actions]]
 type = "symlink-dir"
 source-dir = "files"
 dest-dir = "~"
-exclude = "README.md"
+exclude = ["README.md", "config/private"]
 "#,
     );
     assert!(
-        stderr.contains("exclude"),
-        "the field was not named:\n{stderr}"
+        stderr.contains("exclude pattern `config/private` contains `/`"),
+        "the pattern was not named:\n{stderr}"
     );
+}
+
+#[test]
+fn a_filter_pattern_that_is_not_a_glob_is_rejected() {
+    for (pattern, expected) in [
+        ("[abc", "is not a glob"),
+        ("", "a pattern is empty"),
+        ("/zshrc", "starts with `/`"),
+    ] {
+        let stderr = rejected(&format!(
+            "[[actions]]\ntype = \"symlink-dir\"\nsource-dir = \"files\"\ndest-dir = \"~\"\n\
+             include = \"{pattern}\"\n"
+        ));
+        assert!(
+            stderr.contains(expected),
+            "no `{expected}` for `{pattern}`:\n{stderr}"
+        );
+    }
 }
 
 #[test]
@@ -449,31 +467,26 @@ dest-dir = "~"
 }
 
 #[test]
-fn a_filter_the_copy_types_do_not_have_yet_is_rejected() {
-    for manifest in [
+fn the_copy_types_take_filters_that_may_reach_below_a_child() {
+    let tree = Tree::new();
+    tree.repo_file("seed/a/b", "b\n");
+    tree.write_manifest(
         r#"[[actions]]
 type = "copy"
 source = "seed"
-dest = "~/.config"
-include = "*.toml"
-"#,
-        r#"[[actions]]
+dest = "~/one"
+include = "a/*"
+
+[[actions]]
 type = "copy-dir"
 source-dir = "seed"
-dest-dir = "~"
-exclude = ["private/*"]
+dest-dir = "~/two"
+exclude = ["a/c", "**/*.bak"]
 "#,
-    ] {
-        let stderr = rejected(manifest);
-        for expected in ["include", "exclude"] {
-            if manifest.contains(expected) {
-                assert!(
-                    stderr.contains(expected),
-                    "`{expected}` was not named:\n{stderr}"
-                );
-            }
-        }
-    }
+    );
+    tree.batfiles().arg("sync").assert().success();
+    assert!(tree.home("one/a/b").is_file());
+    assert!(tree.home("two/a/b").is_file());
 }
 
 #[test]

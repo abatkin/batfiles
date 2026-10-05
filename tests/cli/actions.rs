@@ -330,6 +330,189 @@ fn a_copy_dir_with_nothing_in_it_creates_its_destination_and_says_so() {
     );
 }
 
+/// A seed tree for filters: files at the root and at depth, one of them a backup.
+fn with_filtered_seed(tree: &Tree) {
+    with_seed(tree);
+    tree.repo_file("seed/scripts/hello.bak", "# old\n");
+    tree.repo_file("seed/scripts/lib/util", "# util\n");
+    tree.repo_file("seed/private/key", "secret\n");
+}
+
+/// A manifest declaring one action with filter fields appended.
+fn filtered(action: String, filters: &str) -> String {
+    format!("{action}{filters}\n")
+}
+
+#[test]
+fn a_filtered_copy_installs_only_what_is_selected_beneath_its_source() {
+    let tree = Tree::new();
+    with_filtered_seed(&tree);
+    tree.write_manifest(&filtered(
+        one_copy("seed", "~/.seed"),
+        r#"exclude = ["private", "**/*.bak"]"#,
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(
+        entries(&tree.home(".seed")),
+        ["gitconfig", "inputrc", "scripts"]
+    );
+    assert_eq!(entries(&tree.home(".seed/scripts")), ["hello", "lib"]);
+    assert!(tree.home(".seed/scripts/lib/util").is_file());
+}
+
+#[test]
+fn an_include_below_the_root_brings_only_the_directories_that_hold_it() {
+    let tree = Tree::new();
+    with_filtered_seed(&tree);
+    tree.write_manifest(&filtered(
+        one_copy("seed", "~/.seed"),
+        r#"include = "scripts/lib""#,
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&tree.home(".seed")), ["scripts"]);
+    assert_eq!(entries(&tree.home(".seed/scripts")), ["lib"]);
+    assert_eq!(entries(&tree.home(".seed/scripts/lib")), ["util"]);
+}
+
+#[test]
+fn a_class_in_a_filter_stays_within_one_segment() {
+    let tree = Tree::new();
+    tree.repo_file("seed/a/b", "nested\n");
+    tree.repo_file("seed/a-b", "flat\n");
+    tree.write_manifest(&filtered(
+        one_copy("seed", "~/.seed"),
+        r#"include = "a[!x]b""#,
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(entries(&tree.home(".seed")), ["a-b"]);
+}
+
+#[test]
+fn a_filtered_copy_of_a_file_is_refused_whatever_its_destination_holds() {
+    let tree = Tree::new();
+    with_seed(&tree);
+    fs::write(tree.home(".gitconfig"), "mine\n").expect("an occupied destination");
+    tree.write_manifest(&filtered(
+        one_copy("seed/gitconfig", "~/.gitconfig"),
+        r#"include = "*""#,
+    ));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .failure();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(
+            "it is a file, and `include` and `exclude` choose entries within a directory"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_filtered_copy_dir_seeds_only_the_children_with_something_selected() {
+    let tree = Tree::new();
+    with_filtered_seed(&tree);
+    tree.write_manifest(&filtered(
+        one_copy_dir("seed", "~/installed", false),
+        "include = [\"gitconfig\", \"scripts/lib\"]",
+    ));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync"])
+        .assert()
+        .success();
+    assert_eq!(entries(&tree.home("installed")), ["gitconfig", "scripts"]);
+    assert_eq!(entries(&tree.home("installed/scripts")), ["lib"]);
+    let stderr = stderr_of(&assertion);
+    assert!(!stderr.contains("private"), "{stderr}");
+    assert!(!stderr.contains("inputrc"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_the_filters_leave_out_is_not_a_copy_error() {
+    let tree = Tree::new();
+    with_seed(&tree);
+    fs::create_dir_all(tree.path("repo/seed/links")).expect("a directory of links");
+    std::os::unix::fs::symlink("../gitconfig", tree.path("repo/seed/links/gitconfig"))
+        .expect("a symlink");
+    tree.write_manifest(&filtered(
+        one_copy_dir("seed", "~/installed", false),
+        r#"exclude = "links""#,
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+    assert_eq!(
+        entries(&tree.home("installed")),
+        ["gitconfig", "inputrc", "scripts"]
+    );
+}
+
+#[test]
+fn a_filtered_copy_dir_says_at_verbose_what_matched_nothing() {
+    let tree = Tree::new();
+    with_filtered_seed(&tree);
+    tree.write_manifest(&filtered(
+        one_copy_dir("seed", "~/installed", false),
+        r#"exclude = ["private", "*.orig"]"#,
+    ));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "-v", "sync"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "exclude pattern `*.orig` matched nothing in {}",
+            display(&tree.path("repo/seed"))
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("`private` matched nothing"), "{stderr}");
+}
+
+#[test]
+fn a_dry_run_reports_only_what_a_filtered_copy_dir_would_seed() {
+    let tree = Tree::new();
+    with_filtered_seed(&tree);
+    tree.write_manifest(&filtered(
+        one_copy_dir("seed", "~/installed", false),
+        r#"exclude = ["private", "scripts"]"#,
+    ));
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "sync", "--dry-run"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    for (child, expected) in [
+        ("gitconfig", true),
+        ("inputrc", true),
+        ("scripts", false),
+        ("private", false),
+    ] {
+        assert_eq!(
+            stderr.contains(&format!(
+                "would copy {}",
+                display(&tree.home(&format!("installed/{child}")))
+            )),
+            expected,
+            "`{child}`:\n{stderr}"
+        );
+    }
+    assert!(!tree.home("installed").exists());
+}
+
 #[test]
 fn copy_dir_dots_every_installed_name_and_nothing_else() {
     let tree = Tree::new();

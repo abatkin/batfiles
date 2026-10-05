@@ -1,9 +1,7 @@
 # Batfiles Repository Format
 
-The part of the repository format that runs today: where the manifest lives, how
-it is read, the variables and remotes it can declare, and the nine kinds of
-action it can declare. The rest of the schema — entry filters — is in
-[`future/repoformat.md`](future/repoformat.md) until it is built.
+The repository format: where the manifest lives, how it is read, the variables
+and remotes it can declare, and the kinds of action it can declare.
 
 ## Repository layout
 
@@ -250,14 +248,14 @@ archive-root = "*"
 | `url`          | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.              |
 | `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
 | `archive-root` | string |    no    | A prefix every entry is written without, or `*` for the archive's single top-level directory. |
+| `include`      | glob or list | no | Entries to unpack, by their path once the root is stripped; absent, every entry. See [entry filters](#entry-filters). |
+| `exclude`      | glob or list | no | Entries not to unpack.                                                 |
 
 **The archive is unpacked into `remotes/<id>/` exactly as a
 [`fetch-archive`](#fetch-archive) unpacks one into its `dest`**: the same formats,
-the same `archive-root`, and the same [archive safety](safety.md#archive-extraction).
-An action then reads paths within it as it would within a Git remote's clone —
-`@fzf/bin/fzf`. Filtering the entries is not built for an archive remote any more
-than for `fetch-archive`, and `include` or `exclude` on one is refused as an
-unknown field; see [`future/repoformat.md`](future/repoformat.md#fetch-archive-entry-filters).
+the same `archive-root`, the same filters, and the same [archive
+safety](safety.md#archive-extraction). An action then reads paths within it as it
+would within a Git remote's clone — `@fzf/bin/fzf`.
 
 Neither a file nor an archive remote has a manifest, so neither can be named by an
 [`include-remote`](#include-remote).
@@ -288,8 +286,8 @@ recognize there is a mistake to report.
 
 **A file or archive remote is fetched when it is missing or its declaration has
 changed.** Once one is in place, batfiles writes a stamp beside it,
-`remotes/<id>.batfiles-source`, recording the `type`, `url`, `sha256`, and
-`archive-root` it was fetched from. A later `sync` compares the stamp with the
+`remotes/<id>.batfiles-source`, recording the `type`, `url`, `sha256`,
+`archive-root`, `include`, and `exclude` it was fetched from. A later `sync` compares the stamp with the
 manifest:
 
 | At `remotes/<id>` | Stamp | `sync` |
@@ -300,7 +298,8 @@ manifest:
 | Anything else | | Refuses, naming what is there |
 
 A digest is compared without regard to case, so rewriting one in capitals fetches
-nothing. Whatever is fetched is built beside the materialization and
+nothing, and a filter is compared as a list, so writing one pattern as a list of
+one fetches nothing either; reordering a filter's patterns does. Whatever is fetched is built beside the materialization and
 [replaces it](safety.md#replacing-a-materialization) only once it is complete and
 verified, so a failed fetch — a server that is down, a digest that does not
 match — leaves the earlier materialization and its stamp as they were, and fails
@@ -440,6 +439,64 @@ normalized lexically. [Location selection](environment.md#location-selection)
 defines the roots; [installation safety](safety.md) defines filesystem
 resolution, source containment checks, occupied destinations, and staging.
 
+## Entry filters
+
+`include` and `exclude` choose which entries of a tree an action installs.
+[`symlink-dir`](#symlink-dir), [`copy`](#copy), [`copy-dir`](#copy-dir),
+[`fetch-archive`](#fetch-archive), and the [`archive` remote](#archive) take
+them. Each is one glob or a list of them:
+
+```toml
+include = "*rc"
+exclude = ["private", "*.bak"]
+```
+
+**An entry is named by its path from the root of what is filtered**, with `/`
+between its segments on every platform; each record says what its root is.
+A pattern matches the whole of that path, so `*.bak` matches only an entry at the
+root and `**/*.bak` matches one at any depth.
+
+| Syntax | Matches |
+| --- | --- |
+| `*` | Any run of characters within one segment, including a leading `.` |
+| `?` | Any one byte within one segment |
+| `[abc]`, `[a-z]`, `[!abc]` | One byte from, or not from, the class, within one segment |
+| `{a,b}` | Either alternative, within one segment |
+| `**` | Any number of whole segments, none included, written as a segment of its own |
+
+A pattern is matched one `/`-separated segment at a time, so only `**` reaches
+past a segment: `a[!x]b` matches `a-b` and never `a/b`. A class or alternative
+containing `/` is refused. Matching is case-sensitive on every platform, and `\`
+is an ordinary character rather than an escape; write `[*]` to match a literal
+`*`.
+
+**`?` and a class match one byte, not one character.** A character outside ASCII
+is more than one byte in a name, so neither matches it: `?.txt` and `[é].txt`
+both miss `é.txt`. Write the character itself, or `*`, which matches it as it
+matches any run of bytes.
+
+**A pattern matching a directory decides everything beneath it.** An entry is
+installed when it or one of the directories holding it matches an `include` —
+or no `include` is written — and neither it nor any of them matches an
+`exclude`. So `include = "bin"` takes all of `bin`, `exclude = "private"` leaves
+out all of `private`, and an exclude wins wherever the two meet:
+`include = "bin"` with `exclude = "bin/secret"` installs `bin` without `secret`.
+`include = []` selects nothing.
+
+**A directory that is not selected is still made to hold what is.** Where a
+filter selects entries below the root, as every record but `symlink-dir` does, a directory
+neither selected nor excluded is created when something beneath it is selected,
+and left out when nothing is. `include = "scripts/lib"` installs `scripts`
+holding only `lib`.
+
+**A pattern no entry could have is refused as the manifest is read**: an empty
+one, one beginning with `/`, one with an empty, `.`, or `..` segment — `bin/`
+included — and one that is not a glob at all.
+
+**A pattern that matched nothing is said at `-v`, and is not an error.** A
+directory's contents change, so a pattern can be waiting for a file that is not
+there yet. The line names the pattern and the tree it was matched in.
+
 ## Actions
 
 `[[actions]]` is an ordered list. Each entry is a closed record selected by its
@@ -548,6 +605,8 @@ dot-prefix = true
 | `source-dir` | repository path  |   yes    | The directory whose direct children are linked. |
 | `dest-dir`   | string  |   yes    | The directory the links are made in. Created if it is missing.            |
 | `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.                 |
+| `include`    | glob or list |  no | Children to link; absent, every child. See [entry filters](#entry-filters). |
+| `exclude`    | glob or list |  no | Children not to link.                                                    |
 
 This is the action for a directory whose contents you do not want to enumerate.
 Adding a file to `source-dir` installs it on the next `sync` with no change to
@@ -597,10 +656,12 @@ creating `dest-dir` inside `source-dir` before children are enumerated.
 The platform rule is `symlink`'s: where batfiles cannot create a symlink the
 action is refused by name, before the source directory is read.
 
-Filtering the children — `include` and `exclude` — is specified in
-[`future/repoformat.md`](future/repoformat.md#symlink-dir) and is not built. A
-manifest that writes either is rejected rather than linking every child while
-looking as though it had linked a chosen few.
+**Filters choose children by name.** An [entry filter](#entry-filters) here
+matches each child's name as it is in `source-dir`, before `dot-prefix`, so a
+pattern containing `/` could never match and is refused as the manifest is read.
+A child the filters leave out is not linked, and nothing already at its
+destination is touched. Filters that select no child still create `dest-dir`, as
+an empty `source-dir` does, and `-v` says that no child was selected.
 
 ### `create-dir`
 
@@ -645,6 +706,8 @@ dest = "~/.gitconfig.local"
 |----------|--------|:--------:|-------------------------------------------------------------------|
 | `source` | repository path |   yes    | The file or directory to copy, within this repository or a remote it names. |
 | `dest`   | string |   yes    | Where the copy goes, exactly. Never empty; `~` is the home.     |
+| `include` | glob or list | no | Entries of a directory source to copy; absent, every entry. See [entry filters](#entry-filters). |
+| `exclude` | glob or list | no | Entries of a directory source not to copy.                     |
 
 The same two fields as [`symlink`](#symlink), installing the same thing in the
 same place, and the difference is what the user gets: a detached copy that
@@ -667,6 +730,17 @@ Only regular files and directories are copied. Symlinks, sockets, FIFOs, and
 devices nested in a copied tree are errors naming the offending path. The
 manifest's source itself may resolve through a symlink.
 
+**Filters choose what of a directory source is copied.** An [entry
+filter](#entry-filters) here matches paths relative to `source`, at any depth, and
+the directory installed holds only what it selects — possibly nothing, in which
+case an empty directory is seeded, as an empty source would be. An entry the
+filters leave out is never inspected, so a symlink among them is not an error.
+Filters are for choosing among entries, and a `copy` writing them whose source is
+a file fails, whatever is at its destination. The source is read to decide what
+is selected in either run mode, before the destination is considered, and a
+[refresh](safety.md#refreshing-seeds) compares the destination with the filtered
+tree, not with the whole source.
+
 ### `copy-dir`
 
 Declares one copy per direct child of a directory, all of them in one
@@ -686,6 +760,8 @@ dot-prefix = true
 | `source-dir` | repository path  |   yes    | The directory whose direct children are copied. |
 | `dest-dir`   | string  |   yes    | The directory the copies are made in. Created if it is missing.       |
 | `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.             |
+| `include`    | glob or list | no  | Entries under `source-dir` to copy, at any depth; absent, every entry. See [entry filters](#entry-filters). |
+| `exclude`    | glob or list | no  | Entries under `source-dir` not to copy, at any depth.                 |
 
 This is [`copy`](#copy) done once per child, exactly as
 [`symlink-dir`](#symlink-dir) is `symlink` done once per child. Each child is
@@ -710,9 +786,13 @@ An empty `source-dir` copies nothing and is not an error, and creates its
 `dest-dir`, on the same terms as `symlink-dir`'s. A `source-dir` that exists but
 is not a directory is an error.
 
-Filtering the children — `include` and `exclude` — is specified in
-[`future/repoformat.md`](future/repoformat.md#copy) for both `copy` and
-`copy-dir` and is not built on either. A manifest that writes one is rejected.
+**Filters reach below the children.** An [entry filter](#entry-filters) here
+matches paths relative to `source-dir`, so `scripts` names a child and
+`scripts/lib` something inside one; patterns are matched before `dot-prefix`. A
+child is seeded when it, or something beneath it, is selected, and holds only
+what is selected; a child with nothing selected is not seeded at all, and what is
+at its destination is not looked at. Everything else is `copy`'s filter rule,
+unchanged.
 
 ### `fetch-file`
 
@@ -769,6 +849,8 @@ archive-root = "*"
 | `dest`         | string |   yes    | Where the unpacked directory goes, exactly. Never empty; `~` is the home. |
 | `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
 | `archive-root` | string |    no    | A prefix every entry is written without, spelled as an entry path is, or `*` for the archive's single top-level directory. |
+| `include`      | glob or list | no | Entries to unpack, by their path once the root is stripped; absent, every entry. See [entry filters](#entry-filters). |
+| `exclude`      | glob or list | no | Entries not to unpack.                                                 |
 
 The sibling of [`fetch-file`](#fetch-file), and [the
 transfer](#the-transfer-both-fetching-actions-share) is the same one. What
@@ -805,9 +887,27 @@ one that is, is refused as the manifest is read.
 [Installed permissions](safety.md#installed-permissions) specifies entry and
 root modes. Extraction is staged and published only after it succeeds.
 
-Filtering the entries — `include` and `exclude` — is specified in
-[`future/repoformat.md`](future/repoformat.md#fetch-archive-entry-filters) and
-is not built. A manifest that writes one is rejected.
+**Filters are written against the tree as it will be installed.** An [entry
+filter](#entry-filters) here matches an entry's path with `archive-root` already
+stripped, rather than as the archive spells it:
+
+```toml
+[[actions]]
+type = "fetch-archive"
+source = "https://example.com/tool.tar.gz"
+dest = "~/.local/tool"
+archive-root = "*"
+include = ["bin", "lib"]
+exclude = "**/*.md"
+```
+
+A directory entry holding something selected is installed with the mode the
+archive gives it. Filters that leave nothing to install are an error, as an
+`archive-root` with nothing under it is, and so is a selected hard link to an
+entry they leave out. They do not relax [archive
+safety](safety.md#archive-extraction). What they matched is known only once the
+archive is unpacked, so a pattern that matched nothing is said at `-v` by a run
+that unpacks it, and never by a dry run.
 
 ### The transfer both fetching actions share
 

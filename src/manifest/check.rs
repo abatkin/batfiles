@@ -10,6 +10,7 @@ use thiserror::Error;
 
 use super::action::IncludeRemoteAction;
 use super::remote::Remote;
+use crate::entry_filter::GlobFilter;
 use crate::fetch::{FileUrlError, file_url_path};
 use crate::item::{ItemId, ItemKind};
 use crate::repo_path::{REMOTE_PREFIX, RepoPath};
@@ -250,6 +251,17 @@ pub(crate) enum ManifestError {
          write a prefix such as `tool-1.0`, or `*` for the archive's single top-level directory"
     )]
     ArchiveRootNotInside { record: RecordName, value: String },
+
+    /// A filter over direct children whose pattern could only match below one.
+    #[error(
+        "{record}: {field} pattern `{pattern}` contains `/`; this action's filters match \
+         the names of the direct children of source-dir"
+    )]
+    ChildFilterNested {
+        record: RecordName,
+        field: &'static str,
+        pattern: String,
+    },
 }
 
 /// Required source kind: any file or directory, or a directory only.
@@ -526,6 +538,22 @@ pub(super) fn check_archive_root(
             record: record.clone(),
             value: value.to_owned(),
         })
+    }
+}
+
+/// Refuse a pattern in a filter over direct child names that contains `/`.
+pub(super) fn check_child_filter(
+    field: &'static str,
+    filter: Option<&GlobFilter>,
+    record: &RecordName,
+) -> Result<(), ManifestError> {
+    match filter.and_then(GlobFilter::first_nested) {
+        None => Ok(()),
+        Some(pattern) => Err(ManifestError::ChildFilterNested {
+            record: record.clone(),
+            field,
+            pattern: pattern.as_str().to_owned(),
+        }),
     }
 }
 

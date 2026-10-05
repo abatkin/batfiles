@@ -50,6 +50,9 @@ flate2 = "1"
 # zones are needed, so the bundled database and system lookup are left out.
 jiff = { version = "0.2.37", default-features = false, features = ["std", "serde"] }
 
+# The globs an entry filter's `include` and `exclude` are written in.
+globset = { version = "0.4.20", default-features = false }
+
 [dev-dependencies]
 # Run the binary in CLI tests.
 assert_cmd = "2"

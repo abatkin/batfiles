@@ -55,11 +55,6 @@ carry markers and withheld options cannot refer to them as implementation steps.
   two runs started at once. It would also close the lost update that [state
   rewrites](../state.md#writing) permit. Per-operation no-replace renames are
   out of scope; the lock does not guard against other programs.
-- **Entry filters.** Add include/exclude filters to archives and local directory
-  actions. Archive filters match paths after root stripping. There is nothing to
-  share with the inclusion filters 7.3 built beyond the one-or-many spelling:
-  those compare IDs for equality against what a manifest declared, and these
-  match globs against paths. Building `GlobFilter` is this proposal's own work.
 - **Additional archive formats.** Consider ZIP and other compressed tar formats.
   The existing scratch file permits random access; assess dependencies and
   cross-platform builds for each reader.
