@@ -47,9 +47,9 @@ fn cloned(tree: &Tree) -> Vec<&'static str> {
         .collect()
 }
 
-/// The bare repository a `listed` entry clones.
+/// The bare repository a `listed` entry clones, as its list writes it.
 fn repository(origin: &BareRepo, name: &str) -> String {
-    display(&origin.origin().with_file_name(format!("{name}.git")))
+    written(&origin.origin().with_file_name(format!("{name}.git")))
 }
 
 #[test]
