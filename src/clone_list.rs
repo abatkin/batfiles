@@ -6,10 +6,11 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::condition::{Bindings, Condition, ConditionError, Exclusion, Gate};
+use crate::condition::{Condition, ConditionError, Gate};
 use crate::error::Error;
-use crate::item::{ItemId, ItemIdError};
+use crate::item::{ItemAddress, ItemId, ItemIdError};
 use crate::manifest::action::GitCloneListAction;
+use crate::selection::{Disposition, Subject};
 
 /// One repository the list names.
 #[derive(Debug)]
@@ -18,8 +19,7 @@ pub(crate) struct CloneListEntry {
     pub repository: String,
     /// The one directory component the clone lands in.
     pub dest_name: String,
-    /// Identifies the entry in diagnostics. Individual entry selection is not
-    /// implemented; see the clone-list address enhancement in the roadmap.
+    /// Identifies the entry in diagnostics, and addresses it under its list.
     pub id: Option<ItemId>,
     /// The branch, tag, or commit the entry follows.
     pub git_ref: Option<String>,
@@ -47,35 +47,49 @@ impl CloneListEntry {
     }
 }
 
-/// A validated clone list with evaluated entry conditions. An empty list declares no
-/// repositories.
+/// A validated clone list with each entry decided. An empty list declares no repositories.
 pub(crate) struct PreparedList<'a> {
     /// The action that declares the list and its destination directory.
     action: &'a GitCloneListAction,
     entries: Vec<PreparedEntry>,
 }
 
-/// A parsed clone-list entry with its evaluated condition.
+/// A parsed clone-list entry, its address, and what the run does with it.
 pub(crate) struct PreparedEntry {
     /// The parsed entry.
     pub declared: CloneListEntry,
-    /// The condition excluding this entry, or `None` if it may be cloned.
-    pub exclusion: Option<Exclusion>,
+    /// The list's address followed by the entry's `id`. `None` if either is absent.
+    pub address: Option<ItemAddress>,
+    /// Whether the entry is cloned, excluded, or not requested.
+    pub disposition: Disposition,
 }
 
 impl<'a> PreparedList<'a> {
-    /// Read and validate the clone list at `path` for `action`, evaluating entry conditions
-    /// against `bindings`. Missing or malformed lists return an error.
+    /// Read and validate the clone list at `path` for `action`, whose record is at `list`,
+    /// and decide each entry in list order with `decide`. Missing or malformed lists return
+    /// an error.
     pub fn prepare(
         action: &'a GitCloneListAction,
         path: &Path,
-        bindings: &Bindings<'_>,
+        list: Option<&ItemAddress>,
+        mut decide: impl FnMut(Subject<'_>) -> Disposition,
     ) -> Result<Self, Error> {
         let entries = read(path)?
             .into_iter()
-            .map(|declared| PreparedEntry {
-                exclusion: exclusion(&declared, bindings),
-                declared,
+            .map(|declared| {
+                let address = list
+                    .zip(declared.id.as_ref())
+                    .map(|(list, id)| list.child(id));
+                let disposition = decide(Subject {
+                    address: address.as_ref(),
+                    group_address: None,
+                    gate: declared.gate(),
+                });
+                PreparedEntry {
+                    declared,
+                    address,
+                    disposition,
+                }
             })
             .collect();
         Ok(Self { action, entries })
@@ -100,12 +114,6 @@ impl<'a> PreparedList<'a> {
     pub fn entries(&self) -> &[PreparedEntry] {
         &self.entries
     }
-}
-
-/// Evaluate an entry's condition, returning `None` when it may be cloned.
-/// The caller supplies the `not cloning` prefix when reporting an exclusion.
-fn exclusion(entry: &CloneListEntry, bindings: &Bindings<'_>) -> Option<Exclusion> {
-    entry.gate()?.exclusion(bindings, None)
 }
 
 /// Read and check one list.

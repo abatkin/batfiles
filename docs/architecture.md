@@ -121,9 +121,11 @@ Code names follow these terms beside the user-facing ones:
   a node.
 - **Contributor**: the manifest a record came from, the leaf's or an
   inclusion's, which decides how its names are qualified.
-- **Disposition**: what a run does with one record: not requested, excluded, or
-  allowed.
-- **Subject**: what selection decides a record on: its addresses and its gate.
+- **Disposition**: what a run does with one record or clone-list entry: not
+  requested, excluded, allowed, or allowed in part — an inclusion or a list
+  opened only because the target names something inside it.
+- **Subject**: what selection decides a record or an entry on: its addresses and
+  its gate.
 
 ### Execution
 
@@ -137,7 +139,7 @@ Code names follow these terms beside the user-facing ones:
 | `execute/inclusion.rs` | What an opened inclusion contributes: its filters' verdicts, dropped nested inclusions, and the warnings composing it gives. |
 | `inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
 | `dynamic/` | Running dynamic variables' commands, and their cache. |
-| `selection.rs` | Targets and exclusions, decided on a record's addresses and condition. |
+| `selection.rs` | Targets and exclusions, decided on a record's or a clone-list entry's addresses and condition. |
 | `action/` | Dispatch of prepared install records. |
 
 A run proceeds in this order:
@@ -153,8 +155,10 @@ A run proceeds in this order:
 5. Assemble and select, opening only reached, admitted
    [inclusions](repoformat.md#include-remote) and resolving each opened
    remote's dynamic variables, if the leaf allows them.
-6. Warn about unmatched skips and [prepare](cmdline.md#clone-list-preparation)
-   every selected clone list.
+6. [Prepare](cmdline.md#clone-list-preparation) every selected clone list,
+   and every list the target reaches into for one entry, deciding each entry.
+   Then warn about unmatched skips, and fail an apply command whose target
+   names nothing, before any action writes.
 7. Walk the list once in declaration order: report exclusions and dispatch
    admitted records. An admitted inclusion prints its heading and then walks
    the records it contributed, reading their repository paths from its

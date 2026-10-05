@@ -91,7 +91,7 @@ pub(crate) enum Error {
     TargetInExcludedInclusion {
         kind: ItemKind,
         address: ItemAddress,
-        inclusion: ItemId,
+        inclusion: ItemAddress,
         reason: String,
     },
 
@@ -105,8 +105,20 @@ pub(crate) enum Error {
     TargetInUnreadInclusion {
         kind: ItemKind,
         address: ItemAddress,
-        inclusion: ItemId,
+        inclusion: ItemAddress,
         remote: ItemId,
+    },
+
+    /// An `apply-action` target inside a clone list the run excluded, whose
+    /// entries were therefore not read.
+    #[error(
+        "entry `{address}` would come from git-clone-list `{list}`, which is \
+         excluded: {reason}"
+    )]
+    TargetInExcludedList {
+        address: ItemAddress,
+        list: ItemAddress,
+        reason: String,
     },
 
     /// An `apply-action` target naming an inclusion instead of an executable action.

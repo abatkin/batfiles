@@ -9,12 +9,8 @@ anything.
 
 The document, its schema, and the four commands that maintain it are specified
 in [`docs/state.md`](../state.md), including the addresses both lists hold and
-the rules a `sync` applies to them. Three things about it are still unbuilt.
-
-**Resolving a qualified address.** An address naming an included remote's action
-or group is recorded today and matches nothing, since no remote can contribute
-one. What arrives with `include-remote` is the lookup that makes such an entry
-live; see the [address forms](cmdline.md#address-forms) that need it.
+the rules a `sync` applies to them, every [address
+form](../cmdline.md#addresses) included. What follows is still open.
 
 **What a disable does to a remote.** How a disabled `include-remote` interacts
 with materialization belongs to the step that builds it. One part is settled

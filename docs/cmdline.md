@@ -4,7 +4,7 @@ The parts of the command-line interface that run today: the set of commands, the
 options every command accepts, where output goes, and what the exit status
 means.
 
-Additional address forms are described in
+One open question about `vars list` is in
 [`future/cmdline.md`](future/cmdline.md).
 
 ## What runs today
@@ -622,6 +622,12 @@ opened. An `--id` inside an inclusion the run did not read — one this machine
 fetched — fails as well, naming the inclusion and why rather than an address
 nothing carries.
 
+**An `--id` may name one [clone-list entry](#addresses)**, and the run clones
+that entry alone, into its list's `dest-dir`, waiving the entry's own disable
+and condition as it would an action's. Its list is not named, and one this
+machine excludes fails the command naming the list and why — see [selection by
+command](#selection-by-command).
+
 **An `--id` naming an [`include-remote`](repoformat.md#include-remote) is
 refused**, and refused as that rather than as an unknown action. The inclusion's
 `id` is the prefix its included actions are addressed under; the record itself is
@@ -657,8 +663,12 @@ the group, exactly as `apply-action` does for an unknown ID, and there is no
 separate empty-group case to succeed quietly over. A qualified group inside an
 inclusion the run did not read fails the same way, naming the inclusion instead.
 
-Naming a group bypasses group exclusions; each member's own exclusions still
-apply. See the [selection table](#selection-by-command) for the complete rules.
+Naming a group bypasses that group's disable and no other; each member's own
+exclusions still apply. A record an [inclusion](repoformat.md#include-remote) in
+the group contributed is a member through the inclusion, so a disable naming its
+own group still applies: `apply-group --group work` passes over a disabled
+`corp.shell`. See the [selection table](#selection-by-command) for the complete
+rules.
 
 Where the group applies no action, the run says so in one line and exits 0 — the
 group exists and the command did what was asked. Which record was passed over,
@@ -973,6 +983,12 @@ members carry — so an action written with no `id` can be left out only through
 its group, and an action in no group only by its own name. The two namespaces are
 separate, so `--skip-group zshrc` does not reach the action `zshrc`.
 
+A [`git-clone-list`](repoformat.md#the-clone-list-format) entry written with an
+`id` is named in the action namespace, under its list's
+[address](#addresses): `--skip-action zsh-plugins.p10k` leaves out one plugin
+and clones the rest. No group names an entry, so a group reaches one only by
+reaching its whole list.
+
 A condition names nothing and is not a list: it is a property of the record, read
 against [the variables this run resolved](environment.md#variable-precedence).
 
@@ -997,7 +1013,8 @@ Both come before the first action, because they are complaints about the
 invocation and a run that fails partway should not swallow them. A malformed
 address is reported as the options are read; whether a well-formed one matched
 anything waits until every [inclusion](repoformat.md#include-remote) the run
-reaches has contributed what it contributes, since until then there is nothing to
+reaches has contributed what it contributes and every clone list it runs has
+been [prepared](#clone-list-preparation), since until then there is nothing to
 match it against.
 
 **An [inclusion](repoformat.md#include-remote) is excluded as a unit.** It is a
@@ -1016,14 +1033,20 @@ so the same non-match that warns above is expected there.
 | --- | --- | --- | --- |
 | An inclusion's selection filters | Honor | Honor | Honor |
 | Disabled action IDs | Honor | Waive | Honor |
-| Disabled groups | Honor | Waive | Waive |
+| Disabled groups | Honor | Waive | Waive the named group; honor others |
 | `--skip-action` / `BATFILES_SKIP_ACTIONS` | Honor | Option rejected; environment ignored | Honor |
 | `--skip-group` / `BATFILES_SKIP_GROUPS` | Honor | Option rejected; environment ignored | Option rejected; environment ignored |
 | The action's `when` / `unless` | Evaluate if otherwise selected | Do not evaluate | Evaluate if otherwise selected |
 
 `apply-action` bypasses its record's condition even if evaluation would fail.
-Conditions on entries inside a selected clone list still apply. These overrides
-affect only the invocation; they do not edit persistent disabled state.
+These overrides affect only the invocation; they do not edit persistent disabled
+state.
+
+**A clone list's entries answer to every row above under their own
+[addresses](#addresses)**, and naming the list waives nothing for them: its
+entries' disables, the skips the command reads, and their conditions all still
+apply. Naming one entry with `apply-action` waives that entry's own, as it does
+an action's.
 
 [`clone`](#clone) is not a fourth column: the run it performs is a `sync`, so it
 reads the first one.
@@ -1031,7 +1054,8 @@ reads the first one.
 A record an [inclusion](repoformat.md#include-remote) contributed answers to
 every row above under its qualified address, and the inclusion that contributed
 it answers under its own. Asking for the inclusion — `apply-group` naming the
-group it is in — reaches everything it brought in.
+group it is in — reaches everything it brought in, and waives only that group:
+a disabled group a contributed record names still leaves it out.
 
 **Naming what an inclusion contributed does not name the inclusion.** A
 qualified target makes the command read the inclusion's manifest, but the
@@ -1046,6 +1070,19 @@ inclusion and the reason:
 $ batfiles apply-action --id corp.zshrc
 error: action `corp.zshrc` would come from include-remote `corp`, which is excluded: group `work` is disabled
 ```
+
+**Naming a clone-list entry does not name its list**, in the same way. The list
+is decided as `sync` decides it, with nothing waived, and one this machine keeps
+out goes unread and fails the command:
+
+```console
+$ batfiles apply-action --id zsh-plugins.p10k
+error: entry `zsh-plugins.p10k` would come from git-clone-list `zsh-plugins`, which is excluded: action `zsh-plugins` is disabled
+```
+
+That includes a list an inclusion's [selection
+filters](repoformat.md#selecting-part-of-a-remote) left out: its entries were
+never read, so there is no entry to report as passed over.
 
 **An inclusion's [selection filters](repoformat.md#selecting-part-of-a-remote)
 are honored everywhere**, which is the one row no command waives. They are the
@@ -1077,13 +1114,19 @@ only `sync` had work to pass over.
 
 After the run's list is expanded and selection and action conditions are settled,
 all selected, unskipped clone lists are read and validated before any action
-writes. This includes the lists an [inclusion](repoformat.md#include-remote)
-contributed, each read from the materialization its record came from. Skipped
-lists are not opened. A missing or malformed executable list fails the run before
-installation begins, even if its action appears later in the list. A list
-produced by an earlier action in the same run is therefore unavailable for
-preparation. Entry conditions are evaluated during preparation, but their
-exclusions are reported when the parent action runs, in list order.
+writes. This includes a list read only because the command names one of its
+entries, and the lists an [inclusion](repoformat.md#include-remote) contributed,
+each read from the materialization its record came from. Skipped lists are not
+opened. A missing or malformed executable list fails the run before installation
+begins, even if its action appears later in the list. A list produced by an
+earlier action in the same run is therefore unavailable for preparation.
+
+Preparation decides each entry as selection decides a record — its disable, then
+the run-only skips, then its condition, evaluated only for an entry nothing else
+excludes — but the exclusions are reported when the parent action runs, in list
+order. It comes before run-only skips are checked for a match and before an
+apply command's target is resolved, since an entry's address is known only once
+its list has been read.
 
 ### Addresses
 
@@ -1094,14 +1137,16 @@ a nonempty list of [IDs](repoformat.md#names-and-ids) joined by `.`, with no
 upper bound on the number of segments. Dots are the separators and are not part
 of an individual ID.
 
-Four forms resolve today:
+Six forms resolve:
 
-| Form                       | Meaning                                                 |
-|----------------------------|---------------------------------------------------------|
-| `<action-id>`              | Top-level action in the leaf repository.                |
-| `<group>`                  | Group in the leaf repository.                           |
-| `<inclusion>.<action-id>`  | Action an [`include-remote`](repoformat.md#include-remote) contributed. |
-| `<inclusion>.<group>`      | Group a contributed action names.                       |
+| Form                                  | Meaning                                                 |
+|---------------------------------------|---------------------------------------------------------|
+| `<action-id>`                         | Top-level action in the leaf repository.                |
+| `<group>`                             | Group in the leaf repository.                           |
+| `<inclusion>.<action-id>`             | Action an [`include-remote`](repoformat.md#include-remote) contributed. |
+| `<inclusion>.<group>`                 | Group a contributed action names.                       |
+| `<list>.<entry-id>`                   | Entry in a leaf [`git-clone-list`](repoformat.md#the-clone-list-format). |
+| `<inclusion>.<list>.<entry-id>`       | Entry in a list an inclusion contributed.               |
 
 **An unqualified address names the leaf repository and nothing else.** Batfiles
 does not search what an inclusion contributed for a matching unqualified name, so
@@ -1117,9 +1162,14 @@ inclusion's manifest, which is how `apply-action --id corp.zshrc` reaches past a
 record it does not name. Reaching past the inclusion waives none of its
 exclusions — see [selection by command](#selection-by-command).
 
-The remaining form — an addressable entry inside a `git-clone-list` — is in
-[`future/cmdline.md`](future/cmdline.md#address-forms) with the slice that gives
-it something to refer to.
+**A clone-list entry is addressed under its list**: the list's own address,
+then the `id` the entry was written with. Entries are named where actions are —
+`--skip-action`, `disable-action`, `apply-action --id`, and the `actions` of
+`disabled.toml` and `[default-disabled]` — and no group names one. An entry
+written without an `id`, or one in a list that has no address of its own, runs
+and answers to nothing. Action IDs are unique, so the leading segments name one
+record: `zsh-plugins.p10k` is an entry where `zsh-plugins` is a clone list and a
+contributed action where it is an inclusion.
 
 **Syntax and resolution are separate questions.** A well-formed address that no
 form above can resolve — one naming an inclusion that declares nothing by that
@@ -1135,8 +1185,8 @@ error: no action in /home/you/dotfiles/batfiles.toml has the id `corp.nowhere`
 ```
 
 A run-only skip is warned about when nothing answers it, with one exception: a
-name qualified by an inclusion this run did not read is neither matched nor
-unmatched, since what would have answered it was never read.
+name inside an inclusion or a clone list this run did not read is neither
+matched nor unmatched, since what would have answered it was never read.
 
 ### Exclusion reporting
 
@@ -1192,11 +1242,16 @@ evaluated](repoformat.md#when-a-condition-cannot-be-evaluated) costs only the
 runs that would otherwise have carried the record out.
 
 Clone-list exclusions are reported under the parent action, in entry order.
-An ordinary condition exclusion is `-v` detail:
+An ordinary condition exclusion is `-v` detail, and so is an entry a disable or
+a run-only skip leaves out, with the reason an action's would give:
 
 ```text
 not cloning https://github.com/company/internal-zsh-tools.git (plugins.txt line 2): when "work" is false
+not cloning https://github.com/romkatv/powerlevel10k.git (id=p10k, plugins.txt line 3): action `zsh-plugins.p10k` is disabled
 ```
+
+An entry the command did not request — every entry but the one
+[`apply-action`](#apply-action) names — is not reported at all.
 
 An entry condition that cannot be evaluated instead emits a warning using the
 same `not cloning` frame, naming the condition and failure. Other entries remain

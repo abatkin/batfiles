@@ -2,8 +2,7 @@
 
 The part of the repository format that runs today: where the manifest lives, how
 it is read, the variables and remotes it can declare, and the nine kinds of
-action it can declare. The rest of the schema — entry filters, and addresses
-reaching a single clone-list entry — is in
+action it can declare. The rest of the schema — entry filters — is in
 [`future/repoformat.md`](future/repoformat.md) until it is built.
 
 ## Repository layout
@@ -949,6 +948,9 @@ The destination directory is created before processing entries, even for an
 empty list. Entries are cloned in list order using [`git-clone`](#git-clone)'s
 behavior, including its [ref rules](#ref-following-one-branch-tag-or-commit).
 
+An entry written with an `id` can be named on its own, as `zsh-plugins.<id>`
+here; see [the clone list format](#the-clone-list-format).
+
 Entries are processed independently: recoverable failures warn and leave later
 entries eligible to run. The command reference owns
 [clone-list warning and exit semantics](cmdline.md#clone-list-entry-failures).
@@ -1277,7 +1279,7 @@ comment may contain anything at all — including text that looks like metadata.
 
 | Key         | Type      | Description                                                |
 |-------------|-----------|-------------------------------------------------------------|
-| `id`        | `ID`      | Names the entry in what the run says about it.              |
+| `id`        | `ID`      | Addresses the entry, and names it in what the run says.     |
 | `ref`       | string    | The branch, tag, or commit to follow.                       |
 | `dest-name` | string    | What to call the clone, in place of the derived name.       |
 | `when`      | condition | Clone the entry only where the condition is true.           |
@@ -1303,11 +1305,15 @@ as action conditions. See [preparation](cmdline.md#clone-list-preparation) for
 evaluation timing and [exclusion reporting](cmdline.md#exclusion-reporting) for
 output examples.
 
-**An `id` names the entry in diagnostics**, and nothing more than that today: a
-line about an entry that carries one says `id=p10k, plugins.txt line 3` where one
-without is named by its file and line alone. Naming a single entry on the command
-line is an [enhancement](future/roadmap.md#enhancements); no address resolves
-to an entry, so writing an `id` makes nothing selectable.
+**An `id` makes the entry addressable**, under its list: in a list declared as
+`zsh-plugins`, the first example's `id=p10k` entry is `zsh-plugins.p10k`, which a machine can
+[disable](cmdline.md#enable-and-disable-actions-or-groups), skip for one run, or
+apply on its own. A condition is the repository choosing entries per machine;
+an address is how a machine chooses for itself. The command reference owns what
+an entry [address](cmdline.md#addresses) reaches and [what each command
+waives](cmdline.md#selection-by-command). A line about an entry that carries an
+`id` says `id=p10k, plugins.txt line 3`, where one without is named by its file
+and line alone.
 
 An `id` follows the [ID rule](#names-and-ids), which is not the rule a directory
 name follows: `ack.vim` is a perfectly good directory and not a valid ID,

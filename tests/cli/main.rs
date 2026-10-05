@@ -7,6 +7,7 @@ mod actions;
 mod apply;
 mod bootstrap;
 mod clone;
+mod clone_list_addresses;
 mod clone_lists;
 mod cloning;
 mod conditions;

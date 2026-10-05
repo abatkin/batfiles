@@ -3,13 +3,12 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::condition::Exclusion;
 use crate::error::Error;
-use crate::inclusion::{Inclusion, Unread};
+use crate::inclusion::Inclusion;
 use crate::item::{ItemAddress, ItemId};
 use crate::manifest::action::{Action, Contributor};
 use crate::output::Reporter;
-use crate::selection::{Selection, Subject};
+use crate::selection::{Disposition, Selection, Subject, Unread};
 use crate::var_set::VarSet;
 
 /// An action's declaration, addresses, report heading, and disposition for this run.
@@ -67,16 +66,6 @@ impl RunRecord {
     }
 }
 
-/// What this run does with one record.
-pub(super) enum Disposition {
-    /// Not requested by the command; still available for skip matching.
-    NotRequested,
-    /// Requested, and excluded for this reason.
-    Excluded(Exclusion),
-    /// Requested and not excluded.
-    Allowed,
-}
-
 /// One record of the leaf manifest, in declaration order.
 pub(super) enum LeafEntry {
     /// Any record but an inclusion.
@@ -121,10 +110,10 @@ impl RunList {
         })
     }
 
-    /// Iterate unread inclusion IDs and their reasons. Qualified addresses inside them cannot
-    /// be classified as unmatched.
-    pub fn unread_inclusions(&self) -> impl Iterator<Item = (&ItemId, Unread<'_>)> {
-        self.entries.iter().filter_map(|entry| match entry {
+    /// Iterate the addresses of unread inclusions and clone lists, with the reason each went
+    /// unread. Addresses inside them cannot be classified as unmatched.
+    pub fn unread(&self) -> impl Iterator<Item = (&ItemAddress, Unread<'_>)> {
+        let inclusions = self.entries.iter().filter_map(|entry| match entry {
             LeafEntry::Inclusion {
                 record,
                 inclusion,
@@ -132,40 +121,64 @@ impl RunList {
             } => {
                 let unread = match &record.disposition {
                     Disposition::NotRequested => Unread::NotRequested,
-                    Disposition::Excluded(exclusion) => Unread::Excluded(exclusion),
-                    Disposition::Allowed => Unread::NotMaterialized(inclusion.remote()),
+                    Disposition::Excluded(exclusion) => Unread::ExcludedInclusion(exclusion),
+                    Disposition::Allowed | Disposition::AllowedInPart => {
+                        Unread::NotMaterialized(inclusion.remote())
+                    }
                 };
-                Some((inclusion.id()?, unread))
+                Some((record.address.as_ref()?, unread))
             }
             _ => None,
-        })
+        });
+        let lists = self.records().filter_map(|record| {
+            if !matches!(record.action, Action::GitCloneList(_)) {
+                return None;
+            }
+            let unread = match &record.disposition {
+                Disposition::NotRequested => Unread::NotRequested,
+                Disposition::Excluded(exclusion) => Unread::ExcludedList(exclusion),
+                Disposition::Allowed | Disposition::AllowedInPart => return None,
+            };
+            Some((record.address.as_ref()?, unread))
+        });
+        inclusions.chain(lists)
     }
 
     /// Warn about every run-only skip in `selection` that names nothing listed
-    /// here. See [`Selection::warn_unmatched`].
-    pub fn warn_unmatched(&self, selection: &Selection<'_>, reporter: &Reporter) {
+    /// here or among `entries`, the addresses of every prepared clone-list
+    /// entry. See [`Selection::warn_unmatched`].
+    pub fn warn_unmatched(
+        &self,
+        selection: &Selection<'_>,
+        entries: &[&ItemAddress],
+        reporter: &Reporter,
+    ) {
         let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
             self.records().filter_map(|it| of(it).as_ref()).collect()
         };
-        let unread: Vec<&ItemId> = self.unread_inclusions().map(|(id, _)| id).collect();
+        let mut addresses = names(|it| &it.address);
+        addresses.extend_from_slice(entries);
+        let unread: Vec<&ItemAddress> = self.unread().map(|(address, _)| address).collect();
         selection.warn_unmatched(
-            &names(|it| &it.address),
+            &addresses,
             &names(|it| &it.group_address),
             &unread,
             reporter,
         );
     }
 
-    /// Return an error if the selection's target matched no record, or `None` if it matched or
-    /// selected everything. Diagnostics identify `manifest` or an unread inclusion.
+    /// Return an error if the selection's target matched no record and no clone-list entry
+    /// (`entry_found`), or `None` if it matched or selected everything. Diagnostics identify
+    /// `manifest` or the unread inclusion or list the target is inside.
     pub fn unmatched_target_error(
         &self,
         selection: &Selection<'_>,
         manifest: PathBuf,
+        entry_found: bool,
     ) -> Option<Error> {
-        if self.target_found {
+        if self.target_found || entry_found {
             return None;
         }
-        selection.unmatched_target_error(manifest, self.unread_inclusions())
+        selection.unmatched_target_error(manifest, self.unread())
     }
 }

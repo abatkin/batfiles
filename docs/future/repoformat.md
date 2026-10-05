@@ -96,26 +96,11 @@ exclude = ["private/*", "*.bak"]
 
 ### Names and IDs
 
-The ID rule, action-ID uniqueness, remote IDs, the `include-remote` ID, and the
-variable-name rule are specified in
-[`docs/repoformat.md`](../repoformat.md#names-and-ids). Clone-list entry IDs
-follow the current [entry format](../repoformat.md#the-clone-list-format), where
-one names its entry in diagnostics alone. What is not built is the address that
-reaches a single entry, in a leaf's list or in one an inclusion contributed.
-
-```text
-ID = string matching [A-Za-z0-9][A-Za-z0-9_-]*
-```
-
-- IDs and group names match `[A-Za-z0-9][A-Za-z0-9_-]*`. This rule applies to
-  action IDs, `include-remote` IDs, manifest-entry IDs, remote IDs, and group
-  names. In particular, an ID cannot contain whitespace, `.`, or `,`; dots are
-  reserved for composing qualified addresses and commas delimit environment
-  lists.
-- Action IDs must be unique within a repository. Manifest-entry IDs must be
-  unique within their manifest.
-- Group names and action IDs occupy distinct namespaces.
-- A remote map key is also that remote's ID.
+Built, and specified in [`docs/repoformat.md`](../repoformat.md#names-and-ids),
+along with clone-list entry IDs in the [entry
+format](../repoformat.md#the-clone-list-format) and the
+[addresses](../cmdline.md#addresses) they compose. Nothing about them is
+outstanding.
 
 ## Remotes
 
@@ -196,16 +181,9 @@ These filters are unbuilt. Selection is recursive, so patterns may contain `/`.
 Built and specified in
 [`docs/repoformat.md`](../repoformat.md#git-clone-list), along with the [clone
 list format](../repoformat.md#the-clone-list-format) it reads, the per-entry
-`ref=` it honors, and the per-entry `when=` and `unless=` it decides. One thing
-about it is not built.
-
-**Entries are not individually selectable.** An entry may carry an `id`, and an
-`<action>.<entry>` address may be written in `disabled.toml` or passed to
-`--skip-action`; nothing resolves one, which is the outcome every list holding
-an address already has a rule for. What has to happen for one to resolve is a
-step of its own. A per-entry condition now covers the case that motivated it —
-a plugin one machine wants and the others do not — so what is left is per-machine
-selection the machine states for itself rather than the repository.
+`ref=` it honors, the per-entry `when=` and `unless=` it decides, and the
+[address](../cmdline.md#addresses) an entry written with an `id` answers to.
+Nothing about it is outstanding.
 
 ### `fetch-archive` entry filters
 

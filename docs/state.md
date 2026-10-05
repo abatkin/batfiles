@@ -53,7 +53,9 @@ A syntactically valid address is persisted as given, whatever its segment count.
 These commands resolve nothing, so an address with more segments than any
 resolvable [form](cmdline.md#addresses) — `a.b.c.d.e` — is accepted and recorded.
 A qualified address names an action or a group an
-[`include-remote`](repoformat.md#include-remote) spliced in. One naming an
+[`include-remote`](repoformat.md#include-remote) spliced in, or an entry of a
+[clone list](repoformat.md#the-clone-list-format); `actions = ["zsh-plugins.p10k"]`
+leaves one plugin out. One naming an
 inclusion that contributes nothing by that name matches nothing, which is the
 same outcome as any other name a manifest does not answer to — and one recorded
 before the inclusion existed starts matching when it does.

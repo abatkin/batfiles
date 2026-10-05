@@ -81,6 +81,8 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   guarantees and reporting limits.
 - **Disable actions and groups.** The enable/disable commands persist choices
   in `disabled.toml`; skip options and environment variables apply to one run.
+  A clone-list entry written with an `id` is named under its list, as
+  `zsh-plugins.p10k`, so one machine can leave out a single plugin.
   See [selection](docs/cmdline.md#selecting-what-a-run-does).
 - **Configure variables and conditions.** `vars set`, `get`, `unset`, and `list`
   manage or inspect variables. Manifest defaults, per-inclusion overrides,

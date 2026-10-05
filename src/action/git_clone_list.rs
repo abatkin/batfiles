@@ -4,9 +4,11 @@ use super::RunContext;
 use crate::clone_list::PreparedList;
 use crate::error::Error;
 use crate::git::{self, GitError};
+use crate::selection::Disposition;
 
 /// Create the destination directory and process entries in list order. `list`
-/// was read during preparation; an empty one declares no repositories.
+/// was read during preparation; an empty one declares no repositories. Entries
+/// the command did not request are passed over without a word.
 pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> Result<(), Error> {
     let dest_dir = context.destination(list.dest_dir());
     if !context.ensure_directory(&dest_dir)? {
@@ -22,15 +24,22 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
     }
     for entry in list.entries() {
         let declared = &entry.declared;
-        if let Some(exclusion) = &entry.exclusion {
-            let line = format!(
-                "not cloning {} ({}): {}",
-                declared.repository,
-                declared.written_at(&name),
-                exclusion.reason()
-            );
-            exclusion.report(context.reporter(), &line);
-            continue;
+        match &entry.disposition {
+            Disposition::Allowed => {}
+            Disposition::NotRequested => continue,
+            Disposition::AllowedInPart => {
+                unreachable!("an entry holds nothing to reach into, so it is never allowed in part")
+            }
+            Disposition::Excluded(exclusion) => {
+                let line = format!(
+                    "not cloning {} ({}): {}",
+                    declared.repository,
+                    declared.written_at(&name),
+                    exclusion.reason()
+                );
+                exclusion.report(context.reporter(), &line);
+                continue;
+            }
         }
 
         let dest = dest_dir.join(&declared.dest_name);

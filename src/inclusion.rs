@@ -43,11 +43,6 @@ impl Inclusion {
         }
     }
 
-    /// The `id` this inclusion answers to, where it was written with one.
-    pub fn id(&self) -> Option<&ItemId> {
-        self.id.as_ref()
-    }
-
     /// The remote it includes.
     pub fn remote(&self) -> &ItemId {
         &self.remote
@@ -129,16 +124,6 @@ pub(crate) fn warn_not_materialized(remote: &ItemId, path: &Path, reporter: &Rep
          listed; run `batfiles sync` to bring it down",
         path.display()
     ));
-}
-
-/// Why an inclusion's manifest was not read.
-pub(crate) enum Unread<'a> {
-    /// The command did not request it.
-    NotRequested,
-    /// Requested, and excluded for this reason.
-    Excluded(&'a Exclusion),
-    /// Admitted, with no materialization of this remote to read.
-    NotMaterialized(&'a ItemId),
 }
 
 #[cfg(test)]

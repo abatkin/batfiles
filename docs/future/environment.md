@@ -15,9 +15,9 @@ follow the built [variable precedence](../environment.md#variable-precedence).
 
 ## Run-only skips
 
-The existing [run-only skip inputs](../environment.md#run-only-skips) will also
-resolve qualified addresses in included remotes. See the proposed
-[address forms](cmdline.md#address-forms).
+The [run-only skip inputs](../environment.md#run-only-skips) resolve every
+[address form](../cmdline.md#addresses), qualified ones and clone-list entries
+included. Nothing about them is outstanding.
 
 ## Bootstrap enable and disable lists
 

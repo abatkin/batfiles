@@ -5,15 +5,15 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::inclusion::{IncludedRecord, InclusionContents, compose, not_selected};
-use super::record::{Disposition, LeafEntry, OpenedInclusion, RunList, RunRecord};
+use super::record::{LeafEntry, OpenedInclusion, RunList, RunRecord};
 use crate::action::RunContext;
-use crate::condition::{Bindings, HostNamespaces};
+use crate::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::dynamic::{DynamicVarResolver, ManifestSource};
 use crate::error::Error;
 use crate::inclusion::{self, Inclusion};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
-use crate::selection::Selection;
+use crate::selection::{Disposition, Selection};
 use crate::var::VarName;
 use crate::var_set::{VarSet, VarValue};
 
@@ -47,37 +47,37 @@ pub(super) fn assemble(
         }
 
         let Action::IncludeRemote(declaration) = &record.action else {
-            if target_names_record {
-                record.disposition = disposition(&record, selection, &bindings);
-            }
+            decide(&mut record, target_names_record, None, selection, &bindings);
             run_list.entries.push(LeafEntry::Action(record));
             continue;
         };
         let inclusion = Inclusion::at(declaration, index + 1);
         // A qualified target opens its inclusion without bypassing the inclusion's exclusions.
-        let should_open_inclusion = target_names_record || selection.reaches_into(inclusion.id());
+        let should_open_inclusion =
+            target_names_record || selection.reaches_into(record.address.as_ref());
         if should_open_inclusion {
             let remote_exclusion = context.excluded_remote(inclusion.remote());
             let exclusion =
                 inclusion.exclusion(record.subject(), selection, &bindings, remote_exclusion);
-            record.disposition = match exclusion {
-                Some(exclusion) => Disposition::Excluded(exclusion),
-                None => Disposition::Allowed,
+            let disposition = Disposition::from_exclusion(exclusion);
+            record.disposition = if target_names_record {
+                disposition
+            } else {
+                disposition.in_part()
             };
         }
-        let included = match record.disposition {
-            Disposition::Allowed => {
-                let included = inclusion.manifest(context.repository().path())?;
-                if included.is_none() {
-                    inclusion::warn_not_materialized(
-                        inclusion.remote(),
-                        &context.materialization(inclusion.remote()),
-                        context.reporter(),
-                    );
-                }
-                included
+        let included = if record.disposition.is_allowed() {
+            let included = inclusion.manifest(context.repository().path())?;
+            if included.is_none() {
+                inclusion::warn_not_materialized(
+                    inclusion.remote(),
+                    &context.materialization(inclusion.remote()),
+                    context.reporter(),
+                );
             }
-            _ => None,
+            included
+        } else {
+            None
         };
         let Some(included) = included else {
             run_list.entries.push(LeafEntry::Inclusion {
@@ -117,15 +117,15 @@ pub(super) fn assemble(
             let mut contributed = RunRecord::contributed(action, number, inclusion.contributor());
             let target_names_contributed =
                 match_and_record_target(&mut run_list, &contributed, selection);
-            if target_names_record || target_names_contributed {
-                // Inclusion filters cannot be waived and must suppress condition evaluation for
-                // rejected records.
-                contributed.disposition = if included_by_filter {
-                    disposition(&contributed, selection, &scoped)
-                } else {
-                    Disposition::Excluded(not_selected(&inclusion))
-                };
-            }
+            let filtered_out = (!included_by_filter).then(|| not_selected(&inclusion));
+            let inclusion_allowed_whole = matches!(record.disposition, Disposition::Allowed);
+            decide(
+                &mut contributed,
+                inclusion_allowed_whole || target_names_contributed,
+                filtered_out,
+                selection,
+                &scoped,
+            );
             records.push(contributed);
         }
         run_list.entries.push(LeafEntry::Inclusion {
@@ -150,16 +150,35 @@ fn match_and_record_target(
     named
 }
 
-/// The disposition of a requested record: its first exclusion, or `Allowed`.
-fn disposition(
-    record: &RunRecord,
+/// Decide a record that is not an inclusion. A `requested` record takes its first exclusion
+/// under the target's waivers. A clone list the target only reaches into, for one of its
+/// entries, is decided with nothing waived and allowed only in part. Anything else stays not
+/// requested.
+///
+/// `filtered_out` is an inclusion's filters leaving the record out, which nothing waives and
+/// which comes ahead of every other exclusion, so the record's condition is not evaluated.
+fn decide(
+    record: &mut RunRecord,
+    requested: bool,
+    filtered_out: Option<Exclusion>,
     selection: &Selection<'_>,
     bindings: &Bindings<'_>,
-) -> Disposition {
-    match selection.exclusion(record.subject(), bindings) {
-        Some(exclusion) => Disposition::Excluded(exclusion),
-        None => Disposition::Allowed,
+) {
+    let reached = matches!(record.action, Action::GitCloneList(_))
+        && selection.reaches_into_list(record.address.as_ref());
+    if !requested && !reached {
+        return;
     }
+    record.disposition = match filtered_out {
+        Some(exclusion) => Disposition::Excluded(exclusion),
+        None if requested => {
+            Disposition::from_exclusion(selection.exclusion(record.subject(), bindings))
+        }
+        None => Disposition::from_exclusion(
+            selection.exclusion_without_waivers(record.subject(), bindings),
+        )
+        .in_part(),
+    };
 }
 
 /// The scope for one opened inclusion's records: the run's set with the

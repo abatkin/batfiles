@@ -7,7 +7,7 @@ pub(crate) mod record;
 use std::rc::Rc;
 
 use self::assemble::assemble;
-use self::record::{Disposition, LeafEntry, RunList, RunRecord};
+use self::record::{LeafEntry, RunList, RunRecord};
 use crate::action::{self, DestinationOptions, Executable, RunContext};
 use crate::bootstrap::BootstrapDecisions;
 use crate::clone_list::PreparedList;
@@ -23,7 +23,7 @@ use crate::manifest::action::Action;
 use crate::mode::RunMode;
 use crate::output::Reporter;
 use crate::remotes;
-use crate::selection::{Selection, Target};
+use crate::selection::{Disposition, Selection, Target};
 use crate::var::VarName;
 use crate::var_set::VarSet;
 
@@ -189,13 +189,15 @@ enum PreparedLeafEntry<'a> {
     },
 }
 
-/// Prepare records in declaration order, reading selected, allowed clone lists once. Missing or
-/// malformed lists fail before any action writes. Unrequested and excluded lists are not read.
+/// Prepare records in declaration order, reading each allowed clone list once and deciding its
+/// entries against `selection`. Missing or malformed lists fail before any action writes.
+/// Unrequested and excluded lists are not read.
 ///
 /// Bootstrap adoption and remote materialization have already run; their writes are retained on
 /// failure. Files that an earlier action would create are not available yet.
 fn prepare<'a>(
     run_list: &'a RunList,
+    selection: &Selection<'_>,
     context: &RunContext<'_>,
     scope: &Rc<VarSet>,
     host: &HostNamespaces,
@@ -208,15 +210,14 @@ fn prepare<'a>(
                 record,
                 inclusion,
                 opened,
-            } if matches!(record.disposition, Disposition::Allowed) => {
+            } if record.disposition.is_allowed() => {
                 let remote = inclusion.remote();
                 let steps = opened
                     .iter()
                     .flat_map(|opened| {
-                        opened
-                            .records
-                            .iter()
-                            .map(|it| step(it, Some(remote), &opened.scope, context, host))
+                        opened.records.iter().map(|it| {
+                            step(it, Some(remote), selection, &opened.scope, context, host)
+                        })
                     })
                     .collect::<Result<_, _>>()?;
                 Ok(PreparedLeafEntry::Inclusion {
@@ -226,7 +227,7 @@ fn prepare<'a>(
                 })
             }
             LeafEntry::Action(record) | LeafEntry::Inclusion { record, .. } => Ok(
-                PreparedLeafEntry::Step(step(record, None, scope, context, host)?),
+                PreparedLeafEntry::Step(step(record, None, selection, scope, context, host)?),
             ),
         })
         .collect()
@@ -237,6 +238,7 @@ fn prepare<'a>(
 fn step<'a>(
     record: &'a RunRecord,
     remote: Option<&ItemId>,
+    selection: &Selection<'_>,
     scope: &Rc<VarSet>,
     context: &RunContext<'_>,
     host: &HostNamespaces,
@@ -244,18 +246,20 @@ fn step<'a>(
     Ok(match &record.disposition {
         Disposition::NotRequested => Step::NotRequested,
         Disposition::Excluded(exclusion) => Step::ReportExclusion(record, exclusion),
-        Disposition::Allowed => {
-            Step::Run(record, executable(record, remote, scope, context, host)?)
-        }
+        Disposition::Allowed | Disposition::AllowedInPart => Step::Run(
+            record,
+            executable(record, remote, selection, scope, context, host)?,
+        ),
     })
 }
 
 /// Prepare execution inputs for `record`. Clone lists are read from `remote`'s tree (`None` for
-/// the leaf), with conditions evaluated in `scope`; other actions use their declaration
-/// directly.
+/// the leaf), with their entries decided by `selection` in `scope`; other actions use their
+/// declaration directly.
 fn executable<'a>(
     record: &'a RunRecord,
     remote: Option<&ItemId>,
+    selection: &Selection<'_>,
     scope: &Rc<VarSet>,
     context: &RunContext<'_>,
     host: &HostNamespaces,
@@ -266,8 +270,27 @@ fn executable<'a>(
     let path = context.source(remote, &list.source)?;
     let bindings = Bindings::new(scope, host);
     Ok(Executable::CloneList(PreparedList::prepare(
-        list, &path, &bindings,
+        list,
+        &path,
+        record.address.as_ref(),
+        |entry| selection.entry_disposition(entry, &record.disposition, &bindings),
     )?))
+}
+
+/// The address of every addressable entry in the clone lists `plan` prepared.
+fn entry_addresses<'a>(plan: &'a [PreparedLeafEntry<'_>]) -> Vec<&'a ItemAddress> {
+    plan.iter()
+        .flat_map(|entry| match entry {
+            PreparedLeafEntry::Step(step) => std::slice::from_ref(step),
+            PreparedLeafEntry::Inclusion { steps, .. } => steps.as_slice(),
+        })
+        .filter_map(|step| match step {
+            Step::Run(_, Executable::CloneList(list)) => Some(list.entries()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|entry| entry.address.as_ref())
+        .collect()
 }
 
 /// Carry out one step, whose record is read from `remote`'s tree (`None`: the
@@ -292,7 +315,7 @@ fn execute(
 }
 
 /// Load inputs, adopt bootstrap state, materialize remotes, assemble and select records,
-/// prepare clone lists, and execute actions in declaration order. Return the number of
+/// prepare clone lists, check the target, and execute actions in declaration order. Return the number of
 /// dispatched actions, including unchanged actions and dry-run dispatches, but excluding
 /// inclusions.
 ///
@@ -375,10 +398,18 @@ fn run(
     // Save earlier inclusions' captures even if a later inclusion failed.
     dynamic.save();
     let run_list = run_list?;
-    // Included addresses are known only after assembly.
-    run_list.warn_unmatched(&selection, reporter);
 
-    let plan = prepare(&run_list, &context, &scope, &host)?;
+    let plan = prepare(&run_list, &selection, &context, &scope, &host)?;
+    // Included addresses are known only after assembly, and entry addresses after preparation.
+    let entries = entry_addresses(&plan);
+    run_list.warn_unmatched(&selection, &entries, reporter);
+    let entry_found = entries.iter().any(|it| selection.names(it));
+    if let Some(error) =
+        run_list.unmatched_target_error(&selection, invocation.roots.manifest_path(), entry_found)
+    {
+        return Err(error);
+    }
+
     let mut processed_action_count = 0;
 
     for prepared in &plan {
@@ -397,12 +428,6 @@ fn run(
                 }
             }
         }
-    }
-
-    if let Some(error) =
-        run_list.unmatched_target_error(&selection, invocation.roots.manifest_path())
-    {
-        return Err(error);
     }
     Ok(processed_action_count)
 }

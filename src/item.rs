@@ -145,11 +145,17 @@ impl ItemAddress {
         }
     }
 
-    /// Return whether this address starts with `id` followed by at least one more segment.
-    pub fn qualified_by(&self, id: &ItemId) -> bool {
+    /// The address of `id` inside the item this address names, `self.id`.
+    pub fn child(&self, id: &ItemId) -> Self {
+        Self(format!("{self}{SEGMENT_SEPARATOR}{id}"))
+    }
+
+    /// Return whether this address starts with every segment of `container`
+    /// followed by at least one more segment.
+    pub fn within(&self, container: &ItemAddress) -> bool {
         self.0
-            .split_once(SEGMENT_SEPARATOR)
-            .is_some_and(|(first, _)| first == id.as_str())
+            .strip_prefix(container.0.as_str())
+            .is_some_and(|rest| rest.starts_with(SEGMENT_SEPARATOR))
     }
 }
 
@@ -295,13 +301,25 @@ mod tests {
     }
 
     #[test]
-    fn an_address_reaches_into_the_inclusion_its_first_segment_names() {
-        let core = id("core");
-        assert!(address("core.zshrc").qualified_by(&core));
-        assert!(address("core.vim-bundles.p10k").qualified_by(&core));
-        assert!(!address("work.zshrc").qualified_by(&core));
-        // The inclusion's own name reaches the record, not inside it.
-        assert!(!address("core").qualified_by(&core));
+    fn an_address_is_within_the_containers_its_leading_segments_name() {
+        let (core, list) = (address("core"), address("core.vim-bundles"));
+        assert!(address("core.zshrc").within(&core));
+        assert!(address("core.vim-bundles.p10k").within(&core));
+        assert!(address("core.vim-bundles.p10k").within(&list));
+        assert!(!address("work.zshrc").within(&core));
+        assert!(!address("core.zshrc").within(&list));
+        // A container's own name reaches the record, not inside it.
+        assert!(!address("core").within(&core));
+        // Segments compare whole: `core-2` is not inside `core`.
+        assert!(!address("core-2.zshrc").within(&core));
+        assert!(!address("corezshrc").within(&core));
+    }
+
+    #[test]
+    fn a_child_is_addressed_under_its_container() {
+        let child = address("core.vim-bundles").child(&id("p10k"));
+        assert_eq!(child, address("core.vim-bundles.p10k"));
+        assert!(child.within(&address("core.vim-bundles")));
     }
 
     #[test]

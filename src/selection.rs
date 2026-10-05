@@ -1,4 +1,5 @@
-//! Select actions using command targets, disabled state, run-only skips, and conditions.
+//! Select actions and clone-list entries using command targets, disabled state, run-only
+//! skips, and conditions.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -8,7 +9,6 @@ use crate::condition::{Bindings, Exclusion, Gate};
 use crate::disabled::DisabledItems;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::inclusion::Unread;
 use crate::item::{ItemAddress, ItemId, ItemKind};
 use crate::manifest::action::Action;
 use crate::output::Reporter;
@@ -23,12 +23,63 @@ const SKIP_GROUPS: &str = "BATFILES_SKIP_GROUPS";
 const NOT_INSTALLED: &str = "it is not installed";
 
 /// A record's action address, group address, and condition for selection. Included addresses
-/// are qualified; absent IDs and unnamed inclusions have no address.
+/// are qualified; absent IDs and unnamed inclusions have no address. A clone-list entry is
+/// addressed under its list and has no group.
 #[derive(Clone, Copy)]
 pub(crate) struct Subject<'a> {
     pub address: Option<&'a ItemAddress>,
     pub group_address: Option<&'a ItemAddress>,
     pub gate: Option<Gate<'a>>,
+}
+
+/// What this run does with one record or clone-list entry.
+pub(crate) enum Disposition {
+    /// Not requested by the command; still available for skip matching.
+    NotRequested,
+    /// Requested, and excluded for this reason.
+    Excluded(Exclusion),
+    /// Requested and not excluded.
+    Allowed,
+    /// An inclusion or clone list that is not excluded, opened only because the
+    /// target names something inside it. Nothing else it holds is requested.
+    AllowedInPart,
+}
+
+impl Disposition {
+    /// `Excluded` for an exclusion, `Allowed` for none.
+    pub fn from_exclusion(exclusion: Option<Exclusion>) -> Self {
+        match exclusion {
+            Some(exclusion) => Self::Excluded(exclusion),
+            None => Self::Allowed,
+        }
+    }
+
+    /// This disposition for a record opened only to reach inside it: `Allowed`
+    /// becomes `AllowedInPart`, and anything else is unchanged.
+    pub fn in_part(self) -> Self {
+        match self {
+            Self::Allowed => Self::AllowedInPart,
+            other => other,
+        }
+    }
+
+    /// Whether the record may run or be opened, whole or in part.
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed | Self::AllowedInPart)
+    }
+}
+
+/// Why a record holding addressable items, an inclusion or a clone list, was
+/// not read.
+pub(crate) enum Unread<'a> {
+    /// The command did not request it.
+    NotRequested,
+    /// An inclusion that was requested, and excluded for this reason.
+    ExcludedInclusion(&'a Exclusion),
+    /// An admitted inclusion, with no materialization of this remote to read.
+    NotMaterialized(&'a ItemId),
+    /// A clone list that was requested, and excluded for this reason.
+    ExcludedList(&'a Exclusion),
 }
 
 /// Which of the manifest's records a command asked for.
@@ -52,24 +103,35 @@ impl Target<'_> {
         }
     }
 
-    /// Whether this target could name something inside the inclusion with `id`,
-    /// so its manifest must be read. An inclusion without an `id` is opened only
-    /// for [`Everything`](Self::Everything).
-    fn reaches_into(&self, id: Option<&ItemId>) -> bool {
+    /// Whether this target could name something inside the inclusion at
+    /// `address`, so its manifest must be read. An inclusion without an `id` is
+    /// opened only for [`Everything`](Self::Everything).
+    fn reaches_into(&self, address: Option<&ItemAddress>) -> bool {
         match self {
             Self::Everything => true,
-            Self::Action(address) | Self::Group(address) => {
-                id.is_some_and(|id| address.qualified_by(id))
+            Self::Action(target) | Self::Group(target) => {
+                address.is_some_and(|it| target.within(it))
             }
         }
     }
 
+    /// Whether this target names an entry of the clone list at `address`
+    /// without naming the list, so the list must be read to find it. Entries
+    /// have no group, and [`Everything`](Self::Everything) requests the list
+    /// itself.
+    fn reaches_into_list(&self, address: Option<&ItemAddress>) -> bool {
+        match self {
+            Self::Action(target) => address.is_some_and(|it| target.within(it)),
+            Self::Everything | Self::Group(_) => false,
+        }
+    }
+
     /// Build an unmatched-target error, or return `None` for [`Everything`](Self::Everything).
-    /// If the target falls within an unread inclusion, report why that inclusion was not read.
+    /// If the target falls within an unread inclusion or clone list, report why it was not read.
     fn unmatched_target_error<'b>(
         &self,
         manifest: PathBuf,
-        unread: impl IntoIterator<Item = (&'b ItemId, Unread<'b>)>,
+        unread: impl IntoIterator<Item = (&'b ItemAddress, Unread<'b>)>,
     ) -> Option<Error> {
         let (kind, address) = match self {
             Self::Everything => return None,
@@ -78,23 +140,32 @@ impl Target<'_> {
         };
         let unread = unread
             .into_iter()
-            .filter(|(id, _)| address.qualified_by(id))
-            .find_map(|(inclusion, unread)| {
-                let (address, inclusion) = (address.clone(), inclusion.clone());
+            .filter(|(container, _)| address.within(container))
+            .find_map(|(container, unread)| {
+                let (address, container) = (address.clone(), container.clone());
                 match unread {
                     Unread::NotRequested => None,
-                    Unread::Excluded(exclusion) => Some(Error::TargetInExcludedInclusion {
-                        kind,
-                        address,
-                        inclusion,
-                        reason: exclusion.reason().to_owned(),
-                    }),
+                    Unread::ExcludedInclusion(exclusion) => {
+                        Some(Error::TargetInExcludedInclusion {
+                            kind,
+                            address,
+                            inclusion: container,
+                            reason: exclusion.reason().to_owned(),
+                        })
+                    }
                     Unread::NotMaterialized(remote) => Some(Error::TargetInUnreadInclusion {
                         kind,
                         address,
-                        inclusion,
+                        inclusion: container,
                         remote: remote.clone(),
                     }),
+                    Unread::ExcludedList(exclusion) => {
+                        matches!(kind, ItemKind::Action).then(|| Error::TargetInExcludedList {
+                            address,
+                            list: container,
+                            reason: exclusion.reason().to_owned(),
+                        })
+                    }
                 }
             });
         Some(unread.unwrap_or_else(|| match self {
@@ -115,9 +186,20 @@ impl Target<'_> {
         !matches!(self, Self::Action(_))
     }
 
-    /// Whether exclusions naming a record's group apply; only
-    /// [`Everything`](Self::Everything) honors them.
-    fn honors_group_exclusions(&self) -> bool {
+    /// Whether exclusions naming `group`, a record's group, apply. `apply-group`
+    /// waives the group it names and no other, so a contributed record's own
+    /// group still counts; `apply-action` waives its record's group.
+    fn honors_group_exclusion(&self, group: &ItemAddress) -> bool {
+        match self {
+            Self::Everything => true,
+            Self::Group(named) => *named != group,
+            Self::Action(_) => false,
+        }
+    }
+
+    /// Whether the command reads the run-only group skips; only
+    /// [`Everything`](Self::Everything) does.
+    fn reads_group_skips(&self) -> bool {
         matches!(self, Self::Everything)
     }
 }
@@ -136,8 +218,8 @@ impl TargetWaivers {
         matches!(self, Self::Ignore) || target.honors_action_exclusions()
     }
 
-    fn honors_group_exclusions(self, target: &Target<'_>) -> bool {
-        matches!(self, Self::Ignore) || target.honors_group_exclusions()
+    fn honors_group_exclusion(self, target: &Target<'_>, group: &ItemAddress) -> bool {
+        matches!(self, Self::Ignore) || target.honors_group_exclusion(group)
     }
 }
 
@@ -191,18 +273,17 @@ impl SkipList {
         self.names.get(candidate).copied()
     }
 
-    /// Warn once per name not in `present`. Names qualified by an
-    /// `unread_inclusions` ID are skipped silently: nothing read could answer
-    /// them.
+    /// Warn once per name not in `present`. Names within an `unread` address
+    /// are skipped silently: nothing read could answer them.
     fn warn_unmatched(
         &self,
         present: &[&ItemAddress],
-        unread_inclusions: &[&ItemId],
+        unread: &[&ItemAddress],
         kind: ItemKind,
         reporter: &Reporter,
     ) {
         for (name, origin) in &self.names {
-            if present.contains(&name) || unread_inclusions.iter().any(|id| name.qualified_by(id)) {
+            if present.contains(&name) || unread.iter().any(|it| name.within(it)) {
                 continue;
             }
             reporter.warn(&format!("{origin} `{name}` matched no {kind}"));
@@ -257,7 +338,7 @@ impl<'a> Selection<'a> {
                 reporter,
             ),
             groups: read_skip_list(
-                target.honors_group_exclusions(),
+                target.reads_group_skips(),
                 skip_groups,
                 "--skip-group",
                 SKIP_GROUPS,
@@ -285,16 +366,26 @@ impl<'a> Selection<'a> {
         self.target.wants(record)
     }
 
+    /// Whether the target is the one action or entry at `address`.
+    pub fn names(&self, address: &ItemAddress) -> bool {
+        matches!(self.target, Target::Action(target) if target == address)
+    }
+
     /// See [`Target::reaches_into`].
-    pub fn reaches_into(&self, id: Option<&ItemId>) -> bool {
-        self.target.reaches_into(id)
+    pub fn reaches_into(&self, address: Option<&ItemAddress>) -> bool {
+        self.target.reaches_into(address)
+    }
+
+    /// See [`Target::reaches_into_list`].
+    pub fn reaches_into_list(&self, address: Option<&ItemAddress>) -> bool {
+        self.target.reaches_into_list(address)
     }
 
     /// See [`Target::unmatched_target_error`].
     pub fn unmatched_target_error<'b>(
         &self,
         manifest: PathBuf,
-        unread: impl IntoIterator<Item = (&'b ItemId, Unread<'b>)>,
+        unread: impl IntoIterator<Item = (&'b ItemAddress, Unread<'b>)>,
     ) -> Option<Error> {
         self.target.unmatched_target_error(manifest, unread)
     }
@@ -312,30 +403,26 @@ impl<'a> Selection<'a> {
 
     /// Warn about every run-only skip that names nothing the run listed.
     /// `addresses` and `group_addresses` are every listed record's, contributed
-    /// ones included. Skips qualified by an `unread_inclusions` ID are not
-    /// warned about: nothing read could answer them.
+    /// ones and clone-list entries included. Skips within an `unread` inclusion
+    /// or list are not warned about: nothing read could answer them.
     pub fn warn_unmatched(
         &self,
         addresses: &[&ItemAddress],
         group_addresses: &[&ItemAddress],
-        unread_inclusions: &[&ItemId],
+        unread: &[&ItemAddress],
         reporter: &Reporter,
     ) {
         self.actions
-            .warn_unmatched(addresses, unread_inclusions, ItemKind::Action, reporter);
-        self.groups.warn_unmatched(
-            group_addresses,
-            unread_inclusions,
-            ItemKind::Group,
-            reporter,
-        );
+            .warn_unmatched(addresses, unread, ItemKind::Action, reporter);
+        self.groups
+            .warn_unmatched(group_addresses, unread, ItemKind::Group, reporter);
     }
 
     /// Return the first exclusion, or `None` if admitted. Apply target exemptions, then check
     /// disabled state and run-only skips before evaluating the condition. Evaluation failures
     /// exclude the record.
     pub fn exclusion(&self, record: Subject<'_>, bindings: &Bindings<'_>) -> Option<Exclusion> {
-        self.decide(record, bindings, TargetWaivers::Apply)
+        self.decide(record, bindings, TargetWaivers::Apply, Some(NOT_INSTALLED))
     }
 
     /// Return the first exclusion without target exemptions. Check all loaded skip lists and
@@ -345,14 +432,40 @@ impl<'a> Selection<'a> {
         record: Subject<'_>,
         bindings: &Bindings<'_>,
     ) -> Option<Exclusion> {
-        self.decide(record, bindings, TargetWaivers::Ignore)
+        self.decide(record, bindings, TargetWaivers::Ignore, Some(NOT_INSTALLED))
     }
 
+    /// Decide one entry of a clone list whose disposition is `list`, which allows it whole or
+    /// in part.
+    ///
+    /// An entry the target names waives its own exclusions and condition. Every other entry
+    /// of a list allowed whole is decided without waivers, so naming the list does not waive
+    /// its entries' disables; the other entries of a list allowed in part are not requested.
+    /// A failed condition's reason leaves the consequence to the caller's line.
+    pub fn entry_disposition(
+        &self,
+        entry: Subject<'_>,
+        list: &Disposition,
+        bindings: &Bindings<'_>,
+    ) -> Disposition {
+        let waivers = if self.target.wants(entry) {
+            TargetWaivers::Apply
+        } else if matches!(list, Disposition::Allowed) {
+            TargetWaivers::Ignore
+        } else {
+            return Disposition::NotRequested;
+        };
+        Disposition::from_exclusion(self.decide(entry, bindings, waivers, None))
+    }
+
+    /// The first exclusion `waivers` leave standing. `consequence` completes a failed
+    /// condition's reason.
     fn decide(
         &self,
         record: Subject<'_>,
         bindings: &Bindings<'_>,
         waivers: TargetWaivers,
+        consequence: Option<&str>,
     ) -> Option<Exclusion> {
         if let Some(reason) = self.listed_reason(record, waivers) {
             return Some(Exclusion::Deliberate(reason.to_string()));
@@ -361,7 +474,7 @@ impl<'a> Selection<'a> {
         let gate = record
             .gate
             .filter(|_| waivers.honors_action_exclusions(&self.target))?;
-        gate.exclusion(bindings, Some(NOT_INSTALLED))
+        gate.exclusion(bindings, consequence)
     }
 
     /// The first exclusion either list names, or `None` where neither does.
@@ -378,7 +491,7 @@ impl<'a> Selection<'a> {
             .filter(|_| waivers.honors_action_exclusions(&self.target));
         let group_address = record
             .group_address
-            .filter(|_| waivers.honors_group_exclusions(&self.target));
+            .filter(|group| waivers.honors_group_exclusion(&self.target, group));
 
         let listed = |list: &BTreeSet<ItemAddress>, item: &ItemAddress| list.contains(item);
 
@@ -450,10 +563,6 @@ mod tests {
             "type = \"create-dir\"\nid = \"{id}\"\ngroup = \"{group}\"\ndest = \"~/x\"\n"
         ))
         .expect("the record should parse")
-    }
-
-    fn item(id: &str) -> ItemId {
-        ItemId::try_from(id.to_owned()).expect("valid ID")
     }
 
     fn disabled(actions: &[&str], groups: &[&str]) -> DisabledItems {
@@ -531,7 +640,7 @@ mod tests {
         let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
         let host = HostNamespaces::capture(&empty);
         let bindings = Bindings::new(&variables, &host);
-        selection.decide(record.subject(), &bindings, waivers)
+        selection.decide(record.subject(), &bindings, waivers, Some(NOT_INSTALLED))
     }
 
     /// Return the reason for a [`Deliberate`](Exclusion::Deliberate) exclusion; panic on
@@ -641,6 +750,40 @@ mod tests {
         assert_eq!(
             reason(&selection, &action("zshrc", "shell")).as_deref(),
             Some("`zshrc` from --skip-action")
+        );
+    }
+
+    #[test]
+    fn asking_for_a_group_waives_that_group_and_no_other() {
+        let work = address("work");
+        let by_group = filter(
+            Target::Group(&work),
+            &[],
+            &[],
+            &[],
+            disabled(&[], &["work", "corp.shell"]),
+        );
+        assert_eq!(reason(&by_group, &action("corp", "work")), None);
+        assert_eq!(
+            reason(&by_group, &included("zshrc", "shell", Some("corp"))).as_deref(),
+            Some("group `corp.shell` is disabled")
+        );
+        assert_eq!(
+            reason(&by_group, &included("p10k", "prompt", Some("corp"))),
+            None
+        );
+
+        let corp_shell = address("corp.shell");
+        let by_inner_group = filter(
+            Target::Group(&corp_shell),
+            &[],
+            &[],
+            &[],
+            disabled(&[], &["work", "corp.shell"]),
+        );
+        assert_eq!(
+            reason(&by_inner_group, &included("zshrc", "shell", Some("corp"))),
+            None
         );
     }
 
@@ -935,7 +1078,7 @@ mod tests {
 
     #[test]
     fn a_target_reaches_into_the_inclusion_its_address_is_qualified_by() {
-        let core = item("core");
+        let core = address("core");
         let everything = selection(&[], &[], &[], DisabledItems::default());
         assert!(everything.reaches_into(Some(&core)));
         assert!(everything.reaches_into(None));
@@ -949,7 +1092,7 @@ mod tests {
             DisabledItems::default(),
         );
         assert!(named.reaches_into(Some(&core)));
-        assert!(!named.reaches_into(Some(&item("work"))));
+        assert!(!named.reaches_into(Some(&address("work"))));
         assert!(!named.reaches_into(None));
 
         // An inclusion's own address does not reach its children.
@@ -962,5 +1105,141 @@ mod tests {
             DisabledItems::default(),
         );
         assert!(!inclusion.reaches_into(Some(&core)));
+    }
+
+    #[test]
+    fn only_an_action_target_reaches_into_a_clone_list() {
+        let list = address("core.plugins");
+        let entry = address("core.plugins.p10k");
+        let by_action = filter(
+            Target::Action(&entry),
+            &[],
+            &[],
+            &[],
+            DisabledItems::default(),
+        );
+        assert!(by_action.reaches_into_list(Some(&list)));
+        assert!(!by_action.reaches_into_list(Some(&address("plugins"))));
+        assert!(!by_action.reaches_into_list(None));
+
+        let by_group = filter(
+            Target::Group(&entry),
+            &[],
+            &[],
+            &[],
+            DisabledItems::default(),
+        );
+        assert!(!by_group.reaches_into_list(Some(&list)));
+        let everything = selection(&[], &[], &[], DisabledItems::default());
+        assert!(!everything.reaches_into_list(Some(&list)));
+    }
+
+    /// An entry subject at `address`, under a `when = "work"` gate.
+    fn entry_disposition(
+        selection: &Selection,
+        address: &ItemAddress,
+        list: &Disposition,
+    ) -> Disposition {
+        let condition = crate::condition::Condition::new("work").expect("a condition");
+        let entry = Subject {
+            address: Some(address),
+            group_address: None,
+            gate: Some(Gate::When(&condition)),
+        };
+        let variables = Rc::new(VarSet::stack(
+            BTreeMap::from([(
+                VarName::try_from("work".to_owned()).expect("valid name"),
+                crate::var_set::VarValue::Static("false".to_owned()),
+            )]),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        ));
+        let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
+        let host = HostNamespaces::capture(&empty);
+        selection.entry_disposition(entry, list, &Bindings::new(&variables, &host))
+    }
+
+    fn reason_of(disposition: Disposition) -> Option<String> {
+        match disposition {
+            Disposition::Excluded(exclusion) => Some(exclusion.reason().to_owned()),
+            Disposition::Allowed => None,
+            Disposition::AllowedInPart => Some("allowed in part".to_owned()),
+            Disposition::NotRequested => Some("not requested".to_owned()),
+        }
+    }
+
+    #[test]
+    fn an_entry_named_by_the_target_waives_its_own_exclusions() {
+        let entry = address("plugins.p10k");
+        let named = filter(
+            Target::Action(&entry),
+            &[],
+            &[],
+            &[],
+            disabled(&["plugins.p10k"], &[]),
+        );
+        assert_eq!(
+            reason_of(entry_disposition(
+                &named,
+                &entry,
+                &Disposition::AllowedInPart
+            )),
+            None
+        );
+        let other = address("plugins.zsh-z");
+        assert_eq!(
+            reason_of(entry_disposition(
+                &named,
+                &other,
+                &Disposition::AllowedInPart
+            ))
+            .as_deref(),
+            Some("not requested")
+        );
+    }
+
+    #[test]
+    fn naming_a_list_does_not_waive_its_entries_exclusions() {
+        let list = address("plugins");
+        let named = filter(
+            Target::Action(&list),
+            &[],
+            &[],
+            &[],
+            disabled(&["plugins.p10k"], &[]),
+        );
+        assert_eq!(
+            reason_of(entry_disposition(
+                &named,
+                &address("plugins.p10k"),
+                &Disposition::Allowed
+            ))
+            .as_deref(),
+            Some("action `plugins.p10k` is disabled")
+        );
+        assert_eq!(
+            reason_of(entry_disposition(
+                &named,
+                &address("plugins.zsh-z"),
+                &Disposition::Allowed
+            ))
+            .as_deref(),
+            Some("when \"work\" is false")
+        );
+    }
+
+    #[test]
+    fn a_skipped_entry_is_not_asked_its_condition() {
+        let sync = selection(&["plugins.p10k"], &[], &[], DisabledItems::default());
+        assert_eq!(
+            reason_of(entry_disposition(
+                &sync,
+                &address("plugins.p10k"),
+                &Disposition::Allowed
+            ))
+            .as_deref(),
+            Some("`plugins.p10k` from --skip-action")
+        );
     }
 }

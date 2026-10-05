@@ -63,14 +63,6 @@ carry markers and withheld options cannot refer to them as implementation steps.
 - **Additional archive formats.** Consider ZIP and other compressed tar formats.
   The existing scratch file permits random access; assess dependencies and
   cross-platform builds for each reader.
-- **Individual clone-list addresses.** Resolve `<action-id>.<entry-id>` for
-  apply, disable, and run-only skips. Dotted addresses already parse; add lookup
-  against prepared list entries. Accept per-machine plugin selection, such as
-  `disable-action vim-bundles.YouCompleteMe`. Needs lists read before
-  unmatched-skip warnings and target resolution, which today precede
-  preparation; a way for a qualified target to reach into a clone list as
-  `Selection::reaches_into` does for inclusions; and a per-entry "not
-  requested" state beside `PreparedEntry::exclusion`.
 - **Personal installation adoption.** Verify the complete personal manifest on
   the real home when deployment is requested; scratch-home validation alone
   does not establish live adoption.

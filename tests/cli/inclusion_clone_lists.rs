@@ -202,3 +202,87 @@ fn an_included_list_with_nothing_to_clone_still_makes_its_directory() {
         );
     }
 }
+
+/// A remote whose `plugins` list names `zsh-z` and `p10k`, both with IDs, and
+/// a leaf including it as `corp` with `fields`, synchronized once with
+/// `plugins.p10k` disabled by its qualified address. Returns the repositories
+/// the list names, the remote, and the leaf.
+fn addressed(fields: &str) -> (BareRepo, BareRepo, Tree) {
+    let upstream = BareRepo::new();
+    let list = format!(
+        "{} id=zsh-z\n{} id=p10k\n",
+        display(&upstream.another("zsh-z")),
+        display(&upstream.another("p10k")),
+    );
+    let origin = remote(&plugins(""), &list);
+    let tree = leaf(&origin, "", fields, "");
+    tree.batfiles()
+        .args(["disable-action", "corp.plugins.p10k"])
+        .assert()
+        .success();
+    tree.batfiles().arg("sync").assert().success();
+    (upstream, origin, tree)
+}
+
+#[test]
+fn an_entry_in_an_included_list_answers_to_its_full_address() {
+    let (_upstream, _origin, tree) = addressed("");
+
+    assert!(tree.home(".plugins/zsh-z").is_dir());
+    assert!(
+        !tree.home(".plugins/p10k").exists(),
+        "the qualified disable did not reach the entry"
+    );
+
+    tree.batfiles()
+        .args(["apply-action", "--id", "corp.plugins.p10k"])
+        .assert()
+        .success();
+    assert!(tree.home(".plugins/p10k").is_dir());
+}
+
+#[test]
+fn naming_an_entry_inside_an_excluded_inclusion_names_the_inclusion() {
+    let (_upstream, _origin, tree) = addressed("");
+    tree.batfiles()
+        .args(["disable-action", "corp"])
+        .assert()
+        .success();
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-action", "--id", "corp.plugins.p10k"])
+        .assert()
+        .failure();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(
+            "action `corp.plugins.p10k` would come from include-remote `corp`, which is \
+             excluded: action `corp` is disabled"
+        ),
+        "{stderr}"
+    );
+    assert!(!tree.home(".plugins/p10k").exists());
+}
+
+#[test]
+fn naming_an_entry_in_a_list_the_filters_left_out_names_the_list() {
+    let (_upstream, _origin, tree) = addressed("exclude-actions = \"plugins\"");
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-action", "--id", "corp.plugins.p10k"])
+        .assert()
+        .failure();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(
+            "entry `corp.plugins.p10k` would come from git-clone-list `corp.plugins`, which \
+             is excluded: not selected by include-remote `corp`"
+        ),
+        "{stderr}"
+    );
+    assert!(!tree.home(".plugins").exists());
+}

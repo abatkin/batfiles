@@ -80,6 +80,58 @@ fn a_qualified_group_applies_what_the_inclusion_declared_under_it() {
 #[test]
 // Symlink actions, which are Unix-only.
 #[cfg(unix)]
+fn naming_a_group_does_not_waive_a_disabled_group_inside_the_inclusion() {
+    let (_origin, tree) = ready();
+    tree.batfiles()
+        .args(["disable-group", "corp.shell", "work"])
+        .assert()
+        .success();
+
+    let assertion = tree
+        .batfiles()
+        .args(["apply-group", "-v", "--group", "work"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(
+            "symlink corp.zshrc (group corp.shell) - skipped: group `corp.shell` is disabled"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(
+        installed(&tree),
+        (false, true),
+        "naming `work` waived a group it did not name"
+    );
+}
+
+#[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
+fn naming_a_disabled_group_inside_the_inclusion_waives_it() {
+    let (_origin, tree) = ready();
+    tree.batfiles()
+        .args(["disable-group", "corp.shell"])
+        .assert()
+        .success();
+
+    tree.batfiles()
+        .args(["apply-group", "--group", "corp.shell"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        installed(&tree),
+        (true, false),
+        "naming `corp.shell` did not waive its own disable"
+    );
+}
+
+#[test]
+// Symlink actions, which are Unix-only.
+#[cfg(unix)]
 fn asking_for_the_inclusion_asks_for_everything_it_contributed() {
     let (_origin, tree) = ready();
 
