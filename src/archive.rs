@@ -749,8 +749,12 @@ fn set_mode(_at: &Path, _mode: u32) -> Result<(), Error> {
     Ok(())
 }
 
+/// A path inside an archive, as a diagnostic writes it.
 fn display(path: &Path) -> String {
-    path.display().to_string()
+    // An archive spells its paths with `/`, whatever the host's separator.
+    path.display()
+        .to_string()
+        .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 #[cfg(test)]
@@ -825,6 +829,11 @@ mod tests {
         for refused in ["/etc/shadow", "../../outside", ".."] {
             assert!(!stays_inside(Path::new(refused), &links), "`{refused}`");
         }
+    }
+
+    #[test]
+    fn an_archive_path_is_written_with_slashes_on_every_platform() {
+        assert_eq!(display(&Path::new("bin").join("core")), "bin/core");
     }
 
     #[test]

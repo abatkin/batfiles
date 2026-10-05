@@ -431,8 +431,10 @@ fn a_filtered_copy_dir_seeds_only_the_children_with_something_selected() {
     assert_eq!(entries(&tree.home("installed")), ["gitconfig", "scripts"]);
     assert_eq!(entries(&tree.home("installed/scripts")), ["lib"]);
     let stderr = stderr_of(&assertion);
-    assert!(!stderr.contains("private"), "{stderr}");
-    assert!(!stderr.contains("inputrc"), "{stderr}");
+    for left_out in ["private", "inputrc"] {
+        let dest = display(&tree.home(&format!("installed/{left_out}")));
+        assert!(!stderr.contains(&dest), "{stderr}");
+    }
 }
 
 #[cfg(unix)]
