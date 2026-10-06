@@ -298,6 +298,32 @@ fn a_fetched_file_arrives_readable_rather_than_staying_private() {
 }
 
 #[test]
+#[cfg(unix)]
+fn a_fetched_file_declared_executable_arrives_executable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = Server::new(&[("/tool", Reply::Body("#!/bin/sh\necho tool\n"))]);
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        r#"[[actions]]
+type = "fetch-file"
+source = "{}/tool"
+dest = "~/bin/tool"
+executable = true
+"#,
+        server.address()
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    let mode = fs::metadata(tree.home("bin/tool"))
+        .expect("the fetched file")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755);
+}
+
+#[test]
 fn a_source_that_is_not_a_url_is_refused_before_anything_runs() {
     let tree = Tree::new();
     tree.write_manifest(
@@ -467,7 +493,7 @@ fn an_archive_is_unpacked_where_nothing_is() {
 }
 
 /// An archive with no `archive-root` is unpacked exactly as it is written, and
-/// a plain `.tar` is the same archive by another wrapping.
+/// a plain or bzipped `.tar` is the same archive by another wrapping.
 #[test]
 fn an_archive_without_a_root_keeps_the_paths_it_was_written_with() {
     let members = &[
@@ -477,6 +503,7 @@ fn an_archive_without_a_root_keeps_the_paths_it_was_written_with() {
     for (name, body) in [
         ("gzipped", tarball(members)),
         ("plain", plain_tarball(members)),
+        ("bzipped", bzipped_tarball(members)),
         // A V7 archive has no ustar magic.
         ("V7", v7_tarball(members)),
     ] {
@@ -513,23 +540,27 @@ fn entries_written_with_a_leading_dot_slash_are_unpacked_as_though_they_were_not
     assert_eq!(entries(&tree.home(".local/tool")), ["bin"]);
 }
 
-/// Read all concatenated gzip members before publishing the extracted tree.
+/// Read all concatenated gzip members or bzip2 streams before publishing the extracted tree.
 #[test]
-fn a_gzip_stream_of_several_members_is_read_to_the_end() {
+fn a_compressed_stream_of_several_members_is_read_to_the_end() {
     let members = &[
         Member::File("bin/first", 0o755, "one\n"),
         Member::File("bin/second", 0o755, "two\n"),
         Member::File("bin/third", 0o755, "three\n"),
     ];
-    let server = Server::new(&[("/tool.tar.gz", Reply::Bytes(multi_member_tarball(members)))]);
-    let tree = one_archive(&server, "");
+    for stream in [Stream::Gzip, Stream::Bzip2] {
+        let body = multi_member_tarball(members, stream);
+        let server = Server::new(&[("/tool.tar.gz", Reply::Bytes(body))]);
+        let tree = one_archive(&server, "");
 
-    tree.batfiles().arg("sync").assert().success();
+        tree.batfiles().arg("sync").assert().success();
 
-    assert_eq!(
-        entries(&tree.home(".local/tool/bin")),
-        ["first", "second", "third"]
-    );
+        assert_eq!(
+            entries(&tree.home(".local/tool/bin")),
+            ["first", "second", "third"],
+            "{stream:?}"
+        );
+    }
 }
 
 /// A named `archive-root` installs one directory out of an archive, and nothing
@@ -677,6 +708,61 @@ fn an_entry_a_filter_leaves_out_must_still_have_a_safe_path() {
         stderr_of(&assertion)
     );
     assert!(!tree.home(".local/tool").exists());
+}
+
+/// `executable` adds execute permission to the files it or a directory holding them matches,
+/// and leaves directories and the files it does not match as the archive gives them.
+#[test]
+#[cfg(unix)]
+fn executable_marks_the_files_it_matches_whatever_their_recorded_modes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = serving(RELEASE);
+    let tree = one_archive(
+        &server,
+        "archive-root = \"*\"\nexecutable = [\"lib\", \"*.md\"]\n",
+    );
+
+    tree.batfiles().arg("sync").assert().success();
+
+    let mode = |path: &str| {
+        fs::metadata(tree.home(&format!(".local/tool/{path}")))
+            .expect("an unpacked entry")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode("lib/core"), 0o755);
+    assert_eq!(mode("lib/core.bak"), 0o755);
+    assert_eq!(mode("README.md"), 0o755);
+    assert_eq!(mode("bin/tool"), 0o755);
+    assert_eq!(mode("bin"), 0o750, "a directory is not marked");
+    assert_eq!(mode("lib"), 0o755);
+}
+
+#[test]
+fn an_executable_pattern_that_marked_no_file_is_said_at_verbose() {
+    let server = serving(RELEASE);
+    let tree = one_archive(
+        &server,
+        "archive-root = \"*\"\nexecutable = [\"bin\", \"share\"]\n",
+    );
+
+    let assertion = tree
+        .batfiles()
+        .args(["--color", "never", "-v", "sync"])
+        .assert()
+        .success();
+
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!(
+            "executable pattern `share` matched no file in {}/tool.tar.gz",
+            server.address()
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("`bin` matched no file"), "{stderr}");
 }
 
 #[test]
@@ -902,10 +988,13 @@ fn an_entry_that_is_not_a_file_a_directory_or_a_link_installs_nothing() {
 
 /// A body that is not an archive batfiles unpacks, named by what it is.
 #[test]
-fn a_body_that_is_not_a_tar_archive_says_what_it_is() {
+fn a_body_that_is_not_an_archive_batfiles_unpacks_says_what_it_is() {
     for (body, said) in [
-        (&b"PK\x03\x04and the rest of a zip"[..], "a zip archive"),
-        (&b"BZh9and the rest of a bzip2"[..], "a bzip2 archive"),
+        (
+            &b"\x28\xb5\x2f\xfdand the rest of a zstd"[..],
+            "a zstd archive",
+        ),
+        (&b"\xfd7zXZ\x00and the rest of an xz"[..], "an xz archive"),
         (
             &b"<!DOCTYPE html>\n<title>Not found</title>\n"[..],
             "not an archive batfiles recognizes",

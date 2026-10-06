@@ -55,9 +55,9 @@ carry markers and withheld options cannot refer to them as implementation steps.
   two runs started at once. It would also close the lost update that [state
   rewrites](../state.md#writing) permit. Per-operation no-replace renames are
   out of scope; the lock does not guard against other programs.
-- **Additional archive formats.** Consider ZIP and other compressed tar formats.
-  The existing scratch file permits random access; assess dependencies and
-  cross-platform builds for each reader.
+- **xz and zstd tar archives.** `fetch-archive` refuses tar.xz and tar.zst by
+  name. Pure-Rust decoders exist for both (`lzma-rust2`, `ruzstd`); each is a
+  dependency and a [detection](../repoformat.md#fetch-archive) branch.
 - **Personal installation adoption.** Verify the complete personal manifest on
   the real home when deployment is requested; scratch-home validation alone
   does not establish live adoption.

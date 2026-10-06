@@ -1,6 +1,6 @@
 //! Download HTTP or `file://` content into a caller-provided staging or scratch
-//! file. HTTP transfers require status 200; both verify an optional SHA-256
-//! digest.
+//! file, decompressing a fetched file whole where it is declared compressed. HTTP
+//! transfers require status 200; both verify an optional SHA-256 digest.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -12,7 +12,10 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use ureq::tls::{RootCerts, TlsConfig};
 
+use crate::archive;
 use crate::error::Error;
+use crate::install;
+use crate::output::Reporter;
 
 /// How long to wait for a connection before giving up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -30,16 +33,41 @@ const MAX_REDIRECTS: u32 = 5;
 #[cfg(unix)]
 const FETCHED_MODE: u32 = 0o644;
 
-/// Download one URL into the file opened for it, and give it the permissions a
-/// fetched file should have.
-pub(crate) fn download_file(
-    url: &str,
-    sha256: Option<&str>,
+/// The mode a fetched file declared `executable` lands with.
+#[cfg(unix)]
+const EXECUTABLE_MODE: u32 = 0o755;
+
+/// One file to fetch, as a `fetch-file` or a file remote declares it.
+pub(crate) struct FileSource<'a> {
+    pub url: &'a str,
+    /// The digest the downloaded bytes must have, before any decompression.
+    pub sha256: Option<&'a str>,
+    /// Whether the file lands executable.
+    pub executable: bool,
+    /// Whether the download is a gzip or bzip2 stream whose contents are the file.
+    pub decompress: bool,
+}
+
+/// Fetch `source` into the file opened for it at `built_at`, and give it the permissions a
+/// fetched file should have. A compressed download is verified in a scratch file beside
+/// `dest` before it is decompressed into `into`.
+pub(crate) fn fetch_file(
+    source: &FileSource<'_>,
     mut into: fs::File,
     built_at: &Path,
+    dest: &Path,
+    reporter: &Reporter,
 ) -> Result<(), Error> {
-    download(url, sha256, &mut into, built_at)?;
-    set_download_permissions(&mut into, built_at)
+    if source.decompress {
+        install::with_scratch(dest, reporter, |scratch| {
+            let at = scratch.path().to_path_buf();
+            download(source.url, source.sha256, scratch, &at)?;
+            archive::decompress(scratch.file(), &mut into, built_at, source.url)
+        })?;
+    } else {
+        download(source.url, source.sha256, &mut into, built_at)?;
+    }
+    set_download_permissions(&mut into, source.executable, built_at)
 }
 
 /// Download a complete HTTP 200 response, or a whole local file for a
@@ -255,10 +283,19 @@ fn hex(digest: &[u8]) -> String {
 
 /// Give the finished download the permissions a fetched file should have.
 #[cfg(unix)]
-fn set_download_permissions(into: &mut fs::File, built_at: &Path) -> Result<(), Error> {
+fn set_download_permissions(
+    into: &mut fs::File,
+    executable: bool,
+    built_at: &Path,
+) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
 
-    into.set_permissions(fs::Permissions::from_mode(FETCHED_MODE))
+    let mode = if executable {
+        EXECUTABLE_MODE
+    } else {
+        FETCHED_MODE
+    };
+    into.set_permissions(fs::Permissions::from_mode(mode))
         .map_err(|error| Error::Write {
             path: built_at.to_path_buf(),
             source: error,
@@ -267,7 +304,11 @@ fn set_download_permissions(into: &mut fs::File, built_at: &Path) -> Result<(), 
 
 /// Keep platform-default permissions on non-Unix systems.
 #[cfg(not(unix))]
-fn set_download_permissions(_into: &mut fs::File, _built_at: &Path) -> Result<(), Error> {
+fn set_download_permissions(
+    _into: &mut fs::File,
+    _executable: bool,
+    _built_at: &Path,
+) -> Result<(), Error> {
     Ok(())
 }
 

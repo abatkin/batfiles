@@ -50,12 +50,15 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   instead, and `--interactive` asks each time. `--refresh-content` installs
   copies and fetched content again, backing up what changed. See
   [conflicts and backups](docs/safety.md#conflicts-and-backups).
-- **Download files and archives.** `fetch-file` downloads a file and
-  `fetch-archive` unpacks a plain or gzipped tarball, from an `http://`,
-  `https://`, or `file://` URL, optionally checking a SHA-256 digest. Both install only at vacant destinations, unless refreshed, using
+- **Download files and archives.** `fetch-file` downloads a file, decompressing
+  a gzip or bzip2 one where asked, and `fetch-archive` unpacks a zip, or a
+  tarball plain or compressed with gzip or bzip2, from an `http://`,
+  `https://`, or `file://` URL, optionally checking a SHA-256 digest. Both
+  install only at vacant destinations, unless refreshed, using
   [staging and publication](docs/safety.md#staging-and-publication).
   Archives follow the [extraction safety rules](docs/safety.md#archive-extraction),
-  and `include` and `exclude` choose which of their entries are unpacked.
+  `include` and `exclude` choose which of their entries are unpacked, and
+  `executable` which of their files are made executable.
 - **Manage Git repositories and plugin lists.** `git-clone` clones or updates a
   repository; `git-clone-list` processes a text list of repositories. Both use
   the [conservative Git update policy](docs/safety.md#git-updates), with optional

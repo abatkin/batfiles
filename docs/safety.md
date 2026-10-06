@@ -176,9 +176,10 @@ Seeds and fetched [remote materializations](repoformat.md#materialization) are
 built at `<destination>.batfiles-incomplete`, beside their destination.
 [Backups](#conflicts-and-backups) and nodes waiting to be discarded sit beside
 it too.
-Archive downloads first use `<destination>.batfiles-download`; verification
-finishes before extraction into the staging directory. Downloads and extraction
-use the same open archive file.
+Archive downloads, and downloads declared `decompress`, first use
+`<destination>.batfiles-download`; verification finishes before extraction or
+decompression into the staging node. Downloads and extraction use the same open
+file.
 
 Temporary nodes are created exclusively. An occupied staging or download path
 fails and is left untouched. On Unix, staging roots are private while content is built;
@@ -239,13 +240,17 @@ separate [atomic rewrite policy](state.md#writing).
   are applied after their children are copied. Symlinks nested inside copied
   trees are refused. Ownership belongs to the user running batfiles. Parents
   created to reach a destination use platform defaults subject to the umask.
-- On Unix, fetched files receive mode `0644`; the process umask does not alter
-  that final mode.
+- On Unix, fetched files receive mode `0644`, or `0755` where declared
+  `executable`; the process umask does not alter that final mode.
 - Archive entries keep permission bits `0777` only: setuid, setgid, and sticky
   bits are removed. Missing or unreadable modes default to `0644` for files and
-  `0755` for directories. Directory modes are applied after their contents.
-  The destination root uses the stripped root directory's mode when available,
-  otherwise `0755`.
+  `0755` for directories. A zip entry has a mode only where the zip records a
+  Unix one, as a zip made on Unix does; one made on Windows records none, and
+  its MS-DOS attributes are not read as a mode. Directory modes are applied
+  after their contents. The destination root uses the stripped root directory's
+  mode when available, otherwise `0755`. A file
+  [`executable`](repoformat.md#fetch-archive) marks gains `0111` after these
+  rules apply.
 - Unix mode handling does not apply on Windows. Symlink actions and archive
   symlink entries are unsupported there.
 

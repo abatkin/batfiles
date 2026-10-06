@@ -34,6 +34,9 @@ allow = [
     # stack. It licenses certificate *data* rather than code, and permissively;
     # batfiles links the bundle but asks the platform verifier for roots.
     "CDLA-Permissive-2.0",
+    # libbzip2's own BSD-style license, which the pure-Rust port of it that
+    # decodes bzip2 archives keeps.
+    "bzip2-1.0.6",
 ]
 
 [bans]

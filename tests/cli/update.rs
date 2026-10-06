@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
-use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
 use crate::support::{
-    Reply, Server, batfiles, batfiles_at, canonical, compiled_stand_in, entries, file_url,
+    Reply, Server, batfiles, batfiles_at, canonical, compiled_stand_in, entries, file_url, sha256,
     stderr_of, stdout_of,
 };
 
@@ -54,13 +53,6 @@ const STAGED: &str = if cfg!(windows) {
 /// The name of the executable Windows sets aside.
 #[cfg(windows)]
 const SET_ASIDE: &str = "batfiles.exe.batfiles-old";
-
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
 
 /// The version the built binary reports.
 fn running() -> String {

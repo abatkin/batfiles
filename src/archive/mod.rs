@@ -1,32 +1,34 @@
-//! Validate tar and gzip archives, then extract into an owned staging directory.
-//! Both passes use the supplied open file; unsafe paths and link traversal fail.
+//! Validate an archive, then extract its selected entries into an owned staging
+//! directory. Each format reader hands over format-neutral entries; both passes
+//! read the supplied open file, and unsafe paths and link traversal fail.
+
+mod compressed;
+mod detect;
+mod tar;
+mod zip;
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use flate2::read::MultiGzDecoder;
 use thiserror::Error;
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-use crate::entry_filter::EntryFilter;
+use crate::entry_filter::{EntryFilter, Executable};
 use crate::error::Error;
-
-/// The first bytes of a gzip stream.
-const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-
-/// Number of bytes in a tar header block.
-const HEADER_BYTES: usize = 512;
-
-/// Where a tar header keeps the checksum of the block it is in.
-const CHECKSUM_FIELD: std::ops::Range<usize> = 148..156;
+pub(crate) use compressed::DecompressError;
+use detect::Format;
 
 /// The value `archive-root` takes to mean "whatever the single top-level
 /// directory turns out to be".
 const DETECT_ROOT: &str = "*";
+
+/// The bits `executable` adds to a file's mode.
+#[cfg(unix)]
+const EXECUTE_BITS: u32 = 0o111;
 
 /// The permission bits an unpacked entry may carry.
 #[cfg(unix)]
@@ -53,14 +55,14 @@ fn symlink(_target: &Path, _at: &Path) -> io::Result<()> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
-/// A tar entry backed by a plain or decompressed reader.
-type ArchiveEntry<'a> = tar::Entry<'a, Box<dyn io::Read>>;
-
 /// Failures that prevent archive extraction.
 #[derive(Debug, Error)]
 pub(crate) enum ArchiveError {
     /// An unsupported archive format, identified when possible.
-    #[error("is {saw}, and `fetch-archive` unpacks tar archives, gzipped or plain")]
+    #[error(
+        "is {saw}, and batfiles unpacks zip archives and tar archives, \
+         plain or compressed with gzip or bzip2"
+    )]
     Format { saw: &'static str },
 
     /// A recognized archive format whose contents cannot be read.
@@ -74,6 +76,24 @@ pub(crate) enum ArchiveError {
     /// An entry that is neither a file, a directory, nor a link.
     #[error("has an entry that is neither a file, a directory, nor a link: `{entry}`")]
     UnsupportedEntry { entry: String },
+
+    /// A zip entry name that cannot be an entry path as written.
+    #[error(
+        "has an entry whose name holds a `\\`, a NUL byte, or bytes that are not the \
+         UTF-8 it is flagged as: `{entry}`"
+    )]
+    UnusableName { entry: String },
+
+    /// An encrypted zip entry.
+    #[error("has the encrypted entry `{entry}`, and batfiles does not decrypt")]
+    Encrypted { entry: String },
+
+    /// A zip entry compressed with a method batfiles does not read.
+    #[error(
+        "compresses `{entry}` with {method}, and batfiles reads zip entries that are \
+         stored, deflated, or compressed with bzip2"
+    )]
+    UnsupportedMethod { entry: String, method: String },
 
     /// A symlink entry on a platform where symlink creation is unsupported.
     #[error("holds the symlink `{entry}`, and symlinks are not supported on this platform")]
@@ -113,22 +133,67 @@ pub(crate) enum ArchiveError {
 
 /// Validate an archive and unpack selected entries into an owned staging directory.
 /// The file must contain the complete, verified download. `root` must already
-/// pass manifest validation. `filter` decides entries by their path with the root
+/// pass manifest validation. `filter` decides entries, and `executable` which
+/// installed files gain execute permission, by their path with the root
 /// stripped. Failure may leave partial content inside `into`.
 pub(crate) fn extract(
     archive: &fs::File,
     into: &Path,
     root: Option<&str>,
     filter: Option<&mut EntryFilter>,
+    executable: Option<&mut Executable>,
     url: &str,
 ) -> Result<(), Error> {
-    let tarball = Tarball::identify(archive, url)?;
-    let records = plan(&tarball, root, filter)?;
-    unpack(&tarball, &records, into)
+    let archive = Archive::identify(archive, url)?;
+    let records = plan(&archive, root, filter, executable)?;
+    unpack(&archive, &records, into)
+}
+
+/// Decompress the gzip or bzip2 body in `file`, the complete and verified download from `url`,
+/// into `into`, whose path `built_at` names in diagnostics. A body that is not compressed, or
+/// that decompresses to a tar, is refused. Failure may leave partial content in `into`.
+pub(crate) fn decompress(
+    file: &fs::File,
+    into: &mut impl io::Write,
+    built_at: &Path,
+    url: &str,
+) -> Result<(), Error> {
+    use std::io::Read as _;
+
+    let fault = |source| Error::Decompress {
+        url: url.to_owned(),
+        source,
+    };
+    let unreadable = |source| fault(DecompressError::Unreadable { source });
+    let compression =
+        compressed::compression_of(&head_of(file).map_err(unreadable)?).map_err(fault)?;
+
+    let mut head = Vec::with_capacity(detect::HEADER_BYTES);
+    compression
+        .decoder(rewound(file).map_err(unreadable)?)
+        .take(detect::HEADER_BYTES as u64)
+        .read_to_end(&mut head)
+        .map_err(unreadable)?;
+    compressed::not_a_tar(&head, compression).map_err(fault)?;
+
+    let written = |source| Error::Write {
+        path: built_at.to_path_buf(),
+        source,
+    };
+    let mut decoder = compression.decoder(rewound(file).map_err(unreadable)?);
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let filled = decoder.read(&mut buffer).map_err(unreadable)?;
+        if filled == 0 {
+            break;
+        }
+        into.write_all(&buffer[..filled]).map_err(written)?;
+    }
+    into.flush().map_err(written)
 }
 
 /// An open archive, its detected format, and its URL for diagnostics.
-struct Tarball<'a> {
+struct Archive<'a> {
     /// The complete, verified download. Read through this handle, not its scratch path.
     file: &'a fs::File,
     format: Format,
@@ -136,25 +201,17 @@ struct Tarball<'a> {
     url: &'a str,
 }
 
-impl<'a> Tarball<'a> {
+impl<'a> Archive<'a> {
     /// Identify the file's archive format, or return an error naming its URL.
     fn identify(file: &'a fs::File, url: &'a str) -> Result<Self, Error> {
         let head = head_of(file).map_err(|source| Error::Archive {
             url: url.to_owned(),
             source: ArchiveError::Unreadable { source },
         })?;
-        let format = if head.starts_with(&GZIP_MAGIC) {
-            Format::Gzip
-        } else if is_tar_header(&head) {
-            Format::Plain
-        } else {
-            return Err(Error::Archive {
-                url: url.to_owned(),
-                source: ArchiveError::Format {
-                    saw: looks_like(&head),
-                },
-            });
-        };
+        let format = detect::identify(&head).map_err(|saw| Error::Archive {
+            url: url.to_owned(),
+            source: ArchiveError::Format { saw },
+        })?;
         Ok(Self { file, format, url })
     }
 
@@ -179,11 +236,15 @@ impl<'a> Tarball<'a> {
     }
 }
 
-/// Archive format detected from the file contents.
-#[derive(Debug, Clone, Copy)]
-enum Format {
-    Gzip,
-    Plain,
+/// One entry as a format reader hands it over, in archive order.
+struct Entry<'r> {
+    /// The path as the archive writes it.
+    path: PathBuf,
+    kind: EntryKind,
+    /// The permission bits the archive records, where it records any.
+    mode: Option<u32>,
+    /// What a file entry holds.
+    content: &'r mut dyn io::Read,
 }
 
 /// One entry, as [`plan`] left it.
@@ -194,6 +255,8 @@ struct EntryPlan {
     placement: Placement,
     /// What it is, and where a link points.
     kind: EntryKind,
+    /// Whether `executable` marks this installed file.
+    executable: bool,
 }
 
 /// Where an entry ends up in the tree being built.
@@ -230,68 +293,13 @@ enum EntryKind {
     Metadata,
 }
 
-/// Whether a block is a tar header, by the checksum it carries of itself.
-fn is_tar_header(head: &[u8]) -> bool {
-    let Some(block) = head.get(..HEADER_BYTES) else {
-        return false;
-    };
-    let Some(declared) = octal(&block[CHECKSUM_FIELD]) else {
-        return false;
-    };
-    let (unsigned, signed) =
-        block
-            .iter()
-            .enumerate()
-            .fold((0u32, 0i32), |(unsigned, signed), (offset, &byte)| {
-                // The checksum field is summed as spaces.
-                let byte = if CHECKSUM_FIELD.contains(&offset) {
-                    b' '
-                } else {
-                    byte
-                };
-                (unsigned + u32::from(byte), signed + i32::from(byte as i8))
-            });
-    // Accept both signed-byte and unsigned-byte tar checksums.
-    declared == unsigned || i64::from(declared) == i64::from(signed)
-}
-
-/// Parse a padded octal tar-header field; return `None` if invalid.
-fn octal(field: &[u8]) -> Option<u32> {
-    let mut value: u32 = 0;
-    let mut digits = 0;
-    for byte in field.iter().skip_while(|byte| **byte == b' ') {
-        if !(b'0'..=b'7').contains(byte) {
-            break;
-        }
-        value = value.checked_mul(8)?.checked_add(u32::from(byte - b'0'))?;
-        digits += 1;
-    }
-    (digits > 0).then_some(value)
-}
-
-/// What a run of leading bytes is, in the words a diagnostic uses.
-fn looks_like(head: &[u8]) -> &'static str {
-    for (magic, name) in [
-        (&b"PK\x03\x04"[..], "a zip archive"),
-        (&b"BZh"[..], "a bzip2 archive"),
-        (&b"\xfd7zXZ\x00"[..], "an xz archive"),
-        (&b"\x28\xb5\x2f\xfd"[..], "a zstd archive"),
-        (&b"7z\xbc\xaf\x27\x1c"[..], "a 7-zip archive"),
-    ] {
-        if head.starts_with(magic) {
-            return name;
-        }
-    }
-    "not an archive batfiles recognizes"
-}
-
 /// The archive's first block, or as much of it as there is.
 fn head_of(file: &fs::File) -> io::Result<Vec<u8>> {
     use std::io::Read as _;
 
-    let mut head = Vec::with_capacity(HEADER_BYTES);
+    let mut head = Vec::with_capacity(detect::HEADER_BYTES);
     rewound(file)?
-        .take(HEADER_BYTES as u64)
+        .take(detect::HEADER_BYTES as u64)
         .read_to_end(&mut head)?;
     Ok(head)
 }
@@ -307,26 +315,25 @@ fn rewound(file: &fs::File) -> io::Result<fs::File> {
 }
 
 /// Validate archive entries and compute their destinations after stripping the selected root
-/// and applying the entry filters.
+/// and applying the entry filters, then mark the installed files `executable` matches.
 fn plan(
-    tarball: &Tarball<'_>,
+    archive: &Archive<'_>,
     root: Option<&str>,
     filter: Option<&mut EntryFilter>,
+    executable: Option<&mut Executable>,
 ) -> Result<Vec<EntryPlan>, Error> {
     let mut declared: Vec<(PathBuf, EntryKind)> = Vec::new();
-    for_each_entry(tarball, |entry| {
-        let as_written = path_of(entry, tarball)?;
-        let kind = kind_of(entry, tarball)?;
-        let archive_path = if matches!(kind, EntryKind::Metadata) {
-            as_written
+    for_each_entry(archive, &mut |entry| {
+        let archive_path = if matches!(entry.kind, EntryKind::Metadata) {
+            entry.path
         } else {
-            entry_path(&as_written).ok_or_else(|| tarball.escaping(&as_written))?
+            entry_path(&entry.path).ok_or_else(|| archive.escaping(&entry.path))?
         };
-        declared.push((archive_path, kind));
+        declared.push((archive_path, entry.kind));
         Ok(())
     })?;
 
-    let strip = root_prefix(&declared, root, tarball)?;
+    let strip = root_prefix(&declared, root, archive)?;
     let mut records: Vec<EntryPlan> = declared
         .into_iter()
         .map(|(archive_path, kind)| {
@@ -338,12 +345,13 @@ fn plan(
                 archive_path,
                 placement,
                 kind,
+                executable: false,
             }
         })
         .collect();
 
     if !installs_anything(&records) {
-        return Err(tarball.fault(match strip {
+        return Err(archive.fault(match strip {
             Some(root) => ArchiveError::EmptyRoot {
                 root: display(&root),
             },
@@ -362,7 +370,7 @@ fn plan(
     if let Some(filter) = filter {
         leave_out(&mut records, filter);
         if !installs_anything(&records) {
-            return Err(tarball.fault(ArchiveError::NothingSelected));
+            return Err(archive.fault(ArchiveError::NothingSelected));
         }
     }
 
@@ -374,7 +382,14 @@ fn plan(
         })
         .collect();
     for record in &mut records {
-        check_and_resolve(record, strip.as_deref(), &links, &left_out, tarball)?;
+        check_and_resolve(record, strip.as_deref(), &links, &left_out, archive)?;
+    }
+    if let Some(executable) = executable {
+        for record in &mut records {
+            if let (EntryKind::File, Placement::At(path)) = (&record.kind, &record.placement) {
+                record.executable = executable.marks(path);
+            }
+        }
     }
     Ok(records)
 }
@@ -416,19 +431,19 @@ fn check_and_resolve(
     strip: Option<&Path>,
     links: &BTreeSet<PathBuf>,
     left_out: &BTreeSet<PathBuf>,
-    tarball: &Tarball<'_>,
+    archive: &Archive<'_>,
 ) -> Result<(), Error> {
     let Some(inside) = record.placement.path() else {
         return Ok(());
     };
     if walks_through_a_link(inside, links) {
-        return Err(tarball.escaping(&record.archive_path));
+        return Err(archive.escaping(&record.archive_path));
     }
     match &mut record.kind {
         EntryKind::File | EntryKind::Directory | EntryKind::Metadata => Ok(()),
         EntryKind::Symlink(target) => {
             if cfg!(not(unix)) {
-                return Err(tarball.fault(ArchiveError::SymlinkEntry {
+                return Err(archive.fault(ArchiveError::SymlinkEntry {
                     entry: display(&record.archive_path),
                 }));
             }
@@ -436,7 +451,7 @@ fn check_and_resolve(
             if stays_inside(&from.join(target.as_path()), links) {
                 Ok(())
             } else {
-                Err(tarball.escaping(&record.archive_path))
+                Err(archive.escaping(&record.archive_path))
             }
         }
         EntryKind::Hardlink(target) => {
@@ -444,9 +459,9 @@ fn check_and_resolve(
                 .map(|named| place(&named, strip))
                 .and_then(|placement| placement.path().map(Path::to_path_buf))
                 .filter(|resolved| !walks_through_a_link(resolved, links))
-                .ok_or_else(|| tarball.escaping(&record.archive_path))?;
+                .ok_or_else(|| archive.escaping(&record.archive_path))?;
             if left_out.contains(&resolved) {
-                return Err(tarball.fault(ArchiveError::LinkTargetLeftOut {
+                return Err(archive.fault(ArchiveError::LinkTargetLeftOut {
                     entry: display(&record.archive_path),
                     target: display(target),
                 }));
@@ -461,7 +476,7 @@ fn check_and_resolve(
 fn root_prefix(
     declared: &[(PathBuf, EntryKind)],
     root: Option<&str>,
-    tarball: &Tarball<'_>,
+    archive: &Archive<'_>,
 ) -> Result<Option<PathBuf>, Error> {
     let Some(root) = root else {
         return Ok(None);
@@ -478,9 +493,9 @@ fn root_prefix(
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect();
     match tops.len() {
-        0 => Err(tarball.fault(ArchiveError::Empty)),
+        0 => Err(archive.fault(ArchiveError::Empty)),
         1 => Ok(tops.into_iter().next().map(PathBuf::from)),
-        _ => Err(tarball.fault(ArchiveError::AmbiguousRoot {
+        _ => Err(archive.fault(ArchiveError::AmbiguousRoot {
             found: tops.into_iter().collect(),
         })),
     }
@@ -543,20 +558,20 @@ fn stays_inside(path: &Path, links: &BTreeSet<PathBuf>) -> bool {
 }
 
 /// Write the records into the tree being built.
-fn unpack(tarball: &Tarball<'_>, records: &[EntryPlan], into: &Path) -> Result<(), Error> {
+fn unpack(archive: &Archive<'_>, records: &[EntryPlan], into: &Path) -> Result<(), Error> {
     let mut root_mode = UNSTATED_DIRECTORY_MODE;
     let mut directories: Vec<(PathBuf, u32)> = Vec::new();
     let mut planned = records.iter();
 
-    for_each_entry(tarball, |entry| {
+    for_each_entry(archive, &mut |entry| {
         let Some(record) = planned.next() else {
-            return Err(tarball.fault(ArchiveError::Changed));
+            return Err(archive.fault(ArchiveError::Changed));
         };
         let built_at = match &record.placement {
             Placement::At(inside) => into.join(inside),
             Placement::Root => {
                 if matches!(record.kind, EntryKind::Directory) {
-                    root_mode = mode_of(entry, &record.kind);
+                    root_mode = mode_of(entry.mode, &record.kind);
                 }
                 return Ok(());
             }
@@ -566,17 +581,17 @@ fn unpack(tarball: &Tarball<'_>, records: &[EntryPlan], into: &Path) -> Result<(
         match &record.kind {
             EntryKind::Directory => {
                 create_directory(&built_at)?;
-                directories.push((built_at, mode_of(entry, &record.kind)));
+                directories.push((built_at, mode_of(entry.mode, &record.kind)));
             }
             EntryKind::File => {
                 create_parents(&built_at)?;
                 let mut file = create_private_file(&built_at)?;
-                io::copy(entry, &mut file).map_err(|source| Error::Write {
+                io::copy(entry.content, &mut file).map_err(|source| Error::Write {
                     path: built_at.clone(),
                     source,
                 })?;
                 // Keep the file private until its contents are complete.
-                set_mode(&built_at, mode_of(entry, &record.kind))?;
+                set_mode(&built_at, file_mode(entry.mode, record.executable))?;
             }
             EntryKind::Symlink(target) => {
                 create_parents(&built_at)?;
@@ -597,7 +612,7 @@ fn unpack(tarball: &Tarball<'_>, records: &[EntryPlan], into: &Path) -> Result<(
         Ok(())
     })?;
     if planned.next().is_some() {
-        return Err(tarball.fault(ArchiveError::Changed));
+        return Err(archive.fault(ArchiveError::Changed));
     }
 
     // Apply descendant modes before ancestors that may become unwritable.
@@ -608,67 +623,15 @@ fn unpack(tarball: &Tarball<'_>, records: &[EntryPlan], into: &Path) -> Result<(
     set_mode(into, root_mode)
 }
 
-/// Read the archive from the start, handing each entry to `visit`.
+/// Read the archive from the start, handing each entry to `visit` in archive order.
 fn for_each_entry(
-    tarball: &Tarball<'_>,
-    mut visit: impl FnMut(&mut ArchiveEntry<'_>) -> Result<(), Error>,
+    archive: &Archive<'_>,
+    visit: &mut dyn FnMut(Entry<'_>) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let file = rewound(tarball.file).map_err(|source| tarball.unreadable(source))?;
-    let reader: Box<dyn io::Read> = match tarball.format {
-        Format::Gzip => Box::new(MultiGzDecoder::new(file)),
-        Format::Plain => Box::new(file),
-    };
-    let mut archive = tar::Archive::new(reader);
-    for entry in archive
-        .entries()
-        .map_err(|source| tarball.unreadable(source))?
-    {
-        let mut entry = entry.map_err(|source| tarball.unreadable(source))?;
-        visit(&mut entry)?;
-    }
-    Ok(())
-}
-
-/// The path an entry names, as the archive writes it.
-fn path_of(entry: &ArchiveEntry<'_>, tarball: &Tarball<'_>) -> Result<PathBuf, Error> {
-    entry
-        .path()
-        .map(|path| path.into_owned())
-        .map_err(|source| tarball.unreadable(source))
-}
-
-/// Which kind an entry is, refusing the ones batfiles has no way to install.
-fn kind_of(entry: &ArchiveEntry<'_>, tarball: &Tarball<'_>) -> Result<EntryKind, Error> {
-    let entry_type = entry.header().entry_type();
-    if entry_type.is_pax_global_extensions()
-        || entry_type.is_pax_local_extensions()
-        || entry_type.is_gnu_longname()
-        || entry_type.is_gnu_longlink()
-    {
-        return Ok(EntryKind::Metadata);
-    }
-    if entry_type.is_dir() {
-        return Ok(EntryKind::Directory);
-    }
-    if entry_type.is_file() {
-        return Ok(EntryKind::File);
-    }
-    let unsupported = || {
-        tarball.fault(ArchiveError::UnsupportedEntry {
-            entry: entry
-                .path()
-                .map_or_else(|_| String::from("?"), |path| display(&path)),
-        })
-    };
-    let Some(target) = entry.link_name().ok().flatten() else {
-        return Err(unsupported());
-    };
-    if entry_type.is_symlink() {
-        Ok(EntryKind::Symlink(target.into_owned()))
-    } else if entry_type.is_hard_link() {
-        Ok(EntryKind::Hardlink(target.into_owned()))
-    } else {
-        Err(unsupported())
+    let file = rewound(archive.file).map_err(|source| archive.unreadable(source))?;
+    match archive.format {
+        Format::Tar(compression) => tar::for_each_entry(archive, compression, file, visit),
+        Format::Zip => zip::for_each_entry(archive, file, visit),
     }
 }
 
@@ -720,17 +683,34 @@ fn create_private_file(at: &Path) -> Result<fs::File, Error> {
 /// The permission bits an entry asks for, with the ones batfiles will not grant
 /// removed.
 #[cfg(unix)]
-fn mode_of(entry: &ArchiveEntry<'_>, kind: &EntryKind) -> u32 {
+fn mode_of(recorded: Option<u32>, kind: &EntryKind) -> u32 {
     let unstated = match kind {
         EntryKind::Directory => UNSTATED_DIRECTORY_MODE,
         _ => UNSTATED_FILE_MODE,
     };
-    entry.header().mode().unwrap_or(unstated) & KEPT_BITS
+    recorded.unwrap_or(unstated) & KEPT_BITS
+}
+
+/// The mode a file is given: what it asks for, and execute permission where `executable`
+/// marked it.
+#[cfg(unix)]
+fn file_mode(recorded: Option<u32>, executable: bool) -> u32 {
+    let mode = mode_of(recorded, &EntryKind::File);
+    if executable {
+        mode | EXECUTE_BITS
+    } else {
+        mode
+    }
 }
 
 /// Return a placeholder mode on platforms where Unix permissions are not applied.
 #[cfg(not(unix))]
-fn mode_of(_entry: &ArchiveEntry<'_>, _kind: &EntryKind) -> u32 {
+fn mode_of(_recorded: Option<u32>, _kind: &EntryKind) -> u32 {
+    0
+}
+
+#[cfg(not(unix))]
+fn file_mode(_recorded: Option<u32>, _executable: bool) -> u32 {
     0
 }
 
@@ -834,49 +814,5 @@ mod tests {
     #[test]
     fn an_archive_path_is_written_with_slashes_on_every_platform() {
         assert_eq!(display(&Path::new("bin").join("core")), "bin/core");
-    }
-
-    #[test]
-    fn leading_bytes_are_named_where_they_are_recognizable() {
-        assert_eq!(looks_like(b"PK\x03\x04rest"), "a zip archive");
-        assert_eq!(looks_like(b"BZh9"), "a bzip2 archive");
-        assert_eq!(
-            looks_like(b"<!DOCTYPE html>"),
-            "not an archive batfiles recognizes"
-        );
-        assert_eq!(looks_like(b""), "not an archive batfiles recognizes");
-    }
-
-    /// One header block, checksummed, with `magic` written where a `ustar`
-    /// archive carries one and a V7 archive carries nothing.
-    fn header(magic: &[u8]) -> Vec<u8> {
-        let mut block = vec![0u8; HEADER_BYTES];
-        block[..8].copy_from_slice(b"a/b\0\0\0\0\0");
-        block[100..108].copy_from_slice(b"000644 \0");
-        block[124..136].copy_from_slice(b"00000000002\0");
-        block[257..257 + magic.len()].copy_from_slice(magic);
-        block[CHECKSUM_FIELD].fill(b' ');
-        let sum: u32 = block.iter().map(|&byte| u32::from(byte)).sum();
-        let written = format!("{sum:06o}\0 ");
-        block[CHECKSUM_FIELD].copy_from_slice(written.as_bytes());
-        block
-    }
-
-    #[test]
-    fn a_tar_is_recognized_by_its_checksum_rather_than_by_its_format() {
-        // V7 headers lack the `ustar` magic; their checksum still identifies them as tar.
-        for magic in [&b"ustar\0"[..], b"ustar  \0", b""] {
-            assert!(is_tar_header(&header(magic)), "{magic:?}");
-        }
-    }
-
-    #[test]
-    fn something_that_is_not_a_tar_header_is_not_taken_for_one() {
-        let mut wrong = header(b"ustar\0");
-        wrong[0] = b'z';
-        assert!(!is_tar_header(&wrong));
-        assert!(!is_tar_header(b"ustar"));
-        assert!(!is_tar_header(&[0u8; HEADER_BYTES]));
-        assert!(!is_tar_header(&[b'x'; HEADER_BYTES]));
     }
 }

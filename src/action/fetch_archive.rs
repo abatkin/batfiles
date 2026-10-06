@@ -2,7 +2,7 @@
 
 use super::RunContext;
 use crate::archive;
-use crate::entry_filter::EntryFilter;
+use crate::entry_filter::{EntryFilter, Executable};
 use crate::error::Error;
 use crate::fetch;
 use crate::install;
@@ -16,6 +16,7 @@ pub(super) fn fetch_archive(
 ) -> Result<(), Error> {
     let dest = context.destination(&action.dest);
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());
+    let mut executable = Executable::new(action.executable.as_ref());
     let mut extracted = false;
     install::seed_directory(
         install::SeedDescription {
@@ -35,13 +36,19 @@ pub(super) fn fetch_archive(
                     staging,
                     action.archive_root.as_deref(),
                     filter.as_mut(),
+                    executable.as_mut(),
                     &action.source,
                 )
             })
         },
     )?;
-    if let Some(filter) = filter.as_ref().filter(|_| extracted) {
-        filter.report_unmatched(&action.source, context.reporter());
+    if extracted {
+        if let Some(filter) = &filter {
+            filter.report_unmatched(&action.source, context.reporter());
+        }
+        if let Some(executable) = &executable {
+            executable.report_unmatched(&action.source, context.reporter());
+        }
     }
     Ok(())
 }

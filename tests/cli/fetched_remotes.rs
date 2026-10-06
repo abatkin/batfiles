@@ -589,6 +589,90 @@ fn a_changed_filter_is_a_changed_declaration() {
     );
 }
 
+#[test]
+fn marking_files_executable_is_part_of_the_declaration() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = Server::new(&[("/fzf.tar.gz", Reply::Bytes(tarball(FZF_WITH_DOCS)))]);
+    let tree = Tree::new();
+    tree.write_manifest(&linking_a_filtered_archive(&server, ""));
+    tree.batfiles().arg("sync").assert().success();
+
+    tree.write_manifest(&linking_a_filtered_archive(
+        &server,
+        "executable = \"*.md\"\n",
+    ));
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(server.requests(), 2);
+    let readme = materialization(&tree, "fzf").join("README.md");
+    let mode = fs::metadata(&readme)
+        .expect("the README")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755);
+    let stamp = fs::read_to_string(stamp(&tree, "fzf")).expect("the stamp");
+    assert!(stamp.contains("executable = [\"*.md\"]"), "{stamp}");
+}
+
+#[test]
+fn an_executable_file_remote_lands_executable_and_changing_it_fetches_again() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = server();
+    let tree = Tree::new();
+    tree.write_manifest(&linking_a_file(&server, "/pathogen.vim", ""));
+    tree.batfiles().arg("sync").assert().success();
+    let mode = || {
+        fs::metadata(materialization(&tree, "pathogen"))
+            .expect("the materialization")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode(), 0o644);
+
+    tree.write_manifest(&linking_a_file(
+        &server,
+        "/pathogen.vim",
+        "executable = true\n",
+    ));
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(server.requests(), 2);
+    assert_eq!(mode(), 0o755);
+}
+
+#[test]
+fn a_file_remote_may_be_decompressed_and_is_stamped_so() {
+    let server = Server::new(&[(
+        "/pathogen.vim.gz",
+        Reply::Bytes(gzipped(PATHOGEN.as_bytes())),
+    )]);
+    let tree = Tree::new();
+    tree.write_manifest(&linking_a_file(
+        &server,
+        "/pathogen.vim.gz",
+        "decompress = true\n",
+    ));
+
+    tree.batfiles().arg("sync").assert().success();
+
+    assert_eq!(
+        fs::read_to_string(tree.home(".vim/autoload/pathogen.vim")).expect("the linked file"),
+        PATHOGEN
+    );
+    let stamp = fs::read_to_string(stamp(&tree, "pathogen")).expect("the stamp");
+    assert!(stamp.contains("decompress = true"), "{stamp}");
+    assert!(
+        !tree
+            .path("repo")
+            .join("remotes/pathogen.batfiles-download")
+            .exists(),
+        "the compressed download was left behind"
+    );
+}
+
 /// [`FZF`] with documentation beside the program.
 const FZF_WITH_DOCS: &[Member] = &[
     Member::Directory("fzf-0.1.0", 0o755),

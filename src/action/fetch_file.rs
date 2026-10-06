@@ -19,7 +19,13 @@ pub(super) fn fetch_file(action: &FetchFileAction, context: &RunContext) -> Resu
         &dest,
         context,
         |file, staging| {
-            fetch::download_file(&action.source, action.sha256.as_deref(), file, staging)
+            let source = fetch::FileSource {
+                url: &action.source,
+                sha256: action.sha256.as_deref(),
+                executable: action.executable,
+                decompress: action.decompress,
+            };
+            fetch::fetch_file(&source, file, staging, &dest, context.reporter())
         },
     )
 }

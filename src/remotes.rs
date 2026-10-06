@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::RunContext;
 use crate::archive;
 use crate::condition::{Bindings, Exclusion};
-use crate::entry_filter::{EntryFilter, GlobFilter};
+use crate::entry_filter::{EntryFilter, Executable, GlobFilter};
 use crate::error::Error;
 use crate::fetch;
 use crate::git;
@@ -86,11 +86,13 @@ pub(crate) fn materialize(
                 }
             }
             Remote::File(remote) => {
-                fetch(id, Stamp::file(remote), None, &dest, refresh, context)?;
+                fetch(id, Stamp::file(remote), None, None, &dest, refresh, context)?;
             }
             Remote::Archive(remote) => {
                 let filter = EntryFilter::new(remote.include.as_ref(), remote.exclude.as_ref());
-                fetch(id, Stamp::archive(remote), filter, &dest, refresh, context)?;
+                let executable = Executable::new(remote.executable.as_ref());
+                let wanted = Stamp::archive(remote);
+                fetch(id, wanted, filter, executable, &dest, refresh, context)?;
             }
         }
     }
@@ -103,6 +105,7 @@ fn fetch(
     id: &ItemId,
     wanted: Stamp,
     mut filter: Option<EntryFilter<'_>>,
+    mut executable: Option<Executable<'_>>,
     dest: &Path,
     refresh: bool,
     context: &RunContext<'_>,
@@ -131,11 +134,20 @@ fn fetch(
     let url = wanted.url();
     let mut extracted = false;
     match &wanted {
-        Stamp::File { sha256, .. } => {
-            install::rebuild_file(dest, &context.tool_owned(), |file, at| {
-                fetch::download_file(url, sha256.as_deref(), file, at)
-            })?
-        }
+        Stamp::File {
+            sha256,
+            executable,
+            decompress,
+            ..
+        } => install::rebuild_file(dest, &context.tool_owned(), |file, at| {
+            let source = fetch::FileSource {
+                url,
+                sha256: sha256.as_deref(),
+                executable: *executable,
+                decompress: *decompress,
+            };
+            fetch::fetch_file(&source, file, at, dest, reporter)
+        })?,
         Stamp::Archive {
             sha256,
             archive_root,
@@ -150,6 +162,7 @@ fn fetch(
                     staging,
                     archive_root.as_deref(),
                     filter.as_mut(),
+                    executable.as_mut(),
                     url,
                 )
             })
@@ -173,8 +186,13 @@ fn fetch(
         verb.for_mode(mode),
         dest.display()
     ));
-    if let Some(filter) = filter.as_ref().filter(|_| extracted) {
-        filter.report_unmatched(url, reporter);
+    if extracted {
+        if let Some(filter) = &filter {
+            filter.report_unmatched(url, reporter);
+        }
+        if let Some(executable) = &executable {
+            executable.report_unmatched(url, reporter);
+        }
     }
     Ok(())
 }
@@ -211,6 +229,10 @@ enum Stamp {
     File {
         url: String,
         sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        executable: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        decompress: bool,
     },
     Archive {
         url: String,
@@ -218,6 +240,7 @@ enum Stamp {
         archive_root: Option<String>,
         include: Option<Vec<String>>,
         exclude: Option<Vec<String>>,
+        executable: Option<Vec<String>>,
     },
 }
 
@@ -227,6 +250,8 @@ impl Stamp {
         Self::File {
             url: remote.url.clone(),
             sha256: digest(remote.sha256.as_deref()),
+            executable: remote.executable,
+            decompress: remote.decompress,
         }
     }
 
@@ -238,6 +263,7 @@ impl Stamp {
             archive_root: remote.archive_root.clone(),
             include: written(remote.include.as_ref()),
             exclude: written(remote.exclude.as_ref()),
+            executable: written(remote.executable.as_ref()),
         }
     }
 
@@ -267,6 +293,11 @@ fn written(filter: Option<&GlobFilter>) -> Option<Vec<String>> {
             .map(|pattern| pattern.as_str().to_owned())
             .collect()
     })
+}
+
+/// Whether a flag is unset, and so left out of a stamp.
+fn is_false(flag: &bool) -> bool {
+    !flag
 }
 
 /// A declared digest as a stamp records it.
@@ -356,6 +387,8 @@ mod tests {
         Stamp::File {
             url: url.to_owned(),
             sha256: None,
+            executable: false,
+            decompress: false,
         }
     }
 
@@ -366,6 +399,7 @@ mod tests {
             archive_root: Some("*".to_owned()),
             include: None,
             exclude: None,
+            executable: None,
         }
     }
 
@@ -471,8 +505,27 @@ mod tests {
             Stamp::File {
                 url: "https://e.example/a".to_owned(),
                 sha256: Some("abc".to_owned()),
+                executable: false,
+                decompress: false,
             }
         );
+    }
+
+    #[test]
+    fn an_executable_file_is_stamped_so_and_an_ordinary_one_says_nothing() {
+        let executable: FileRemote =
+            toml::from_str("url = \"https://e.example/a\"\nexecutable = true\n")
+                .expect("a well-formed remote");
+        let stamp = Stamp::file(&executable);
+        assert_ne!(stamp, file("https://e.example/a"));
+        let written = toml::to_string(&stamp).expect("a stamp");
+        assert!(written.contains("executable = true"), "{written}");
+        assert_eq!(
+            toml::from_str::<Stamp>(&written).expect("it reads back"),
+            stamp
+        );
+        let ordinary = toml::to_string(&file("https://e.example/a")).expect("a stamp");
+        assert!(!ordinary.contains("executable"), "{ordinary}");
     }
 
     #[test]
@@ -492,6 +545,25 @@ mod tests {
         let written = toml::to_string(&archive("https://e.example/a.tar.gz")).expect("a stamp");
         assert!(!written.contains("include"), "{written}");
         assert!(!written.contains("exclude"), "{written}");
+        assert!(!written.contains("executable"), "{written}");
+    }
+
+    #[test]
+    fn marking_files_executable_is_part_of_what_an_archive_was_fetched_from() {
+        let marking: ArchiveRemote = toml::from_str(
+            "url = \"https://e.example/a.tar.gz\"\narchive-root = \"*\"\nexecutable = \"bin\"\n",
+        )
+        .expect("a well-formed remote");
+        assert_ne!(
+            Stamp::archive(&marking),
+            archive("https://e.example/a.tar.gz")
+        );
+        let earlier =
+            "type = \"archive\"\nurl = \"https://e.example/a.tar.gz\"\narchive-root = \"*\"\n";
+        assert_eq!(
+            toml::from_str::<Stamp>(earlier).expect("a stamp from before `executable`"),
+            archive("https://e.example/a.tar.gz")
+        );
     }
 
     #[test]
@@ -502,6 +574,7 @@ mod tests {
             archive_root: Some("*".to_owned()),
             include: Some(vec!["bin/*".to_owned()]),
             exclude: Some(vec![]),
+            executable: Some(vec!["bin".to_owned()]),
         };
         let written = toml::to_string(&stamp).expect("a stamp serializes");
         assert!(written.contains("archive-root = \"*\""), "{written}");

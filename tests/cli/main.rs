@@ -11,6 +11,7 @@ mod clone_list_addresses;
 mod clone_lists;
 mod cloning;
 mod conditions;
+mod decompressing;
 mod disabled;
 mod fetching;
 mod groups;
@@ -26,6 +27,7 @@ mod refreshing;
 mod remotes;
 mod selection;
 mod surface;
+mod unzipping;
 mod update;
 mod vars;
 

@@ -1,5 +1,6 @@
-//! `include` and `exclude`: glob patterns choosing which entries of a tree an action installs.
-//! Entries are named by their `/`-separated path from the tree's root. See [entry
+//! `include` and `exclude`: glob patterns choosing which entries of a tree an action installs,
+//! and `executable`, choosing which of an archive's files are made executable. Entries are
+//! named by their `/`-separated path from the tree's root. See [entry
 //! filters](../docs/repoformat.md#entry-filters).
 
 use std::ffi::OsStr;
@@ -208,25 +209,14 @@ impl<'a> EntryFilter<'a> {
     /// segments. An absent `include` includes everything; an exclude beats an include; a
     /// pattern matching an ancestor decides for everything beneath it.
     pub fn verdict(&mut self, path: &Path) -> Verdict {
-        let mut included = self.include.is_none();
-        let mut excluded = false;
-        let include_count = self.include.unwrap_or_default().len();
         let segments: Vec<&OsStr> = path.iter().collect();
-        for depth in 1..=segments.len() {
-            let ancestor = &segments[..depth];
-            for (index, pattern) in self.include.unwrap_or_default().iter().enumerate() {
-                if pattern.matches(ancestor) {
-                    self.matched[index] = true;
-                    included = true;
-                }
-            }
-            for (index, pattern) in self.exclude.iter().enumerate() {
-                if pattern.matches(ancestor) {
-                    self.matched[include_count + index] = true;
-                    excluded = true;
-                }
-            }
-        }
+        let (include_matched, exclude_matched) = self
+            .matched
+            .split_at_mut(self.include.unwrap_or_default().len());
+        let included = self
+            .include
+            .is_none_or(|include| matches_at_or_above(include, &segments, include_matched));
+        let excluded = matches_at_or_above(self.exclude, &segments, exclude_matched);
         match (excluded, included) {
             (true, _) => Verdict::Excluded,
             (false, true) => Verdict::Selected,
@@ -259,6 +249,63 @@ impl<'a> EntryFilter<'a> {
             }
         }
     }
+}
+
+/// One action's `executable`, applied to the paths of the files a tree installs, relative to
+/// its root. Remembers which patterns have marked a file, for [`Self::report_unmatched`].
+#[derive(Debug)]
+pub(crate) struct Executable<'a> {
+    patterns: &'a [Pattern],
+    matched: Vec<bool>,
+}
+
+impl<'a> Executable<'a> {
+    /// The marks the field describes, or `None` where it is not written.
+    pub fn new(executable: Option<&'a GlobFilter>) -> Option<Self> {
+        let patterns = executable?.as_slice();
+        Some(Self {
+            patterns,
+            matched: vec![false; patterns.len()],
+        })
+    }
+
+    /// Whether the file at `path` is made executable: a pattern matches it or a directory
+    /// holding it.
+    pub fn marks(&mut self, path: &Path) -> bool {
+        let segments: Vec<&OsStr> = path.iter().collect();
+        matches_at_or_above(self.patterns, &segments, &mut self.matched)
+    }
+
+    /// Say at `-v` which patterns marked none of the files decided so far, naming the tree
+    /// they were matched in as `within`.
+    pub fn report_unmatched(&self, within: &str, reporter: &Reporter) {
+        for (pattern, matched) in self.patterns.iter().zip(&self.matched) {
+            if !matched {
+                reporter.detail(
+                    1,
+                    &format!(
+                        "executable pattern `{}` matched no file in {within}",
+                        pattern.written
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Whether a pattern matches the path whose segments are `segments` or one of the
+/// directories holding it, flagging in `matched` each pattern that does.
+fn matches_at_or_above(patterns: &[Pattern], segments: &[&OsStr], matched: &mut [bool]) -> bool {
+    let mut any = false;
+    for depth in 1..=segments.len() {
+        for (pattern, matched) in patterns.iter().zip(matched.iter_mut()) {
+            if pattern.matches(&segments[..depth]) {
+                *matched = true;
+                any = true;
+            }
+        }
+    }
+    any
 }
 
 #[cfg(test)]
@@ -385,6 +432,19 @@ mod tests {
         let mut entries = EntryFilter::new(Some(&include), Some(&exclude)).expect("a filter");
         entries.verdict(Path::new("bin/tool"));
         assert_eq!(entries.matched, [true, false, false]);
+    }
+
+    #[test]
+    fn an_executable_pattern_marks_what_it_matches_and_what_is_under_it() {
+        let patterns = filter(&["bin", "lib/*.so", "doc"]);
+        let mut executable = Executable::new(Some(&patterns)).expect("marks");
+        assert!(executable.marks(Path::new("bin/tool")));
+        assert!(executable.marks(Path::new("bin/sub/tool")));
+        assert!(executable.marks(Path::new("lib/libtool.so")));
+        assert!(!executable.marks(Path::new("lib/libtool.a")));
+        assert!(!executable.marks(Path::new("README.md")));
+        assert_eq!(executable.matched, [true, true, false]);
+        assert!(Executable::new(None).is_none());
     }
 
     #[test]

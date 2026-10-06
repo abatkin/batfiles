@@ -347,6 +347,12 @@ pub(crate) struct FetchFileAction {
     pub dest: String,
     /// The digest the fetched bytes must have, if the repository pins one.
     pub sha256: Option<String>,
+    /// Whether the file lands executable.
+    #[serde(default)]
+    pub executable: bool,
+    /// Whether the download is a gzip or bzip2 stream whose contents are the file.
+    #[serde(default)]
+    pub decompress: bool,
 }
 
 /// `fetch-archive`: seed a destination directory with a downloaded archive's contents.
@@ -370,6 +376,8 @@ pub(crate) struct FetchArchiveAction {
     pub include: Option<GlobFilter>,
     /// Entries not to unpack, by their path with the root stripped.
     pub exclude: Option<GlobFilter>,
+    /// Files to make executable, by their path with the root stripped.
+    pub executable: Option<GlobFilter>,
 }
 
 /// `git-clone`: clone a repository or update an existing clone.

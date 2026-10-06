@@ -310,6 +310,13 @@ pub(crate) enum Error {
         source: archive::ArchiveError,
     },
 
+    /// A file declared `decompress` could not be decompressed.
+    #[error("the file from {url} {source}")]
+    Decompress {
+        url: String,
+        source: archive::DecompressError,
+    },
+
     // Refreshing dynamic variables.
     /// Requested dynamic variables could not be refreshed.
     #[error(transparent)]

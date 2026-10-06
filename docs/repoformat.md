@@ -214,6 +214,8 @@ url = "https://raw.githubusercontent.com/tpope/vim-pathogen/master/autoload/path
 |----------|--------|:--------:|-----------------------------------------------------------------|
 | `url`    | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.       |
 | `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.  |
+| `executable` | boolean | no  | Whether the file lands executable. Defaults to `false`.         |
+| `decompress` | boolean | no  | Whether the download is a gzip or bzip2 stream holding the file. Defaults to `false`. |
 
 **The materialization is the file itself**, at `remotes/<id>`, so a
 [repository path](#sources-and-destinations) names it whole — as `@pathogen`, or
@@ -230,11 +232,12 @@ A path under a file remote is refused as the manifest is read, and so is a
 `source-dir` naming one, since a file is never a directory. It is fetched by
 [the transfer the fetching actions share](#the-transfer-both-fetching-actions-share)
 and lands with the [permissions](safety.md#installed-permissions) a fetched file
-does.
+does; `executable` and `decompress` mean what they do for a
+[`fetch-file`](#fetch-file).
 
 ### `archive`
 
-A tarball fetched from a URL and unpacked.
+A zip or tarball fetched from a URL and unpacked.
 
 ```toml
 [remotes.fzf]
@@ -250,10 +253,11 @@ archive-root = "*"
 | `archive-root` | string |    no    | A prefix every entry is written without, or `*` for the archive's single top-level directory. |
 | `include`      | glob or list | no | Entries to unpack, by their path once the root is stripped; absent, every entry. See [entry filters](#entry-filters). |
 | `exclude`      | glob or list | no | Entries not to unpack.                                                 |
+| `executable`   | glob or list | no | Files to make executable, by their path once the root is stripped. See [`fetch-archive`](#fetch-archive). |
 
 **The archive is unpacked into `remotes/<id>/` exactly as a
 [`fetch-archive`](#fetch-archive) unpacks one into its `dest`**: the same formats,
-the same `archive-root`, the same filters, and the same [archive
+the same `archive-root`, the same filters and `executable`, and the same [archive
 safety](safety.md#archive-extraction). An action then reads paths within it as it
 would within a Git remote's clone — `@fzf/bin/fzf`.
 
@@ -287,7 +291,7 @@ recognize there is a mistake to report.
 **A file or archive remote is fetched when it is missing or its declaration has
 changed.** Once one is in place, batfiles writes a stamp beside it,
 `remotes/<id>.batfiles-source`, recording the `type`, `url`, `sha256`,
-`archive-root`, `include`, and `exclude` it was fetched from. A later `sync` compares the stamp with the
+`archive-root`, `include`, `exclude`, and `executable` it was fetched from. A later `sync` compares the stamp with the
 manifest:
 
 | At `remotes/<id>` | Stamp | `sync` |
@@ -298,8 +302,8 @@ manifest:
 | Anything else | | Refuses, naming what is there |
 
 A digest is compared without regard to case, so rewriting one in capitals fetches
-nothing, and a filter is compared as a list, so writing one pattern as a list of
-one fetches nothing either; reordering a filter's patterns does. Whatever is fetched is built beside the materialization and
+nothing, and a filter or `executable` is compared as a list, so writing one
+pattern as a list of one fetches nothing either; reordering a filter's patterns does. Whatever is fetched is built beside the materialization and
 [replaces it](safety.md#replacing-a-materialization) only once it is complete and
 verified, so a failed fetch — a server that is down, a digest that does not
 match — leaves the earlier materialization and its stamp as they were, and fails
@@ -444,7 +448,8 @@ resolution, source containment checks, occupied destinations, and staging.
 `include` and `exclude` choose which entries of a tree an action installs.
 [`symlink-dir`](#symlink-dir), [`copy`](#copy), [`copy-dir`](#copy-dir),
 [`fetch-archive`](#fetch-archive), and the [`archive` remote](#archive) take
-them. Each is one glob or a list of them:
+them. Each is one glob or a list of them, and so is the `executable` those last
+two take, which is matched the same way:
 
 ```toml
 include = "*rc"
@@ -811,6 +816,8 @@ dest = "~/.vim/autoload/pathogen.vim"
 | `source` | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL. Not a repository path. |
 | `dest`   | string |   yes    | Where the file goes, exactly. Never empty; `~` is the home.          |
 | `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.       |
+| `executable` | boolean | no  | Whether the file lands executable. Defaults to `false`.              |
+| `decompress` | boolean | no  | Whether the download is a gzip or bzip2 stream holding the file. Defaults to `false`. |
 
 **The same bargain as [`copy`](#copy)**, with the content coming from a URL
 rather than from the repository: the destination decides, missing parents are
@@ -824,11 +831,34 @@ occupied costs no transfer. `--refresh-content` fetches it
 shared [staging](safety.md#staging-and-publication) and
 [permission rules](safety.md#installed-permissions).
 
-**What arrives is installed as a file, whatever it holds.** A `fetch-file` whose
-URL names a tarball installs the tarball. Unpacking one is
-[`fetch-archive`](#fetch-archive), a separate action type; `archive-root` is its
-field and is unknown here, so a manifest that writes it on a `fetch-file` is
-rejected rather than fetching an archive it would not unpack.
+**What arrives is installed as a file, whatever it holds, unless it is declared
+compressed.** A `fetch-file` whose URL names a tarball installs the tarball.
+Unpacking one is [`fetch-archive`](#fetch-archive), a separate action type;
+`archive-root` is its field and is unknown here, so a manifest that writes it on
+a `fetch-file` is rejected rather than fetching an archive it would not unpack.
+
+**`decompress = true` installs what a compressed download holds**, as a release
+publishing `tool-linux.gz` means it to be used:
+
+```toml
+[[actions]]
+type = "fetch-file"
+source = "https://example.com/tool-linux.gz"
+dest = "~/.local/bin/tool"
+decompress = true
+executable = true
+```
+
+The compression is read from the download's leading bytes, as an
+[archive's format](#fetch-archive) is, and may be gzip or bzip2, concatenated
+streams included. A download that is not compressed is an error naming what it
+is, and so is one that is a zip or decompresses to a tar, which `fetch-archive`
+unpacks instead. `sha256` is the digest of the download as it arrived, the one a
+release publishes beside it, and is checked before anything is decompressed.
+
+**`executable = true` installs the file `0755` rather than `0644`**, so a
+fetched program or script can be run; see [installed
+permissions](safety.md#installed-permissions).
 
 ### `fetch-archive`
 
@@ -851,6 +881,7 @@ archive-root = "*"
 | `archive-root` | string |    no    | A prefix every entry is written without, spelled as an entry path is, or `*` for the archive's single top-level directory. |
 | `include`      | glob or list | no | Entries to unpack, by their path once the root is stripped; absent, every entry. See [entry filters](#entry-filters). |
 | `exclude`      | glob or list | no | Entries not to unpack.                                                 |
+| `executable`   | glob or list | no | Files to make executable, by their path once the root is stripped.     |
 
 The sibling of [`fetch-file`](#fetch-file), and [the
 transfer](#the-transfer-both-fetching-actions-share) is the same one. What
@@ -863,14 +894,26 @@ directory an earlier `create-dir` left there. A manifest declaring both is
 asking for the directory twice. `--refresh-content` fetches and unpacks it
 [again](safety.md#refreshing-seeds), replacing the tree whole.
 
-**Gzipped tar and plain tar, decided by reading the archive.** The format comes
-from the archive's own leading bytes rather than from what the URL appears to end
-in, because a release URL redirects, carries a query string, and is named by
-whoever published it. A plain tar is recognized by the checksum its first header
-carries of itself rather than by any one format's magic, so V7, `ustar`, GNU, and
-pax archives are all read. A body that is not a tar at all is an error naming
-what it is instead — "a zip archive", "a bzip2 archive" — rather than a failure
-to parse.
+**Zip, and tar plain or compressed with gzip or bzip2, decided by reading the
+archive.** The format comes from the archive's own leading bytes rather than
+from what the URL appears to end in, because a release URL redirects, carries a
+query string, and is named by whoever published it. A compressed tar stream may
+be several concatenated ones, as `pigz` and `pbzip2` write. A plain tar is
+recognized by the checksum its first header carries of itself rather than by
+any one format's magic, so V7, `ustar`, GNU, and pax archives are all read. A
+zip begins with an entry, or with the end of its directory when it holds none;
+one with anything ahead of that, such as a self-extracting program, is not
+read. A body that is none of these is an error naming what it is instead — "an
+xz archive", "a zstd archive" — rather than a failure to parse.
+
+**A zip is read as its central directory lists it.** Its entries may be stored,
+deflated, or compressed with bzip2; another method is an error naming it, and so
+is an encrypted entry. An entry name is UTF-8 where it is flagged as UTF-8 or its
+bytes are, and otherwise code page 437, the zip format's original encoding. A
+name holding `\` is refused rather than read as a separator, as the format
+requires `/` between segments. A zip records a symlink, and a mode, only where
+it records a Unix mode, as one made on Unix does; see [installed
+permissions](safety.md#installed-permissions).
 
 **`archive-root` strips a prefix off every entry.** Release tarballs usually put
 everything under one directory named for the version, and without stripping it
@@ -909,6 +952,28 @@ safety](safety.md#archive-extraction). What they matched is known only once the
 archive is unpacked, so a pattern that matched nothing is said at `-v` by a run
 that unpacks it, and never by a dry run.
 
+**`executable` marks files whatever modes the archive gives them.** A zip made on
+Windows records no modes, so its programs would otherwise arrive as `0644`; a
+tarball may simply have been packed without them. Each file `executable`
+matches, or that sits under a directory it matches, gains execute permission for
+its owner, its group, and everyone else — `0644` becomes `0755`. Its patterns
+are written and matched as an [entry filter](#entry-filters)'s are, against the
+same root-stripped path:
+
+```toml
+[[actions]]
+type = "fetch-archive"
+source = "https://example.com/tool-windows.zip"
+dest = "~/.local/tool"
+archive-root = "*"
+executable = ["bin", "lib/*.so"]
+```
+
+It marks only files: a directory, a symlink, and a file the filters leave out
+are as they would be without it, and a hard link shares the mode of the file it
+links to. A pattern that marked no file is said at `-v` as an unmatched filter
+pattern is. It has no effect on Windows, where Unix modes do not apply.
+
 ### The transfer both fetching actions share
 
 Both fetching actions use these rules:
@@ -918,7 +983,7 @@ Both fetching actions use these rules:
   such as 206, 204, and 304 fail.
 - An optional `sha256` is checked against the downloaded bytes. A mismatch
   reports both digests and installs nothing. Archives are verified before
-  extraction.
+  extraction, and compressed files before decompression.
 - No `Accept-Encoding` request header. Proxy environment variables are honored.
 - TLS certificates use the operating system's trust store, including corporate
   CAs trusted by that machine.

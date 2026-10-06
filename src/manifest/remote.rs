@@ -110,6 +110,12 @@ pub(crate) struct FileRemote {
     pub url: String,
     /// The digest the fetched bytes must have, if the manifest pins one.
     pub sha256: Option<String>,
+    /// Whether the file lands executable.
+    #[serde(default)]
+    pub executable: bool,
+    /// Whether the download is a gzip or bzip2 stream whose contents are the file.
+    #[serde(default)]
+    pub decompress: bool,
 
     /// The condition under which this machine materializes the remote at all.
     pub when: Option<Condition>,
@@ -132,6 +138,8 @@ pub(crate) struct ArchiveRemote {
     pub include: Option<GlobFilter>,
     /// Entries not to unpack, by their path with the root stripped.
     pub exclude: Option<GlobFilter>,
+    /// Files to make executable, by their path with the root stripped.
+    pub executable: Option<GlobFilter>,
 
     /// The condition under which this machine materializes the remote at all.
     pub when: Option<Condition>,

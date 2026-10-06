@@ -9,7 +9,10 @@ mod manifests;
 mod stand_in;
 mod tree;
 
-pub(crate) use archive::{Member, multi_member_tarball, plain_tarball, tarball, v7_tarball};
+pub(crate) use archive::{
+    Member, Stream, as_if_made_on_windows, bzipped, bzipped_tarball, gzipped, multi_member_tarball,
+    plain_tarball, tarball, v7_tarball, with_entry_encrypted, with_entry_method, zip_archive,
+};
 #[cfg(unix)]
 pub(crate) use filesystem::link_target;
 pub(crate) use filesystem::{
@@ -85,6 +88,16 @@ pub(crate) fn file_url(path: &std::path::Path) -> String {
         }
     }
     url
+}
+
+/// The SHA-256 of `bytes`, as a manifest or `SHA256SUMS` writes it.
+pub(crate) fn sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub(crate) fn stderr_of(assertion: &assert_cmd::assert::Assert) -> String {
