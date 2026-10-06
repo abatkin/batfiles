@@ -1,7 +1,7 @@
 # Installation safety
 
-These rules describe implemented behavior. Remaining proposals are in
-[future/safety.md](future/safety.md).
+These rules describe implemented behavior. Potential additions are tracked in
+[enhancements](enhancements.md).
 
 ## What is not sandboxed
 
@@ -12,6 +12,22 @@ as that user, with no sandbox, in dry runs as well as real ones. A leaf
 repository's commands always run; an included remote's run only where the leaf
 sets [`allow-dynamic-vars`](repoformat.md#git) on it. What such a command does
 besides printing its value is outside every rule below.
+
+Batfiles assumes the user trusts the leaf repository and deliberately selected
+its included repositories. Those repositories can name destinations outside the
+home directory and contribute installation actions. Git and filesystem access
+are not sandboxed, and batfiles does not elevate privileges.
+
+A configured SHA-256 digest verifies downloaded bytes. Without one, content
+identity and authenticity depend on the transport and source the user selected.
+Batfiles does not require signed Git commits or make branches immutable; pin a
+commit or otherwise control the source when upstream changes are unacceptable.
+Updating a remote can change both files and included actions on the next run.
+
+Archive paths and entry types are validated under the [extraction
+rules](#archive-extraction), but extraction and compressed-file expansion have
+no overall byte or entry budget. Those limits are a
+[potential enhancement](enhancements.md#extraction-budgets).
 
 ## Path resolution
 

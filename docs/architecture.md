@@ -8,15 +8,13 @@ restating it.
 
 ## Rules
 
-**1. No code without a caller, by the end of the slice.** Never use
-`allow(dead_code)`. An item waiting for a defined step in the same slice may use
-`#[expect(dead_code, reason = "read at <step>")]`. Only fields of serde records
-whose file format already requires them may name a later slice. Remove spent
-expectations. The compiler and `tests/hygiene.rs` check expectations and their
-step references; reviewers enforce the same-slice bound.
+**1. No code without a caller.** Do not commit unused scaffolding or suppress
+`dead_code` with `allow` or `expect`. Add code with the behavior that uses it;
+clippy denies unused items, and `tests/hygiene.rs` rejects any mention of
+`dead_code` under `src/` and `tests/`.
 
-**2. Build vertical slices.** Every slice ends with usable command behavior and
-a CLI test driving it. Add only the types and validation that behavior needs.
+**2. Build complete behavior.** A behavior change includes its callers,
+documentation, and a CLI test driving it through the binary.
 
 **3. Refactor when there are real callers.** Later work may reshape earlier
 work. Wait for three instances before extracting shared behavior, unless a
@@ -52,8 +50,8 @@ acceptance and use the corporate composition as the acceptance for remote
 inclusion. Both are [fixture repositories](#acceptance-repositories).
 
 **9. Document implemented behavior.** Follow the ownership rules in
-[AGENTS.md](../AGENTS.md#documentation). Unbuilt behavior belongs in
-`docs/future/` and does not bind implementation.
+[AGENTS.md](../AGENTS.md#documentation). Potential future work belongs in
+[enhancements.md](enhancements.md) and does not bind implementation.
 
 **10. Prefer CLI tests.** Use unit tests for tricky calculations, parsing,
 validation, and safety invariants that need a direct test seam. Use ordinary
@@ -63,12 +61,8 @@ useful polymorphism or a clearer practical test seam.
 **11. Serve the configuration.** Installation locations required by a user's
 configuration are requirements for batfiles to support.
 
-**12. Reject parsed but unimplemented options.** Keep the list in
-`src/cli/unsupported.rs`, checked at dispatch before root resolution. Diagnostics
-name the option and implementation step. The hygiene test rejects references to
-undefined or completed steps. Stubbed values may remain strings until their
-validation has a caller. Remove the module when its list empties, and restore it
-with the next option to be withheld.
+**12. Honor every accepted option.** Add CLI options with their implementation.
+Do not accept options that silently do nothing or promise unbuilt behavior.
 
 **13. Preserve existing user content.** Apply the destination policy in
 [safety.md](safety.md). Settle an unmanaged node through `replace.rs`, which
@@ -178,7 +172,7 @@ Guidelines for review, not hard limits:
 
 - A validated string newtype and its error: about 40 lines.
 - A module doc comment: about five lines.
-- A slice: reviewable in one sitting.
+- A change: reviewable in one sitting.
 
 ## Test environments
 

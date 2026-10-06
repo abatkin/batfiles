@@ -8,36 +8,19 @@ in your home directory, and `batfiles sync` makes the home directory match.
 There is no hidden ownership database, no per-repository install hook, and
 nothing in the repository you cannot read with `cat`.
 
-> **Status: early, but it installs a real repository.**
->
-> Batfiles is being rebuilt from scratch. The author's own dotfiles are declared
-> entirely in a `batfiles.toml` — links, seeded copies, a downloaded file, and
-> shell plugin repositories. `sync` installs a repository,
-> `--dry-run` says what it would install, what you have disabled or asked to
-> skip is left out, and `apply-action` and `apply-group` install one piece of it
-> on its own.
->
-> A record can also carry a `when` or an `unless`, so an action, or one
-> repository in a plugin list, belongs to some machines and not others. What a
-> condition reads can be written down, or found out by running a command.
->
-> Composition is built: a `[remotes]` section names other Git repositories,
-> files, and archives, `sync` brings each one into your repository's own
-> `remotes/` tree, an action can install from one, and `include-remote` splices
-> a Git remote's own actions into your manifest at the position that includes it. `init` starts a new repository
-> in the current directory, and `clone` brings an existing one down onto a fresh
-> machine, adopts the bootstrap policy it declares, and installs it — all in one
-> command. See the [command reference](docs/cmdline.md#what-runs-today) for
-> supported commands and the [roadmap](docs/future/roadmap.md) for remaining
-> work.
+Batfiles is feature-complete for its core dotfiles workflow and ready to use.
+It supports installation, repository composition, machine-specific configuration,
+bootstrap, and self-update. See [supported features](#supported-features) for
+platform limits and [potential enhancements](docs/enhancements.md) for ideas
+beyond the current scope.
 
 > [!NOTE]
 > There is a sample repository to read and install:
 > [batfiles-samples/simple-dotfiles](https://github.com/batfiles-samples/simple-dotfiles).
 
-## What works today
+## Supported features
 
-Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, `include-remote`.
+Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, `include-remote`.
 
 - **Install local files and directories.** `symlink` and `symlink-dir` create
   links; `copy` and `copy-dir` seed editable copies; `create-dir` creates a
@@ -129,7 +112,27 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
   and CI runs the test suite on Windows as well as Linux and macOS, apart from
   what needs symlinks or a Unix shell.
 
-Every command works, and every option it accepts is honored.
+## Product principles
+
+- **Keep repositories plain.** Dotfiles are ordinary files in Git; explicit
+  actions in `batfiles.toml` give paths their meaning. Configuration is strict,
+  and [invalid declarations](docs/repoformat.md#reading-the-manifest) fail clearly.
+- **Make composition explicit.** The user's entry-point repository chooses its
+  sources and which remote actions to include. Composition is
+  [one level deep](docs/repoformat.md#include-remote), with no implicit merging
+  or recursive installation hooks.
+- **Keep installation predictable.** Actions run in declaration order, inspecting
+  the filesystem as they go. Repository authors own overlapping destinations;
+  [selection and dry-run](docs/cmdline.md) explain what a run can plan.
+- **Preserve the user's content.** [Destination safety](docs/safety.md) governs
+  backups, seeded content, refresh, and conservative Git updates. Machine
+  variation is expressed through variables, conditions, and explicit selections.
+- **Keep automation explicit.** Prompts and binary updates happen only when
+  requested. Installers leave shell startup files alone, and releases can be
+  [hosted independently](docs/distribution.md#self-hosting).
+- **Keep state small and inspectable.** Machine choices and disposable caches
+  have separate [state files](docs/state.md). Installed content has no hidden
+  ownership database.
 
 ## Example
 
@@ -299,7 +302,7 @@ On Windows, in PowerShell 7 (`pwsh`), the same one-liner is:
 It installs to `%LOCALAPPDATA%\Programs\batfiles`, and `irm …/install.ps1 |
 iex` only installs. `install.ps1` is beside `install.sh` in the release, too. A checkout's `install.ps1`, which `init` writes beside
 `install.sh`, does what `install.sh` does; `batfiles init --stubs` adds it to a
-repository made before it existed. Symlink actions do not run on Windows yet,
+repository made before it existed. Symlink actions do not run on Windows,
 which limits what a Windows machine can install.
 
 Once installed, `batfiles update` replaces batfiles with the latest release, or
@@ -321,7 +324,7 @@ to serve releases from a site of your own.
 
 ## Documentation
 
-- [Product goals](docs/goals.md) — the product model and what it is for.
+- [Product principles](#product-principles) — the product model and what it is for.
 - [Command-line surface](docs/cmdline.md) — commands, global options, output
   streams, exit statuses.
 - [Repository format](docs/repoformat.md) — the manifest, and what an action
@@ -334,9 +337,9 @@ to serve releases from a site of your own.
 - [Architecture](docs/architecture.md) — the rules the implementation is
   written to, and what its tests look like.
 
-[`docs/`](docs/README.md) describes behavior that runs, and nothing else.
-Anything specified but not built is in [`docs/future/`](docs/future/), which
-binds nothing.
+The [documentation index](docs/README.md) links the behavior references and
+development guidance. [Potential enhancements](docs/enhancements.md) tracks
+uncommitted ideas for future work.
 
 ## Development
 

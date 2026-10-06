@@ -16,10 +16,6 @@ fn a_repository_without_a_manifest_fails_and_names_the_file() {
         stderr.contains(&display(&tree.manifest())),
         "the missing file was not named:\n{stderr}"
     );
-    assert!(
-        !stderr.contains("is not implemented yet"),
-        "the stub ran anyway:\n{stderr}"
-    );
 }
 
 #[test]

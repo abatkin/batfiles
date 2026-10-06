@@ -1,11 +1,12 @@
 # Batfiles Documentation
 
-Current behavior is specified here. [Future proposals](future/) are advisory
-and describe unbuilt features. [Documentation
-ownership](../AGENTS.md#documentation) defines promotion and placement.
+These references specify current behavior and implementation design.
+[Documentation ownership](../AGENTS.md#documentation) defines where each rule
+belongs. Start with the [project README](../README.md) for installation and an
+example repository.
 
-- [Product goals](goals.md): product model and intended scope, distinguished
-  from implemented features.
+- [Product principles](../README.md#product-principles): the product model and
+  the principles that guide changes.
 - [Command-line surface](cmdline.md): commands, options, selection, output,
   dry-run, and exit statuses.
 - [Environment](environment.md): environment parsing, location/color
@@ -22,5 +23,7 @@ ownership](../AGENTS.md#documentation) defines promotion and placement.
 - [Architecture](architecture.md): the rules the implementation is written to,
   source organization, and test environments.
 
-Remaining work is in [the roadmap](future/roadmap.md); `AGENTS.md` owns the
-branch workflow and the canonical commands.
+[Potential enhancements](enhancements.md) tracks unscheduled ideas for future
+work; it does not specify supported behavior. [AGENTS.md](../AGENTS.md) owns the
+branch workflow and canonical commands. [Release management](../dist/README.md)
+covers repository setup and the procedure for cutting a release.

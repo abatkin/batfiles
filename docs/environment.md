@@ -1,6 +1,6 @@
 # Environment variables
 
-The environment inputs batfiles reads today: the four location variables that
+The environment inputs batfiles reads: the four location variables that
 select where it works, the two run-only skip lists, the four bootstrap lists,
 the one-shot user variables, the color selection, and the release base; and the environment a
 [dynamic variable](#how-dynamic-commands-are-run)'s command runs in. There is
@@ -313,7 +313,7 @@ is `silver.example.net` has `facts.hostname == 'silver'` there while the same
 name on Unix compares equal to the qualified form. A condition that must work on
 both writes the short form, or tests the domain separately. Reporting the
 qualified Windows name is possible — a different call to the same API — and is
-tracked as an enhancement in [the roadmap](future/roadmap.md#enhancements).
+tracked in [potential enhancements](enhancements.md#fully-qualified-windows-host-name).
 
 ## Host environment in conditions
 
@@ -517,3 +517,12 @@ meaningful failure can be recognized. Every later command sees your
 configuration as usual. `GIT_CONFIG_COUNT` overrides
 are not supported; use your Git configuration files for proxy or header settings.
 This is protection against accidental inherited state, not a security boundary.
+
+## Options without environment equivalents
+
+There are no environment-variable equivalents for `--dry-run`, `--refresh-vars`,
+`--refresh-remotes`, `--refresh-content`, explicit apply commands, or verbosity
+(`--verbose` and `--quiet`). Persisted enable/disable commands also have no
+ambient environment equivalent: the [`BATFILES_ENABLE_*` and
+`BATFILES_DISABLE_*` lists](#bootstrap-enable-and-disable-lists) apply only to
+bootstrap commands.

@@ -1,6 +1,6 @@
 //! Single-action manifests, and what the committed fixtures install.
 
-use super::{Tree, display, stderr_of};
+use super::{Tree, display, stderr_of, stdout_of};
 use std::fs;
 use std::path::PathBuf;
 
@@ -16,10 +16,8 @@ pub(crate) fn rejected(manifest: &str) -> String {
         stderr.contains(&display(&tree.manifest())),
         "the manifest was not named:\n{stderr}"
     );
-    assert!(
-        !stderr.contains("is not implemented yet"),
-        "the stub ran anyway:\n{stderr}"
-    );
+    let stdout = stdout_of(&assertion);
+    assert!(stdout.is_empty(), "an action ran anyway:\n{stdout}");
     stderr
 }
 

@@ -1,20 +1,11 @@
 # Batfiles Command-Line Surface
 
-The parts of the command-line interface that run today: the set of commands, the
-options every command accepts, where output goes, and what the exit status
-means.
+The command-line interface: commands, accepted options, output, and exit statuses.
 
-One open question about `vars list` is in
-[`future/cmdline.md`](future/cmdline.md).
+## Supported commands
 
-## What runs today
-
-The whole surface parses. Every command and option listed below is accepted, and
-an invalid invocation is rejected as a usage error before anything else happens.
-
-**Every command does its work, and every option it accepts is honored.** What
-is not built yet is the behavior [`future/cmdline.md`](future/cmdline.md)
-describes.
+Every command and option listed below is implemented. An invalid invocation is
+rejected as a usage error before command execution.
 
 [`init`](#init) lays the conventional layout into the current directory and puts
 a Git repository around it. It resolves no roots at all, and what it creates is
@@ -60,10 +51,6 @@ variables' commands ahead of a run, whatever the cache holds.
 
 [`update`](#update) replaces the running binary with another release, when the
 user asks and only then; like `init` and `version`, it resolves no roots.
-
-An option a command accepted but did not honor yet would fail rather than be
-ignored, ahead of everything else the command would do — see
-[unimplemented options](#unimplemented-options).
 
 ## Command Overview
 
@@ -412,9 +399,9 @@ are created with it.
 | `--enable-group <group>`  | Start it with one group switched on. Repeatable.               |
 
 `--var` reaches the synchronization the same way, as do the rest of the [shared
-action-execution options](#shared-action-execution-options). `clone` accepts neither `--dry-run` nor `--refresh-remotes` at all,
-rather than refusing them for now: a machine with no repository has no plan to
-describe, and a fresh clone materializes its remotes during the synchronization
+action-execution options](#shared-action-execution-options). `clone` accepts
+neither `--dry-run` nor `--refresh-remotes`: a machine with no repository has no
+plan to describe, and a fresh clone materializes its remotes during the synchronization
 that follows. Use `sync --dry-run` afterwards to inspect later plans.
 
 **`--ref` means what a manifest's [`ref`](repoformat.md#ref-following-one-branch-tag-or-commit)
@@ -1487,13 +1474,6 @@ action, so its plans are complete unless a remote's condition closed;
 `sync --dry-run` and the apply commands read what is already on the machine and
 fetch nothing, which is where a missing materialization shows up.
 
-## Unimplemented Options
-
-An option that parses but is not honored yet is **refused, never ignored**: the
-run exits 2 naming the option and the step that makes it live, before any root
-is resolved or any file is opened. Every option any command accepts is honored
-today, so nothing is refused this way.
-
 ## Execution failures
 
 An action failure stops `sync` or an apply command with status 1. Earlier
@@ -1541,10 +1521,6 @@ started doing the work and something went wrong partway, so the filesystem may
 have been touched. A status of 2 means nothing was attempted — a usage error —
 so nothing was read or written and the invocation can be corrected and retried
 freely.
-
-Status 2 is what clap already uses for the usage errors it renders, and an
-[unimplemented option](#unimplemented-options) would join it rather than
-report a failure it never had.
 
 Status 1 covers a command that needs a home directory and cannot determine one,
 a `sync` whose leaf `batfiles.toml` is missing, malformed, or invalid, or whose
