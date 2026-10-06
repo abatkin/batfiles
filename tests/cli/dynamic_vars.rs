@@ -248,12 +248,7 @@ fn a_run_with_nothing_dynamic_leaves_the_cache_alone() {
     sync(&tree, &[]);
     assert!(tree.home("work").is_dir());
     assert!(!cache(&tree).exists());
-    assert!(
-        fs::read_dir(tree.path("cache"))
-            .expect("cache root")
-            .next()
-            .is_none()
-    );
+    assert_eq!(tree.cache_entries(), ["run.lock"]);
 }
 
 #[test]

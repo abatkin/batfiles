@@ -408,6 +408,8 @@ fn a_dry_run_says_what_it_would_fetch_and_fetches_nothing() {
     let server = server();
     let tree = Tree::new();
     tree.write_manifest(&linking_a_file(&server, "/pathogen.vim", ""));
+    // The run lock is bookkeeping a dry run takes too, not part of the plan.
+    fs::write(tree.path("cache/run.lock"), "").expect("a lock file");
     let before = snapshot(tree.root());
 
     let assertion = tree

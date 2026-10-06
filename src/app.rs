@@ -26,6 +26,7 @@ use crate::machine_vars;
 use crate::mode::RunMode;
 use crate::output::{Reporter, Verbosity};
 use crate::replace::ConflictPolicy;
+use crate::run_lock::RunLock;
 use crate::update;
 use crate::var_set;
 
@@ -105,6 +106,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
                 None
             };
             let roots = locate_repository(cli, env, reporter)?;
+            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
             execute::sync(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.selection.actions.skip_actions,
@@ -116,6 +118,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         }
         Command::ApplyAction(args) => {
             let roots = locate_repository(cli, env, reporter)?;
+            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
             execute::apply_action(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.id,
@@ -124,6 +127,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         }
         Command::ApplyGroup(args) => {
             let roots = locate_repository(cli, env, reporter)?;
+            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
             execute::apply_group(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.group,
@@ -165,6 +169,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         ),
         Command::Vars(VarsCommand::Set { key, value }) => {
             let roots = locate_state(cli, env, reporter)?;
+            let _lock = RunLock::acquire(&roots.cache_dir)?;
             machine_vars::set(key, value, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -175,6 +180,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         }
         Command::Vars(VarsCommand::Unset { key }) => {
             let roots = locate_state(cli, env, reporter)?;
+            let _lock = RunLock::acquire(&roots.cache_dir)?;
             machine_vars::unset(key, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -188,10 +194,12 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
                 var_set::list_machine(&state, reporter)?;
             } else {
                 let roots = locate_repository(cli, env, reporter)?;
-                let policy = if *no_refresh {
-                    CachePolicy::Never
+                // Only a listing that may refresh the dynamic cache writes state.
+                let (policy, _lock) = if *no_refresh {
+                    (CachePolicy::Never, None)
                 } else {
-                    CachePolicy::Auto
+                    let lock = RunLock::acquire(&roots.state.cache_dir)?;
+                    (CachePolicy::Auto, Some(lock))
                 };
                 var_set::list(&roots, env, policy, reporter)?;
             }
@@ -199,6 +207,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         }
         Command::Vars(VarsCommand::Refresh { keys }) => {
             let roots = locate_repository(cli, env, reporter)?;
+            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
             refresh::run(keys, &roots, env, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -243,6 +252,7 @@ fn edit_disabled_list(
     change: Change,
 ) -> Result<ExitCode, Error> {
     let roots = locate_state(cli, env, reporter)?;
+    let _lock = RunLock::acquire(&roots.cache_dir)?;
     disabled::run(names, kind, change, &roots, reporter)?;
     Ok(ExitCode::SUCCESS)
 }

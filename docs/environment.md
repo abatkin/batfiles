@@ -424,7 +424,9 @@ home directory (`<os-home>`, the same home used when `--home-dir` is absent) and
 do **not** follow `--home-dir` or `BATFILES_HOME`. The leaf repository's final
 fallback, `<selected-home>/dotfiles`, tracks the selected home. To root config or
 cache under an alternate install home, set `--config-dir`/`--cache-dir` or the
-corresponding `XDG_*`/`BATFILES_*` variable explicitly.
+corresponding `XDG_*`/`BATFILES_*` variable explicitly. The cache directory
+also locates the [run lock](state.md#run-lock), so two runs exclude each other
+only when they select the same one.
 
 An absent or empty location variable is treated as unset. Location values are
 not trimmed; whitespace is part of the path value.

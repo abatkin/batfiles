@@ -85,6 +85,9 @@ Implemented so far: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, 
 - **Preview a run.** `--dry-run` reports intended work using the current
   filesystem. See [dry-run behavior](docs/cmdline.md#dry-run-behavior) for its
   guarantees and reporting limits.
+- **One run at a time.** Commands that write state hold a [run
+  lock](docs/state.md#run-lock) under the cache directory; a second run started
+  while one holds it is refused with status 1 rather than interleaved.
 - **Disable actions and groups.** The enable/disable commands persist choices
   in `disabled.toml`; skip options and environment variables apply to one run.
   A clone-list entry written with an `id` is named under its list, as
@@ -323,8 +326,8 @@ to serve releases from a site of your own.
   streams, exit statuses.
 - [Repository format](docs/repoformat.md) — the manifest, and what an action
   may declare.
-- [Local state files](docs/state.md) — `vars.toml`, `disabled.toml`, and how batfiles
-  rewrites the documents it owns.
+- [Local state files](docs/state.md) — `vars.toml`, `disabled.toml`, the run
+  lock, and how batfiles rewrites the documents it owns.
 - [Environment variables](docs/environment.md) — the inputs batfiles reads.
 - [Distribution](docs/distribution.md) — what a release contains, and how one
   is built and published.

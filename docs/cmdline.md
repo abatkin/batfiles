@@ -109,7 +109,7 @@ directory and does not use any selected roots.
 | `--batfiles-dir <path>`         | Select the leaf repository. See [location selection](environment.md#location-selection) for its fallbacks.                         |
 | `--home-dir <path>`             | Select the destination home directory. Defaults to the current user's home directory.                             |
 | `--config-dir <path>`           | Select the directory containing `vars.toml` and `disabled.toml`. Defaults to the XDG config location.             |
-| `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml`. Defaults to the XDG cache location.                          |
+| `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml` and the [run lock](state.md#run-lock). Defaults to the XDG cache location. |
 
 `--color` and the four location options have their full effect. `--verbose` at
 one level prints the roots that command resolved, which is not always all four:
@@ -130,7 +130,9 @@ doing all of that; `vars list` reads the first and the last of those, and
 the cache directory, when the manifest declares a dynamic variable. The enable
 and disable commands read and rewrite `disabled.toml` under the config
 directory, and the machine-local variable commands do the same for `vars.toml`
-beside it. Neither kind resolves the repository or the home at all. See
+beside it. Neither kind resolves the repository or the home at all. Every
+command that can write state also takes the [run lock](state.md#run-lock) under
+the cache directory. See
 [location selection](environment.md#location-selection) for the precedence, and
 run a command with `-v` to see what it selected.
 
@@ -1326,7 +1328,7 @@ the model and the real implementation is a dry run that lies.
 
 **A dry run does not do the work.** Nothing is created, replaced, or removed.
 That is a promise about the plan and not about a directory: batfiles' own
-bookkeeping runs in both modes, so a dry run is not a promise that the process
+bookkeeping, the [run lock](state.md#run-lock) included, runs in both modes, so a dry run is not a promise that the process
 writes nothing anywhere — it is a promise that none of the plan it prints is
 carried out. "Nothing under the home changes" would be both weaker and false,
 since the repository can default to `<selected-home>/dotfiles`.
@@ -1555,8 +1557,11 @@ repository around it, and an
 action that could not be carried out — a source the repository does not contain,
 a remote's materialization holding something batfiles will not replace, an
 `--interactive` question standard input closed on, or a write the operating
-system refused. In each case the invocation was well-formed and
-something outside it did not hold up.
+system refused. It also covers a command refused by the [run
+lock](state.md#run-lock) because another batfiles run holds it, or because the
+lock could not be taken; such a command has read and changed nothing, apart
+from the repository a `clone` cloned before it took the lock. In each
+case the invocation was well-formed and something outside it did not hold up.
 
 Failures before action execution leave installation destinations untouched;
 action failures may leave earlier work completed. See [execution failures](#execution-failures)

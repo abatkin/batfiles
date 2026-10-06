@@ -68,7 +68,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 14] = [
+const FILESYSTEM_OWNERS: [Owner; 15] = [
     Owner {
         path: "src/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -129,6 +129,11 @@ const FILESYSTEM_OWNERS: [Owner; 14] = [
         path: "src/tomlfile.rs",
         kind: Kind::Bookkeeping,
         reason: "reads, atomically rewrites, and removes the documents batfiles owns",
+    },
+    Owner {
+        path: "src/run_lock.rs",
+        kind: Kind::Bookkeeping,
+        reason: "creates and locks the empty run lock under the cache directory, in both modes",
     },
     Owner {
         path: "src/init.rs",

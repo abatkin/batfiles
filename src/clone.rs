@@ -10,12 +10,14 @@ use crate::git;
 use crate::mode::RunMode;
 use crate::output::Verb;
 use crate::paths;
+use crate::run_lock::RunLock;
 
 /// Clone `url` into the selected leaf repository, following `git_ref` where one is given, and
 /// synchronize it.
 ///
-/// Validate the destination and bootstrap options before cloning. Keep the clone if the ref
-/// cannot be followed or synchronization fails.
+/// Validate the destination and bootstrap options before cloning. Take the run lock after
+/// cloning and before reading any state. Keep the clone if the ref cannot be followed, the lock
+/// is held, or synchronization fails.
 pub(crate) fn run(
     invocation: &Invocation<'_>,
     url: &str,
@@ -47,6 +49,7 @@ pub(crate) fn run(
         return Err(Error::ClonedWithoutManifest { path: dest.clone() });
     }
 
+    let _lock = RunLock::acquire(&invocation.roots.state.cache_dir)?;
     execute::sync(
         invocation,
         skip_actions,

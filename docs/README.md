@@ -15,7 +15,7 @@ ownership](../AGENTS.md#documentation) defines promotion and placement.
 - [Installation safety](safety.md): path resolution, destination handling,
   conflicts, backups, refresh, staging, permissions, archive validation, and Git
   updates.
-- [Local state](state.md): state schemas, lifecycle, and atomic replacement.
+- [Local state](state.md): state schemas, lifecycle, the run lock, and atomic replacement.
 - [Distribution](distribution.md): the release tree, its targets and assets,
   the tasks and workflow that build and publish a release, and the Pages site
   that serves its installers.

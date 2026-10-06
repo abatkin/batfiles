@@ -221,13 +221,16 @@ it and run `sync` again, which fetches it afresh.
 
 ### Concurrent writers
 
-Batfiles does not lock installation destinations or guarantee safety against a
-concurrent writer. The check and rename fallback are separate operations; another
+Two batfiles runs sharing a cache directory cannot run at once: the second is
+refused by the [run lock](state.md#run-lock). Beyond that, batfiles does not
+lock installation destinations or guarantee safety against a concurrent writer,
+including a batfiles run that selects a different cache directory. The check and rename fallback are separate operations; another
 process can create a node between them. Symlink replacement also has separate
 inspection, removal, and creation operations, and so does replacing a
 materialization. Setting a node aside checks that the backup or `.batfiles-old`
 path is vacant and then renames, and a refresh compares content before it
-replaces it. Do not run simultaneous installs against the same destinations.
+replaces it. Do not run simultaneous installs against the same destinations
+through different cache directories, or alongside another program writing them.
 
 Git clones write directly to their destination. Subsequent runs reject incomplete
 or damaged checkouts; see [Git updates](#git-updates). State documents follow the

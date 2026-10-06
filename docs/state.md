@@ -16,6 +16,9 @@ selecting a different home moves the repository and the destinations but not
 these files. The authoritative rules are in [location
 selection](environment.md#location-selection).
 
+Beside the cache document, the cache directory holds `run.lock`, the [run
+lock](#run-lock), which is not a document at all.
+
 ## `disabled.toml`: disabled actions and groups
 
 `disabled.toml` records deliberate, non-regenerable machine-local decisions. It
@@ -273,6 +276,37 @@ exception either: commands run and captures are written in both modes.
   below. One that cannot be written warns rather than fails; the values captured
   still decide that run.
 
+## Run lock
+
+A command that can write state holds an exclusive lock on
+`<cache-dir>/run.lock` for its whole run, so two batfiles runs sharing a cache
+directory never interleave. The commands that take it are `sync`,
+`apply-action`, `apply-group`, `clone`, the four enable and disable commands,
+`vars set`, `vars unset`, `vars refresh`, and `vars list` without
+`--machine-only` or `--no-refresh`, dry runs included, since a dry run may still
+refresh the dynamic-variable cache. The rest write no state and take no lock:
+`vars get`, `vars list --machine-only`, `vars list --no-refresh`, `version`,
+`init`, and `update`.
+
+A command takes the lock once it has resolved its roots and before it reads any
+state, creating the cache directory and the file when either is missing. `clone`
+takes it after cloning and before its bootstrap reads any state, so a cache
+directory inside the new repository does not occupy the clone's destination. A
+command does not wait: when another process holds the lock, it fails with status
+1 and names the file, having read and changed nothing apart from what a `clone`
+already cloned, which it keeps for a later `sync`. One that cannot create, open,
+or lock the file fails the same way.
+
+The file is empty. Batfiles never writes to it or removes it, and the operating
+system releases the lock when the run's process exits, however it exits, so a
+leftover file blocks nothing. Deleting it while no run is active is safe.
+
+The lock is advisory and keyed on the cache directory. It excludes only other
+batfiles runs that select the same cache directory: two runs with different
+cache directories do not exclude each other even when they share a config
+directory, and an editor or any other program writing these documents is not
+excluded at all.
+
 ## Writing
 
 Every mutation of a document batfiles owns is a whole-document rewrite:
@@ -293,9 +327,10 @@ Consequences of this policy:
 - Comments and original key order are not preserved; a rewritten file uses the
   serializer's canonical order.
 - Batfiles creates no `.bak` or recovery sidecar files.
-- There are no file locks. Two concurrent read-modify-write operations can lose
-  a logical update — the last writer wins — although neither publishes a partial
-  document.
+- The documents themselves are not locked. The [run lock](#run-lock) keeps two
+  batfiles runs sharing a cache directory from interleaving, but a
+  read-modify-write that races any other writer can lose a logical update — the
+  last writer wins — although neither publishes a partial document.
 - Atomicity is not crash durability. Neither the temporary file nor its directory
   is fsynced, so a power loss may lose a just-written document.
 - A new file and its parent directories honor the process umask. A replacement

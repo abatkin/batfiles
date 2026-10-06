@@ -32,6 +32,7 @@ mod release;
 mod remotes;
 mod replace;
 mod repo_path;
+mod run_lock;
 mod selection;
 mod tomlfile;
 mod update;

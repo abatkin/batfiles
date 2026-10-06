@@ -30,6 +30,17 @@ pub(crate) enum Error {
     #[error("could not determine the current directory: {source}")]
     WorkingDirectory { source: io::Error },
 
+    /// Another process holds the run lock under the cache directory.
+    #[error(
+        "another batfiles run holds {}; try again once it finishes",
+        .path.display()
+    )]
+    RunLockHeld { path: PathBuf },
+
+    /// The run lock could not be created, opened, or taken.
+    #[error("could not take the run lock {}: {source}", .path.display())]
+    RunLock { path: PathBuf, source: io::Error },
+
     // Touching the filesystem, for documents, actions, and state files alike.
     /// A path could not be read or inspected.
     #[error("could not read {}: {source}", .path.display())]

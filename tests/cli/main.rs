@@ -25,6 +25,7 @@ mod locations;
 mod manifest;
 mod refreshing;
 mod remotes;
+mod run_lock;
 mod selection;
 mod surface;
 mod unzipping;

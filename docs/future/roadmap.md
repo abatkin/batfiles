@@ -49,12 +49,6 @@ carry markers and withheld options cannot refer to them as implementation steps.
   continuation, avoid repeated diagnostics for one failed parent, and specify
   final status and partial-success output. Destination conflicts already
   continue under `--no-overwrite`.
-- **Run lock.** Hold an advisory lock under the state directory for the whole
-  run, so a second batfiles invocation against the same state waits or refuses.
-  This covers the realistic [concurrent writer](../safety.md#concurrent-writers):
-  two runs started at once. It would also close the lost update that [state
-  rewrites](../state.md#writing) permit. Per-operation no-replace renames are
-  out of scope; the lock does not guard against other programs.
 - **xz and zstd tar archives.** `fetch-archive` refuses tar.xz and tar.zst by
   name. Pure-Rust decoders exist for both (`lzma-rust2`, `ruzstd`); each is a
   dependency and a [detection](../repoformat.md#fetch-archive) branch.

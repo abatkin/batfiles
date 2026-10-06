@@ -158,12 +158,7 @@ fn with_nothing_dynamic_there_is_nothing_to_refresh_and_no_cache() {
     let tree = Tree::new();
     tree.write_manifest("[vars]\neditor = \"nvim\"\n");
     assert_eq!(refresh(&tree, &[]), "nothing to refresh\n");
-    assert!(
-        fs::read_dir(tree.path("cache"))
-            .expect("cache root")
-            .next()
-            .is_none()
-    );
+    assert_eq!(tree.cache_entries(), ["run.lock"]);
 }
 
 #[test]

@@ -151,6 +151,20 @@ impl Tree {
         fs::write(self.machine_vars(), document).expect("a vars document");
     }
 
+    /// The names in the cache root, sorted.
+    #[cfg(unix)]
+    pub(crate) fn cache_entries(&self) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(self.path("cache"))
+            .expect("the cache root")
+            .map(|entry| {
+                let entry = entry.expect("a cache root entry");
+                entry.file_name().to_string_lossy().into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     /// A command with all four roots selected inside this tree.
     pub(crate) fn batfiles(&self) -> Command {
         let mut command = batfiles();

@@ -214,18 +214,18 @@ fn config_and_cache_do_not_follow_the_selected_home() {
         .batfiles()
         .env_remove("BATFILES_CONFIG_DIR")
         .env_remove("BATFILES_CACHE_DIR")
-        .env("XDG_CONFIG_HOME", "/xdg-config")
-        .env("XDG_CACHE_HOME", "/xdg-cache")
+        .env("XDG_CONFIG_HOME", tree.path("xdg-config"))
+        .env("XDG_CACHE_HOME", tree.path("xdg-cache"))
         .args(["sync", "-v", "--home-dir", "/elsewhere"])
         .assert()
         .success();
     let stderr = stderr_of(&assertion);
     for expected in [
-        "home:       /elsewhere",
-        "config:     /xdg-config/batfiles",
-        "cache:      /xdg-cache/batfiles",
+        "home:       /elsewhere".to_owned(),
+        format!("config:     {}", display(&tree.path("xdg-config/batfiles"))),
+        format!("cache:      {}", display(&tree.path("xdg-cache/batfiles"))),
     ] {
-        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
     }
 }
 
