@@ -193,9 +193,10 @@ up to ten minutes, so that check retries for `PAGES_WAIT` seconds, by default
 6. `dist:smoke` installs it with its own one-liner on Linux x86_64 and aarch64,
    macOS, and Windows runners, again including `latest` for a stable release,
    where the installed binary's `update --check` must find it.
-7. For a stable release, after `verify`, the [Pages
-   workflow](#the-pages-workflow) replaces the Pages site's copies of the
-   installers.
+7. For a stable release, after `verify`, the release starts the [Pages
+   workflow](#the-pages-workflow) on `main`, which replaces the Pages site's
+   copies of the installers. That run is separate from the release's, so its
+   outcome appears under the Pages workflow.
 
 A failure before publishing leaves no release, or at most a draft to delete.
 
@@ -283,8 +284,11 @@ byte for byte, independent of the documentation revision.
   their configuration, or the build and verification scripts listed in the
   workflow;
 - on demand, from the Actions tab; and
-- from the [release workflow](#the-release-workflow), after `verify` passes for
-  a stable release.
+- on `main`, started by the [release workflow](#the-release-workflow) after
+  `verify` passes for a stable release. Pages does not serve a deployment made
+  from a tag's run when it has already deployed that commit, which a push to
+  `main` usually has; it does serve one from a run on `main`
+  ([actions/deploy-pages#383](https://github.com/actions/deploy-pages/issues/383)).
 
 Its first job reads the repository's Pages configuration and public URL. Unless
 Pages uses *GitHub Actions* as its source, the workflow succeeds without deploying.
@@ -292,19 +296,15 @@ The URL's path becomes `SITE_URL`, so custom domains and project sites use the
 same build commands.
 
 The deployment job is serialized and never cancels one already running. After
-acquiring that slot, it checks out current `main`, even when called by a release
-tag, installs the pinned tools, and builds and validates that one revision.
-An older release invocation therefore cannot publish its older documentation
-over a newer main revision. The book follows main; unreleased behavior is
+acquiring that slot, it checks out current `main`, whichever branch a manual run
+names, installs the pinned tools, and builds and validates that one revision.
+A queued run therefore cannot publish older documentation over a newer main
+revision. The book follows main; unreleased behavior is
 labeled according to [authoring policy](authoring.md).
 
 The job runs `dist:pages` with `FROM` set to the repository's releases URL,
 uploads and deploys the complete artifact, then runs `dist:verify` with `PAGES`
-set to the deployed URL. Each run deploys under a build version of its own,
-made from the commit, run ID, and attempt: Pages treats a build version it has
-already deployed as done, so reusing the commit alone would let a push's
-deployment stand in for a later release or manual run of the same commit, with
-older installers. Verification checks the installer bytes and that the
+set to the deployed URL. Verification checks the installer bytes and that the
 documentation landing page and first-repository tutorial can be fetched and are
 nonempty. The Pages checks retry while caches settle.
 

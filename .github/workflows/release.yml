@@ -184,15 +184,21 @@ jobs:
           STAMPED="$RELEASE_BASE"
 
   # A stable release replaces the Pages site's copies of the installers, where
-  # the repository has such a site.
+  # the repository has such a site, by starting the Pages workflow on main.
+  # Pages does not serve a deployment made from a tag's run when it has
+  # already deployed that commit, as a push to main usually has
+  # (actions/deploy-pages#383); it does serve one from a run on main.
   pages:
     needs: [plan, verify]
     if: needs.plan.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pages: write
-      id-token: write
-    uses: ./.github/workflows/pages.yml
+      actions: write
+    steps:
+      - name: Start the Pages workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
 
   # The published release, installed by its own one-liner on real machines:
   # each runner's own shell and tools, which the tests only stand in for.

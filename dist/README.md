@@ -109,8 +109,9 @@ again; it takes the next number.
    ```
 
 3. Watch the *Release* workflow as for a candidate. After `verify`, its `pages`
-   job deploys the Pages site with the new installers and checks that
-   `https://batfiles.dev` serves them. A site change on `main` deploys on its
+   job starts the *Pages* workflow on `main`; watch that run too. It deploys the
+   site with the new installers and checks that `https://batfiles.dev` serves
+   them. A site change on `main` deploys on its
    own, and *Run workflow* on the *Pages* workflow redeploys by hand.
 4. In the next change, set `Cargo.toml` to the next version. Until then, both
    `release:` tasks refuse, since `vX.Y.Z` is taken.
