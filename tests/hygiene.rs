@@ -335,7 +335,7 @@ fn no_source_suppresses_dead_code() {
     assert!(
         failures.is_empty(),
         "\n{}\n\nRemove the unused code rather than suppressing `dead_code` with `allow` or \
-         `expect`; see rule 1 in docs/architecture.md.\n",
+         `expect`; see rule 1 in docs/contributing/architecture.md.\n",
         failures.join("\n")
     );
 }

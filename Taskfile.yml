@@ -31,6 +31,8 @@ tasks:
 
   test:
     desc: Run the project test suite (arguments after `--` go to cargo test)
+    # The Pages tests check links with the pinned lychee.
+    deps: [docs:install]
     cmd: cargo test {{.CLI_ARGS}}
 
   test:docker:
@@ -53,7 +55,29 @@ tasks:
     desc: Build the project (release)
     cmd: cargo build --release
 
-  # Release tasks. docs/distribution.md describes each, and the release workflow
+  docs:install:
+    desc: Install the pinned mdBook and lychee into target/docs-tools (Linux and macOS)
+    # Windows runs the test suite without them; its Pages tests are Unix-only.
+    platforms: [linux, darwin]
+    run: once
+    cmd: sh dist/docs.sh install
+
+  docs:build:
+    desc: Build the Markdown documentation (optional SITE_URL=/docs/)
+    deps: [docs:install]
+    cmd: sh dist/docs.sh build {{q (.SITE_URL | default "/docs/")}}
+
+  docs:serve:
+    desc: Preview documentation with live reload
+    deps: [docs:install]
+    cmd: sh dist/docs.sh serve
+
+  docs:check:
+    desc: Build documentation and check source and HTML links (optional SITE_URL=/docs/)
+    deps: [docs:install]
+    cmd: sh dist/docs.sh check {{q (.SITE_URL | default "/docs/")}}
+
+  # Release tasks. docs/contributing/distribution.md describes each, and the release workflow
   # runs them in order: dist:tag, dist:binary per target, dist:assemble,
   # dist:publish, then dist:verify and dist:smoke; for a stable release, the Pages workflow then
   # runs dist:pages. dist/README.md is the procedure for cutting a release with release:rc and
@@ -91,10 +115,14 @@ tasks:
     cmd: sh dist/mirror.sh {{q .VERSION}} {{q .BASE}} {{q .OUT}} {{q (.FROM | default "")}}
 
   dist:pages:
-    desc: Build the Pages site from site/ and the latest stable release's installers (OUT=<dir>, optional FROM=<base>)
+    desc: Build the complete Pages site (OUT=<dir>, optional FROM=<base>, SITE_URL=/)
     requires:
       vars: [OUT]
-    cmd: sh dist/pages.sh {{q .OUT}} {{q (.FROM | default "")}}
+    cmds:
+      - task: docs:check
+        vars:
+          SITE_URL: '{{.SITE_URL | default "/"}}docs/'
+      - sh dist/pages.sh {{q .OUT}} {{q (.FROM | default "")}} site target/docs {{q (.SITE_URL | default "/")}}
 
   dist:publish:
     desc: Publish an assembled release as a GitHub release (VERSION=<version> DIR=<dir>)
@@ -127,4 +155,4 @@ tasks:
 
   ci:checks:
     internal: true
-    deps: [fmt, lint, test, test:docker, deny, build, build:release]
+    deps: [fmt, lint, test, test:docker, deny, build, build:release, docs:check]

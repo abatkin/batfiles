@@ -2,7 +2,7 @@
 
 A dotfiles repository a leaf manifest declares as a remote, standing in for the
 work half of the
-[acceptance](../../../docs/architecture.md#acceptance-repositories): settings an
+[acceptance](../../../docs/contributing/architecture.md#acceptance-repositories): settings an
 employer publishes once, that a personal repository composes over.
 
 Unlike the other fixtures here, this tree is not copied into a leaf repository.

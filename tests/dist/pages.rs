@@ -18,11 +18,17 @@ fn upstream() -> (TempDir, Tree) {
     fs::create_dir_all(site.join("assets")).expect("a site");
     fs::write(site.join("index.html"), "<p>batfiles</p>\n").expect("a page");
     fs::write(site.join("assets/style.css"), "p {}\n").expect("an asset");
+    let docs = dir.path().join("docs");
+    fs::create_dir_all(docs.join("guides")).expect("documentation");
+    for name in ["index.html", "getting-started.html", "guides/everyday.html"] {
+        fs::write(docs.join(name), "<h1>Documentation</h1>\n").expect("a documentation page");
+    }
     (dir, tree)
 }
 
 fn pages(out: &Path, from: &str, site: &Path) -> assert_cmd::Command {
-    script("pages.sh", &[utf8(out), from, utf8(site)])
+    let docs = site.parent().expect("the fixture root").join("docs");
+    script("pages.sh", &[utf8(out), from, utf8(site), utf8(&docs)])
 }
 
 #[test]
@@ -36,7 +42,7 @@ fn a_site_holds_its_own_content_and_the_latest_stable_installers() {
 
     assert_eq!(
         entries(&out),
-        ["assets", "index.html", "install.ps1", "install.sh"]
+        ["assets", "docs", "index.html", "install.ps1", "install.sh"]
     );
     assert_eq!(
         fs::read_to_string(out.join("assets/style.css")).expect("the asset"),
@@ -55,9 +61,18 @@ fn a_site_holds_its_own_content_and_the_latest_stable_installers() {
 fn the_repository_site_builds() {
     let (dir, tree) = upstream();
     let out = dir.path().join("out");
-    script("pages.sh", &[utf8(&out), &tree.url()])
-        .assert()
-        .success();
+    let site = Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
+    script(
+        "pages.sh",
+        &[
+            utf8(&out),
+            &tree.url(),
+            utf8(&site),
+            utf8(&dir.path().join("docs")),
+        ],
+    )
+    .assert()
+    .success();
 
     let site = Path::new(env!("CARGO_MANIFEST_DIR")).join("site");
     assert_eq!(
@@ -65,6 +80,7 @@ fn the_repository_site_builds() {
         fs::read(site.join("index.html")).expect("the repository's page")
     );
     assert!(out.join("install.sh").is_file());
+    assert!(out.join("docs/getting-started.html").is_file());
 }
 
 #[test]
@@ -151,4 +167,98 @@ fn verification_catches_a_stale_or_missing_site() {
         .assert()
         .failure();
     assert!(stderr_of(&not_latest).contains("serves only the latest release"));
+}
+
+#[test]
+fn missing_or_broken_docs_never_publish_a_partial_site() {
+    let (dir, tree) = upstream();
+    let out = dir.path().join("out");
+    let site = dir.path().join("site");
+    let index = dir.path().join("docs/index.html");
+    fs::remove_file(&index).expect("missing docs");
+    let missing = pages(&out, &tree.url(), &site).assert().failure();
+    assert!(stderr_of(&missing).contains("no built documentation"));
+    assert!(!out.exists());
+
+    fs::write(index, "<a href=\"missing.html\">Broken</a>").expect("broken docs");
+    fs::create_dir(&out).expect("an empty output directory");
+    let broken = pages(&out, &tree.url(), &site).assert().failure();
+    assert!(stderr_of(&broken).contains("invalid local links"));
+    assert!(entries(&out).is_empty());
+}
+
+#[test]
+fn a_site_cannot_shadow_the_generated_documentation() {
+    let (dir, tree) = upstream();
+    let out = dir.path().join("out");
+    let site = dir.path().join("site");
+    fs::create_dir(site.join("docs")).expect("a conflicting tree");
+    let clash = pages(&out, &tree.url(), &site).assert().failure();
+    assert!(stderr_of(&clash).contains("replaced by the generated documentation"));
+    assert!(!out.exists());
+}
+
+#[test]
+fn deployed_site_verification_requires_documentation() {
+    let (dir, tree) = upstream();
+    let site = served_site(dir.path(), &tree);
+    fs::remove_file(dir.path().join("served/docs/getting-started.html")).expect("missing tutorial");
+    let missing = script("verify.sh", &[&tree.url(), "1.2.3", "yes", "", &site])
+        .env("PAGES_WAIT", "0")
+        .assert()
+        .failure();
+    assert!(stderr_of(&missing).contains("docs/getting-started.html cannot be fetched"));
+}
+
+#[test]
+fn project_site_prefixes_are_checked_before_publication() {
+    let (dir, tree) = upstream();
+    let out = dir.path().join("out");
+    fs::write(
+        dir.path().join("docs/index.html"),
+        "<a href=\"/batfiles/docs/getting-started.html\">Tutorial</a>",
+    )
+    .expect("a project-prefixed link");
+    script(
+        "pages.sh",
+        &[
+            utf8(&out),
+            &tree.url(),
+            utf8(&dir.path().join("site")),
+            utf8(&dir.path().join("docs")),
+            "/batfiles/",
+        ],
+    )
+    .assert()
+    .success();
+    let wrong = pages(
+        &dir.path().join("wrong"),
+        &tree.url(),
+        &dir.path().join("site"),
+    )
+    .assert()
+    .failure();
+    assert!(stderr_of(&wrong).contains("invalid local links"));
+}
+
+#[test]
+fn the_documentation_404_page_serves_a_site_without_one() {
+    let (dir, tree) = upstream();
+    let site = dir.path().join("site");
+    let missing = "<base href=\"/docs/\"><a href=\"index.html\">Documentation</a>\n";
+    fs::write(dir.path().join("docs/404.html"), missing).expect("a documentation 404 page");
+    let out = dir.path().join("out");
+    pages(&out, &tree.url(), &site).assert().success();
+    assert_eq!(
+        fs::read_to_string(out.join("404.html")).expect("the site's 404 page"),
+        missing
+    );
+
+    fs::write(site.join("404.html"), "<p>Not here</p>\n").expect("the site's own 404 page");
+    let own = dir.path().join("own");
+    pages(&own, &tree.url(), &site).assert().success();
+    assert_eq!(
+        fs::read_to_string(own.join("404.html")).expect("the site's 404 page"),
+        "<p>Not here</p>\n"
+    );
 }

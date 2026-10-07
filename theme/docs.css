@@ -1,0 +1,23 @@
+/* Keep documentation typography close to the landing page. */
+:root {
+    --content-max-width: 760px;
+    --sidebar-width: 280px;
+}
+body { font-family: system-ui, sans-serif; }
+.content { line-height: 1.6; }
+.content main { padding-bottom: 4rem; }
+.content h1 { font-size: 2em; }
+.content h2 { margin-top: 2.2em; }
+.content pre { border-radius: 6px; }
+.content table { display: block; overflow-x: auto; }
+.content table td, .content table th { padding: 0.5em 0.75em; }
+.content a { text-underline-offset: 0.15em; }
+
+.light {
+    --bg: #fdfdfc;
+    --fg: #1d1d1f;
+    --sidebar-bg: #f4f4f1;
+    --sidebar-fg: #1d1d1f;
+    --sidebar-active: #185a94;
+    --links: #185a94;
+}

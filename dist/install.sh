@@ -9,7 +9,7 @@
 # release base, by default the one stamped below), BATFILES_VERSION (a release
 # to fetch, and the oldest one accepted), and BATFILES_BIN (the one batfiles to
 # use or install, instead of searching PATH and then $HOME/.local/bin).
-# docs/distribution.md specifies the rest.
+# docs/contributing/distribution.md specifies the rest.
 #
 # `dist/assemble.sh` stamps the release base into the line below. An unstamped
 # copy runs only with BATFILES_BASE set.
@@ -24,7 +24,7 @@ fail() {
     exit 1
 }
 
-# SemVer without build metadata, as docs/distribution.md#versions specifies.
+# SemVer without build metadata, as docs/contributing/distribution.md#versions specifies.
 # dist/version.sh holds the same line; tests/dist checks they agree.
 version_pattern='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 

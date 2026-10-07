@@ -1,5 +1,5 @@
 # A leaf repository that composes another one over its own actions: the work
-# half of the acceptance in `docs/architecture.md`, at the size a test can
+# half of the acceptance in `docs/contributing/architecture.md`, at the size a test can
 # drive.
 # Kept apart from `leaf` for the reason `cloning` is, and from `cloning` for a
 # second: this one needs a bare repository that holds a manifest rather than one

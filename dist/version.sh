@@ -1,6 +1,6 @@
 # shellcheck shell=sh
 # Sourced by the release scripts: the version grammar every release follows,
-# which docs/distribution.md#versions specifies. install.sh, which runs on its
+# which docs/contributing/distribution.md#versions specifies. install.sh, which runs on its
 # own, carries an identical `version_pattern` line; tests/dist checks they agree.
 
 # SemVer without build metadata: X.Y.Z, optionally followed by a pre-release of

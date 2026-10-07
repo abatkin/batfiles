@@ -16,7 +16,7 @@ except that missing state files are empty documents. Mutations use the shared
 
 ## `disabled.toml`: disabled actions and groups
 
-Maintained by [enable/disable commands](cmdline.md#enable-and-disable-actions-or-groups),
+Maintained by [enable/disable commands](commands/enable-disable.md#enable-and-disable-actions-or-groups),
 bootstrap, or hand edits. [Selection](cmdline.md#selecting-what-a-run-does)
 defines how commands use it.
 
@@ -53,12 +53,12 @@ writing policy as other mutations. Dry-run bootstrap uses the computed choices
 without persisting them.
 
 Run-only skip variables and options never persist here. See
-[bootstrap command behavior](cmdline.md#what-the-bootstrap-decides) for
+[bootstrap command behavior](commands/clone.md#what-the-bootstrap-decides) for
 conditions, reporting, and failures.
 
 ## `vars.toml`: machine-local variables
 
-Maintained by [`vars set` and `vars unset`](cmdline.md#vars-set), or hand edits.
+Maintained by [`vars set` and `vars unset`](commands/vars.md#vars-set), or hand edits.
 See [variable precedence](environment.md#variable-precedence) for how stored
 values combine with other layers.
 
@@ -79,7 +79,7 @@ the whole document. Writes sort by key.
 Setting an identical value or unsetting an absent key succeeds without rewriting
 or creating the document or its directory. Removing the last key keeps an empty file. Deleting
 `vars.toml` removes machine values without altering installed content.
-Argument validation and output belong to the [command reference](cmdline.md#what-the-three-of-them-share).
+Argument validation and output belong to the [command reference](commands/vars.md#what-the-three-of-them-share).
 
 ## `dynamic-vars.toml`: dynamic-variable cache
 
@@ -159,6 +159,8 @@ Dry runs resolve commands and save captures on the same terms.
   still decide that run.
 
 ## Run lock
+
+**Unreleased:** run locking requires a build newer than 0.1.0.
 
 An exclusive advisory lock on `<cache-dir>/run.lock`, held for the command's
 whole run, prevents overlapping state operations by commands sharing that cache.

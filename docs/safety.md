@@ -27,7 +27,7 @@ Updating a remote can change both files and included actions on the next run.
 Archive paths and entry types are validated under the [extraction
 rules](#archive-extraction), but extraction and compressed-file expansion have
 no overall byte or entry budget. Those limits are a
-[potential enhancement](enhancements.md#extraction-budgets).
+[potential enhancement](https://github.com/abatkin/batfiles/blob/main/docs/contributing/enhancements.md#extraction-budgets).
 
 ## Path resolution
 
@@ -268,7 +268,7 @@ separate [atomic rewrite policy](state.md#writing).
   its MS-DOS attributes are not read as a mode. Directory modes are applied
   after their contents. The destination root uses the stripped root directory's
   mode when available, otherwise `0755`. A file
-  [`executable`](repoformat.md#fetch-archive) marks gains `0111` after these
+  [`executable`](actions/fetch-archive.md#fetch-archive) marks gains `0111` after these
   rules apply.
 - Unix mode handling does not apply on Windows. Symlink actions and archive
   symlink entries are unsupported there.
@@ -299,7 +299,7 @@ For example, `bin/tool -> ../lib/tool` is allowed. A target of
 cancellation appears to keep it inside the tree.
 
 The destination is published only after extraction succeeds. See
-[fetch-archive](repoformat.md#fetch-archive) for formats and root selection and
+[fetch-archive](actions/fetch-archive.md#fetch-archive) for formats and root selection and
 [HTTP transfer rules](repoformat.md#the-transfer-both-fetching-actions-share)
 for digest verification.
 
@@ -328,7 +328,7 @@ overwritten by an update or ref switch. Untracked files count regardless of
 `status.showUntrackedFiles`. A successful branch switch may be reported even
 when the subsequent fast-forward is skipped; local branches and commits remain.
 
-The [ref field](repoformat.md#ref-following-one-branch-tag-or-commit) controls
+The [ref field](actions/git-clone.md#ref-following-one-branch-tag-or-commit) controls
 branch versus detached checkout. Submodules are not initialized or updated.
 The command reference defines [clone-list failure handling](cmdline.md#clone-list-entry-failures).
 

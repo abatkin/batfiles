@@ -98,6 +98,40 @@ fn a_stable_tag_is_the_cargo_version_on_main() {
 }
 
 #[test]
+fn a_stable_tag_needs_published_documentation_free_of_unreleased_labels() {
+    let checkout = Checkout::new();
+    fs::create_dir_all(checkout.work().join("docs/guides")).expect("documentation");
+    fs::create_dir_all(checkout.work().join("docs/contributing")).expect("contributor docs");
+    checkout.commit(
+        "docs/contributing/authoring.md",
+        "**Unreleased:** a label shown as an example.\n",
+    );
+    checkout.commit(
+        "docs/guides/install.md",
+        "**Unreleased:** `--ref` requires a build newer than 1.2.2.\n",
+    );
+    checkout.git(&["push", "--quiet", "origin", "main"]);
+    checkout.git(&["fetch", "--quiet", "origin"]);
+
+    let assertion = checkout.script("tag.sh", &["v1.2.3"]).assert().failure();
+    let stderr = stderr_of(&assertion);
+    assert!(stderr.contains("still labels features Unreleased: docs/guides/install.md;"));
+    assert!(!stderr.contains("authoring.md"));
+    checkout
+        .script("tag.sh", &["v1.2.3-rc.1"])
+        .assert()
+        .success();
+
+    checkout.commit(
+        "docs/guides/install.md",
+        "**Since 1.2.3:** `--ref` requires 1.2.3 or newer.\n",
+    );
+    checkout.git(&["push", "--quiet", "origin", "main"]);
+    checkout.git(&["fetch", "--quiet", "origin"]);
+    checkout.script("tag.sh", &["v1.2.3"]).assert().success();
+}
+
+#[test]
 fn a_prerelease_tag_suffixes_the_cargo_version_from_any_commit() {
     let checkout = Checkout::new();
     checkout.commit("unmerged", "");

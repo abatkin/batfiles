@@ -14,16 +14,16 @@ Global options may appear before or after the command name.
 
 | Command | Purpose |
 | --- | --- |
-| [`init`](#init) | Create a repository skeleton or add missing installer stubs |
-| [`version`](#version) | Print the installed version |
-| [`update`](#update) | Check for or install a binary release |
-| [`clone`](#clone) | Clone a leaf repository, adopt bootstrap choices, and sync |
-| [`sync`](#sync) | Materialize remotes and execute selected actions |
-| [`apply-action`](#apply-action), [`apply-group`](#apply-group) | Execute a named part of the manifest |
-| [`enable-action`, `disable-action`, `enable-group`, `disable-group`](#enable-and-disable-actions-or-groups) | Persist machine-local selections |
-| [`vars set`](#vars-set), [`get`](#vars-get), [`unset`](#vars-unset) | Manage machine-local variables |
-| [`vars list`](#vars-list) | Inspect effective values and origins |
-| [`vars refresh`](#vars-refresh) | Refresh cached dynamic variables |
+| [`init`](commands/init.md#init) | Create a repository skeleton or add missing installer stubs |
+| [`version`](commands/version.md#version) | Print the installed version |
+| [`update`](commands/update.md#update) | Check for or install a binary release |
+| [`clone`](commands/clone.md#clone) | Clone a leaf repository, adopt bootstrap choices, and sync |
+| [`sync`](commands/sync.md#sync) | Materialize remotes and execute selected actions |
+| [`apply-action`](commands/apply-action.md#apply-action), [`apply-group`](commands/apply-group.md#apply-group) | Execute a named part of the manifest |
+| [`enable-action`, `disable-action`, `enable-group`, `disable-group`](commands/enable-disable.md#enable-and-disable-actions-or-groups) | Persist machine-local selections |
+| [`vars set`](commands/vars.md#vars-set), [`get`](commands/vars.md#vars-get), [`unset`](commands/vars.md#vars-unset) | Manage machine-local variables |
+| [`vars list`](commands/vars.md#vars-list) | Inspect effective values and origins |
+| [`vars refresh`](commands/vars.md#vars-refresh) | Refresh cached dynamic variables |
 
 Shared reference: [execution options](#shared-action-execution-options),
 [output](#output-streams), [selection](#selecting-what-a-run-does),
@@ -47,7 +47,7 @@ directory and does not use any selected roots.
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml` and the [run lock](state.md#run-lock). Defaults to the XDG cache location. |
 
 `-v` prints the roots the command resolves, unchanged destinations, and action
-headings and exclusions. `-vv` also prints the [effective variables](#vars-list).
+headings and exclusions. `-vv` also prints the [effective variables](commands/vars.md#vars-list).
 See [location selection](environment.md#location-selection) for which roots
 each command uses and their precedence, and [output streams](#output-streams)
 for quiet mode.
@@ -95,426 +95,6 @@ Dynamic commands inherit standard error unless `--quiet` disconnects it; their
 output is otherwise captured or discarded. See
 [dynamic-command execution](environment.md#how-dynamic-commands-are-run).
 
-## Commands
-
-### `init`
-
-```text
-batfiles init [--no-git-init | --stubs]
-```
-
-Create a leaf-repository skeleton in the current directory. Location options
-such as `--batfiles-dir` have no effect.
-
-| Option | Purpose |
-| --- | --- |
-| `--no-git-init` | Skip `git init`; it is also skipped automatically inside a Git repository |
-| `--stubs` | Add only missing installer stubs to an existing repository |
-
-The layout is created in this order: `batfiles.toml`, `.gitignore`, `bin/`,
-`files/`, executable [`install.sh`](distribution.md#leaf-stub), and
-[`install.ps1`](distribution.md#the-windows-stub), on every platform. The
-starter manifest has only commented samples and installs nothing. The
-`.gitignore` excludes generated `remotes/`; that tree is not created by `init`.
-Stubs use the selected [release base](environment.md#release-base), validated
-before anything is created.
-
-Before writing, `init` refuses:
-
-- Anything already named `batfiles.toml`.
-- The invoking user's OS home directory, regardless of `--home-dir`. An
-  undeterminable home does not fail this check.
-- A layout path of the wrong filesystem kind. Symlinks are classified by their
-  targets; broken ones are the wrong kind.
-
-Existing paths of the expected kind retain contents and permissions and are
-omitted from the creation report. An existing `.gitignore` that appears not to
-cover `remotes/`, or an existing installer that is not a batfiles stub, warns
-and is left alone. A failure to launch or complete `git init` fails the command;
-any layout already created remains.
-
-#### Adding the stubs to a repository
-
-`init --stubs` requires a `batfiles.toml` file in the current directory. It
-writes only missing stubs, creates no other layout, and runs no Git. It cannot
-be combined with `--no-git-init`. Existing stubs follow the rules above; a wrong
-node kind refuses the command before writing. Output names the stubs created,
-or reports that all were already present.
-
-### `version`
-
-```text
-batfiles version
-```
-
-Print `batfiles <version>` to standard output, like `batfiles --version`.
-[Release builds](distribution.md#versions) report the release version including
-its pre-release suffix; other builds report the `Cargo.toml` version.
-No location roots are resolved.
-
-### `update`
-
-```text
-batfiles update [<version>] [--check]
-```
-
-Replace the running binary with the latest [release](distribution.md#release-tree),
-or with `<version>`. Only this command installs or checks for updates, and only
-when run. No location roots are resolved.
-
-| Argument or option | Purpose |
-|--------------------|---------|
-| `<version>`        | The release to install: a [version](distribution.md#versions), with or without a leading `v`, or `latest`, the default. One outside the grammar is a usage error. |
-| `--check`          | Print what is running and what is available, and install nothing. |
-
-Releases come from the [release base](environment.md#release-base).
-
-Without `<version>`, `update` reads `<base>/latest/download/VERSION` once and
-downloads nothing unless that release is newer, by [version
-order](distribution.md#versions), than the running one; a pre-release therefore
-stays until a stable release passes it. If `VERSION` cannot be read, the error
-suggests naming a release, since the base may have published only pre-releases.
-A named `<version>` is installed even when it is older or the same, which also
-repairs a binary.
-
-Installation uses `<base>/download/v<version>/`:
-
-1. Create a private file beside the running executable, after resolving
-   symlinks, so a link to batfiles stays a link. An unwritable directory fails
-   before downloading. An existing file at that path, such as one an interrupted
-   update left, is never replaced; remove it and retry.
-2. Download `SHA256SUMS` and this build's [asset](distribution.md#targets) into
-   that file, verifying its digest.
-3. Make it executable and run its `version`, which must report the release.
-4. Rename it over the running executable, and report both versions and the path.
-
-Any failure removes the file and leaves the running binary unchanged.
-
-On Windows, the staged file ends in `.exe`, and the running `batfiles.exe` is
-first renamed aside to `batfiles.exe.batfiles-old` (and restored if the second
-rename fails). A hidden `%SystemRoot%` `powershell.exe` removes that file after
-`update` exits. If another running batfiles still holds it, the next `update`
-removes it first, reporting at `-v` and warning on failure.
-
-`--check` reads only the needed `VERSION`: `latest/download/` without
-`<version>`, otherwise that release's own, which must hold the named version.
-It prints two lines of requested data to standard output:
-
-```text
-running 1.2.0
-available 1.3.0
-```
-
-It succeeds whether or not the available release is newer; an unreadable or
-invalid `VERSION` fails. Without `--check`, all output is diagnostic.
-
-### `clone`
-
-```text
-batfiles clone <url> [--ref <ref>] [--skip-action <id>]... [--skip-group <group>]...
-    [--enable-action <id>]... [--disable-action <id>]...
-    [--enable-group <group>]... [--disable-group <group>]...
-```
-
-Clone a leaf repository into the selected batfiles directory, adopt its
-bootstrap policy, and [sync](#sync). [Location selection](environment.md#location-selection)
-excludes working-directory discovery for this command.
-
-The destination must not exist, even as an empty directory or broken symlink.
-Batfiles rejects it before launching Git; missing parents are created.
-
-| Option | Purpose |
-| --- | --- |
-| `--ref <ref>` | Check out a branch, tag, or commit before reading the manifest; never empty |
-| `--skip-action <id>` | Skip an action during this synchronization; repeatable |
-| `--skip-group <group>` | Skip a group during this synchronization; repeatable |
-| `--disable-action <id>` / `--enable-action <id>` | Persist a bootstrap action choice; repeatable |
-| `--disable-group <group>` / `--enable-group <group>` | Persist a bootstrap group choice; repeatable |
-
-The [shared execution options](#shared-action-execution-options) also apply.
-`clone` accepts neither `--dry-run` nor `--refresh-remotes`.
-
-`--ref` follows the [manifest ref rules](repoformat.md#ref-following-one-branch-tag-or-commit):
-a published branch becomes a local tracking branch; other resolved refs are
-detached. Without it, the origin's `HEAD` selects the branch. Batfiles records
-no ref and never updates the leaf repository itself.
-
-#### What the bootstrap decides
-
-Bootstrap applies the leaf's [default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries)
-and explicit enable/disable inputs using [adoption precedence](environment.md#bootstrap-adoption-precedence),
-then persists the result under the [state lifecycle rules](state.md#bootstrap-adoption).
-Included manifests' bootstrap sections are ignored. Candidate conditions use
-the leaf's effective variables; a condition failure warns and leaves the
-candidate unapplied. Ordinary condition exclusions are reported at `-v`.
-
-Each decision is reported with its source and the same wording as an
-[enable/disable command](#enable-and-disable-actions-or-groups):
-
-```text
-default-disabled: disabled action `p10k`
-BATFILES_DISABLE_GROUPS: disabled group `gui`
---enable-group: enabled group `gui` (was disabled)
-```
-
-Malformed option addresses fail before cloning; malformed environment addresses
-warn and are dropped. Once cloned, the repository is kept on any later failure:
-
-- An unresolved `--ref` fails before manifest loading and leaves the default
-  branch checked out. Correct it with Git, then run `sync --bootstrap`.
-- A missing `batfiles.toml` fails before bootstrap, identifying the clone as a
-  Git repository that is not a batfiles repository.
-- A synchronization failure leaves both the clone and written bootstrap state
-  in place. Fix the cause and retry with `sync`.
-
-### `sync`
-
-```text
-batfiles sync [--dry-run | --refresh-remotes] [--skip-action <id>]... [--skip-group <group>]...
-    [--bootstrap [--enable-action <id>]... [--disable-action <id>]...
-                 [--enable-group <group>]... [--disable-group <group>]...]
-```
-
-[Materialize remotes](repoformat.md#materialization), then execute selected
-actions in declaration order. Each action sees the filesystem left by its
-predecessors. [Selection](#selecting-what-a-run-does) defines exclusions and
-loading; [execution failures](#execution-failures) defines stopping behavior.
-
-| Option | Purpose |
-| --- | --- |
-| `--dry-run` | [Report intended work](#dry-run-behavior) |
-| `--refresh-remotes` | Fetch every admitted file and archive remote again |
-| `--skip-action <id>` | Skip one action; repeatable |
-| `--skip-group <group>` | Skip one group; repeatable |
-| `--bootstrap` | Adopt bootstrap choices before synchronization |
-
-The [shared execution options](#shared-action-execution-options) also apply.
-
-Normal output names each change, one line per link or installed child. Correct
-destinations are silent. `-v` adds unchanged destinations and a heading per
-action; unnamed actions use their one-based manifest position, and ungrouped
-actions omit the group:
-
-```text
-symlink zshrc (group shell)
-linked /home/you/.zshrc -> /home/you/dotfiles/shell/zshrc
-symlink-dir action 7 (group shell)
-linked /home/you/.ackrc -> /home/you/dotfiles/files/ackrc
-```
-
-Remote work is reported first under `remote <id>` headings, using the Git or
-fetching action's wording. Replaced file/archive materializations say
-`refetched`; unchanged ones appear only at `-v`. Remote exclusions use
-[exclusion reporting](#exclusion-reporting).
-
-`--bootstrap` performs [clone's bootstrap](#what-the-bootstrap-decides).
-The four enable/disable options in the syntax are accepted only with it;
-otherwise they are usage errors. In a dry run, bootstrap reports its decisions
-and uses them for selection without writing `disabled.toml`.
-The [leaf stub](distribution.md#leaf-stub) runs `sync --bootstrap`.
-
-`--refresh-remotes` rebuilds even materializations whose declarations still
-match their stamps. Remote conditions and ownership checks still apply; Git
-remotes are unaffected because normal synchronization already updates them.
-It cannot accompany `--dry-run`.
-
-### `apply-action`
-
-```text
-batfiles apply-action --id <id> [--dry-run]
-```
-
-Execute one action or clone-list entry by [address](#addresses), with `sync`'s
-action behavior and the [shared execution options](#shared-action-execution-options).
-`--id` is required. An action without an ID cannot be named directly.
-
-The [selection table](#selection-by-command) defines which exclusions naming
-an action bypasses. Apply commands use existing remote materializations.
-
-These failures exit 1:
-
-- An invalid address, checked before the repository is opened.
-- An address matching nothing, with the address and manifest in the error.
-- An unread enclosing inclusion or clone list, with its name and reason.
-- An address naming an `include-remote` itself: it contributes actions but is
-  not an executable action.
-
-A contributed action excluded by inclusion filters still resolves, so naming it
-succeeds without installing anything. `-v` identifies the record and reason:
-
-```text
-nothing to apply: the inclusion that contributed the action did not select it
-```
-
-### `apply-group`
-
-```text
-batfiles apply-group --group <group> [--skip-action <id>]... [--dry-run]
-```
-
-Execute a group's actions in declaration order, with `sync`'s action behavior
-and the [shared execution options](#shared-action-execution-options).
-`--group` is required; `--skip-action` is repeatable. See
-[selection by command](#selection-by-command) for member exclusions.
-
-An invalid or unknown group exits 1; a group exists only when an action names
-it. A qualified group in an unread inclusion fails naming that inclusion.
-An existing group with no eligible actions exits 0 and reports:
-
-```text
-nothing to apply: every action in the group is disabled, skipped, excluded by its own condition, or was not contributed
-```
-
-`-v` gives individual reasons. Inclusions count only through the actions they
-contribute, so a group containing an inclusion that contributes nothing also
-has nothing to apply.
-
-### `vars set`
-
-```text
-batfiles vars set <key> <value>
-```
-
-Store a machine-local string verbatim, including an empty string. Output names
-only the key:
-
-| Change | Report |
-| --- | --- |
-| New key | ``set `editor` `` |
-| Different value | ``changed `editor` (it had a different value)`` |
-| Same value | ``` `editor` was already set to that value ``` |
-
-### `vars get`
-
-```text
-batfiles vars get <key>
-```
-
-Print the persisted machine-local string on standard output. No other variable
-layers or host facts are resolved. An absent key exits 1, names the key on
-standard error, and prints nothing on standard output.
-
-### `vars unset`
-
-```text
-batfiles vars unset <key>
-```
-
-Remove a machine-local value. An absent key succeeds and reports
-``` `editor` was not set ```.
-
-### What the three of them share
-
-These commands operate on [`vars.toml`](state.md#varstoml-machine-local-variables)
-without loading a repository. Invalid [variable names](repoformat.md#names-and-ids)
-exit 1 before the document is opened. See the state reference for idempotence,
-empty documents, and writes, and [output streams](#output-streams) for quiet mode.
-
-### `vars list`
-
-```text
-batfiles vars list [--machine-only] [--no-refresh]
-```
-
-Print effective leaf variables, their origins, and shadowed origins to standard
-output. Resolve `[vars]`, `vars.toml`, and `BATFILES_VAR_*` using
-[variable precedence](environment.md#variable-precedence). `--var` is not
-accepted. Host `facts`/`env` and inclusion-local scopes are not listed.
-
-```text
-editor  = "nvim" (vars.toml; over batfiles.toml)
-profile = "work" (vars.toml; over batfiles.toml)
-rank    = "9" (BATFILES_VAR_*; over batfiles.toml)
-```
-
-| Option | Effect |
-| --- | --- |
-| `--machine-only` | List only persisted `vars.toml` values; read no repository, variable environment layer, or dynamic cache |
-| `--no-refresh` | Run no dynamic commands and write no cache; report cached values |
-
-Dynamic-variable evaluation follows the [cache rules](state.md#when-declarations-are-evaluated).
-`--no-refresh` adds nothing to `--machine-only`. A normal listing requires a
-manifest; `--machine-only` works without one.
-
-Names are sorted and aligned. Values are quoted, including `""`, with control
-characters escaped to keep each entry on one line. Shadowed origins run from
-highest to lowest precedence. An empty set writes nothing to standard output
-and reports that there is nothing to list on standard error.
-
-Action commands at `-vv` use this format on standard error, indented under
-`variables:` and including the run's `--var` overrides. Opened inclusions add a
-block naming only variables declared by their overrides or included manifest:
-
-```text
-variables:
-  profile = "personal" (batfiles.toml)
-include-remote `corp` variables:
-  editor  = "vim" (batfiles.toml of include-remote `corp`)
-  profile = "work" (include-remote `corp`; over batfiles.toml)
-```
-
-Blocks appear during assembly, before action output. An unopened inclusion or
-one declaring no variables has no block. An unnamed inclusion uses its
-[reporting name](repoformat.md#include-remote). Values overridden by a higher
-layer still appear with the winning origin:
-
-```text
-profile = "lab" (vars.toml; over include-remote `corp`, batfiles.toml)
-```
-
-A winning dynamic declaration includes its capture state:
-
-```text
-email  = "me@corp.example" (batfiles.toml, command)
-has_op = "false" (batfiles.toml, command could not start)
-shell  = "zsh" (batfiles.toml, cached 3h ago)
-team   = "platform" (batfiles.toml, command failed, cached 2d ago)
-token  = no value (batfiles.toml, command failed)
-```
-
-`command` means captured now; cache ages use the largest whole unit. Under
-`--no-refresh`, stale entries say `stale, cached 2d ago` and missing entries say
-`no value (batfiles.toml, not cached)`. Overridden declarations have no separate
-capture state. Listings explicitly expose values; mutation reports name only
-keys, and `vars get` supplies a bare persisted value for scripts.
-
-### `vars refresh`
-
-```text
-batfiles vars refresh [<key>...]
-```
-
-Run dynamic commands regardless of cache freshness and save their captures.
-With no keys, refresh every declaration [in play](state.md#when-declarations-are-evaluated),
-including ones overridden by machine values. With keys, refresh only those
-named, plus leaf resolution needed to decide remote eligibility.
-
-A leaf key is its variable name; a remote key is `<remote-id>.<name>` using the
-leaf's `[remotes]` ID, not an inclusion ID. Other syntax, including the cache's
-`remote:corporate.has_op`, is a usage error before any file is read.
-`--var` is not accepted.
-
-Remote eligibility uses the leaf scope. Its declarations resolve first, reusing
-fresh values and running stale ones; explicitly named leaf keys are refreshed
-before deciding eligibility. Naming only leaf keys reads no remote.
-
-Keys are checked before their commands run. All invalid requests are collected
-in one error with a reason per key; exit status is 1. A key is refused if it:
-
-- Is undeclared or static.
-- Names an undeclared remote, one out of play, one not allowed to run commands,
-  or one not materialized.
-
-Leaf values already refreshed to decide remote eligibility remain refreshed
-when a remote key is refused. With no keys, an unmaterialized remote in play
-warns and is skipped. This command fetches nothing; use `sync` first.
-
-Each capture reports a line such as ``refreshed `email` `` on standard error, without its value;
-`--quiet` suppresses it. A command with nothing to refresh says so. Capture
-failures warn and retain cached values; other captures are saved, then the
-command exits 1 with the failure count. A status command that could not start
-counts as failed because its assumed `"false"` was not captured.
-
 ## Selecting what a run does
 
 Selection preserves declaration order. `sync` considers all actions; apply
@@ -523,7 +103,7 @@ commands consider the named action or group. Exclusions come from:
 - [Persistent disables](state.md#disabledtoml-disabled-actions-and-groups).
 - Run-only skips: CLI options and [environment lists](environment.md#run-only-skips).
 - The record's [condition](repoformat.md#conditions).
-- For included records, the inclusion's [filters](repoformat.md#selecting-part-of-a-remote),
+- For included records, the inclusion's [filters](actions/include-remote.md#selecting-part-of-a-remote),
   checked before all other exclusions.
 
 CLI and environment skips form a union, as do skips and persistent disables.
@@ -565,7 +145,7 @@ error: entry `zsh-plugins.p10k` would come from git-clone-list `zsh-plugins`, wh
 
 This includes a list excluded by inclusion filters: its entries cannot resolve.
 A contributed action whose own record is filtered out still resolves but
-[applies nothing](#apply-action).
+[applies nothing](commands/apply-action.md#apply-action).
 
 Conversely, naming a list waives none of its entries' exclusions; each entry
 uses the table under its own address. Naming one entry with `apply-action`
@@ -589,7 +169,7 @@ exclusion as skipped materialization work.
 After the run's list is expanded and selection and action conditions are settled,
 all selected, unskipped clone lists are read and validated before any action
 writes. This includes a list read only because the command names one of its
-entries, and the lists an [inclusion](repoformat.md#include-remote) contributed,
+entries, and the lists an [inclusion](actions/include-remote.md#include-remote) contributed,
 each read from the materialization its record came from. Skipped lists are not
 opened. A missing or malformed executable list fails the run before installation
 begins, even if its action appears later in the list. A list produced by an
@@ -603,6 +183,9 @@ apply command's target is resolved, since an entry's address is known only once
 its list has been read.
 
 ### Addresses
+
+**Unreleased:** addresses selecting individual clone-list entries require
+a build newer than 0.1.0.
 
 An address is a nonempty sequence of [IDs](repoformat.md#names-and-ids) joined
 by `.`, with no segment-count limit. It is used wherever actions or groups are
@@ -665,30 +248,6 @@ entries eligible. Remote exclusions appear before actions under `remote <id>`:
 ordinary condition exclusions at `-v`, evaluation failures as warnings. Neither
 stops the run, but an action sourcing that excluded remote fails naming it and
 repeating the reason.
-
-### Enable and disable actions or groups
-
-```text
-batfiles disable-action <id>...
-batfiles enable-action <id>...
-batfiles disable-group <group>...
-batfiles enable-group <group>...
-```
-
-Add or remove persistent [addresses](#addresses) in `disabled.toml`. These
-commands load no repository, run no synchronization, and remove no installed
-content. Unknown names are accepted; malformed addresses exit 1 before opening
-the document or applying any supplied name. Repeated names warn and apply once.
-
-One diagnostic per name reports whether state changed:
-
-```text
-disabled action `p10k`
-action `zshrc` was already disabled
-```
-
-`--quiet` suppresses reports, not edits. See [state lifecycle](state.md#semantics-and-lifecycle)
-for idempotence and persistence.
 
 ## Dry-run behavior
 
@@ -753,7 +312,7 @@ no additional completion message. These do not make a plan partial:
 
 Partiality alone does not fail a command: available actions still run or are
 reported, and status is 0 absent another failure. A specifically targeted action
-or group that cannot be resolved still [fails](#apply-action).
+or group that cannot be resolved still [fails](commands/apply-action.md#apply-action).
 `sync` materializes remotes before action execution; dry runs and apply
 commands use existing trees, where missing materializations can leave a partial
 plan. Materialize the remote and repeat the command to see the remaining work.

@@ -8,8 +8,9 @@
 # <stamped-base>, which defaults to <url>. With <latest> `yes`,
 # <url>/latest/download/ must serve the same VERSION and SHA256SUMS, and a
 # Pages site at <pages> must serve at its root the installers that directory
-# does. The Pages check retries for PAGES_WAIT seconds, by default 600, which
-# outlasts what Pages caches.
+# does, plus nonempty documentation landing and tutorial pages. The Pages
+# check retries for PAGES_WAIT seconds, by default 600, which outlasts what
+# Pages caches.
 set -eu
 
 die() {
@@ -98,6 +99,12 @@ pages_match() {
         get "$pages/$name" "$work/pages/$name" || return 1
         differs="$pages/$name differs from $url/latest/download/$name"
         cmp -s "$work/latest/$name" "$work/pages/$name" || return 1
+    done
+    for name in index.html getting-started.html; do
+        differs="$pages/docs/$name cannot be fetched"
+        get "$pages/docs/$name" "$work/pages/$name" || return 1
+        differs="$pages/docs/$name is empty"
+        [ -s "$work/pages/$name" ] || return 1
     done
 }
 

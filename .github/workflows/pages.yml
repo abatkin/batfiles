@@ -3,13 +3,26 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ['site/**']
+    # What builds or verifies the site; the remaining dist:pages inputs come
+    # from the latest release.
+    paths:
+      - 'site/**'
+      - 'docs/**'
+      - 'theme/**'
+      - 'book.toml'
+      - 'dist/docs.sh'
+      - 'dist/docs-tools'
+      - 'dist/pages.sh'
+      - 'dist/verify.sh'
+      - 'dist/version.sh'
+      - 'Taskfile.yml'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
   # The release workflow calls this after verifying a stable release.
   workflow_call:
 
 # Builds the Pages site with dist:pages from Taskfile.yml and deploys it;
-# docs/distribution.md describes the site. Third-party actions are pinned to a
+# docs/contributing/distribution.md describes the site. Third-party actions are pinned to a
 # commit SHA, as in ci.yml.
 
 permissions:
@@ -34,14 +47,15 @@ jobs:
       pages: read
     outputs:
       deploy: ${{ steps.pages.outputs.deploy }}
+      site-url: ${{ steps.pages.outputs.site-url }}
     steps:
       - name: Read the Pages configuration
         id: pages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if build_type=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type 2>"$RUNNER_TEMP/error"); then
-            :
+          if gh api "repos/$GITHUB_REPOSITORY/pages" >"$RUNNER_TEMP/pages.json" 2>"$RUNNER_TEMP/error"; then
+            build_type=$(jq -r .build_type "$RUNNER_TEMP/pages.json")
           elif grep -q 'HTTP 404' "$RUNNER_TEMP/error"; then
             build_type=none
           else
@@ -50,6 +64,9 @@ jobs:
           fi
           if [ "$build_type" = workflow ]; then
             echo deploy=true >>"$GITHUB_OUTPUT"
+            # The URL path the site is served under: / for a custom domain,
+            # /<repository>/ for a project site.
+            echo "site-url=$(jq -r '.html_url | sub("^[a-z]+://[^/]+"; "") | sub("/*$"; "/")' "$RUNNER_TEMP/pages.json")" >>"$GITHUB_OUTPUT"
           else
             echo "::notice::Not deploying: Pages is not enabled with GitHub Actions as its source (build type: $build_type)."
             echo deploy=false >>"$GITHUB_OUTPUT"
@@ -72,7 +89,11 @@ jobs:
       pages: write
       id-token: write
     steps:
+      # Resolve main after acquiring the deployment slot, even for release calls.
+      # The rest of this job builds and validates that one checked-out revision.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -80,7 +101,9 @@ jobs:
 
       - name: task dist:pages
         id: site
-        run: task --silent dist:pages OUT=target/site FROM="$PUBLISHED_BASE" >>"$GITHUB_OUTPUT"
+        env:
+          SITE_URL: ${{ needs.plan.outputs.site-url }}
+        run: task --silent dist:pages OUT=target/site FROM="$PUBLISHED_BASE" SITE_URL="$SITE_URL" >>"$GITHUB_OUTPUT"
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

@@ -121,7 +121,7 @@ empty string.
 
 Malformed or unreadable `vars.toml` fails merging; so does a malformed dynamic
 cache when a declaration needs it. Inspect values and origins with
-[`vars list` or `-vv`](cmdline.md#vars-list).
+[`vars list` or `-vv`](commands/vars.md#vars-list).
 
 ## How dynamic commands are run
 
@@ -175,7 +175,7 @@ not truncated to `silver`. On Windows it is the short physical DNS hostname,
 without the suffix, even on domain-joined machines. A condition shared by Unix
 and Windows machines should compare the short name, or test the domain
 separately. A qualified Windows name is tracked in
-[enhancements](enhancements.md#fully-qualified-windows-host-name).
+[enhancements](https://github.com/abatkin/batfiles/blob/main/docs/contributing/enhancements.md#fully-qualified-windows-host-name).
 
 ## Host environment in conditions
 
@@ -202,7 +202,7 @@ Commands resolve only the roots they need:
 | `init`, `version`, `update` | None |
 
 `init` separately checks the OS home to refuse initialization directly in it;
-see [`init`](cmdline.md#init).
+see [`init`](commands/init.md#init).
 
 Choose the first available value in each row:
 
@@ -257,10 +257,10 @@ usage errors receive the selected mode and use clap's terminal detection.
 
 | Variable        | Effect                                                                   |
 |-----------------|--------------------------------------------------------------------------|
-| `BATFILES_BASE` | The [release base](distribution.md#the-release-base) `init` writes into the stub, and [`update`](cmdline.md#update) installs from. |
+| `BATFILES_BASE` | The [release base](https://github.com/abatkin/batfiles/blob/main/docs/contributing/distribution.md#the-release-base) `init` writes into the stub, and [`update`](commands/update.md#update) installs from. |
 
 An absent or empty `BATFILES_BASE` is unset, and the base compiled into the
-build applies. A value outside the [base syntax](distribution.md#the-release-base)
+build applies. A value outside the [base syntax](https://github.com/abatkin/batfiles/blob/main/docs/contributing/distribution.md#the-release-base)
 fails the command that reads it. The hosted installer and the stub read the same
 variable themselves. A self-hoster sets it in the environment their dotfiles
 install.

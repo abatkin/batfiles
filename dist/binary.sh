@@ -40,7 +40,7 @@ case $version in
 *) die "version $version is neither the Cargo.toml version $cargo nor a pre-release of it" ;;
 esac
 is_version "$version" ||
-    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>; see docs/distribution.md#versions"
+    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>; see docs/contributing/distribution.md#versions"
 
 case $target in
 *-windows-*) exe=.exe ;;

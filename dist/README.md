@@ -2,7 +2,7 @@
 
 For the repository owner: the settings releases rely on, how to cut one, and
 how to build and check the pieces locally. What a release contains and what
-each task does is specified in [`docs/distribution.md`](../docs/distribution.md).
+each task does is specified in [`docs/contributing/distribution.md`](../docs/contributing/distribution.md).
 
 ## Repository setup
 
@@ -33,7 +33,7 @@ be changed afterwards.
 - [ ] **`BATFILES_BASE`, only if needed.** A repository variable, set only to
   serve releases from somewhere other than this repository's GitHub releases.
 
-The [Pages site](../docs/distribution.md#github-pages) needs two more; without
+The [Pages site](../docs/contributing/distribution.md#github-pages) needs two more; without
 them, the Pages workflow deploys nothing and says so:
 
 - [X] **Pages source.** Settings → Pages → *Build and deployment* → *Source*:
@@ -66,7 +66,7 @@ The rest put the site at `batfiles.dev`, in this order:
 ## Cutting a release
 
 `Cargo.toml` always holds `X.Y.Z`, the release being worked toward. Tags carry
-the rest; see [versions](../docs/distribution.md#versions).
+the rest; see [versions](../docs/contributing/distribution.md#versions).
 
 ### A release candidate
 
@@ -96,7 +96,10 @@ again; it takes the next number.
 
 ### A stable release
 
-1. Merge the work, with `Cargo.toml` at `X.Y.Z`, into `main`.
+1. Replace each `**Unreleased:**` label in the published documentation with
+   `**Since X.Y.Z:**`, as [authoring](../docs/contributing/authoring.md#links-and-examples)
+   describes. `dist:tag` refuses a stable tag while any remain. Merge the work, with `Cargo.toml` at `X.Y.Z`,
+   into `main`.
 2. Tag the merged commit and push the tag:
 
    ```sh

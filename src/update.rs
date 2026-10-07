@@ -1,5 +1,5 @@
 //! `update`: replace the running binary with another release from the [release
-//! base](../docs/distribution.md#the-release-base). Resolves none of the four roots.
+//! base](../docs/contributing/distribution.md#the-release-base). Resolves none of the four roots.
 
 use std::fs;
 use std::io;

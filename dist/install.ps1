@@ -8,7 +8,7 @@
 # release base, by default the one stamped below), BATFILES_VERSION (a release
 # to fetch, and the oldest one accepted), and BATFILES_BIN (the one batfiles to
 # use or install, instead of searching PATH and then
-# $env:LOCALAPPDATA\Programs\batfiles). docs/distribution.md specifies the rest.
+# $env:LOCALAPPDATA\Programs\batfiles). docs/contributing/distribution.md specifies the rest.
 #
 # Failures are terminating errors rather than `exit`, which would close the
 # session the one-liner runs in. Batfiles' own status is left in $LASTEXITCODE.
@@ -31,7 +31,7 @@ function Invoke-BatfilesInstaller {
         throw "install.ps1: $message"
     }
 
-    # SemVer without build metadata, as docs/distribution.md#versions specifies.
+    # SemVer without build metadata, as docs/contributing/distribution.md#versions specifies.
     # dist/version.sh holds the same pattern; tests/dist checks they agree.
     $VersionPattern = '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 

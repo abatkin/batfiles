@@ -1,0 +1,28 @@
+[book]
+title = "Batfiles documentation"
+description = "Install and manage dotfiles with plain files and explicit composition."
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "target/docs"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+no-section-label = true
+site-url = "/docs/"
+git-repository-url = "https://github.com/abatkin/batfiles"
+edit-url-template = "https://github.com/abatkin/batfiles/edit/main/{path}"
+additional-css = ["theme/docs.css"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+runnable = false
+
+[output.html.print]
+enable = false

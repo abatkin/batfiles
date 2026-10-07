@@ -31,7 +31,7 @@ targets=${5:-}
 installers=${6:-$here}
 
 is_version "$version" ||
-    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>; see docs/distribution.md#versions"
+    die "version '$version' is not X.Y.Z or X.Y.Z-<pre-release>; see docs/contributing/distribution.md#versions"
 # Every character the stamped installers quote safely.
 printf '%s\n' "$base" |
     grep -Eqx "[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9._~:/@%+=,;!*()-]+" ||

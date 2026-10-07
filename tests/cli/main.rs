@@ -13,6 +13,7 @@ mod cloning;
 mod conditions;
 mod decompressing;
 mod disabled;
+mod documentation;
 mod fetching;
 mod groups;
 mod inclusion;

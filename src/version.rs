@@ -5,7 +5,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-/// A [release version](../docs/distribution.md#versions): `X.Y.Z` or `X.Y.Z-<pre-release>`,
+/// A [release version](../docs/contributing/distribution.md#versions): `X.Y.Z` or `X.Y.Z-<pre-release>`,
 /// without build metadata. Numbers of any length compare exactly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Version(String);
@@ -125,7 +125,7 @@ fn compare_identifiers<'a>(
 #[derive(Debug, Error)]
 #[error(
     "`{version}` is not a release version: X.Y.Z or X.Y.Z-<pre-release>, as \
-     docs/distribution.md#versions describes"
+     docs/contributing/distribution.md#versions describes"
 )]
 pub(crate) struct VersionError {
     version: String,

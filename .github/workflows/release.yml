@@ -5,7 +5,7 @@ on:
     tags: ['v*']
 
 # Each step is a `dist:` task from Taskfile.yml; this file only chooses runners
-# and moves assets between jobs. docs/distribution.md describes the release.
+# and moves assets between jobs. docs/contributing/distribution.md describes the release.
 #
 # Third-party actions are pinned to a commit SHA, as in ci.yml.
 

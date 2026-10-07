@@ -5,7 +5,8 @@
 #
 # The Cargo.toml version, X.Y.Z, is the release being worked toward. The tag
 # v<X.Y.Z> is a stable release and needs the checked-out commit to be on <main>,
-# by default origin/main. v<X.Y.Z>-<pre-release> is a pre-release, from any
+# by default origin/main, and its published documentation (docs/ outside
+# docs/contributing/) to carry no `**Unreleased:**` label. v<X.Y.Z>-<pre-release> is a pre-release, from any
 # commit. On success, prints `version=<version>` and
 # `prerelease=<true|false>` on standard output.
 set -eu
@@ -37,12 +38,15 @@ case $tag in
         die "there is no $main to check a stable release against"
     git merge-base --is-ancestor HEAD "$main" ||
         die "$tag is a stable release, and $(git rev-parse --short HEAD) is not on $main"
+    labeled=$(cd "$root" && grep -rlsF --exclude-dir=contributing '**Unreleased:**' docs | sort | tr '\n' ' ')
+    [ -z "$labeled" ] ||
+        die "$tag is a stable release, and documentation still labels features Unreleased: ${labeled% }; see dist/README.md"
     ;;
 "v$cargo"-*)
     version=${tag#v}
     prerelease=true
     is_version "$version" ||
-        die "'$tag' has a malformed pre-release suffix; see docs/distribution.md#versions"
+        die "'$tag' has a malformed pre-release suffix; see docs/contributing/distribution.md#versions"
     ;;
 *)
     die "tag '$tag' is neither v$cargo nor v$cargo-<pre-release>, as the Cargo.toml version allows"

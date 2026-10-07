@@ -12,6 +12,8 @@ mod support;
 #[cfg(unix)]
 mod assemble;
 #[cfg(unix)]
+mod docs;
+#[cfg(unix)]
 mod install;
 #[cfg(unix)]
 mod mirror;
