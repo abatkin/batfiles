@@ -81,8 +81,6 @@ On Windows, in PowerShell 7:
 For a different checkout location, add `--batfiles-dir` and its path to the
 `clone` command. For a particular branch, tag, or commit, add `--ref`.
 
-**Unreleased:** `--ref` requires a build newer than 0.1.0.
-
 ## Update batfiles
 
 ```sh

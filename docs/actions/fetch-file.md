@@ -1,7 +1,5 @@
 # `fetch-file`
 
-**Unreleased:** `executable` and `decompress` require a build newer than 0.1.0.
-
 Declares one file downloaded to a destination where nothing is.
 
 ```toml

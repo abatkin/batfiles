@@ -1,8 +1,5 @@
 # `fetch-archive`
 
-**Unreleased:** zip and bzip2 support, entry filters, and `executable` require
-a build newer than 0.1.0. Plain and gzip tar archives are supported in 0.1.0.
-
 Declares one archive downloaded and unpacked at a destination where nothing is.
 
 ```toml

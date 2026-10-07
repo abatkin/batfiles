@@ -96,10 +96,10 @@ again; it takes the next number.
 
 ### A stable release
 
-1. Replace each `**Unreleased:**` label in the published documentation with
-   `**Since X.Y.Z:**`, as [authoring](../docs/contributing/authoring.md#links-and-examples)
-   describes. `dist:tag` refuses a stable tag while any remain. Merge the work, with `Cargo.toml` at `X.Y.Z`,
-   into `main`.
+1. Remove each `**Unreleased:**` label from the published documentation, as
+   [authoring](../docs/contributing/authoring.md#links-and-examples) describes;
+   `dist:tag` refuses a stable tag while any remain. Merge the work, with
+   `Cargo.toml` at `X.Y.Z`, into `main`.
 2. Tag the merged commit and push the tag:
 
    ```sh

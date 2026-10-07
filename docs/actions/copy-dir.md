@@ -1,7 +1,5 @@
 # `copy-dir`
 
-**Unreleased:** `include` and `exclude` require a build newer than 0.1.0.
-
 Declares one copy per direct child of a directory, all of them in one
 destination directory.
 

@@ -1,7 +1,5 @@
 # `symlink-dir`
 
-**Unreleased:** `include` and `exclude` require a build newer than 0.1.0.
-
 Declares one symlink per direct child of a directory in the repository, all of
 them in one destination directory.
 

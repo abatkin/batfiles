@@ -160,8 +160,6 @@ Dry runs resolve commands and save captures on the same terms.
 
 ## Run lock
 
-**Unreleased:** run locking requires a build newer than 0.1.0.
-
 An exclusive advisory lock on `<cache-dir>/run.lock`, held for the command's
 whole run, prevents overlapping state operations by commands sharing that cache.
 

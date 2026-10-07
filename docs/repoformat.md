@@ -117,8 +117,6 @@ leaf's `[remotes]` is materialized. An included manifest's map is
 
 ### `file`
 
-**Unreleased:** `executable` and `decompress` require a build newer than 0.1.0.
-
 One file, fetched from a URL.
 
 ```toml
@@ -151,9 +149,6 @@ fetched by the [shared transfer](#the-transfer-both-fetching-actions-share), wit
 `decompress` mean what they do for [`fetch-file`](actions/fetch-file.md#fetch-file).
 
 ### `archive`
-
-**Unreleased:** zip and bzip2 support, filters, and executable patterns require
-a build newer than 0.1.0.
 
 A zip or tarball fetched from a URL and unpacked.
 
@@ -283,8 +278,6 @@ lexically. [Location selection](environment.md#location-selection) defines roots
 containment, conflicts, and staging.
 
 ## Entry filters
-
-**Unreleased:** entry filters require a build newer than 0.1.0.
 
 `include` and `exclude` select tree entries for `symlink-dir`, `copy`,
 `copy-dir`, `fetch-archive`, and archive remotes. Each accepts one glob or a list;

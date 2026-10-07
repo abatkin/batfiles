@@ -1,8 +1,5 @@
 # `git-clone-list`
 
-**Unreleased:** selecting individual clone-list entries by address requires
-a build newer than 0.1.0.
-
 Declares every repository a list names, cloned under one directory.
 
 ```toml

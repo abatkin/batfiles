@@ -79,8 +79,6 @@ not an inclusion's address. See [refreshing variables](../commands/vars.md#vars-
 
 ## Another run holds the lock
 
-**Unreleased:** this diagnostic requires a build newer than 0.1.0.
-
 Wait for the other run using the same cache directory to finish. The presence
 of `run.lock` alone does not mean a process holds it; the operating-system lock
 is released when the process exits. Do not delete or replace the file while a

@@ -62,8 +62,6 @@ to expand a gzip or bzip2 stream into a single file. The action references list
 supported formats and options; [archive safety](../safety.md#archive-extraction)
 defines permitted entries.
 
-**Unreleased:** `decompress` requires a build newer than 0.1.0.
-
 ## Refresh deliberately
 
 ```sh

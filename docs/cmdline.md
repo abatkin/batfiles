@@ -184,9 +184,6 @@ its list has been read.
 
 ### Addresses
 
-**Unreleased:** addresses selecting individual clone-list entries require
-a build newer than 0.1.0.
-
 An address is a nonempty sequence of [IDs](repoformat.md#names-and-ids) joined
 by `.`, with no segment-count limit. It is used wherever actions or groups are
 named, including skips, apply targets, persistent choices, and bootstrap defaults.

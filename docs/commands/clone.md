@@ -1,7 +1,5 @@
 # `clone`
 
-**Unreleased:** `--ref` requires a build newer than 0.1.0.
-
 ```text
 batfiles clone <url> [--ref <ref>] [--skip-action <id>]... [--skip-group <group>]...
     [--enable-action <id>]... [--disable-action <id>]...

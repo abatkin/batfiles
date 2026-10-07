@@ -74,14 +74,9 @@ or the text it qualifies:
 **Unreleased:** `--ref` requires a build newer than 0.1.0.
 ```
 
-When the release ships, replace each label with the shipped version:
-
-```md
-**Since 0.2.0:** `--ref` requires 0.2.0 or newer.
-```
-
-A stable release cannot be tagged while any published page still carries the
-Unreleased label; see [release management](../../dist/README.md#a-stable-release).
+Remove the labels when the release that ships those features is cut. A stable
+release cannot be tagged while any published page still carries the Unreleased
+label; see [release management](../../dist/README.md#a-stable-release).
 Do not describe ideas from [enhancements](enhancements.md) as supported behavior.
 
 ## Building and previewing
