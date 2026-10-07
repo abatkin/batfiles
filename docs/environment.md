@@ -1,18 +1,15 @@
 # Environment variables
 
-The environment inputs batfiles reads: the four location variables that
-select where it works, the two run-only skip lists, the four bootstrap lists,
-the one-shot user variables, the color selection, and the release base; and the environment a
-[dynamic variable](#how-dynamic-commands-are-run)'s command runs in. There is
-also one family it deliberately does *not* pass on to Git, covered at the end.
+Environment parsing, precedence, host inputs, and subprocess execution.
 
-The process environment is captured once when batfiles starts, so every lookup
-during a run sees the same values.
+[Locations](#location-selection) · [Skips](#run-only-skips) ·
+[Bootstrap](#bootstrap-enable-and-disable-lists) · [Variables](#variable-precedence) ·
+[Dynamic commands](#how-dynamic-commands-are-run) · [Host facts](#host-facts-in-conditions) ·
+[Host environment](#host-environment-in-conditions) · [Color](#color) ·
+[Releases](#release-base) · [Git](#variables-passed-on-to-git)
 
-Environment variable **names** follow the host operating system's case
-sensitivity. On Unix they are used verbatim. On Windows, whose environment is
-case-insensitive, batfiles uppercases every variable name at capture so that all
-lookups are deterministic. Values are never case-folded.
+The environment is captured once at startup. Names are case-sensitive on Unix;
+Windows names are uppercased at capture. Values are never case-folded.
 
 ## Location variables
 
@@ -23,21 +20,8 @@ lookups are deterministic. Values are never case-folded.
 | `BATFILES_CONFIG_DIR` | `--config-dir`    | Selects the directory containing `vars.toml` and `disabled.toml`.                 |
 | `BATFILES_CACHE_DIR`  | `--cache-dir`     | Selects the directory containing the dynamic-variable cache, `dynamic-vars.toml`. |
 
-The four are global because their corresponding CLI options are global. A
-command still reads or acts on only the roots it needs, and a command that needs
-none of them — `version`, and `init`, which works on the current directory —
-skips location resolution entirely.
-
-All four are live. `sync`, the two apply commands, and a normal `vars list` open
-the `batfiles.toml` in the leaf repository and both documents under the config
-directory — [`disabled.toml`](state.md) and
-[`vars.toml`](state.md#varstoml-machine-local-variables); the first three also
-install into the selected home. Each of them reads and writes
-[`dynamic-vars.toml`](state.md#dynamic-varstoml-dynamic-variable-cache) under
-the cache directory when the manifest declares a dynamic variable. The enable
-and disable commands rewrite `disabled.toml` and open nothing else, as the
-machine-local variable commands do for `vars.toml`. Which of the four a given
-command resolves is settled under [location selection](#location-selection).
+See [location selection](#location-selection) for precedence and which roots
+each command resolves.
 
 ## Run-only skips
 
@@ -64,98 +48,51 @@ $ BATFILES_SKIP_GROUPS=" gui , fonts" batfiles sync --skip-action p10k
 | `BATFILES_DISABLE_GROUPS`  | `--disable-group`  | Adds group addresses to the state a bootstrap writes.        |
 | `BATFILES_ENABLE_GROUPS`   | `--enable-group`   | Removes group addresses from the state a bootstrap writes.   |
 
-All four are comma-separated lists read the same way the run-only skips are:
-items trimmed, empty items discarded. They are honored **only by a bootstrap
-that accepts the matching options**: [`clone`](cmdline.md#clone), and
-[`sync --bootstrap`](cmdline.md#sync). They are meant for generated installers
-and fresh-machine automation rather than as ambient controls, so a later `sync`
-without `--bootstrap` in a shell that still exports them is unaffected.
-
-Unlike the run-only skips, what these decide is written down: a bootstrap
-persists the outcome in [`disabled.toml`](state.md), where it stands until an
-enable or disable command changes it.
+Like run-only skips, these are comma-separated, trimmed lists with empty items
+discarded. They apply only to `clone` and `sync --bootstrap`. See
+[bootstrap adoption](state.md#bootstrap-adoption) for persistence.
 
 ### Bootstrap adoption precedence
 
-A bootstrap settles what this machine starts with switched off by applying four
-sources in order, each over the one before it:
+Inputs apply in order, each overriding previous decisions:
 
 ```text
-leaf repository default-disabled candidates
+leaf default-disabled candidates
 < environment disables
 < environment enables
 < command-line disables
 < command-line enables
 ```
 
-So the command line outranks the environment, and within either source enable is
-applied after disable, which is what makes enable win where the same address
-appears in both lists. The
-[candidates](repoformat.md#default-disabled-bootstrap-entries) are the layer
-beneath all four: whatever the repository proposed, this invocation can overturn.
+Thus CLI wins over environment, and enables win over disables within either.
+Only candidates eligible under [bootstrap adoption](state.md#bootstrap-adoption)
+participate; explicit inputs apply even when candidates are not offered.
 
-An address is recorded rather than resolved, exactly as the enable and disable
-commands record one, so naming something no action answers to is not an error —
-see [addresses](cmdline.md#addresses). A malformed address is: one written as an
-option fails the command, and one written in a variable warns and is dropped,
-for the same reason the run-only skips treat the two differently.
-
-Only a machine with **no `disabled.toml` at all** is offered the candidates. The
-document existing means this machine has an opinion of its own, and the section
-is a starting point rather than a standing setting; the explicit decisions above
-apply either way, because they were written for this invocation. A bootstrap
-that decides nothing writes no document, so nothing is latched on a machine that
-was never set up.
+Addresses are recorded without resolving them. Malformed option addresses fail
+the command; malformed environment addresses warn and are dropped.
 
 ## One-shot variables: `BATFILES_VAR_<NAME>`
 
-| Variable              | Equivalent option        | Effect                             |
-|-----------------------|--------------------------|-------------------------------------|
-| `BATFILES_VAR_<NAME>` | `--var <NAME>=<value>`   | Defines a one-shot user variable.  |
+`BATFILES_VAR_<NAME>` defines a user variable for this invocation, equivalent to
+`--var <NAME>=<value>`. It is never persisted to `vars.toml`.
 
-Every environment key beginning with `BATFILES_VAR_` defines a candidate
-one-shot variable:
-
-- The suffix after `BATFILES_VAR_` is the variable name exactly as written and
-  is case-sensitive on Unix. On Windows the whole name is uppercased at capture,
-  so `BATFILES_VAR_editor` defines the user variable `EDITOR`; name the matching
-  `[vars]` and `vars.toml` keys in uppercase for Windows.
-- A bare `BATFILES_VAR_` with an empty suffix is ignored.
-- An empty value is significant: `BATFILES_VAR_PROFILE=` defines `PROFILE` as
-  the empty string.
-- Names must follow the repository format's shared [user-variable name
-  rules](repoformat.md#names-and-ids). An invalid suffix — including a reserved
-  identifier, so `BATFILES_VAR_env` on a case-sensitive system — is reported as
-  a warning naming the whole environment variable, and that one variable is
-  ignored; the command continues. This is deliberately not the rule for an
-  invalid [`--var` key](cmdline.md#shared-action-execution-options), which fails
-  the command: an environment variable is ambient and may predate any interest
-  in batfiles, while a `--var` was typed for this run.
-- The override lasts only for the current invocation and is not written to
-  `vars.toml`.
-
-A warning names the environment variable and not its value, which may be a
-token. The one listing that prints values is the one asked for them: `-vv`,
-below.
+- The suffix is the exact variable name. On Windows capture uppercases it, so
+  `BATFILES_VAR_editor` defines `EDITOR`; use uppercase manifest and machine keys.
+- A bare `BATFILES_VAR_` is ignored; an empty value is significant.
+- Invalid [variable names](repoformat.md#names-and-ids), including reserved
+  identifiers, warn and are dropped. Warnings name the environment key but never
+  its value. Invalid CLI `--var` names instead [fail](cmdline.md#shared-action-execution-options).
 
 ### Two distinct destinations
 
-`BATFILES_VAR_<NAME>` and the [`env` namespace](#host-environment-in-conditions)
-are separate channels, and one environment variable can appear in both:
-
-- `BATFILES_VAR_FOO` defines the **user variable** `FOO`, which a condition
-  reads as the bare identifier `FOO`, subject to the precedence below.
-- `env` exposes the *raw* process environment, so the same variable is also
-  `env["BATFILES_VAR_FOO"]`. It takes no part in user-variable precedence.
-
-Only the `BATFILES_VAR_` prefix creates a user variable. A raw `FOO` in the
-environment is reachable as `env.FOO` and does **not** become the user variable
-`FOO`; a condition writing a bare `FOO` for it gets an undeclared-identifier
-error.
+`BATFILES_VAR_FOO` creates the user variable `FOO`, subject to precedence below.
+It is also visible unchanged as `env["BATFILES_VAR_FOO"]` in the raw environment.
+An ordinary environment key `FOO` is only `env.FOO`; it creates no user variable,
+so a bare `FOO` in a condition is an undeclared name.
 
 ## Variable precedence
 
-Layers can declare a user variable. Each overrides the ones before it:
+Each layer overrides those above it in this list:
 
 ```text
 included remote [vars]
@@ -166,316 +103,155 @@ included remote [vars]
 < one-shot --var
 ```
 
-The layers are merged into one flat set for every command that executes actions
-— `sync`, `apply-action`, and `apply-group` — in both real and dry runs. Every
-value is a string, and an empty string is a value like any other: a higher
-layer's empty value overrides a lower layer's non-empty one. Repeating `--var`
-for one key is the same rule applied within a layer, so the last value written
-wins.
+An empty string overrides a lower value. Repeated `--var` assignments use the
+last value. Execution commands merge these layers in real and dry runs.
 
-**The first and third layers belong to one inclusion, and reach only what that
-inclusion contributed.** The set a leaf repository's own records are decided
-against has the other four layers: the leaf's `[vars]`, `vars.toml`,
-`BATFILES_VAR_*`, and `--var`. A record an [`include-remote`](repoformat.md#include-remote)
-contributed is decided against that set with two more in it — the included
-remote's own [`[vars]`](repoformat.md#variables-an-included-remote-declares)
-beneath every other layer, and that inclusion's
-[`vars`](repoformat.md#variables-for-one-inclusion) above the leaf's `[vars]`.
+| Scope | Decides | Layers used |
+| --- | --- | --- |
+| **Leaf scope** | Leaf actions and entries, inclusion conditions, remote conditions | Leaf `[vars]`, machine, environment, CLI |
+| Inclusion scope | Records an inclusion contributed, including clone-list entries | All six, with that inclusion's remote defaults and overrides |
 
-So a remote says what its own conditions read, a leaf composing it overrides
-that without having to know it is there, and this machine overrides both. Two
-inclusions of one remote are two scopes and can get different answers out of the
-same manifest, while nothing in either scope reaches the leaf's own records, the
-inclusion's own condition, or the remote's.
+Each opened inclusion has a separate scope, even when two include the same
+remote. Its values never affect the leaf, another inclusion, or its own gate.
 
-**A [dynamic variable](repoformat.md#dynamic-variables) takes the place of the
-manifest that declared it.** A leaf's is in the leaf's `[vars]` layer and a
-remote's in that remote's, so every layer above overrides it the same way. Two
-cases are the declaration's rather than its value's:
+A dynamic declaration belongs to its declaring manifest's layer. A remote
+command that is not [allowed](repoformat.md#git) declares nothing. An allowed
+declaration producing no value still overrides lower layers and reads as the
+empty string.
 
-- One a remote is not [allowed](repoformat.md#git) to run declares nothing at
-  all, so whatever is beneath it stands, as though it were not written.
-- One that ran and has no value still overrides the layers beneath it. The
-  variable reads as the empty string rather than as the lower layer's value:
-  the higher declaration won, and produced nothing.
-
-Because the merge reads [`vars.toml`](state.md#varstoml-machine-local-variables),
-a malformed or unreadable one fails these commands as a malformed manifest does.
-So does a malformed `dynamic-vars.toml`, when a declaration needs it.
-
-The merged set supplies [condition](repoformat.md#conditions) values. Use
-`vars list` or an action command's `-vv` output to inspect values and origins;
-the command reference owns the [listing format](cmdline.md#vars-list). A line
-naming a layer one inclusion derived says which inclusion, since `batfiles.toml`
-alone names three documents in a run that includes two remotes.
+Malformed or unreadable `vars.toml` fails merging; so does a malformed dynamic
+cache when a declaration needs it. Inspect values and origins with
+[`vars list` or `-vv`](cmdline.md#vars-list).
 
 ## How dynamic commands are run
 
-A [dynamic variable](repoformat.md#dynamic-variables)'s command is an arbitrary
-program. Batfiles runs it as the invoking user, with no sandbox, in both a real
-and a [dry](cmdline.md#dry-run-behavior) run, and whatever it does besides
-printing is its own business.
+Dynamic commands run as the invoking user without a sandbox, in real and dry
+runs. They inherit batfiles' environment; resolved variables are not exported.
+Their working directory is the declaring repository's root: the leaf or remote
+materialization.
 
-It **inherits the batfiles process environment**, and nothing is added to it:
-the resolved variables are not exported, so a command that needs an input reads
-the ordinary environment, or a file in the repository that declared it.
+| Declaration | Launch |
+| --- | --- |
+| String | `sh -c` on Unix; `cmd /C` on Windows |
+| List of strings | Direct program and arguments, without a shell |
 
-It **runs in the root of the repository that declared it**: the leaf
-repository, or the materialization of the remote whose manifest declared it. A
-relative path in the command resolves there, not in the directory batfiles was
-started from.
+The login shell and its startup files are not used. Standard input is closed.
+Standard error is inherited verbatim, or disconnected under `--quiet`;
+batfiles' own failure warnings remain visible.
 
-A `command` written as a string runs under `sh -c` on Unix and `cmd /C` on
-Windows — never the user's login shell, whose startup files would make one
-manifest capture differently on two machines whose owner prefers a different
-shell. A `command` written as a list is run directly, with no shell.
+| Capture | Result |
+| --- | --- |
+| `stdout` | Surrounding whitespace trimmed; requires exit 0 and valid UTF-8, with at most 1 MiB output |
+| `status` | `"true"` for exit 0, `"false"` for other exit statuses; output discarded |
 
-Its three standard streams are connected as follows:
+Output never reaches batfiles' standard output. Stdout capture waits for the
+stream to close, including when a background child holds it open; redirect
+background output, for example `daemon >/dev/null &`.
 
-- **Standard input** is connected to nothing, so a command that reads it sees
-  end of input rather than waiting on a terminal nobody is watching.
-- **Standard output** is captured for `capture = "stdout"` and discarded for
-  `capture = "status"`. It never reaches batfiles' own [standard
-  output](cmdline.md#output-streams). The value is everything written to it
-  until it closes, which is normally when the command exits. A process the
-  command leaves running that still holds it open delays the capture, and if it
-  is still open at `command-timeout` the capture fails: nothing says the value
-  is complete. A command that starts something in the background should
-  redirect that process's output, as `daemon >/dev/null &` does.
-- **Standard error** is inherited, so the command's own diagnostics reach the
-  user verbatim. `--quiet` disconnects it; batfiles still warns about a failed
-  capture itself.
-
-`command-timeout` bounds the whole run. When it expires the command is killed,
-and the run is a failure under either capture, so a status capture that was cut
-off does not read as `"false"`. Only the process batfiles started is killed; one
-it started in the background keeps running.
-
-A `capture = "stdout"` command is also stopped as soon as it has written more
-than 1 MiB. Batfiles holds the output in memory and never more than that, and
-once it stops reading, it closes the output: anything still writing to it,
-including a process the command left running, has its writes refused rather
-than stored anywhere.
+`command-timeout` bounds the entire capture. Expiry kills only the directly
+started process, not background children, and fails either capture mode; it
+does not produce a status value of `"false"`. Stdout exceeding 1 MiB also stops
+the command and closes the pipe, refusing further writes rather than storing
+them. [Cache rules](state.md#freshness-and-refresh-behavior) define fallback and
+how failure to start differs from a captured nonzero status.
 
 ## Host facts in conditions
 
-The `facts` namespace is what batfiles knows about the machine it is running on.
-It is string-valued and read-only, like `env`, and takes no part in user-variable
-precedence.
+`facts` is a read-only string namespace, separate from user-variable precedence.
+Member and index access both work: `facts.os` or `facts["os"]`.
 
-```toml
-when = "facts.os == 'macos'"
-unless = "facts.family == 'windows'"
-```
+| Key | Value |
+| --- | --- |
+| `facts.os` | `linux`, `macos`, `windows`, and other platform names |
+| `facts.arch` | Target architecture, such as `x86_64` or `aarch64` |
+| `facts.family` | `unix` or `windows` |
+| `facts.hostname` | Platform-reported host name |
 
-It contains exactly these keys:
+Unknown keys return the empty string; later versions may add keys. macOS uses
+`macos`, not `darwin`.
 
-| Key              | Value                                                        |
-|------------------|--------------------------------------------------------------|
-| `facts.os`       | The operating system: `linux`, `macos`, `windows`, and so on. |
-| `facts.arch`     | The target architecture: `x86_64`, `aarch64`, and so on.     |
-| `facts.family`   | The operating-system family: `unix` or `windows`.            |
-| `facts.hostname` | The host's configured name.                                  |
-
-- **A key batfiles does not define is the empty string**, not an error, matching
-  `env` and the [condition rule](repoformat.md#conditions). That is what makes
-  the set safely extensible — and equally what makes a typo quiet, since
-  `facts.arhc == 'arm64'` is simply false. The set is enumerated above so that
-  there is something to check a spelling against.
-- **The set is extensible.** A later batfiles may define more keys; adding one
-  is a non-breaking change, because a manifest cannot have relied on it resolving
-  to the empty string in any way that mattered.
-- Every key name is identifier-compatible, so member access always works.
-  Indexing (`facts["os"]`) is accepted for symmetry with `env` and is never
-  required.
-
-**macOS is `macos`, not `darwin`.** This is the value most likely to be guessed
-wrong: `uname -s` prints `Darwin` and the Rust target triple is
-`aarch64-apple-darwin`, but `facts.os` is `macos` on every Apple platform. A
-condition written as `facts.os == 'darwin'` is not an error — it is simply never
-true, so the record it gates is silently skipped on exactly the machines it was
-written for.
-
-**`facts.hostname` is the name the platform reports, and batfiles never truncates
-it at the first dot.** On a Unix machine configured with a fully qualified name
-it is `silver.example.net`; on one configured with a short name it is `silver`.
-The cost is real: `facts.hostname == 'silver'` works on the second machine and
-silently fails on the first, because a mismatch is a false condition rather than
-an error. Batfiles does not truncate, because the domain is what distinguishes
-work from home on some fleets and truncating would lose it just as silently.
-Write the name your machines actually report, or compare against the qualified
-form.
-
-**Windows reports the short name, even on a domain-joined machine.** The value
-comes from `GetComputerNameExW(ComputerNamePhysicalDnsHostname)`, the host
-component with the DNS suffix excluded, so a machine whose fully qualified name
-is `silver.example.net` has `facts.hostname == 'silver'` there while the same
-name on Unix compares equal to the qualified form. A condition that must work on
-both writes the short form, or tests the domain separately. Reporting the
-qualified Windows name is possible — a different call to the same API — and is
-tracked in [potential enhancements](enhancements.md#fully-qualified-windows-host-name).
+On Unix, the hostname retains any configured domain: `silver.example.net` is
+not truncated to `silver`. On Windows it is the short physical DNS hostname,
+without the suffix, even on domain-joined machines. A condition shared by Unix
+and Windows machines should compare the short name, or test the domain
+separately. A qualified Windows name is tracked in
+[enhancements](enhancements.md#fully-qualified-windows-host-name).
 
 ## Host environment in conditions
 
-The `env` namespace exposes arbitrary host environment variables to a condition.
-These values are separate from the `BATFILES_*` configuration inputs above.
+`env` exposes the captured process environment as read-only strings, separate
+from user variables. An unset key is the empty string. Use member syntax for
+identifier-compatible names or index syntax for any name:
 
 ```toml
 when = "env.HOME != ''"
-when = "env[\"XDG_CONFIG_HOME\"] != ''"
+when = 'env["XDG_CONFIG_HOME"] != ""'
 ```
 
-- Names follow the host operating system's case sensitivity: verbatim on Unix,
-  uppercased at capture on Windows. Reference Windows host variables by their
-  uppercase form (`env.PATH`); a lowercase reference is the empty string.
-- A set variable resolves to its string value and is never re-typed as a boolean
-  or a number.
-- An unset variable is the empty string. A lookup never fails merely because a
-  key is absent.
-- Identifier-compatible names may use member access, such as `env.HOME`. Indexing
-  is available for those too and is required for other keys, such as
-  `env["XDG_CONFIG_HOME"]`.
-- The namespace is read-only and takes no part in user-variable precedence.
-
-The whole environment is captured once, at startup, so every condition in one run
-reads the same values.
+Windows references must use uppercase keys (`env.PATH`); a lowercase lookup
+returns the empty string. Values are not converted to numbers or booleans.
 
 ## Location selection
 
-A command resolves only the roots its own work needs, and there are two sets. A
-command that installs nothing and reads no repository resolves the **config and
-cache directories alone**: the four enable and disable commands, `vars set`,
-`vars get`, `vars unset`, and `vars list --machine-only`. A command that reads
-the leaf repository resolves those two and also selects the destination home and
-the leaf repository: `sync`, `apply-action`, `apply-group`, `clone`, a normal
-`vars list`, and `vars refresh`. `version` and `init` resolve no roots at all.
+Commands resolve only the roots they need:
 
-[`init`](cmdline.md#init) consults the invoking user's OS home for one thing
-only: to refuse initializing a repository directly in it. That is not root
-selection, and `--home-dir` and `BATFILES_HOME` have no bearing on it — the
-point of the check is the home the user would land in from a fresh shell. A home
-that cannot be determined is not fatal there.
+| Commands | Roots |
+| --- | --- |
+| Enable/disable commands; `vars set`, `get`, `unset`, `list --machine-only` | Config and cache |
+| `sync`, apply commands, `clone`, normal `vars list`, `vars refresh` | Repository, home, config, cache |
+| `init`, `version`, `update` | None |
 
-The destination home is selected in this order:
+`init` separately checks the OS home to refuse initialization directly in it;
+see [`init`](cmdline.md#init).
 
-```text
---home-dir > BATFILES_HOME > current user's OS home directory
-```
+Choose the first available value in each row:
 
-The OS home directory is the one the platform reports for the invoking user: on
-Unix `$HOME` when it is set and non-empty, otherwise the current user's passwd
-entry; on Windows `%USERPROFILE%` when it is set and non-empty, otherwise the
-user's profile directory as reported by the OS.
+| Root | Precedence, highest first |
+| --- | --- |
+| Destination home | `--home-dir` → `BATFILES_HOME` → OS home |
+| Leaf repository | `--batfiles-dir` → `BATFILES_DIR` → current directory containing `batfiles.toml` → `<selected-home>/dotfiles` |
+| Config | `--config-dir` → `BATFILES_CONFIG_DIR` → `$XDG_CONFIG_HOME/batfiles` → `<os-home>/.config/batfiles` |
+| Cache | `--cache-dir` → `BATFILES_CACHE_DIR` → `$XDG_CACHE_HOME/batfiles` → `<os-home>/.cache/batfiles` |
 
-Failure to determine a home directory for a command that needs one is fatal.
-Batfiles does not silently use the current directory as the destination home.
-A command that resolves the config and cache directories alone selects no
-destination home, so `--home-dir` and `BATFILES_HOME` do not apply to it and no
-home has to be determined for it.
+An absent or empty location variable is unset. Values are not trimmed.
+OS home uses nonempty `$HOME` on Unix, otherwise the passwd entry; Windows uses
+nonempty `%USERPROFILE%`, otherwise the OS profile directory.
 
-The leaf repository is selected in this order:
+Repository discovery checks only `./batfiles.toml`, never parents. It does not
+validate the manifest before selecting the directory; an unreadable or invalid
+manifest then fails instead of falling through. Failure to determine the current
+directory or inspect that file is fatal when discovery is needed. Explicit
+repository selection avoids discovery. `clone` also skips discovery and uses
+the other three repository choices.
 
-```text
---batfiles-dir
-> BATFILES_DIR
-> current directory when it contains batfiles.toml
-> <selected-home>/dotfiles
-```
+Config and cache fallbacks always use **OS home**, independently of
+`--home-dir`/`BATFILES_HOME`. Only the repository fallback follows the selected
+destination home. Set config/cache options or environment variables explicitly
+to relocate machine state.
 
-Working-directory discovery checks only `./batfiles.toml`; it does not search
-parent directories or test whether the manifest is valid. Once that file
-selects the repository, a command that reads it reports an unreadable,
-malformed, or invalid manifest instead of falling through to
-`<selected-home>/dotfiles`. Changing the working directory can therefore change
-the selected repository when neither explicit repository input is set.
+OS home is consulted only when a needed root lacks an explicit value. A command
+that needs it and cannot determine it fails; it never falls back to the current
+directory. Selecting all required roots works without a determinable home.
+Config/cache-only commands do not use the destination-home options.
 
-Only commands that read the leaf repository perform this discovery. An enable
-or disable command, for example, does not inspect the working directory.
-Neither does [`clone`](cmdline.md#clone), which is the one command that selects
-a leaf repository without reading one: discovery names a directory precisely
-because a manifest is already in it, and `clone` creates the repository it
-clones into, so it selects from the remaining three entries alone. When a
-command does need the repository and has no explicit repository selection,
-failure to determine the working directory or inspect `./batfiles.toml` is
-fatal: batfiles cannot tell whether the working-directory precedence entry
-applies, so it does not silently choose `<selected-home>/dotfiles`.
-
-The config directory is selected in this order:
-
-```text
---config-dir
-> BATFILES_CONFIG_DIR
-> $XDG_CONFIG_HOME/batfiles
-> <os-home>/.config/batfiles when XDG_CONFIG_HOME is unset
-```
-
-The cache directory is selected independently in this order:
-
-```text
---cache-dir
-> BATFILES_CACHE_DIR
-> $XDG_CACHE_HOME/batfiles
-> <os-home>/.cache/batfiles when XDG_CACHE_HOME is unset
-```
-
-The config and cache directories hold batfiles' own machine-local state rather
-than installed content, so their home-based fallbacks use the invoking user's OS
-home directory (`<os-home>`, the same home used when `--home-dir` is absent) and
-do **not** follow `--home-dir` or `BATFILES_HOME`. The leaf repository's final
-fallback, `<selected-home>/dotfiles`, tracks the selected home. To root config or
-cache under an alternate install home, set `--config-dir`/`--cache-dir` or the
-corresponding `XDG_*`/`BATFILES_*` variable explicitly. The cache directory
-also locates the [run lock](state.md#run-lock), so two runs exclude each other
-only when they select the same one.
-
-An absent or empty location variable is treated as unset. Location values are
-not trimmed; whitespace is part of the path value.
-
-The OS home is consulted only when a root still needs it. Selecting every root a
-command resolves — including by way of `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME`
-— therefore works even where no home directory can be determined at all. For a
-command that resolves the config and cache directories alone, those two are
-every root it resolves: `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME` alone are
-enough to run it on a machine with no determinable home.
-
-`batfiles <command> -v` prints the roots that command resolved, which is the way
-to check what a given combination of options and variables selected for it. A
-command that reads the leaf repository prints `repository:` and `home:` ahead of
-`config:` and `cache:`. A command that resolves the config and cache directories
-alone prints those two and nothing else: it has no home and no repository to
-report, rather than a resolved value withheld from the report.
+`-v` prints only resolved roots: `repository:`, `home:`, `config:`, `cache:` in
+that order, or just the last two for state-only commands. Cache selection also
+determines which runs share the [run lock](state.md#run-lock).
 
 ## Color
-
-Color selection follows this precedence:
 
 ```text
 --color > BATFILES_COLOR > non-empty NO_COLOR > auto
 ```
 
-`BATFILES_COLOR` accepts `auto`, `always`, or `never`. An absent or empty
-`BATFILES_COLOR` is treated as unset, and the next input in precedence decides.
-Any other unrecognized value produces a diagnostic and falls back instead of
-silently selecting a different color mode.
+`BATFILES_COLOR` accepts `auto`, `always`, and `never`; absent or empty means
+unset. An invalid value warns and falls back. Inputs below the first valid
+choice are not consulted or validated. Nonempty `NO_COLOR` selects `never`
+only when neither higher-priority input decides.
 
-Precedence stops at the first input that answers, and an input that is never
-consulted is never validated: an invalid `BATFILES_COLOR` is reported when it is
-reached, and passed over in silence when `--color` already settled the question.
-
-`NO_COLOR` follows the cross-tool convention: presence alone is insufficient;
-its value must be non-empty. It acts as `never` only when neither `--color` nor
-`BATFILES_COLOR` supplies a higher-precedence choice. Color inputs affect only
-presentation.
-
-`auto` is left unresolved by this precedence and answered by whatever is about
-to print. Batfiles' own warnings and errors follow **standard error**, because
-that is the only stream it ever colors — requested data goes to standard output
-unlabeled and uncolored, so there is no second stream whose state could
-disagree. The help, `--version`, and usage-error output that clap renders is
-handed the mode untouched and applies clap's own terminal detection.
-
-The selected color mode also applies to help, version output, and argument
-parsing errors.
+`auto` follows standard error's terminal status for batfiles diagnostics;
+requested data on standard output stays uncolored. Help, `--version`, and
+usage errors receive the selected mode and use clap's terminal detection.
 
 ## Release base
 
@@ -483,22 +259,18 @@ parsing errors.
 |-----------------|--------------------------------------------------------------------------|
 | `BATFILES_BASE` | The [release base](distribution.md#the-release-base) `init` writes into the stub, and [`update`](cmdline.md#update) installs from. |
 
-An absent or empty `BATFILES_BASE` is treated as unset, and the base this build
-was released from applies, which a build compiles in from
-`BATFILES_DEFAULT_BASE` and otherwise takes to be the official one. A value that
-is not a URL made of the characters the installers quote is an error for the
-command that reads it. The hosted installer and the stub read the same variable
-on their own; see [distribution](distribution.md).
+An absent or empty `BATFILES_BASE` is unset, and the base compiled into the
+build applies. A value outside the [base syntax](distribution.md#the-release-base)
+fails the command that reads it. The hosted installer and the stub read the same
+variable themselves. A self-hoster sets it in the environment their dotfiles
+install.
 
 ## Variables passed on to `git`
 
-`git-clone` runs the `git` on your `PATH`, which inherits batfiles' own
-environment, so the things that make Git work as you have set it up keep
-working: `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`, `GIT_SSH_COMMAND`,
-`GIT_ASKPASS`, `SSH_AUTH_SOCK`, and the proxy variables are all passed through
-untouched.
-
-One family is removed first:
+Git actions, clone lists, and Git remotes run the `git` on your `PATH` with
+batfiles' environment, so your Git setup keeps working: `GIT_CONFIG_GLOBAL`,
+`GIT_CONFIG_SYSTEM`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `SSH_AUTH_SOCK`, and the
+proxy variables pass through untouched. These are removed first:
 
 ```text
 GIT_DIR  GIT_WORK_TREE  GIT_COMMON_DIR
@@ -507,22 +279,22 @@ GIT_INDEX_FILE  GIT_OBJECT_DIRECTORY  GIT_ALTERNATE_OBJECT_DIRECTORIES
 GIT_NAMESPACE  GIT_CONFIG  GIT_CONFIG_COUNT
 ```
 
-Repository discovery and command-local configuration overrides are cleared along
-with repository, index, and object-store redirects. The one command that checks
-whether an existing `.git` is a repository directory at all, before any other
-runs there, also sets `GIT_CONFIG_NOSYSTEM=1`, points `GIT_CONFIG_GLOBAL` and
-`GIT_CONFIG_SYSTEM` at `/dev/null`, sets `LC_ALL=C`, and removes `LANGUAGE`, so
-its answer is about the directory rather than your configuration, and its one
-meaningful failure can be recognized. Every later command sees your
-configuration as usual. `GIT_CONFIG_COUNT` overrides
-are not supported; use your Git configuration files for proxy or header settings.
-This is protection against accidental inherited state, not a security boundary.
+That clears repository discovery, command-local configuration overrides, and
+repository, index, and object-store redirects. `GIT_CONFIG_COUNT` overrides are
+therefore unsupported; put proxy or header settings in your Git configuration.
+This protects against accidental inherited state; it is not a security boundary.
+
+The first command run against an existing `.git`, which checks that it is a
+repository directory, also sets `GIT_CONFIG_NOSYSTEM=1`, points
+`GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` at `/dev/null`, sets `LC_ALL=C`, and
+removes `LANGUAGE`, so its answer depends only on the directory. Later commands
+see your configuration as usual.
 
 ## Options without environment equivalents
 
 There are no environment-variable equivalents for `--dry-run`, `--refresh-vars`,
-`--refresh-remotes`, `--refresh-content`, explicit apply commands, or verbosity
-(`--verbose` and `--quiet`). Persisted enable/disable commands also have no
+`--refresh-remotes`, `--refresh-content`, `--no-overwrite`, `--interactive`,
+`--bootstrap`, explicit apply commands, or verbosity (`--verbose` and `--quiet`). Persisted enable/disable commands also have no
 ambient environment equivalent: the [`BATFILES_ENABLE_*` and
 `BATFILES_DISABLE_*` lists](#bootstrap-enable-and-disable-lists) apply only to
 bootstrap commands.

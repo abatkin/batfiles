@@ -1,7 +1,7 @@
 # Installation safety
 
-These rules describe implemented behavior. Potential additions are tracked in
-[enhancements](enhancements.md).
+How batfiles treats what is already at a destination, builds and publishes new
+content, and updates Git checkouts.
 
 ## What is not sandboxed
 
@@ -69,7 +69,7 @@ under the destination.
 
 ## Replacing what is already there
 
-Inspect an installation destination without following its final symlink:
+A destination is inspected without following its final symlink:
 
 | Existing node | Symlink installation | Git clone installation |
 | --- | --- | --- |
@@ -126,8 +126,8 @@ An interactive question is written to standard error, even under `--quiet`,
 and one line is read from standard input for each, which need not be a terminal:
 `b` or an empty line backs up, `o` overwrites, `s` skips, and anything else asks
 again. Standard input ending before an answer fails the run with nothing done at
-that destination. `--interactive` cannot be combined with `--dry-run`, and
-`--no-overwrite` cannot be combined with `--interactive`.
+that destination. [Option rules](cmdline.md#shared-action-execution-options)
+say which policies combine with each other and with `--dry-run`.
 
 A dry run settles each conflict as the default would, or skips it under
 `--no-overwrite`, and reports the rename it would make, naming the backup path
@@ -239,14 +239,14 @@ it and run `sync` again, which fetches it afresh.
 
 Two batfiles runs sharing a cache directory cannot run at once: the second is
 refused by the [run lock](state.md#run-lock). Beyond that, batfiles does not
-lock installation destinations or guarantee safety against a concurrent writer,
-including a batfiles run that selects a different cache directory. The check and rename fallback are separate operations; another
-process can create a node between them. Symlink replacement also has separate
-inspection, removal, and creation operations, and so does replacing a
-materialization. Setting a node aside checks that the backup or `.batfiles-old`
-path is vacant and then renames, and a refresh compares content before it
-replaces it. Do not run simultaneous installs against the same destinations
-through different cache directories, or alongside another program writing them.
+lock destinations or guard against a concurrent writer, including a batfiles
+run with a different cache directory. Several operations check and then act in
+separate steps, and another process can change the path between them: the
+publication fallback's occupancy check and rename; symlink inspection, removal,
+and creation; materialization replacement; the vacancy check before setting a
+node aside; and refresh's comparison before replacement. Do not run simultaneous
+installs against the same destinations through different cache directories, or
+alongside another program writing them.
 
 Git clones write directly to their destination. Subsequent runs reject incomplete
 or damaged checkouts; see [Git updates](#git-updates). State documents follow the
@@ -275,8 +275,8 @@ separate [atomic rewrite policy](state.md#writing).
 
 ## Archive extraction
 
-Validate archive paths before unpacking selected entries. Any unsafe installed
-entry fails the action; it is not silently skipped.
+Archive paths are validated before selected entries are unpacked. An unsafe
+installed entry fails the action rather than being skipped.
 
 - Entry paths must be relative, without platform prefixes or any `..` component.
   `.` components are removed. These entry-path checks also apply outside a
@@ -332,14 +332,12 @@ The [ref field](repoformat.md#ref-following-one-branch-tag-or-commit) controls
 branch versus detached checkout. Submodules are not initialized or updated.
 The command reference defines [clone-list failure handling](cmdline.md#clone-list-entry-failures).
 
-A clone whose declared `ref` cannot be resolved remains at its destination in
-the checkout state reached before the failure. Later runs retry the ref; fixing
-it lets the clone follow the intended target. Removing the list entry, action, or
-remote does not remove that directory, and neither does a
-[remote's condition](repoformat.md#a-remotes-condition) closing on a machine
-that once satisfied it: the materialization stays where its owner can see it,
-and is not read while the remote is excluded. This applies to standalone clones,
-clone-list entries, and materializations alike.
+A clone whose declared `ref` cannot be resolved stays at its destination in
+the checkout state reached before the failure; later runs retry the ref.
+Removing an action, list entry, or remote from the manifest does not remove its
+clone or materialization. Neither does a
+[remote's condition](repoformat.md#a-remotes-condition) that stops passing; the
+materialization stays in place but is not read.
 
 ### Clone validation
 

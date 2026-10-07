@@ -1,4 +1,4 @@
-# Batfiles Architecture
+# Batfiles architecture
 
 Implementation design: the rules the code is written to, how the crate is
 organized, and what its tests look like. User-visible behavior is specified by
@@ -230,9 +230,8 @@ architecture, and each scenario gets batfiles from there, the one-liner's under
 `dash`. The binary is a Linux one whatever the machine running the test is: a
 Linux host hands over the one `task build` produced, and a host that builds
 something a container cannot execute has the image build batfiles itself,
-against the pinned toolchain. The task is part of `task ci`, so it must not fail for being
-run somewhere unusual -- a host with no working container runtime reports that
-it did not run.
+against the pinned toolchain. Because the task is part of `task ci`, a host with
+no working container runtime reports that it did not run rather than failing.
 
 ## Dry-run
 
@@ -262,16 +261,17 @@ code review and behavioral tests. Keep the scanner small.
 ## Variables
 
 Variables feed `when` and `unless`; they do not interpolate paths or strings.
-The four sources resolve into one flat scope: one namespace, in which a name
-resolves the same way whatever declared it. The representation is not
-prescribed; the seam below is. An opened inclusion derives a second scope from
-that one, holding its `vars` overrides and the included remote's own `[vars]`: a
-scope is derived once per opened inclusion and held beside the records it
-contributed, and every condition on those records is decided against it. Conditions and precedence are specified in
+The leaf's four sources resolve into one flat scope, in which a name resolves
+the same way whatever declared it. The representation is not prescribed; the
+seam below is. Each opened inclusion derives its own scope from that one, adding
+its `vars` overrides and the included remote's `[vars]`; the scope is held
+beside the records the inclusion contributed and decides every condition on
+them. Conditions and precedence are specified in
 [repoformat.md](repoformat.md#conditions) and
 [environment.md](environment.md#variable-precedence). A manifest's layer holds
 its dynamic variables' resolved values beside its static ones; one
-`DynamicVarResolver` per command resolves each declaration once and owns the cache.
+`DynamicVarResolver` per command resolves each declaration once and owns the
+cache.
 
 ## Centralized decisions
 
@@ -289,7 +289,8 @@ Keep each of these in one place, without building future abstractions:
    records it contributed; inclusion is one level deep, so they are never
    inclusions themselves. Assembly and selection are one pass, and both finish
    before clone-list preparation. The assembled list is not a simulation and
-   never becomes one: it is the same records, read from more than one file. See [Dry-run](#dry-run).
+   never becomes one: it is the same records, read from more than one file. See
+   [Dry-run](#dry-run).
 6. Whether an inclusion is opened, and the reading of its manifest, belong to
    `inclusion.rs`, which `execute` and `vars refresh` both call, admission
    first. It takes the anchored repository path rather than a `RunContext`.

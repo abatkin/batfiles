@@ -1,130 +1,68 @@
 # Local state files
 
-Batfiles keeps machine-local state outside the leaf repository, in documents it
-owns and rewrites. Three exist:
+Machine choices and dynamic captures live in these files. Directory selection
+and defaults are defined by [location precedence](environment.md#location-selection).
 
-| File                | Default location                                                                                      | Classification                    | Regenerable? |
-|---------------------|-------------------------------------------------------------------------------------------------------|-----------------------------------|--------------|
-| `disabled.toml`     | `$XDG_CONFIG_HOME/batfiles/disabled.toml`, otherwise `<os-home>/.config/batfiles/disabled.toml`       | Machine-local user configuration  | No           |
-| `vars.toml`         | `$XDG_CONFIG_HOME/batfiles/vars.toml`, otherwise `<os-home>/.config/batfiles/vars.toml`               | Machine-local user configuration  | No           |
-| `dynamic-vars.toml` | `$XDG_CACHE_HOME/batfiles/dynamic-vars.toml`, otherwise `<os-home>/.cache/batfiles/dynamic-vars.toml` | Disposable dynamic-variable cache | Yes          |
+| File | Directory | Contents | Safe to discard? |
+| --- | --- | --- | --- |
+| [`disabled.toml`](#disabledtoml-disabled-actions-and-groups) | Config | Persistent action/group choices | Clears choices |
+| [`vars.toml`](#varstoml-machine-local-variables) | Config | Machine variable values | Clears values |
+| [`dynamic-vars.toml`](#dynamic-varstoml-dynamic-variable-cache) | Cache | Captured command results | Yes; regenerated |
+| [`run.lock`](#run-lock) | Cache | Empty advisory-lock file | Only while no run is active |
 
-The config directory holds the non-regenerable state, and the cache directory,
-apart from it, the one document that can be deleted at no cost. Both default
-under the invoking user's OS home and are independent of `--home-dir`, so
-selecting a different home moves the repository and the destinations but not
-these files. The authoritative rules are in [location
-selection](environment.md#location-selection).
-
-Beside the cache document, the cache directory holds `run.lock`, the [run
-lock](#run-lock), which is not a document at all.
+Documents follow [manifest reading rules](repoformat.md#reading-the-manifest),
+except that missing state files are empty documents. Mutations use the shared
+[atomic writing policy](#writing).
 
 ## `disabled.toml`: disabled actions and groups
 
-`disabled.toml` records deliberate, non-regenerable machine-local decisions. It
-is maintained by the four enable and disable commands, written once more by the
-[bootstrap](#bootstrap-adoption) that sets a machine up, and it may also be
-edited by hand.
-
-`sync` reads it along with the manifest and passes over every action either list
-names, alongside the run-only skips that select the same way for one invocation.
-The rules a run applies are in
-[selecting what a run does](cmdline.md#selecting-what-a-run-does); what is here
-is the document.
+Maintained by [enable/disable commands](cmdline.md#enable-and-disable-actions-or-groups),
+bootstrap, or hand edits. [Selection](cmdline.md#selecting-what-a-run-does)
+defines how commands use it.
 
 ### Schema
-
-The document is a closed TOML record:
 
 ```toml
 actions = ["p10k", "core.zshrc"]
 groups = ["shell", "core.gui"]
 ```
 
-- `actions` is an array of action [addresses](cmdline.md#addresses).
-- `groups` is an array of group addresses, which follow the same rule.
-- These are the only allowed top-level fields. An unknown field is invalid
-  configuration.
-- Batfiles writes the logical sets without duplicates and in stable order. That
-  order is the address's dotted text, so `a-c` sorts ahead of `a.b`.
-- A missing file is treated as an empty disabled set, so a machine that has
-  never disabled anything needs no file.
-- If a mutation leaves both sets empty, batfiles keeps a canonical empty
-  `disabled.toml` rather than deleting it.
-
-A syntactically valid address is persisted as given, whatever its segment count.
-These commands resolve nothing, so an address with more segments than any
-resolvable [form](cmdline.md#addresses) — `a.b.c.d.e` — is accepted and recorded.
-A qualified address names an action or a group an
-[`include-remote`](repoformat.md#include-remote) spliced in, or an entry of a
-[clone list](repoformat.md#the-clone-list-format); `actions = ["zsh-plugins.p10k"]`
-leaves one plugin out. One naming an
-inclusion that contributes nothing by that name matches nothing, which is the
-same outcome as any other name a manifest does not answer to — and one recorded
-before the inclusion existed starts matching when it does.
+These are the only fields, each an array of [addresses](cmdline.md#addresses).
+Malformed entries fail loading. Syntactically valid addresses are retained
+without resolution or warnings, even if no current record can match them.
+The two namespaces are independent.
 
 ### Semantics and lifecycle
 
-The file stores action and group addresses independently. Unknown addresses are
-retained without warning, including when synchronization finds no matching
-record. Malformed entries fail the load; they are never silently dropped.
-
-Mutations are idempotent. A no-op does not rewrite the file or create a missing
-file or parent directory. Deleting `disabled.toml` clears persistent exclusions;
-run-only skips can still exclude actions.
-
-[Enable and disable commands](cmdline.md#enable-and-disable-actions-or-groups)
-define argument validation and output.
-[Selection](cmdline.md#selecting-what-a-run-does) defines when each command
-honors these lists and how they combine with run-only skips.
+Writes deduplicate and sort each set by dotted address text (`a-c` before `a.b`).
+A mutation leaving both sets empty keeps a canonical empty file. A no-op neither
+rewrites nor creates the document or its parent directories. Deleting the file
+clears persistent exclusions but leaves installed content and run-only skips
+unaffected.
 
 ### Bootstrap adoption
 
-The document's other writer. A bootstrap — [`clone`](cmdline.md#clone), or
-[`sync --bootstrap`](cmdline.md#sync) — settles this machine's starting point
-before its first action, from the leaf's [default-disabled
-candidates](repoformat.md#default-disabled-bootstrap-entries), the four
-`BATFILES_*` bootstrap lists, and its own enable and disable options, in the
-[adoption precedence](environment.md#bootstrap-adoption-precedence) the
-environment reference owns. What comes out is persisted here, by the rules
-above: the same sets, the same canonical order, and the same idempotence, so a
-bootstrap that decides nothing creates no file.
+Before the first action, `clone` and `sync --bootstrap` adopt eligible leaf
+[default-disabled candidates](repoformat.md#default-disabled-bootstrap-entries)
+and explicit inputs in [precedence order](environment.md#bootstrap-adoption-precedence).
 
-The candidates are offered only where no `disabled.toml` exists at all. Once one
-does, this machine has said something of its own, and a later `clone` — of
-another repository, or of the same one again — adds only what its variables and
-options ask for.
+Candidates are offered only if no `disabled.toml` exists, including no empty
+one. Explicit environment and CLI choices apply either way. A bootstrap with
+no changes creates no file; changed state uses the same sets, ordering, and
+writing policy as other mutations. Dry-run bootstrap uses the computed choices
+without persisting them.
 
-Run-only `BATFILES_SKIP_ACTIONS`, `BATFILES_SKIP_GROUPS`, `--skip-action`, and
-`--skip-group` never persist here. They leave something out of one run; these
-lists say what the machine starts with.
+Run-only skip variables and options never persist here. See
+[bootstrap command behavior](cmdline.md#what-the-bootstrap-decides) for
+conditions, reporting, and failures.
 
 ## `vars.toml`: machine-local variables
 
-`vars.toml` stores deliberate, non-regenerable variable values for one machine.
-It is maintained by `vars set` and `vars unset`, and it may also be edited by
-hand.
-
-Every command that executes actions reads it, as the second of the four layers
-[variable precedence](environment.md#variable-precedence) merges: a value stored
-here overrides the repository's `[vars]` and is overridden by `BATFILES_VAR_*`
-and `--var`. A malformed or unreadable document therefore fails those commands
-as a malformed manifest does.
-
-A value stored here is read by every [condition](repoformat.md#conditions) a run
-decides, which is how one machine says it wants what a shared repository declares
-conditionally. It is also what `vars get` answers, what a run reports at `-vv`,
-and what [`vars list`](cmdline.md#vars-list) shows in its place among the layers
-— alone, under `--machine-only`, which is the one listing that reads this file
-and nothing else. A value stored here also keeps `vars list` from running the
-dynamic variable it overrides. [`vars refresh`](cmdline.md#vars-refresh) reads
-it only as a layer of the leaf scope that decides [which remotes are in
-play](#when-declarations-are-evaluated), and a value stored here does not keep
-it from running the declaration the value overrides.
+Maintained by [`vars set` and `vars unset`](cmdline.md#vars-set), or hand edits.
+See [variable precedence](environment.md#variable-precedence) for how stored
+values combine with other layers.
 
 ### Schema
-
-The whole document is a TOML map from user-variable name to string value:
 
 ```toml
 editor = "nvim"
@@ -132,51 +70,26 @@ profile = "work"
 work = "true"
 ```
 
-- Top-level keys are data, not a fixed set of schema fields. Each key must
-  follow the repository format's shared [user-variable name
-  rules](repoformat.md#names-and-ids), which are not the rules an ID follows: an
-  underscore may start a name and not an ID, a hyphen may appear in an ID and not
-  a name.
-- A key that breaks that rule fails the whole document rather than just its own
-  entry, so a hand-written `has-dash` or a key named `vars` — one of the five
-  reserved identifiers — makes the file fail to load.
-- Every value is a string. A bare `work = true` is invalid rather than coerced,
-  the same way it is under a manifest's `[vars]`.
-- The document may be empty. Removing the final key leaves a valid empty
-  `vars.toml`; batfiles does not delete the file.
-- Batfiles writes the map sorted by key, which is the serializer's order rather
-  than the order the values were set in.
+Keys follow [variable-name syntax](repoformat.md#names-and-ids); all values are
+strings, including the empty string. Invalid keys or non-string values fail
+the whole document. Writes sort by key.
 
 ### Semantics and lifecycle
 
-The three commands that maintain it are specified in
-[`vars set`, `vars get`, and `vars unset`](cmdline.md#vars-set); what is here is
-the document.
-
-- A key is validated before the file is opened, so an invalid name reads and
-  writes nothing — including when the existing document is malformed.
-- Any string is a value, the empty string included. `vars get` fails on a key
-  with no value rather than reporting an empty one, which would be
-  indistinguishable from a key stored as the empty string.
-- Setting a key to the value it already holds succeeds without rewriting the
-  file. Unsetting an absent key is likewise idempotent: it does not rewrite the
-  document, and does not create a `vars.toml` that was not there before.
-- Deleting `vars.toml` removes the machine-local values. It does not remove or
-  otherwise alter installed home-directory content.
+Setting an identical value or unsetting an absent key succeeds without rewriting
+or creating the document or its directory. Removing the last key keeps an empty file. Deleting
+`vars.toml` removes machine values without altering installed content.
+Argument validation and output belong to the [command reference](cmdline.md#what-the-three-of-them-share).
 
 ## `dynamic-vars.toml`: dynamic-variable cache
 
-`dynamic-vars.toml` holds what [dynamic
-variables](repoformat.md#dynamic-variables)' commands captured, so that a run
-need not repeat a command whose answer is still fresh. It is named unlike
-`vars.toml` so that cache is never mistaken for configuration someone wrote.
+Stores [dynamic-variable](repoformat.md#dynamic-variables) captures for reuse.
 
 ### Schema
 
-The document is a map keyed by the declaration a value came from. A leaf
-repository's variable uses its bare name; a remote's uses
-`remote:<remote-id>.<name>`, where `<remote-id>` is the remote's key in the
-leaf's `[remotes]`:
+Leaf keys are variable names; remote keys are `remote:<remote-id>.<name>`, using
+the leaf's `[remotes]` ID. All inclusions of a remote share one entry per variable,
+regardless of their IDs or overrides.
 
 ```toml
 [work_email]
@@ -188,87 +101,56 @@ value = "true"
 captured-at = "2026-06-19T12:00:00Z"
 ```
 
-- The `remote:` prefix keeps a leaf's and a remote's variables of one name
-  apart. The key is quoted so the dot stays inside one key.
-- A remote's key names the declared remote, not an `include-remote`, so every
-  inclusion of one remote shares one entry per variable, whatever its `id` or
-  `vars`.
-- An entry is a closed record of two required fields: `value`, the captured
-  string (a status capture is `"true"` or `"false"`), and `captured-at`, an RFC
-  3339 timestamp written as a string. An unknown field, or a TOML datetime in
-  place of the string, is invalid.
+Each entry has exactly two required string fields: `value` and `captured-at`
+(an RFC 3339 timestamp). Unknown fields and TOML datetime values are invalid.
 
 ### Freshness and refresh behavior
 
-An entry is **fresh** while less time than its declaration's `cache` (default
-`1d`) has passed since `captured-at`, and **stale** after that. A `captured-at`
-in the future counts as captured now, so a skewed clock does not make every
-command run. How a run treats an entry depends on the command:
+An entry is fresh while its age is less than the declaration's `cache` duration;
+otherwise it is stale. Future timestamps count as age zero.
 
-- **By default**, a fresh entry is used and a stale or absent one runs its
-  command. This is every command that executes actions — `sync`, `clone`,
-  `apply-action`, and `apply-group` — and `vars list`.
-- **`--refresh-vars`** runs every command, fresh entry or not.
-- **`vars list --no-refresh`** runs nothing and writes nothing: it reports a
-  fresh entry, a stale one as stale, and an absent one as having no value.
-- **`vars refresh`** runs every command it refreshes, fresh entry or not, and
-  treats any other leaf declaration it needs as a run does.
+| Invocation | Cache use |
+| --- | --- |
+| Action execution or normal `vars list` | Reuse fresh entries; run stale or missing declarations |
+| `--refresh-vars` | Run every evaluated declaration regardless of freshness |
+| `vars list --no-refresh` | Run/write nothing; report fresh, stale, or missing values |
+| `vars refresh` | Force selected declarations; resolve other required leaf values normally |
 
-A command that succeeds writes its entry, with `captured-at` taken as it
-finished. One that fails — by exiting non-zero under `capture = "stdout"`, by
-being killed at its `command-timeout`, by leaving its output open past that
-timeout, by writing too much or writing something that is not UTF-8 — keeps whatever entry there was, fresh or stale, and the run
-uses it, with a warning that says how old it is. With nothing cached, the
-variable has [no value](repoformat.md#dynamic-variables) and the warning says
-so.
+A successful capture writes its value and completion timestamp. A
+[capture failure](environment.md#how-dynamic-commands-are-run) retains and uses
+any previous value, fresh or stale, warning with its age. Without a cached
+value, the variable has [no value](repoformat.md#dynamic-variables) and warns.
 
-A `capture = "status"` command that cannot be started at all is different: the
-run uses `"false"` whether or not a value is cached, warns, and writes nothing,
-so installing the missing program is noticed on the next run rather than after
-the cache expires. A `capture = "stdout"` command that cannot be started is an
-ordinary failure.
+A status command that cannot start is an exception: use `"false"` for this run
+regardless of cached contents, warn, and write nothing. Failure to start a
+stdout command uses the ordinary fallback.
 
 ### When declarations are evaluated
 
-A command that executes actions evaluates every declaration in the leaf, then
-every declaration in each remote an inclusion opens that the leaf
-[allows](repoformat.md#git) to run them — including one a higher layer
-overrides, so its entry stays current. An inclusion that is not opened runs
-nothing. `vars list` resolves the leaf alone, and leaves unrun a declaration a
-`vars.toml` value overrides.
+Execution commands resolve all leaf declarations, then those in each opened
+remote the leaf [allows](repoformat.md#git). Higher-layer overrides do not
+suppress evaluation. Unopened inclusions run nothing; shared remote declarations
+resolve once per command. `vars list` resolves only the leaf and skips commands
+whose values `vars.toml` overrides.
 
-`vars refresh` has no selection to open inclusions with, so it refreshes the
-declarations **in play** instead. Every declaration in the leaf is in play, and
-a remote's are when an `include-remote` names that remote and a run on this
-machine would open it:
+For `vars refresh`, every leaf declaration is **in play**. A remote is in play
+if at least one inclusion naming it would open on this machine:
 
-- Neither the inclusion's address nor its group is in
-  [`disabled.toml`](#disabledtoml-disabled-actions-and-groups). Disabling an
-  inclusion is how a machine keeps a remote's commands from running, so a
-  refresh runs nothing that no `sync` here would. A run-only skip does not
-  count: it belongs to one action run.
-- The inclusion's own `when` or `unless` passes, and so does the one on the
-  leaf's [`[remotes]`](repoformat.md#a-remotes-condition) entry. Either closing
-  excludes that inclusion, and a remote no remaining inclusion names is not in
-  play.
+- Neither the inclusion's address nor its group is persistently disabled.
+- Both its own condition and the remote's condition pass.
 
-Both gates are leaf records, decided against the **leaf scope**, which needs
-nothing but the leaf repository: nothing in it depends on a remote, and an
-inclusion's own `vars` play no part in its gate. So the leaf's declarations
-resolve first, the leaf scope decides which remotes are in play, and only then
-are those remotes' manifests read and their declarations run, where the leaf
-[allows](repoformat.md#git) them. A remote not in play is never read and runs
-nothing, whatever its `allow-dynamic-vars`; a malformed manifest in one that is
-in play fails the command before anything in that remote runs.
+Run-only skips do not apply. Resolve leaf values first, evaluate those gates
+in the [leaf scope](environment.md#variable-precedence), then read admitted
+remote manifests and resolve their allowed declarations. A remote out of play
+is never read. A malformed admitted manifest fails before its commands run.
 
-Neither `disabled.toml` nor a run-only skip changes what a declaration does
-once its inclusion is opened. [Dry-run](cmdline.md#dry-run-behavior) is not an
-exception either: commands run and captures are written in both modes.
+Once an inclusion opens, disables and skips do not change declaration behavior.
+Dry runs resolve commands and save captures on the same terms.
 
 ### Lifecycle
 
-- A missing file is an empty cache, and a command with no dynamic declaration to
-  resolve neither reads nor creates it, nor its directory.
+- A missing file is an empty cache. A command with no dynamic declaration to
+  resolve neither reads nor creates it; the run lock may still create its directory.
 - A malformed file fails the command before any declaration runs, and is left
   untouched. Deleting it is the remedy, and is always safe: the next run
   captures again.
@@ -278,34 +160,25 @@ exception either: commands run and captures are written in both modes.
 
 ## Run lock
 
-A command that can write state holds an exclusive lock on
-`<cache-dir>/run.lock` for its whole run, so two batfiles runs sharing a cache
-directory never interleave. The commands that take it are `sync`,
-`apply-action`, `apply-group`, `clone`, the four enable and disable commands,
-`vars set`, `vars unset`, `vars refresh`, and `vars list` without
-`--machine-only` or `--no-refresh`, dry runs included, since a dry run may still
-refresh the dynamic-variable cache. The rest write no state and take no lock:
-`vars get`, `vars list --machine-only`, `vars list --no-refresh`, `version`,
-`init`, and `update`.
+An exclusive advisory lock on `<cache-dir>/run.lock`, held for the command's
+whole run, prevents overlapping state operations by commands sharing that cache.
 
-A command takes the lock once it has resolved its roots and before it reads any
-state, creating the cache directory and the file when either is missing. `clone`
-takes it after cloning and before its bootstrap reads any state, so a cache
-directory inside the new repository does not occupy the clone's destination. A
-command does not wait: when another process holds the lock, it fails with status
-1 and names the file, having read and changed nothing apart from what a `clone`
-already cloned, which it keeps for a later `sync`. One that cannot create, open,
-or lock the file fails the same way.
+| Takes the lock | Does not take it |
+| --- | --- |
+| `sync`, apply commands, `clone`, enable/disable commands, `vars set`, `unset`, `refresh`, normal `list` | `vars get`, `list --machine-only`, `list --no-refresh`, `init`, `version`, `update` |
 
-The file is empty. Batfiles never writes to it or removes it, and the operating
-system releases the lock when the run's process exits, however it exits, so a
-leftover file blocks nothing. Deleting it while no run is active is safe.
+Dry runs take it too. The lock is acquired after resolving roots and before
+reading state, creating the directory and file if needed. `clone` does so after
+cloning and before bootstrap, allowing a cache inside the new repository.
 
-The lock is advisory and keyed on the cache directory. It excludes only other
-batfiles runs that select the same cache directory: two runs with different
-cache directories do not exclude each other even when they share a config
-directory, and an editor or any other program writing these documents is not
-excluded at all.
+There is no wait: contention, or failure to create/open/lock the file, exits 1
+naming the path before state is read or changed. Any repository already cloned
+is kept. The file stays empty and is never removed by batfiles; process exit
+releases the lock, so a leftover file blocks nothing.
+
+Different cache directories do not exclude each other, even with shared config.
+Editors and other programs are not excluded. Delete the file only when no run
+is active.
 
 ## Writing
 
@@ -338,11 +211,5 @@ Consequences of this policy:
   temporary file is still empty, so a deliberately restricted document is never
   briefly readable through a world-readable sibling.
 
-Reading follows the rules the leaf manifest is read by, specified in
-[reading the manifest](repoformat.md#reading-the-manifest), with one difference:
-a **missing** state file is an empty document rather than an error.
-
-A dry run does not change any of this. `--dry-run` promises that the plan is not
-carried out, not that the process writes nothing anywhere — batfiles' own
-bookkeeping is not part of the plan. See
-[dry-run behavior](cmdline.md#dry-run-behavior).
+Bookkeeping writes follow this policy in [dry runs](cmdline.md#dry-run-behavior)
+too; bootstrap's explicit dry-run exception is described above.
