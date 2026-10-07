@@ -300,7 +300,11 @@ labeled according to [authoring policy](authoring.md).
 
 The job runs `dist:pages` with `FROM` set to the repository's releases URL,
 uploads and deploys the complete artifact, then runs `dist:verify` with `PAGES`
-set to the deployed URL. Verification checks the installer bytes and that the
+set to the deployed URL. Each run deploys under a build version of its own,
+made from the commit, run ID, and attempt: Pages treats a build version it has
+already deployed as done, so reusing the commit alone would let a push's
+deployment stand in for a later release or manual run of the same commit, with
+older installers. Verification checks the installer bytes and that the
 documentation landing page and first-repository tutorial can be fetched and are
 nonempty. The Pages checks retry while caches settle.
 
