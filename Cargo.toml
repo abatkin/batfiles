@@ -50,7 +50,7 @@ bzip2 = "0.6"
 # Zip extraction, through the deflate and bzip2 decoders above. The default
 # features would add encryption and other compression methods, which batfiles
 # refuses, and C zstd.
-zip = { version = "8.6", default-features = false, features = ["deflate-flate2", "bzip2"] }
+zip = { version = "9.0", default-features = false, features = ["deflate-flate2", "bzip2"] }
 
 # The friendly duration grammar of a dynamic variable's `cache` and
 # `command-timeout`, and the RFC 3339 `captured-at` of its cache entry. No time
