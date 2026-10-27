@@ -3,7 +3,7 @@
 use std::io::{self, Read as _};
 use std::path::PathBuf;
 
-use zip::{CompressionMethod, HasZipMetadata as _, ZipArchive};
+use zip::{CompressionMethod, ZipArchive};
 
 use super::{Archive, ArchiveError, Entry, EntryKind};
 use crate::error::Error;
@@ -16,6 +16,10 @@ const SYMLINK_TYPE: u32 = 0o120_000;
 
 /// The bits of a Unix mode that are not its type.
 const PERMISSION_BITS: u32 = 0o7777;
+
+/// The general-purpose flag bit that marks a name as UTF-8, which the `zip` crate also sets
+/// where a Unicode path field gave the name.
+const LANGUAGE_ENCODING_FLAG: u16 = 0x0800;
 
 /// The longest symlink target a link entry's contents may hold.
 const MAX_LINK_TARGET: u64 = 4096;
@@ -31,14 +35,14 @@ pub(super) fn for_each_entry(
     for index in 0..zip.len() {
         let (path, recorded) = {
             let raw = zip.by_index_raw(index).map_err(unreadable)?;
-            let data = raw.get_metadata();
+            let name = raw.name().map_err(unreadable)?;
             let listed = Listed {
-                name_raw: &data.file_name_raw,
-                name: &data.file_name,
-                is_utf8: data.is_utf8,
-                external_attributes: data.external_attributes,
-                encrypted: data.encrypted,
-                method: data.compression_method,
+                name_raw: raw.name_raw(),
+                name: &name,
+                is_utf8: raw.flags().as_u16() & LANGUAGE_ENCODING_FLAG != 0,
+                external_attributes: raw.external_attributes(),
+                encrypted: raw.encrypted(),
+                method: raw.compression(),
             };
             let path = path_of(&listed).map_err(|invalid| archive.fault(invalid))?;
             readable(&listed, &path).map_err(|invalid| archive.fault(invalid))?;
