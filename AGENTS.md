@@ -37,6 +37,7 @@ specification before changing behavior and update it in the same change.
 | Release tree, release tasks, and the release workflow | `docs/contributing/distribution.md` |
 | Cutting a release, and the repository settings it relies on | `dist/README.md` |
 | Implementation design | `docs/contributing/architecture.md` |
+| Codex Cloud environment setup | `docs/contributing/codex-cloud.md` |
 | Filesystem-owner inventory | `tests/hygiene.rs` |
 | Potential future enhancements | `docs/contributing/enhancements.md` |
 | Branch workflow and canonical commands | This file |

@@ -166,6 +166,8 @@ The documentation tasks and `task test` fetch the pinned mdBook and lychee on
 first use; `task docs:serve` previews the book. See [documentation authoring](docs/contributing/authoring.md)
 and [release management](dist/README.md) for publishing.
 
+For hosted development, follow [Codex Cloud setup](docs/contributing/codex-cloud.md).
+
 ## License
 
 [MIT](LICENSE)

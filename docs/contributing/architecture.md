@@ -182,6 +182,9 @@ host is named but must never be contacted. Fixture Git commands must use an
 isolated environment and configuration; production Git behavior is tested
 through the binary with explicit test inputs.
 
+Run the suite as an unprivileged user. Permission tests rely on filesystem
+access restrictions that root can bypass.
+
 Keep `tests/cli/` as one test target. Group tests by behavior and shared support
 by responsibility. Keep realistic fixture repositories separate when they need
 different environments. Snapshot whole trees for dry-run assertions and also
