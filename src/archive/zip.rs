@@ -17,6 +17,9 @@ const SYMLINK_TYPE: u32 = 0o120_000;
 /// The bits of a Unix mode that are not its type.
 const PERMISSION_BITS: u32 = 0o7777;
 
+/// The general-purpose flag requiring UTF-8 entry names.
+const UTF8_FLAG: u16 = 1 << 11;
+
 /// The longest symlink target a link entry's contents may hold.
 const MAX_LINK_TARGET: u64 = 4096;
 
@@ -32,12 +35,13 @@ pub(super) fn for_each_entry(
         let (path, recorded) = {
             let raw = zip.by_index_raw(index).map_err(unreadable)?;
             let data = raw.get_metadata();
+            let name = raw.name().map_err(unreadable)?;
             let listed = Listed {
-                name_raw: &data.file_name_raw,
-                name: &data.file_name,
-                is_utf8: data.is_utf8,
+                name_raw: raw.name_raw(),
+                name: &name,
+                is_utf8: data.flags.as_u16() & UTF8_FLAG != 0,
                 external_attributes: data.external_attributes,
-                encrypted: data.encrypted,
+                encrypted: raw.encrypted(),
                 method: data.compression_method,
             };
             let path = path_of(&listed).map_err(|invalid| archive.fault(invalid))?;
@@ -65,7 +69,7 @@ pub(super) fn for_each_entry(
 
 /// What the central directory says of one entry.
 struct Listed<'a> {
-    /// The name's bytes, as written or as a Unicode path field gave them.
+    /// The entry name's bytes from the central directory.
     name_raw: &'a [u8],
     /// The name as the `zip` crate decoded it.
     name: &'a str,
