@@ -1,7 +1,7 @@
 # Pinned toolchain for local + CI parity. This pin is where parity usually
 # breaks first, so it does the heavy lifting. Bump deliberately.
 [toolchain]
-channel = "1.94.1"
+channel = "1.99.1"
 # `llvm-tools` supplies `llvm-ar`, which `cargo xwin` symlinks to `llvm-lib`
 # to archive the assembly objects the Windows cross-lint compiles below.
 components = ["rustfmt", "clippy", "llvm-tools"]
