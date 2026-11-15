@@ -8,6 +8,8 @@ use std::process::{Command, Stdio};
 
 use thiserror::Error as ThisError;
 
+use crate::cli::UpdateArgs;
+use crate::commands::Session;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::filesystem::paths;
@@ -37,20 +39,18 @@ impl TryFrom<&str> for Wanted {
     }
 }
 
-/// Install `wanted` over the running executable, or with `check` only report what is running and
-/// what is available.
-pub(crate) fn run(
-    wanted: &Wanted,
-    check: bool,
-    env: &Environment,
-    reporter: &Reporter,
-) -> Result<(), Error> {
+/// Install the wanted release over the running executable, or with `--check` only report what
+/// is running and what is available.
+pub(crate) fn run(args: &UpdateArgs, session: &Session<'_>) -> Result<(), Error> {
+    let wanted = &args.version;
+    let env = session.env;
+    let reporter = session.reporter;
     let base = ReleaseBase::from_env(env)?;
     let running =
         Version::try_from(crate::cli::VERSION).expect("a build reports a release version");
     reporter.detail(1, &format!("{:<12}{}", "base:", base.as_str()));
 
-    if check {
+    if args.check {
         let available = match wanted {
             Wanted::Latest => latest(&base)?,
             Wanted::Release(version) => {

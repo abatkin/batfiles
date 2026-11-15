@@ -18,10 +18,10 @@ pub(crate) struct CloneArgs {
     pub git_ref: Option<String>,
 
     #[command(flatten)]
-    pub action: ExecutionOptions,
+    pub execution: ExecutionOptions,
 
     #[command(flatten)]
-    pub selection: SkipOptions,
+    pub skips: SkipOptions,
 
     #[command(flatten)]
     pub bootstrap: BootstrapOptions,
@@ -52,10 +52,10 @@ pub(crate) struct SyncArgs {
     pub bootstrap: bool,
 
     #[command(flatten)]
-    pub action: ExecutionOptions,
+    pub execution: ExecutionOptions,
 
     #[command(flatten)]
-    pub selection: SkipOptions,
+    pub skips: SkipOptions,
 
     #[command(flatten)]
     pub bootstrap_options: BootstrapOptions,
@@ -72,7 +72,7 @@ pub(crate) struct ApplyActionArgs {
     pub dry_run: bool,
 
     #[command(flatten)]
-    pub action: ExecutionOptions,
+    pub execution: ExecutionOptions,
 }
 
 /// Arguments for `apply-group`, including action skips.
@@ -87,10 +87,10 @@ pub(crate) struct ApplyGroupArgs {
     pub dry_run: bool,
 
     #[command(flatten)]
-    pub action: ExecutionOptions,
+    pub execution: ExecutionOptions,
 
     #[command(flatten)]
-    pub selection: SkipActionOptions,
+    pub skips: SkipActionOptions,
 }
 
 #[cfg(test)]
@@ -176,7 +176,7 @@ mod tests {
         let Command::ApplyGroup(args) = cli.command else {
             panic!("expected apply-group");
         };
-        assert_eq!(args.selection.skip_actions, vec!["zshrc".to_owned()]);
+        assert_eq!(args.skips.skip_actions, vec!["zshrc".to_owned()]);
 
         assert_eq!(
             error_kind(&[
@@ -217,7 +217,7 @@ mod tests {
             panic!("expected sync");
         };
         assert_eq!(
-            args.action
+            args.execution
                 .vars
                 .iter()
                 .map(|(key, value)| (key.to_string(), value.clone()))
@@ -250,8 +250,8 @@ mod tests {
         };
         assert_eq!(args.url, "https://example.invalid/dotfiles.git");
         assert_eq!(args.git_ref.as_deref(), Some("work"));
-        assert!(args.action.refresh_vars);
-        assert_eq!(args.selection.groups.skip_groups, vec!["fonts".to_owned()]);
+        assert!(args.execution.refresh_vars);
+        assert_eq!(args.skips.groups.skip_groups, vec!["fonts".to_owned()]);
         assert_eq!(args.bootstrap.disable_groups, vec!["gui".to_owned()]);
         assert_eq!(args.bootstrap.enable_actions, vec!["shell".to_owned()]);
     }

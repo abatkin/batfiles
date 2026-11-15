@@ -1,34 +1,18 @@
-//! Parse arguments, resolve presentation and locations, dispatch commands, and report errors.
+//! Parse arguments, resolve presentation, dispatch commands, and report errors.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, ExecutionOptions, GlobalOptions, VarsCommand, color};
-use crate::commands::clone;
-use crate::commands::disabled;
-use crate::commands::init;
-use crate::commands::update;
-use crate::commands::vars;
+use crate::cli::{Cli, Command, VarsCommand, color};
+use crate::commands::{Session, apply, clone, disabled, init, sync, update, vars};
 use crate::env::Environment;
 use crate::error::Error;
-use crate::filesystem::mode::RunMode;
-use crate::filesystem::replace::ConflictPolicy;
-use crate::location::{
-    LocationInputs, Roots, StateRoots, detect_os_home, discover_working_repository, resolve_roots,
-    resolve_state_roots,
-};
 use crate::manifest::disabled::Change;
 use crate::manifest::item::ItemKind;
 use crate::output::{Reporter, Verbosity};
-use crate::run::bootstrap::BootstrapDecisions;
-use crate::run::context::DestinationOptions;
-use crate::run::lock::RunLock;
-use crate::run::{self, Invocation};
-use crate::vars::dynamic::CachePolicy;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -57,8 +41,13 @@ pub(crate) fn run() -> ExitCode {
     };
     reporter.set_verbosity(Verbosity::new(cli.global.quiet, cli.global.verbose));
 
-    match dispatch(&cli, &env, &reporter) {
-        Ok(code) => code,
+    let session = Session {
+        global: &cli.global,
+        env: &env,
+        reporter: &reporter,
+    };
+    match dispatch(&cli.command, &session) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             reporter.error(&error.to_string());
             ExitCode::from(EXIT_FAILURE)
@@ -67,253 +56,38 @@ pub(crate) fn run() -> ExitCode {
 }
 
 /// Run the parsed command.
-fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCode, Error> {
-    match &cli.command {
+fn dispatch(command: &Command, session: &Session<'_>) -> Result<(), Error> {
+    match command {
         Command::Version => {
             print!("{}", Cli::command().render_version());
-            Ok(ExitCode::SUCCESS)
+            Ok(())
         }
-        Command::Update(args) => {
-            update::run(&args.version, args.check, env, reporter)?;
-            Ok(ExitCode::SUCCESS)
+        Command::Update(args) => update::run(args, session),
+        Command::Init(args) => init::run(args, session),
+        Command::Clone(args) => clone::run(args, session),
+        Command::Sync(args) => sync::run(args, session),
+        Command::ApplyAction(args) => apply::action(args, session),
+        Command::ApplyGroup(args) => apply::group(args, session),
+        Command::DisableAction(args) => {
+            disabled::run(&args.ids, ItemKind::Action, Change::Disable, session)
         }
-        Command::Init(args) => {
-            init::run(args, env, reporter)?;
-            Ok(ExitCode::SUCCESS)
+        Command::EnableAction(args) => {
+            disabled::run(&args.ids, ItemKind::Action, Change::Enable, session)
         }
-        Command::Clone(args) => {
-            let roots = locate_for_new_repository(cli, env, reporter)?;
-            clone::run(
-                &invocation(&roots, false, &args.action, env, reporter),
-                &args.url,
-                args.git_ref.as_deref(),
-                &args.bootstrap,
-                env,
-                &args.selection.actions.skip_actions,
-                &args.selection.groups.skip_groups,
-            )?;
-            Ok(ExitCode::SUCCESS)
+        Command::DisableGroup(args) => {
+            disabled::run(&args.groups, ItemKind::Group, Change::Disable, session)
         }
-        Command::Sync(args) => {
-            // Validate bootstrap options before resolving anything.
-            let bootstrap = if args.bootstrap {
-                Some(BootstrapDecisions::read(
-                    &args.bootstrap_options,
-                    env,
-                    reporter,
-                )?)
-            } else {
-                None
-            };
-            let roots = locate_repository(cli, env, reporter)?;
-            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            run::sync(
-                &invocation(&roots, args.dry_run, &args.action, env, reporter),
-                &args.selection.actions.skip_actions,
-                &args.selection.groups.skip_groups,
-                args.refresh_remotes,
-                bootstrap.as_ref(),
-            )?;
-            Ok(ExitCode::SUCCESS)
+        Command::EnableGroup(args) => {
+            disabled::run(&args.groups, ItemKind::Group, Change::Enable, session)
         }
-        Command::ApplyAction(args) => {
-            let roots = locate_repository(cli, env, reporter)?;
-            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            run::apply_action(
-                &invocation(&roots, args.dry_run, &args.action, env, reporter),
-                &args.id,
-            )?;
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::ApplyGroup(args) => {
-            let roots = locate_repository(cli, env, reporter)?;
-            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            run::apply_group(
-                &invocation(&roots, args.dry_run, &args.action, env, reporter),
-                &args.group,
-                &args.selection.skip_actions,
-            )?;
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::DisableAction(args) => edit_disabled_list(
-            cli,
-            env,
-            reporter,
-            &args.ids,
-            ItemKind::Action,
-            Change::Disable,
-        ),
-        Command::EnableAction(args) => edit_disabled_list(
-            cli,
-            env,
-            reporter,
-            &args.ids,
-            ItemKind::Action,
-            Change::Enable,
-        ),
-        Command::DisableGroup(args) => edit_disabled_list(
-            cli,
-            env,
-            reporter,
-            &args.groups,
-            ItemKind::Group,
-            Change::Disable,
-        ),
-        Command::EnableGroup(args) => edit_disabled_list(
-            cli,
-            env,
-            reporter,
-            &args.groups,
-            ItemKind::Group,
-            Change::Enable,
-        ),
-        Command::Vars(VarsCommand::Set { key, value }) => {
-            let roots = locate_state(cli, env, reporter)?;
-            let _lock = RunLock::acquire(&roots.cache_dir)?;
-            vars::set(key, value, &roots, reporter)?;
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::Vars(VarsCommand::Get { key }) => {
-            let roots = locate_state(cli, env, reporter)?;
-            vars::get(key, &roots, reporter)?;
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::Vars(VarsCommand::Unset { key }) => {
-            let roots = locate_state(cli, env, reporter)?;
-            let _lock = RunLock::acquire(&roots.cache_dir)?;
-            vars::unset(key, &roots, reporter)?;
-            Ok(ExitCode::SUCCESS)
-        }
-        // `--machine-only` must work without a repository.
+        Command::Vars(VarsCommand::Set { key, value }) => vars::set(key, value, session),
+        Command::Vars(VarsCommand::Get { key }) => vars::get(key, session),
+        Command::Vars(VarsCommand::Unset { key }) => vars::unset(key, session),
         Command::Vars(VarsCommand::List {
             machine_only,
             no_refresh,
-        }) => {
-            if *machine_only {
-                let state = locate_state(cli, env, reporter)?;
-                vars::list_machine(&state, reporter)?;
-            } else {
-                let roots = locate_repository(cli, env, reporter)?;
-                // Only a listing that may refresh the dynamic cache writes state.
-                let (policy, _lock) = if *no_refresh {
-                    (CachePolicy::Never, None)
-                } else {
-                    let lock = RunLock::acquire(&roots.state.cache_dir)?;
-                    (CachePolicy::Auto, Some(lock))
-                };
-                vars::list(&roots, env, policy, reporter)?;
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::Vars(VarsCommand::Refresh { keys }) => {
-            let roots = locate_repository(cli, env, reporter)?;
-            let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            vars::refresh::run(keys, &roots, env, reporter)?;
-            Ok(ExitCode::SUCCESS)
-        }
-    }
-}
-
-/// Build the shared execution inputs from resolved roots and command options.
-fn invocation<'a>(
-    roots: &'a Roots,
-    dry_run: bool,
-    action: &'a ExecutionOptions,
-    env: &'a Environment,
-    reporter: &'a Reporter,
-) -> Invocation<'a> {
-    Invocation {
-        roots,
-        mode: RunMode::new(dry_run),
-        vars: &action.vars,
-        refresh_vars: action.refresh_vars,
-        destination_options: DestinationOptions {
-            policy: if action.no_overwrite {
-                ConflictPolicy::Skip
-            } else if action.interactive {
-                ConflictPolicy::Ask
-            } else {
-                ConflictPolicy::Backup
-            },
-            refresh_content: action.refresh_content,
-        },
-        env,
-        reporter,
-    }
-}
-
-/// Edit one of the machine-local disabled lists.
-fn edit_disabled_list(
-    cli: &Cli,
-    env: &Environment,
-    reporter: &Reporter,
-    names: &[String],
-    kind: ItemKind,
-    change: Change,
-) -> Result<ExitCode, Error> {
-    let roots = locate_state(cli, env, reporter)?;
-    let _lock = RunLock::acquire(&roots.cache_dir)?;
-    disabled::run(names, kind, change, &roots, reporter)?;
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Resolve config and cache roots without repository discovery, and report them at `-v`.
-fn locate_state(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<StateRoots, Error> {
-    let state = resolve_state_roots(&location_inputs(&cli.global), env, detect_os_home)?;
-    report_state_roots(reporter, &state);
-    Ok(state)
-}
-
-/// Resolve every root, for a command that reads the leaf repository.
-fn locate_repository(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<Roots, Error> {
-    locate(cli, env, reporter, discover_working_repository)
-}
-
-/// Resolve roots for `clone`, without searching for an existing repository.
-fn locate_for_new_repository(
-    cli: &Cli,
-    env: &Environment,
-    reporter: &Reporter,
-) -> Result<Roots, Error> {
-    locate(cli, env, reporter, || Ok(None))
-}
-
-/// Resolve all roots using the supplied repository discovery function, and report them at `-v`.
-fn locate(
-    cli: &Cli,
-    env: &Environment,
-    reporter: &Reporter,
-    working_repository: impl FnOnce() -> Result<Option<PathBuf>, Error>,
-) -> Result<Roots, Error> {
-    let roots = resolve_roots(
-        &location_inputs(&cli.global),
-        env,
-        working_repository,
-        detect_os_home,
-    )?;
-    reporter.detail(
-        1,
-        &format!("{:<12}{}", "repository:", roots.batfiles_repo.display()),
-    );
-    reporter.detail(1, &format!("{:<12}{}", "home:", roots.home.display()));
-    report_state_roots(reporter, &roots.state);
-    Ok(roots)
-}
-
-/// Extract the four location options used by root resolution.
-fn location_inputs(global: &GlobalOptions) -> LocationInputs {
-    LocationInputs {
-        batfiles_dir: global.batfiles_dir.clone(),
-        home_dir: global.home_dir.clone(),
-        config_dir: global.config_dir.clone(),
-        cache_dir: global.cache_dir.clone(),
-    }
-}
-
-/// Report the config and cache paths at `-v`.
-fn report_state_roots(reporter: &Reporter, state: &StateRoots) {
-    for (label, path) in [("config:", &state.config_dir), ("cache:", &state.cache_dir)] {
-        reporter.detail(1, &format!("{label:<12}{}", path.display()));
+        }) => vars::list(*machine_only, *no_refresh, session),
+        Command::Vars(VarsCommand::Refresh { keys }) => vars::refresh::run(keys, session),
     }
 }
 

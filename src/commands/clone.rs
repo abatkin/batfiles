@@ -1,34 +1,31 @@
 //! Clone a leaf repository into a vacant destination, then synchronize it with bootstrap
 //! disabled-state adoption.
 
-use crate::cli::BootstrapOptions;
-use crate::env::Environment;
+use crate::cli::CloneArgs;
+use crate::commands::Session;
 use crate::error::Error;
 use crate::filesystem::mode::RunMode;
 use crate::filesystem::paths;
 use crate::output::Verb;
+use crate::run;
 use crate::run::bootstrap::BootstrapDecisions;
 use crate::run::lock::RunLock;
-use crate::run::{self, Invocation};
 use crate::source::git;
 
-/// Clone `url` into the selected leaf repository, following `git_ref` where one is given, and
+/// Clone the URL into the selected leaf repository, following `--ref` where one is given, and
 /// synchronize it.
 ///
 /// Validate the destination and bootstrap options before cloning. Take the run lock after
 /// cloning and before reading any state. Keep the clone if the ref cannot be followed, the lock
 /// is held, or synchronization fails.
-pub(crate) fn run(
-    invocation: &Invocation<'_>,
-    url: &str,
-    git_ref: Option<&str>,
-    options: &BootstrapOptions,
-    env: &Environment,
-    skip_actions: &[String],
-    skip_groups: &[String],
-) -> Result<(), Error> {
+pub(crate) fn run(args: &CloneArgs, session: &Session<'_>) -> Result<(), Error> {
+    let roots = session.new_repository_roots()?;
+    let invocation = session.invocation(&roots, false, &args.execution);
+    let url = args.url.as_str();
+    let git_ref = args.git_ref.as_deref();
+
     // Validate bootstrap options before downloading anything.
-    let bootstrap = BootstrapDecisions::read(options, env, invocation.reporter)?;
+    let bootstrap = BootstrapDecisions::read(&args.bootstrap, session.env, session.reporter)?;
 
     let dest = &invocation.roots.batfiles_repo;
     // Even empty directories and broken symlinks count as occupied.
@@ -51,9 +48,9 @@ pub(crate) fn run(
 
     let _lock = RunLock::acquire(&invocation.roots.state.cache_dir)?;
     run::sync(
-        invocation,
-        skip_actions,
-        skip_groups,
+        &invocation,
+        &args.skips.actions.skip_actions,
+        &args.skips.groups.skip_groups,
         false,
         Some(&bootstrap),
     )

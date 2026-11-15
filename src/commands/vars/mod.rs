@@ -7,24 +7,22 @@ pub(crate) mod refresh;
 
 use std::collections::BTreeMap;
 
+use crate::commands::Session;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::location::{Roots, StateRoots};
 use crate::manifest::Manifest;
 use crate::output::Reporter;
+use crate::run::lock::RunLock;
 use crate::vars::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::vars::machine::MachineVars;
 use crate::vars::name::VarName;
 use crate::vars::set::VarSet;
 
-/// Store `value` verbatim under `key`, replacing any previous machine-local value. Empty values
-/// are allowed.
-pub(crate) fn set(
-    key: &str,
-    value: &str,
-    roots: &StateRoots,
-    reporter: &Reporter,
-) -> Result<(), Error> {
+/// Store `value` verbatim under `key`, replacing any previous machine-local value, under the run
+/// lock. Empty values are allowed.
+pub(crate) fn set(key: &str, value: &str, session: &Session<'_>) -> Result<(), Error> {
+    let (roots, _lock) = session.locked_state_roots()?;
     // Reject invalid keys before touching state.
     let key = parse(key)?;
 
@@ -36,27 +34,30 @@ pub(crate) fn set(
         vars.save(&path)?;
     }
 
-    reporter.info(&describe(&key, outcome));
+    session.reporter.info(&describe(&key, outcome));
     Ok(())
 }
 
-/// Print the machine-local value of `key`, or fail because it has none.
-pub(crate) fn get(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
+/// Print the machine-local value of `key`, or fail because it has none. Takes no lock: it only
+/// reads.
+pub(crate) fn get(key: &str, session: &Session<'_>) -> Result<(), Error> {
+    let roots = session.state_roots()?;
     let key = parse(key)?;
     let vars = MachineVars::load(&roots.machine_vars_path())?;
 
     // A missing key must remain distinct from a stored empty string.
     match vars.values.get(&key) {
         Some(value) => {
-            reporter.data(value);
+            session.reporter.data(value);
             Ok(())
         }
         None => Err(Error::VarNotSet { key }),
     }
 }
 
-/// Remove the machine-local value of `key`, if it has one.
-pub(crate) fn unset(key: &str, roots: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
+/// Remove the machine-local value of `key`, if it has one, under the run lock.
+pub(crate) fn unset(key: &str, session: &Session<'_>) -> Result<(), Error> {
+    let (roots, _lock) = session.locked_state_roots()?;
     let key = parse(key)?;
 
     let path = roots.machine_vars_path();
@@ -67,7 +68,7 @@ pub(crate) fn unset(key: &str, roots: &StateRoots, reporter: &Reporter) -> Resul
         vars.save(&path)?;
     }
 
-    reporter.info(&describe(&key, outcome));
+    session.reporter.info(&describe(&key, outcome));
     Ok(())
 }
 
@@ -138,10 +139,32 @@ fn describe(key: &VarName, outcome: Outcome) -> String {
     }
 }
 
+/// `vars list`. `machine_only` lists persisted machine variables without a repository.
+/// Otherwise list the leaf's variables, refreshing the dynamic cache under the run lock unless
+/// `no_refresh` forbids running commands and writing the cache.
+pub(crate) fn list(
+    machine_only: bool,
+    no_refresh: bool,
+    session: &Session<'_>,
+) -> Result<(), Error> {
+    if machine_only {
+        return list_machine(&session.state_roots()?, session.reporter);
+    }
+    let roots = session.repository_roots()?;
+    // Only a listing that may refresh the dynamic cache writes state.
+    let (policy, _lock) = if no_refresh {
+        (CachePolicy::Never, None)
+    } else {
+        let lock = RunLock::acquire(&roots.state.cache_dir)?;
+        (CachePolicy::Auto, Some(lock))
+    };
+    list_leaf(&roots, session.env, policy, session.reporter)
+}
+
 /// List leaf-repository variables without CLI overrides. Resolve dynamic declarations using
 /// `policy`, skip those shadowed by machine-local values, and save captured values to the
 /// cache.
-pub(crate) fn list(
+fn list_leaf(
     roots: &Roots,
     env: &Environment,
     policy: CachePolicy,
@@ -164,7 +187,7 @@ pub(crate) fn list(
 }
 
 /// List only persisted machine variables; do not read the repository or environment.
-pub(crate) fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
+fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let machine = MachineVars::load(&state.machine_vars_path())?;
     VarSet::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
     Ok(())

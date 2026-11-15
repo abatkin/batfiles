@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error as ThisError;
 
 use crate::cli::InitArgs;
-use crate::env::Environment;
+use crate::commands::Session;
 use crate::error::Error;
 use crate::filesystem::paths;
 use crate::manifest::Manifest;
@@ -61,10 +61,12 @@ impl Stub {
     }
 }
 
-/// Initialize the current directory, stamping the stubs with the release base `env` selects.
+/// Initialize the current directory, stamping the stubs with the release base the environment
+/// selects.
 /// With `--stubs`, add only the stubs a repository there lacks.
-pub(crate) fn run(args: &InitArgs, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
-    let base = ReleaseBase::from_env(env)?;
+pub(crate) fn run(args: &InitArgs, session: &Session<'_>) -> Result<(), Error> {
+    let reporter = session.reporter;
+    let base = ReleaseBase::from_env(session.env)?;
     let dir = std::env::current_dir().map_err(|source| Error::WorkingDirectory { source })?;
     if args.stubs {
         return add_stubs(&dir, &base, reporter);

@@ -107,7 +107,7 @@ path; their replacement policy differs from seeds.
 | Directory | Holds |
 | --- | --- |
 | `cli/` | Clap definitions. |
-| `commands/` | Commands outside the run pipeline: `clone`'s checkout, `init`, `update`, editing `disabled.toml`, and `vars`. |
+| `commands/` | Every command's entry point: it takes the parsed arguments and the `Session`, resolves roots, and takes the run lock if it writes state. `sync`, `clone`, and the apply commands then hand an `Invocation` to `run/`. |
 | `run/` | The pipeline `sync`, `clone`'s bootstrap, and the apply commands share; see [Execution](#execution). |
 | `action/` | Each action type's implementation, and dispatch. |
 | `manifest/` | The manifest and its declarations: items, conditions, repository paths, entry filters, clone lists, and `disabled.toml`. |
@@ -115,8 +115,9 @@ path; their replacement policy differs from seeds.
 | `source/` | Downloads, archives, Git, and remote materialization. |
 | `filesystem/` | Path inspection, the write helpers, `RunMode`, and state-document replacement. |
 
-The crate root keeps `main.rs`, `app.rs` (command dispatch), and the shared
-`env`, `error`, `location`, `output`, `release`, and `version`.
+The crate root keeps `main.rs`, `app.rs` (parsing, and one dispatch call per
+command), and the shared `env`, `error`, `location`, `output`, `release`, and
+`version`.
 
 ### Vocabulary
 
@@ -147,7 +148,7 @@ Code names follow these terms beside the user-facing ones:
 
 | Module | Owns |
 | --- | --- |
-| `run/mod.rs` | Command entry points, phase order, clone-list preparation, and the execution loop. |
+| `run/mod.rs` | The pipeline's entry points for `sync` and the apply commands, phase order, clone-list preparation, and the execution loop. |
 | `run/bootstrap.rs` | Bootstrap adoption of `disabled.toml` for `clone` and `sync --bootstrap`. |
 | `run/context.rs` | `RunContext`: run settings, roots, and repository source and destination resolution. |
 | `run/record.rs` | The run's list: each record's identity, heading, and disposition, and each inclusion's ownership of the records it contributed, with their scope. |

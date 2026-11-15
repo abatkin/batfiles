@@ -1,5 +1,5 @@
 //! Arguments for the four commands that edit the machine-local disabled lists.
-//! What they do with them is [`crate::manifest::disabled`]'s; this is the shape they take
+//! What they do with them is [`crate::commands::disabled`]'s; this is the shape they take
 //! on the command line.
 
 use clap::Args;

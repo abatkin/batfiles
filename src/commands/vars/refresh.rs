@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use thiserror::Error as ThisError;
 
+use crate::commands::Session;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::filesystem::paths;
@@ -34,12 +35,10 @@ use crate::vars::set::VarSet;
 /// declarations to evaluate conditions; save those captures even if validation fails. Report
 /// all invalid keys together. Forced command failures return an error after saving successful
 /// captures.
-pub(crate) fn run(
-    keys: &[DynamicVarKey],
-    roots: &Roots,
-    env: &Environment,
-    reporter: &Reporter,
-) -> Result<(), Error> {
+pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), Error> {
+    let (roots, _lock) = session.locked_repository_roots()?;
+    let env = session.env;
+    let reporter = session.reporter;
     let manifest = Manifest::load(&roots.manifest_path())?;
     let selection = RefreshSelection::from_keys(keys);
     refuse(
@@ -58,7 +57,7 @@ pub(crate) fn run(
         reporter,
     );
     if selection.reaches_remotes() {
-        refresh_with_remotes(manifest, &selection, roots, env, &mut dynamic, reporter)?;
+        refresh_with_remotes(manifest, &selection, &roots, env, &mut dynamic, reporter)?;
     } else {
         let leaf = ManifestSource {
             remote: None,

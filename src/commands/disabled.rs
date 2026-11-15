@@ -1,20 +1,21 @@
 //! The four commands that edit `disabled.toml`: `disable-action`,
 //! `enable-action`, `disable-group`, and `enable-group`.
 
+use crate::commands::Session;
 use crate::error::Error;
-use crate::location::StateRoots;
 use crate::manifest::disabled::{Change, DisabledItems, apply, outcome};
 use crate::manifest::item::{ItemAddress, ItemKind};
 use crate::output::Reporter;
 
-/// Add the names to, or remove them from, the machine-local disabled list.
+/// Add the names to, or remove them from, the machine-local disabled list, under the run lock.
 pub(crate) fn run(
     names: &[String],
     kind: ItemKind,
     change: Change,
-    roots: &StateRoots,
-    reporter: &Reporter,
+    session: &Session<'_>,
 ) -> Result<(), Error> {
+    let (roots, _lock) = session.locked_state_roots()?;
+    let reporter = session.reporter;
     // Validate all names before reading or writing state.
     let names = parse_all(names, reporter)?;
 
