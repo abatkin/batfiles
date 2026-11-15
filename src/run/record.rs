@@ -91,7 +91,7 @@ pub(super) struct OpenedInclusion {
 
 /// The run's list, and what reports need to know about its assembly.
 pub(crate) struct RunList {
-    pub(super) entries: Vec<TopLevelRecord>,
+    pub(super) top_level: Vec<TopLevelRecord>,
     /// Whether the target named a record in the list. An inclusion opened only
     /// to reach inside it does not count.
     pub(super) target_found: bool,
@@ -101,19 +101,19 @@ impl RunList {
     /// Every record the run knows of in declaration order: each leaf record,
     /// followed, for an opened inclusion, by the records it contributed.
     pub fn records(&self) -> impl Iterator<Item = &RunRecord> {
-        self.entries.iter().flat_map(|entry| {
-            let (record, opened) = match entry {
+        self.top_level.iter().flat_map(|top| {
+            let (record, opened) = match top {
                 TopLevelRecord::Action(record) => (record, None),
                 TopLevelRecord::Inclusion { record, opened, .. } => (record, opened.as_ref()),
             };
-            std::iter::once(record).chain(opened.into_iter().flat_map(|it| &it.records))
+            std::iter::once(record).chain(opened.into_iter().flat_map(|opened| &opened.records))
         })
     }
 
     /// Iterate the addresses of unread inclusions and clone lists, with the reason each went
     /// unread. Addresses inside them cannot be classified as unmatched.
     pub fn unread(&self) -> impl Iterator<Item = (&ItemAddress, Unread<'_>)> {
-        let inclusions = self.entries.iter().filter_map(|entry| match entry {
+        let inclusions = self.top_level.iter().filter_map(|top| match top {
             TopLevelRecord::Inclusion {
                 record,
                 inclusion,
@@ -145,19 +145,19 @@ impl RunList {
     }
 
     /// Warn about every run-only skip in `selection` that names nothing listed
-    /// here or among `entries`, the addresses of every prepared clone-list
+    /// here or among `list_entries`, the addresses of every prepared clone-list
     /// entry. See [`Selection::warn_unmatched`].
     pub fn warn_unmatched(
         &self,
         selection: &Selection<'_>,
-        entries: &[&ItemAddress],
+        list_entries: &[&ItemAddress],
         reporter: &Reporter,
     ) {
         let names = |of: fn(&RunRecord) -> &Option<ItemAddress>| -> Vec<&ItemAddress> {
             self.records().filter_map(|it| of(it).as_ref()).collect()
         };
         let mut addresses = names(|it| &it.address);
-        addresses.extend_from_slice(entries);
+        addresses.extend_from_slice(list_entries);
         let unread: Vec<&ItemAddress> = self.unread().map(|(address, _)| address).collect();
         selection.warn_unmatched(
             &addresses,

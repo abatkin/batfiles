@@ -10,7 +10,7 @@ use crate::filesystem::paths;
 use crate::location::StateRoots;
 use crate::manifest::condition::{Bindings, Gate};
 use crate::manifest::default_disabled::DefaultDisabled;
-use crate::manifest::disabled::{Change, DisabledItems, apply, outcome};
+use crate::manifest::disabled::{Change, DisabledItems};
 use crate::manifest::item::{ItemAddress, ItemKind};
 use crate::output::Reporter;
 
@@ -115,18 +115,16 @@ impl BootstrapDecisions {
                     exclusion.report_heading(reporter, &heading(kind, name));
                     continue;
                 }
-                let moved = apply(disabled.list_mut(kind), Change::Disable, name);
+                let moved = Change::Disable.apply_to(disabled.list_mut(kind), name);
                 changed |= moved;
                 lines.push(line(kind, Change::Disable, name, moved, DECLARED, mode));
             }
         }
 
         for decision in &self.decisions {
-            let moved = apply(
-                disabled.list_mut(decision.kind),
-                decision.change,
-                &decision.name,
-            );
+            let moved = decision
+                .change
+                .apply_to(disabled.list_mut(decision.kind), &decision.name);
             changed |= moved;
             lines.push(line(
                 decision.kind,
@@ -182,7 +180,7 @@ fn line(
         (RunMode::DryRun, Change::Enable, true) => {
             format!("would enable {kind} `{name}`, which is disabled")
         }
-        _ => outcome(kind, change, name, moved),
+        _ => change.outcome(kind, name, moved),
     };
     format!("{origin}: {outcome}")
 }

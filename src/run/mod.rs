@@ -4,6 +4,7 @@
 
 mod assemble;
 pub(crate) mod bootstrap;
+pub(crate) mod clone_list;
 mod compose;
 pub(crate) mod context;
 pub(crate) mod inclusion;
@@ -22,13 +23,13 @@ use crate::filesystem::mode::RunMode;
 use crate::location::Roots;
 use crate::manifest::Manifest;
 use crate::manifest::actions::Action;
-use crate::manifest::clone_list::PreparedList;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::manifest::disabled::DisabledItems;
 use crate::manifest::item::{ItemAddress, ItemId};
 use crate::manifest::remote::Tree;
 use crate::output::Reporter;
 use crate::run::bootstrap::BootstrapDecisions;
+use crate::run::clone_list::PreparedList;
 use crate::run::context::{DestinationOptions, RunContext};
 use crate::run::selection::{Disposition, Selection, Target};
 use crate::source::remotes;
@@ -36,7 +37,9 @@ use crate::vars::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::vars::name::VarName;
 use crate::vars::set::VarSet;
 
-/// Resolved roots, mode, CLI variables, environment, and reporter for a command.
+/// What a command hands the pipeline: resolved roots, mode, `--var` values, and destination
+/// options, with the session's environment and reporter. Nothing in it depends on the manifest;
+/// the pipeline derives a [`RunContext`] from it after loading one.
 pub(crate) struct Invocation<'a> {
     pub roots: &'a Roots,
     pub mode: RunMode,
@@ -212,9 +215,9 @@ fn prepare<'a>(
     host: &HostNamespaces,
 ) -> Result<Vec<PlannedRecord<'a>>, Error> {
     run_list
-        .entries
+        .top_level
         .iter()
-        .map(|entry| match entry {
+        .map(|top| match top {
             TopLevelRecord::Inclusion {
                 record,
                 inclusion,
@@ -224,9 +227,9 @@ fn prepare<'a>(
                 let steps = opened
                     .iter()
                     .flat_map(|opened| {
-                        opened.records.iter().map(|it| {
+                        opened.records.iter().map(|included| {
                             step(
-                                it,
+                                included,
                                 Tree::Remote(remote),
                                 selection,
                                 &opened.scope,
@@ -294,7 +297,7 @@ fn prepare_action<'a>(
 /// The address of every addressable entry in the clone lists `plan` prepared.
 fn entry_addresses<'a>(plan: &'a [PlannedRecord<'_>]) -> Vec<&'a ItemAddress> {
     plan.iter()
-        .flat_map(|entry| match entry {
+        .flat_map(|planned| match planned {
             PlannedRecord::Step(step) => std::slice::from_ref(step),
             PlannedRecord::Inclusion { steps, .. } => steps.as_slice(),
         })
@@ -394,7 +397,7 @@ fn run_pipeline(
 
     // Materializations must exist before opening inclusions and preparing clone lists.
     if kind.materializes() {
-        remotes::materialize(&manifest.remotes, &context, kind.refreshes_remotes())?;
+        context.materialize(&manifest.remotes, kind.refreshes_remotes())?;
     }
 
     let run_list = assemble(
@@ -411,9 +414,9 @@ fn run_pipeline(
 
     let plan = prepare(&run_list, &selection, &context, &scope, &host)?;
     // Included addresses are known only after assembly, and entry addresses after preparation.
-    let entries = entry_addresses(&plan);
-    run_list.warn_unmatched(&selection, &entries, reporter);
-    let entry_found = entries.iter().any(|it| selection.names(it));
+    let list_entries = entry_addresses(&plan);
+    run_list.warn_unmatched(&selection, &list_entries, reporter);
+    let entry_found = list_entries.iter().any(|address| selection.names(address));
     if let Some(error) =
         run_list.unmatched_target_error(&selection, invocation.roots.manifest_path(), entry_found)
     {

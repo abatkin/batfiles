@@ -246,7 +246,7 @@ fn agent() -> ureq::Agent {
         .timeout_recv_response(Some(RESPONSE_TIMEOUT))
         .timeout_recv_body(Some(BODY_TIMEOUT))
         .max_redirects(MAX_REDIRECTS)
-        .user_agent(format!("batfiles/{}", crate::cli::VERSION))
+        .user_agent(format!("batfiles/{}", crate::version::VERSION))
         // Use the OS trust store, including locally installed corporate CAs.
         .tls_config(
             TlsConfig::builder()

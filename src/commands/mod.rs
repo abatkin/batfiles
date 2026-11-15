@@ -28,7 +28,8 @@ use crate::run::context::DestinationOptions;
 use crate::run::lock::RunLock;
 
 /// What every command runs with: the global options, the captured environment,
-/// and the reporter. Commands resolve roots from it; it resolves none itself.
+/// and the reporter. Commands resolve roots from it; it resolves none itself. A
+/// command that runs the pipeline builds an [`Invocation`] from it.
 pub(crate) struct Session<'a> {
     pub global: &'a GlobalOptions,
     pub env: &'a Environment,

@@ -178,12 +178,14 @@ fn seed(
         source: Some(source),
     };
     match kind {
-        ContentKind::File => install::seed_file(seed, dest, context, |into, staging| {
+        ContentKind::File => install::seed_file(seed, dest, &context.seeding(), |into, staging| {
             copy_file(source, into, staging)
         }),
-        ContentKind::Directory => install::seed_directory(seed, dest, context, |staging| {
-            copy_children(source, staging, copied)
-        }),
+        ContentKind::Directory => {
+            install::seed_directory(seed, dest, &context.seeding(), |staging| {
+                copy_children(source, staging, copied)
+            })
+        }
     }
 }
 

@@ -2,8 +2,8 @@
 
 use clap::Args;
 
-use crate::commands::update::Wanted;
 use crate::version::VersionError;
+use crate::version::Wanted;
 
 #[derive(Debug, Args)]
 pub(crate) struct UpdateArgs {
@@ -26,7 +26,7 @@ fn parse_wanted(raw: &str) -> Result<Wanted, VersionError> {
 mod tests {
     use crate::cli::Command;
     use crate::cli::testing::{error_kind, parse};
-    use crate::commands::update::Wanted;
+    use crate::version::Wanted;
     use clap::error::ErrorKind;
 
     #[test]

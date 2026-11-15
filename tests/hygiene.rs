@@ -1,5 +1,4 @@
-//! Repository checks for `dead_code` suppression, filesystem ownership, and action inventories.
-//! Text scans and TOML parsing check declared structure, not Rust semantics or behavioral coverage.
+//! Check source layers, filesystem ownership, unused-code suppressions, and action inventories.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -338,6 +337,168 @@ fn no_source_suppresses_dead_code() {
          `expect`; see rule 1 in docs/contributing/architecture.md.\n",
         failures.join("\n")
     );
+}
+
+/// Check paths from a lower layer, including relative imports that climb to the crate root.
+#[derive(Default)]
+struct LayerCheck {
+    module_depth: usize,
+    forbidden: Vec<String>,
+}
+
+impl LayerCheck {
+    /// Follow crate-relative prefixes. Once a path enters a named module its layer is known.
+    fn segment(&mut self, depth: usize, name: &syn::Ident) -> Option<usize> {
+        match name.to_string().as_str() {
+            "crate" => Some(0),
+            "self" => Some(depth),
+            "super" => depth.checked_sub(1),
+            "action" | "cli" | "commands" | "run" if depth == 0 => {
+                self.forbidden.push(format!("crate::{name}"));
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn import(&mut self, depth: usize, tree: &syn::UseTree) {
+        use syn::UseTree;
+        match tree {
+            UseTree::Path(path) => {
+                if let Some(next) = self.segment(depth, &path.ident) {
+                    self.import(next, &path.tree);
+                }
+            }
+            UseTree::Group(group) => {
+                for item in &group.items {
+                    self.import(depth, item);
+                }
+            }
+            UseTree::Name(name) => {
+                self.segment(depth, &name.ident);
+            }
+            UseTree::Rename(rename) => {
+                self.segment(depth, &rename.ident);
+            }
+            UseTree::Glob(_) => {}
+        }
+    }
+
+    /// Macro bodies have their own grammar. Look for literal crate paths in each token group.
+    fn macro_paths(&mut self, stream: proc_macro2::TokenStream) {
+        use proc_macro2::TokenTree::{Group, Ident, Punct};
+        let tokens: Vec<_> = stream.into_iter().collect();
+        for (index, token) in tokens.iter().enumerate() {
+            if let Group(group) = token {
+                self.macro_paths(group.stream());
+            } else if let [Ident(root), Punct(first), Punct(second), Ident(module), ..] =
+                &tokens[index..]
+                && root == "crate"
+                && first.as_char() == ':'
+                && first.spacing() == proc_macro2::Spacing::Joint
+                && second.as_char() == ':'
+            {
+                self.segment(0, module);
+            }
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for LayerCheck {
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        self.visit_path(&mac.path);
+        self.macro_paths(mac.tokens.clone());
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        self.import(self.module_depth, &item.tree);
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        self.module_depth += 1;
+        syn::visit::visit_item_mod(self, module);
+        self.module_depth -= 1;
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        let mut depth = self.module_depth;
+        for segment in &path.segments {
+            let Some(next) = self.segment(depth, &segment.ident) else {
+                break;
+            };
+            depth = next;
+        }
+        syn::visit::visit_path(self, path);
+    }
+}
+
+#[test]
+fn layer_check_recognizes_code_paths_and_ignores_documentation() {
+    use syn::visit::Visit;
+    let file = syn::parse_quote! {
+        /// Called by [`crate::commands::sync`].
+        pub use crate::{manifest::actions, run::context as ctx};
+        mod tests {
+            use super::super::super::cli;
+            fn run() { crate::action::dispatch(); }
+        }
+    };
+    // A file such as src/manifest/check.rs is two modules below the crate root.
+    let mut check = LayerCheck {
+        module_depth: 2,
+        ..Default::default()
+    };
+    check.visit_file(&file);
+    assert_eq!(
+        check.forbidden,
+        ["crate::run", "crate::cli", "crate::action"]
+    );
+}
+
+#[test]
+fn layer_check_finds_explicit_crate_paths_in_macro_arguments() {
+    use syn::visit::Visit;
+    let file = syn::parse_file(r#"
+        fn headers() {
+            format!("batfiles/{}", crate::cli::VERSION);
+            outer!(inner!([crate :: commands :: sync]), crate::run::Invocation);
+            format!("crate::action::dispatch {}", /* crate::cli::VERSION */ crate::version::VERSION);
+        }
+    "#).expect("valid Rust");
+    let mut check = LayerCheck {
+        module_depth: 2,
+        ..Default::default()
+    };
+    check.visit_file(&file);
+    assert_eq!(
+        check.forbidden,
+        ["crate::cli", "crate::commands", "crate::run"]
+    );
+}
+
+#[test]
+fn lower_layers_are_independent_of_commands_and_execution() {
+    use syn::visit::Visit;
+    let src = crate_dir().join("src");
+    let mut failures = Vec::new();
+    for layer in ["filesystem", "manifest", "source", "vars"] {
+        for path in rust_sources(&format!("src/{layer}")) {
+            // foo/mod.rs and foo.rs both define foo at the same depth.
+            let relative = path.strip_prefix(&src).expect("source path");
+            let depth = relative.components().count() - usize::from(relative.ends_with("mod.rs"));
+            let source = fs::read_to_string(&path).expect("a readable source file");
+            let file = syn::parse_file(&source).expect("valid Rust");
+            let mut check = LayerCheck {
+                module_depth: depth,
+                ..Default::default()
+            };
+            check.visit_file(&file);
+            for forbidden in check.forbidden {
+                failures.push(format!("{} depends on {forbidden}", display(&path)));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

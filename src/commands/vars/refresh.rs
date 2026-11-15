@@ -25,7 +25,7 @@ use crate::run::inclusion::{self, Inclusion};
 use crate::run::selection::{Selection, Subject};
 use crate::source::remotes;
 use crate::vars::dynamic::{
-    DynamicValueState, DynamicVarKey, DynamicVarResolver, ManifestSource, RefreshSelection,
+    DynamicValueState, DynamicVarKey, DynamicVarResolver, ManifestSource, RefreshTargets,
 };
 use crate::vars::set::VarSet;
 
@@ -41,9 +41,9 @@ pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), E
     let env = session.env;
     let reporter = session.reporter;
     let manifest = Manifest::load(&roots.manifest_path())?;
-    let selection = RefreshSelection::from_keys(keys);
+    let targets = RefreshTargets::from_keys(keys);
     refuse(
-        selection
+        targets
             .keys()
             .filter_map(|key| {
                 declared_in_leaf(key, &manifest).map(|reason| UnrefreshableKey::of(key, reason))
@@ -51,14 +51,10 @@ pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), E
             .collect(),
     )?;
 
-    let mut dynamic = DynamicVarResolver::for_refresh(
-        &roots.state,
-        selection.clone(),
-        &manifest.remotes,
-        reporter,
-    );
-    if selection.reaches_remotes() {
-        refresh_with_remotes(manifest, &selection, &roots, env, &mut dynamic, reporter)?;
+    let mut dynamic =
+        DynamicVarResolver::for_refresh(&roots.state, targets.clone(), &manifest.remotes, reporter);
+    if targets.reaches_remotes() {
+        refresh_with_remotes(manifest, &targets, &roots, env, &mut dynamic, reporter)?;
     } else {
         let leaf = ManifestSource {
             tree: Tree::Leaf,
@@ -74,7 +70,7 @@ pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), E
 /// refresh selected remote declarations.
 fn refresh_with_remotes(
     manifest: Manifest,
-    asked: &RefreshSelection,
+    asked: &RefreshTargets,
     roots: &Roots,
     env: &Environment,
     dynamic: &mut DynamicVarResolver<'_>,
@@ -100,8 +96,8 @@ fn refresh_with_remotes(
     let reach = reachability(&manifest.actions, &selection, &bindings, &excluded_remotes);
 
     let wanted: BTreeSet<&ItemId> = match asked {
-        RefreshSelection::All => reach.keys().collect(),
-        RefreshSelection::Named(_) => asked.keys().filter_map(|key| key.tree.remote()).collect(),
+        RefreshTargets::All => reach.keys().collect(),
+        RefreshTargets::Named(_) => asked.keys().filter_map(|key| key.tree.remote()).collect(),
     };
 
     let mut refusals = Vec::new();
@@ -124,7 +120,7 @@ fn refresh_with_remotes(
                 }
             }
             Some(Reach::InPlay(inclusion)) => match inclusion.manifest(&repository)? {
-                None if matches!(asked, RefreshSelection::All) => {
+                None if matches!(asked, RefreshTargets::All) => {
                     let path = remotes::materialization(&repository, remote);
                     inclusion::warn_not_materialized(remote, &path, reporter);
                     continue;

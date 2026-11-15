@@ -16,28 +16,7 @@ use crate::filesystem::paths;
 use crate::output::Reporter;
 use crate::release::{self, ReleaseBase};
 use crate::source::fetch;
-use crate::version::{Version, VersionError};
-
-/// The release `update` installs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Wanted {
-    /// The release the base's `latest/download/VERSION` names, if it is newer.
-    Latest,
-    /// Exactly this release, whatever the running version.
-    Release(Version),
-}
-
-impl TryFrom<&str> for Wanted {
-    type Error = VersionError;
-
-    /// `latest`, or a version with or without a leading `v`.
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
-        if raw == "latest" {
-            return Ok(Self::Latest);
-        }
-        Version::try_from(raw.strip_prefix('v').unwrap_or(raw)).map(Self::Release)
-    }
-}
+use crate::version::{VERSION, Version, Wanted};
 
 /// Install the wanted release over the running executable, or with `--check` only report what
 /// is running and what is available.
@@ -46,8 +25,7 @@ pub(crate) fn run(args: &UpdateArgs, session: &Session<'_>) -> Result<(), Error>
     let env = session.env;
     let reporter = session.reporter;
     let base = ReleaseBase::from_env(env)?;
-    let running =
-        Version::try_from(crate::cli::VERSION).expect("a build reports a release version");
+    let running = Version::try_from(VERSION).expect("a build reports a release version");
     reporter.detail(1, &format!("{:<12}{}", "base:", base.as_str()));
 
     if args.check {

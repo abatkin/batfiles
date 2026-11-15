@@ -35,7 +35,7 @@ pub(super) fn assemble(
 ) -> Result<RunList, Error> {
     let bindings = Bindings::new(run_scope, host);
     let mut run_list = RunList {
-        entries: Vec::with_capacity(actions.len()),
+        top_level: Vec::with_capacity(actions.len()),
         target_found: false,
     };
 
@@ -49,7 +49,7 @@ pub(super) fn assemble(
 
         let Action::IncludeRemote(declaration) = &record.action else {
             decide(&mut record, target_names_record, None, selection, &bindings);
-            run_list.entries.push(TopLevelRecord::Action(record));
+            run_list.top_level.push(TopLevelRecord::Action(record));
             continue;
         };
         let inclusion = Inclusion::at(declaration, index + 1);
@@ -81,7 +81,7 @@ pub(super) fn assemble(
             None
         };
         let Some(included) = included else {
-            run_list.entries.push(TopLevelRecord::Inclusion {
+            run_list.top_level.push(TopLevelRecord::Inclusion {
                 record,
                 inclusion,
                 opened: None,
@@ -129,7 +129,7 @@ pub(super) fn assemble(
             );
             records.push(contributed);
         }
-        run_list.entries.push(TopLevelRecord::Inclusion {
+        run_list.top_level.push(TopLevelRecord::Inclusion {
             record,
             inclusion,
             opened: Some(OpenedInclusion { scope, records }),

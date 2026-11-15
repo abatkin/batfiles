@@ -5,6 +5,13 @@ use std::fmt;
 
 use thiserror::Error;
 
+/// The version this build reports: the release version a release build compiles in, which may
+/// carry a pre-release suffix, else the `Cargo.toml` version.
+pub(crate) const VERSION: &str = match option_env!("BATFILES_RELEASE_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 /// A [release version](../docs/contributing/distribution.md#versions): `X.Y.Z` or `X.Y.Z-<pre-release>`,
 /// without build metadata. Numbers of any length compare exactly.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +138,27 @@ pub(crate) struct VersionError {
     version: String,
 }
 
+/// The release `update` installs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Wanted {
+    /// The release the base's `latest/download/VERSION` names, if it is newer.
+    Latest,
+    /// Exactly this release, whatever the running version.
+    Release(Version),
+}
+
+impl TryFrom<&str> for Wanted {
+    type Error = VersionError;
+
+    /// `latest`, or a version with or without a leading `v`.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        if raw == "latest" {
+            return Ok(Self::Latest);
+        }
+        Version::try_from(raw.strip_prefix('v').unwrap_or(raw)).map(Self::Release)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +250,6 @@ mod tests {
 
     #[test]
     fn this_build_reports_a_release_version() {
-        assert!(Version::try_from(crate::cli::VERSION).is_ok());
+        assert!(Version::try_from(VERSION).is_ok());
     }
 }

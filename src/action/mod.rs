@@ -9,13 +9,12 @@ mod git_clone;
 mod git_clone_list;
 mod symlink;
 
-use crate::run::context::RunContext;
-
 use crate::error::Error;
 use crate::manifest::actions::Action;
-use crate::manifest::clone_list::PreparedList;
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Tree;
+use crate::run::clone_list::PreparedList;
+use crate::run::context::RunContext;
 
 /// Inputs for executing an action.
 ///

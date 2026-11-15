@@ -1,7 +1,7 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
 use crate::error::Error;
-use crate::manifest::clone_list::PreparedList;
+use crate::run::clone_list::PreparedList;
 use crate::run::context::RunContext;
 use crate::run::selection::Disposition;
 use crate::source::git::{self, GitError};

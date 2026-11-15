@@ -20,12 +20,7 @@ use std::path::PathBuf;
 
 use clap::{Args, ColorChoice, Parser, Subcommand};
 
-/// The version this build reports: the release version a release build compiles in, which may
-/// carry a pre-release suffix, else the `Cargo.toml` version.
-pub(crate) const VERSION: &str = match option_env!("BATFILES_RELEASE_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
-};
+use crate::version::VERSION;
 
 /// A dotfiles manager built around plain files and explicit composition.
 #[derive(Debug, Parser)]

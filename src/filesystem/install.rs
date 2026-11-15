@@ -9,10 +9,9 @@ use std::path::{Path, PathBuf};
 use crate::error::Error;
 use crate::filesystem::directory;
 use crate::filesystem::mode::RunMode;
-use crate::filesystem::paths::{self, ExistingNode, Occupancy};
+use crate::filesystem::paths::{self, ExistingNode, Occupancy, RepositoryRoot};
 use crate::filesystem::replace::{self, ConflictDecision, ConflictResolver, ExistingContent};
 use crate::output::{Reporter, Verb};
-use crate::run::context::RunContext;
 
 /// Whether seed content is a file or directory.
 #[derive(Debug, Clone, Copy)]
@@ -35,19 +34,28 @@ pub(crate) struct SeedDescription<'a> {
     pub source: Option<&'a Path>,
 }
 
+/// What seeding needs from the run: the conflict policy, mode, and reporter for a destination
+/// in the way, the repository whose links count as managed, and whether `--refresh-content`
+/// reinstalls a destination that is already occupied.
+pub(crate) struct Seeding<'a> {
+    pub resolver: ConflictResolver<'a>,
+    pub repository: &'a RepositoryRoot,
+    pub refresh_content: bool,
+}
+
 /// Seed a file using `fill`, which receives the open staging file and its path for diagnostics.
 /// Call `fill` only in perform mode. On error, do not publish and attempt staging cleanup.
 pub(crate) fn seed_file(
     seed: SeedDescription<'_>,
     dest: &Path,
-    context: &RunContext,
+    seeding: &Seeding<'_>,
     fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
     seed_content(
         seed,
         ContentKind::File,
         dest,
-        context,
+        seeding,
         create_private_file,
         fill,
     )
@@ -58,14 +66,14 @@ pub(crate) fn seed_file(
 pub(crate) fn seed_directory(
     seed: SeedDescription<'_>,
     dest: &Path,
-    context: &RunContext,
+    seeding: &Seeding<'_>,
     fill: impl FnOnce(&Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
     seed_content(
         seed,
         ContentKind::Directory,
         dest,
-        context,
+        seeding,
         create_private_directory,
         |(), staging| fill(staging),
     )
@@ -79,15 +87,15 @@ fn seed_content<T>(
     seed: SeedDescription<'_>,
     kind: ContentKind,
     dest: &Path,
-    context: &RunContext,
+    seeding: &Seeding<'_>,
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let resolver = context.conflict_resolver();
-    let (mode, reporter) = (context.mode(), context.reporter());
+    let resolver = &seeding.resolver;
+    let (mode, reporter) = (resolver.mode(), resolver.reporter());
     // Skip rebuilding occupied seeds under `--no-overwrite`.
-    let refreshing = context.refresh_content() && !resolver.conflicts().skips();
-    let found = match Occupancy::at(dest, context.repository())? {
+    let refreshing = seeding.refresh_content && !resolver.conflicts().skips();
+    let found = match Occupancy::at(dest, seeding.repository)? {
         Occupancy::Vacant => None,
         _ if !refreshing => {
             report_kept(dest, mode, reporter);
@@ -104,13 +112,13 @@ fn seed_content<T>(
             if let Some(source) = seed.source {
                 paths::refuse_setting_aside_a_source(source, dest)?;
             }
-            if !refresh_seed(kind, dest, existing, &resolver, make, fill)? {
+            if !refresh_seed(kind, dest, existing, resolver, make, fill)? {
                 return Ok(());
             }
             Verb::Refresh
         }
         None => {
-            if !directory::create_parents(dest, &resolver)? {
+            if !directory::create_parents(dest, resolver)? {
                 return Ok(());
             }
             if mode.writes() && !build_and_publish(kind, dest, reporter, make, fill)? {

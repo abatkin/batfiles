@@ -52,21 +52,23 @@ pub(crate) enum Change {
     Enable,
 }
 
-/// Enable or disable an address, returning whether the set changed.
-pub(crate) fn apply(set: &mut BTreeSet<ItemAddress>, change: Change, name: &ItemAddress) -> bool {
-    match change {
-        Change::Disable => set.insert(name.clone()),
-        Change::Enable => set.remove(name),
+impl Change {
+    /// Enable or disable an address in `set`, returning whether the set changed.
+    pub fn apply_to(self, set: &mut BTreeSet<ItemAddress>, name: &ItemAddress) -> bool {
+        match self {
+            Self::Disable => set.insert(name.clone()),
+            Self::Enable => set.remove(name),
+        }
     }
-}
 
-/// Format the outcome of enabling or disabling an action or group.
-pub(crate) fn outcome(kind: ItemKind, change: Change, name: &ItemAddress, changed: bool) -> String {
-    match (change, changed) {
-        (Change::Disable, true) => format!("disabled {kind} `{name}`"),
-        (Change::Disable, false) => format!("{kind} `{name}` was already disabled"),
-        (Change::Enable, true) => format!("enabled {kind} `{name}` (was disabled)"),
-        (Change::Enable, false) => format!("{kind} `{name}` was already enabled"),
+    /// Format the outcome of enabling or disabling an action or group.
+    pub fn outcome(self, kind: ItemKind, name: &ItemAddress, changed: bool) -> String {
+        match (self, changed) {
+            (Self::Disable, true) => format!("disabled {kind} `{name}`"),
+            (Self::Disable, false) => format!("{kind} `{name}` was already disabled"),
+            (Self::Enable, true) => format!("enabled {kind} `{name}` (was disabled)"),
+            (Self::Enable, false) => format!("{kind} `{name}` was already enabled"),
+        }
     }
 }
 
@@ -185,28 +187,28 @@ mod tests {
     #[test]
     fn disabling_an_absent_name_changes_the_set() {
         let mut actions = BTreeSet::new();
-        assert!(apply(&mut actions, Change::Disable, &id("p10k")));
+        assert!(Change::Disable.apply_to(&mut actions, &id("p10k")));
         assert_eq!(actions, set(["p10k"]));
     }
 
     #[test]
     fn disabling_a_present_name_changes_nothing() {
         let mut actions = set(["p10k"]);
-        assert!(!apply(&mut actions, Change::Disable, &id("p10k")));
+        assert!(!Change::Disable.apply_to(&mut actions, &id("p10k")));
         assert_eq!(actions, set(["p10k"]));
     }
 
     #[test]
     fn enabling_an_absent_name_changes_nothing() {
         let mut actions = set(["p10k"]);
-        assert!(!apply(&mut actions, Change::Enable, &id("zshrc")));
+        assert!(!Change::Enable.apply_to(&mut actions, &id("zshrc")));
         assert_eq!(actions, set(["p10k"]));
     }
 
     #[test]
     fn enabling_a_present_name_changes_the_set() {
         let mut actions = set(["p10k"]);
-        assert!(apply(&mut actions, Change::Enable, &id("p10k")));
+        assert!(Change::Enable.apply_to(&mut actions, &id("p10k")));
         assert!(actions.is_empty());
     }
 
@@ -221,11 +223,7 @@ mod tests {
     #[test]
     fn each_list_is_edited_on_its_own() {
         let mut disabled = DisabledItems::default();
-        apply(
-            disabled.list_mut(ItemKind::Group),
-            Change::Disable,
-            &id("work"),
-        );
+        Change::Disable.apply_to(disabled.list_mut(ItemKind::Group), &id("work"));
         assert!(disabled.actions.is_empty());
         assert_eq!(disabled.groups, set(["work"]));
     }
@@ -233,7 +231,7 @@ mod tests {
     #[test]
     fn every_outcome_says_whether_the_state_moved() {
         let name = id("p10k");
-        let line = |change, changed| outcome(ItemKind::Action, change, &name, changed);
+        let line = |change: Change, changed| change.outcome(ItemKind::Action, &name, changed);
         assert_eq!(line(Change::Disable, true), "disabled action `p10k`");
         assert_eq!(
             line(Change::Disable, false),
@@ -252,7 +250,7 @@ mod tests {
     #[test]
     fn the_outcome_names_the_kind_the_command_edits() {
         assert_eq!(
-            outcome(ItemKind::Group, Change::Disable, &id("work"), true),
+            Change::Disable.outcome(ItemKind::Group, &id("work"), true),
             "disabled group `work`"
         );
     }

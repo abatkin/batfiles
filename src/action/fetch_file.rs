@@ -17,7 +17,7 @@ pub(super) fn fetch_file(action: &FetchFileAction, context: &RunContext) -> Resu
             source: None,
         },
         &dest,
-        context,
+        &context.seeding(),
         |file, staging| {
             let source = fetch::FileSource {
                 url: &action.source,

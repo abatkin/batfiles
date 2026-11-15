@@ -25,7 +25,7 @@ pub(super) fn fetch_archive(
             source: None,
         },
         &dest,
-        context,
+        &context.seeding(),
         |staging| {
             install::with_scratch(&dest, context.reporter(), |scratch| {
                 let at = scratch.path().to_path_buf();

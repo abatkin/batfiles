@@ -3,7 +3,7 @@
 
 use crate::commands::Session;
 use crate::error::Error;
-use crate::manifest::disabled::{Change, DisabledItems, apply, outcome};
+use crate::manifest::disabled::{Change, DisabledItems};
 use crate::manifest::item::{ItemAddress, ItemKind};
 use crate::output::Reporter;
 
@@ -26,9 +26,9 @@ pub(crate) fn run(
     let mut changed = false;
     let mut lines: Vec<String> = Vec::with_capacity(names.len());
     for name in &names {
-        let mutated = apply(set, change, name);
+        let mutated = change.apply_to(set, name);
         changed |= mutated;
-        lines.push(outcome(kind, change, name, mutated));
+        lines.push(change.outcome(kind, name, mutated));
     }
 
     if changed {

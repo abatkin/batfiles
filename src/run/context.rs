@@ -6,13 +6,14 @@ use std::time::SystemTime;
 
 use crate::error::Error;
 use crate::filesystem::directory::{self, DirectoryOutcome};
+use crate::filesystem::install::Seeding;
 use crate::filesystem::mode::RunMode;
 use crate::filesystem::paths::{self, RepositoryRoot};
 use crate::filesystem::replace::{self, ConflictPolicy, ConflictResolver, ConflictSettings};
 use crate::location::Roots;
 use crate::manifest::condition::Exclusion;
 use crate::manifest::item::ItemId;
-use crate::manifest::remote::Tree;
+use crate::manifest::remote::{Remote, Tree};
 use crate::manifest::repo_path::RepoPath;
 use crate::output::{Reporter, Verb};
 use crate::source::remotes;
@@ -35,8 +36,10 @@ impl Default for DestinationOptions {
     }
 }
 
-/// Anchored roots, execution mode, remote exclusions, conflict settings, and reporter for a
-/// run.
+/// What actions read during one run: anchored roots, execution mode, the remotes this machine
+/// excludes, conflict settings, and the reporter. The pipeline builds it from an
+/// [`Invocation`](crate::run::Invocation) once the leaf manifest is loaded and remote
+/// conditions are decided.
 pub(crate) struct RunContext<'a> {
     repository: RepositoryRoot,
     home: PathBuf,
@@ -140,6 +143,22 @@ impl<'a> RunContext<'a> {
         destination(&self.home, dest)
     }
 
+    /// Materialize the declared remotes this run does not exclude; see
+    /// [`remotes::materialize`].
+    pub fn materialize(
+        &self,
+        declared: &BTreeMap<ItemId, Remote>,
+        refetch: bool,
+    ) -> Result<(), Error> {
+        remotes::materialize(
+            declared,
+            &self.excluded_remotes,
+            &self.repository,
+            &self.tool_owned(),
+            refetch,
+        )
+    }
+
     /// Where a declared remote is materialized in this run's repository; see
     /// [`remotes::materialization`].
     pub fn materialization(&self, id: &ItemId) -> PathBuf {
@@ -165,14 +184,18 @@ impl<'a> RunContext<'a> {
         ConflictResolver::new(&self.conflicts, self.mode, self.reporter)
     }
 
+    /// What installing a seed needs from this run.
+    pub fn seeding(&self) -> Seeding<'_> {
+        Seeding {
+            resolver: self.conflict_resolver(),
+            repository: &self.repository,
+            refresh_content: self.refresh_content,
+        }
+    }
+
     /// Return a resolver that refuses unmanaged nodes at tool-owned destinations.
     pub fn tool_owned(&self) -> ConflictResolver<'_> {
         ConflictResolver::new(&replace::REFUSE_CONFLICTS, self.mode, self.reporter)
-    }
-
-    /// Whether `--refresh-content` requests reinstalling existing seed content.
-    pub fn refresh_content(&self) -> bool {
-        self.refresh_content
     }
 
     /// Ensure a destination directory exists and report changes. Return `false` if a conflict

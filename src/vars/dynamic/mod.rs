@@ -31,7 +31,7 @@ pub(crate) struct DynamicVarResolver<'a> {
     policy: CachePolicy,
     /// Declarations run under [`CachePolicy::Force`] whatever `policy` says;
     /// `None` uses `policy` for every declaration.
-    forced: Option<RefreshSelection>,
+    forced: Option<RefreshTargets>,
     /// Whether to skip declarations shadowed by machine-local values.
     skip_shadowed: bool,
     /// The remotes whose declarations may run.
@@ -46,13 +46,13 @@ pub(crate) struct DynamicVarResolver<'a> {
 
 /// Which declarations `vars refresh` forces, regardless of cache freshness.
 #[derive(Clone)]
-pub(crate) enum RefreshSelection {
+pub(crate) enum RefreshTargets {
     All,
     /// At least one key, as constructed by [`Self::from_keys`].
     Named(BTreeSet<DynamicVarKey>),
 }
 
-impl RefreshSelection {
+impl RefreshTargets {
     /// Select all declarations if `keys` is empty; otherwise select the distinct named keys.
     pub fn from_keys(keys: &[DynamicVarKey]) -> Self {
         if keys.is_empty() {
@@ -126,16 +126,16 @@ impl<'a> DynamicVarResolver<'a> {
         Self::new(state, policy, true, BTreeSet::new(), reporter)
     }
 
-    /// Create a resolver that forces `selection` and uses the run policy for other declarations
+    /// Create a resolver that forces `targets` and uses the run policy for other declarations
     /// needed by [`layer`](Self::layer).
     pub fn for_refresh(
         state: &StateRoots,
-        selection: RefreshSelection,
+        targets: RefreshTargets,
         remotes: &BTreeMap<ItemId, Remote>,
         reporter: &'a Reporter,
     ) -> Self {
         Self {
-            forced: Some(selection),
+            forced: Some(targets),
             ..Self::for_run(state, CachePolicy::Auto, remotes, reporter)
         }
     }
@@ -267,7 +267,7 @@ impl<'a> DynamicVarResolver<'a> {
         if self
             .forced
             .as_ref()
-            .is_some_and(|selection| selection.contains(identity))
+            .is_some_and(|targets| targets.contains(identity))
         {
             CachePolicy::Force
         } else {

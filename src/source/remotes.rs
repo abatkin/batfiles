@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 use crate::filesystem::install;
-use crate::filesystem::paths;
+use crate::filesystem::paths::{self, RepositoryRoot};
+use crate::filesystem::replace::ConflictResolver;
 use crate::filesystem::tomlfile;
 use crate::manifest::condition::{Bindings, Exclusion};
 use crate::manifest::entry_filter::{EntryFilter, ExecutableFilter, GlobFilter};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::{ArchiveRemote, FileRemote, Remote};
 use crate::output::Verb;
-use crate::run::context::RunContext;
 use crate::source::archive;
 use crate::source::fetch;
 use crate::source::git;
@@ -56,43 +56,56 @@ pub(crate) fn excluded(
 /// Materialize admitted remotes in ID order. Update Git clones; fetch missing or changed
 /// file/archive declarations, or all of them when `refetch` is set, current or not.
 ///
-/// Report exclusions without reading their trees. Dry runs report intent without Git or
-/// downloads. Stop on the first failure.
+/// Report the remotes in `excluded` without reading their trees. Materializations go under
+/// the leaf root `repository`; `tool_owned` refuses an unmanaged node at one, and carries the
+/// run's mode and reporter. Dry runs report intent without Git or downloads. Stop on the first
+/// failure.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
-    context: &RunContext<'_>,
+    excluded: &BTreeMap<ItemId, Exclusion>,
+    repository: &RepositoryRoot,
+    tool_owned: &ConflictResolver<'_>,
     refetch: bool,
 ) -> Result<(), Error> {
+    let reporter = tool_owned.reporter();
     for (id, remote) in remotes {
         let heading = format!("remote {id}");
-        if let Some(exclusion) = context.excluded_remote(id) {
-            exclusion.report_heading(context.reporter(), &heading);
+        if let Some(exclusion) = excluded.get(id) {
+            exclusion.report_heading(reporter, &heading);
             continue;
         }
-        context.reporter().detail(1, &heading);
-        let dest = context.materialization(id);
+        reporter.detail(1, &heading);
+        let dest = materialization(repository.path(), id);
         match remote {
             Remote::Git(remote) => {
                 git::clone_or_update(
                     &remote.url,
                     &dest,
                     remote.git_ref.as_deref(),
-                    context.repository(),
-                    &context.tool_owned(),
+                    repository,
+                    tool_owned,
                 )?;
                 // A successful Git materialization invalidates any earlier file/archive stamp.
-                if context.mode().writes() {
+                if tool_owned.mode().writes() {
                     tomlfile::remove(&stamp_path(&dest))?;
                 }
             }
             Remote::File(remote) => {
-                fetch(id, Stamp::file(remote), None, None, &dest, refetch, context)?;
+                fetch(
+                    id,
+                    Stamp::file(remote),
+                    None,
+                    None,
+                    &dest,
+                    refetch,
+                    tool_owned,
+                )?;
             }
             Remote::Archive(remote) => {
                 let filter = EntryFilter::new(remote.include.as_ref(), remote.exclude.as_ref());
                 let executable = ExecutableFilter::new(remote.executable.as_ref());
                 let wanted = Stamp::archive(remote);
-                fetch(id, wanted, filter, executable, &dest, refetch, context)?;
+                fetch(id, wanted, filter, executable, &dest, refetch, tool_owned)?;
             }
         }
     }
@@ -108,12 +121,12 @@ fn fetch(
     mut executable: Option<ExecutableFilter<'_>>,
     dest: &Path,
     refetch: bool,
-    context: &RunContext<'_>,
+    tool_owned: &ConflictResolver<'_>,
 ) -> Result<(), Error> {
     let stamp = stamp_path(dest);
     let found = FilesystemEntryKind::at(dest)?;
     let recorded = read_stamp(&stamp)?;
-    let (mode, reporter) = (context.mode(), context.reporter());
+    let (mode, reporter) = (tool_owned.mode(), tool_owned.reporter());
 
     let replacing = match decide(found.as_ref(), recorded.as_ref(), &wanted, refetch) {
         Plan::Unchanged => {
@@ -139,7 +152,7 @@ fn fetch(
             executable,
             decompress,
             ..
-        } => install::rebuild_file(dest, &context.tool_owned(), |file, at| {
+        } => install::rebuild_file(dest, tool_owned, |file, at| {
             let source = fetch::FileSource {
                 url,
                 sha256: sha256.as_deref(),
@@ -152,7 +165,7 @@ fn fetch(
             sha256,
             archive_root,
             ..
-        } => install::rebuild_directory(dest, &context.tool_owned(), |staging| {
+        } => install::rebuild_directory(dest, tool_owned, |staging| {
             install::with_scratch(dest, reporter, |scratch| {
                 let at = scratch.path().to_path_buf();
                 fetch::download(url, sha256.as_deref(), scratch, &at)?;

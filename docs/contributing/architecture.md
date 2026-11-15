@@ -101,6 +101,11 @@ path; their replacement policy differs from seeds.
   register that ownership in `tests/hygiene.rs`.
 - Put a new module in the directory for its layer. Keep the crate root for
   what every layer shares.
+- `manifest/`, `vars/`, `source/`, and `filesystem/` import nothing from
+  `run/`, `action/`, `commands/`, or `cli/`. What they need from a run is passed
+  to them. The source-layer check in `tests/hygiene.rs` inspects imports and
+  qualified paths in parsed Rust code. Inside macro bodies it checks explicit
+  `crate::<layer>` paths as written, before macro expansion.
 
 ### Layout
 
@@ -159,6 +164,7 @@ Code names follow these terms beside the user-facing ones:
 | `run/record.rs` | The run's list: each record's identity, heading, and disposition, and each inclusion's ownership of the records it contributed, with their scope. |
 | `run/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
 | `run/compose.rs` | What an opened inclusion contributes: its filters' verdicts, dropped nested inclusions, and the warnings composing it gives. |
+| `run/clone_list.rs` | A clone list read for one run, with each entry decided against the selection. |
 | `run/inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
 | `run/selection.rs` | Targets and exclusions, decided on a record's or a clone-list entry's addresses and condition. |
 | `vars/dynamic/` | Running dynamic variables' commands, and their cache. |
