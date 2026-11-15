@@ -2,13 +2,13 @@
 
 use std::path::PathBuf;
 
-use crate::disabled::DisabledItems;
-use crate::dynamic::DynamicVarCache;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::machine_vars::MachineVars;
+use crate::filesystem::paths;
 use crate::manifest::Manifest;
-use crate::paths;
+use crate::manifest::disabled::DisabledItems;
+use crate::vars::dynamic::DynamicVarCache;
+use crate::vars::machine::MachineVars;
 
 /// The four location options, as parsed from the command line.
 #[derive(Debug, Default)]

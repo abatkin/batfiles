@@ -3,10 +3,10 @@
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
-use super::RunContext;
 use crate::error::Error;
+use crate::filesystem::paths;
 use crate::output::Verb;
-use crate::paths;
+use crate::run::context::RunContext;
 
 /// Source directory, destination directory, and naming/reporting options for child
 /// installation.

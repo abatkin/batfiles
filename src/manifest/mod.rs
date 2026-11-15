@@ -1,10 +1,18 @@
-//! Parse and validate `batfiles.toml` manifests.
+//! Parse and validate `batfiles.toml` manifests, and the declarations they are
+//! made of: item names, conditions, repository paths, entry filters, clone
+//! lists, and the `disabled.toml` that switches items off on this machine.
 
 pub(crate) mod action;
 pub(crate) mod check;
+pub(crate) mod clone_list;
+pub(crate) mod condition;
 pub(crate) mod default_disabled;
+pub(crate) mod disabled;
 pub(crate) mod duration;
+pub(crate) mod entry_filter;
+pub(crate) mod item;
 pub(crate) mod remote;
+pub(crate) mod repo_path;
 pub(crate) mod vars;
 
 use std::collections::BTreeMap;
@@ -13,14 +21,14 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::error::Error as CrateError;
-use crate::item::ItemId;
+use crate::filesystem::tomlfile;
 use crate::manifest::action::Action;
 use crate::manifest::check::{RecordName, check_included_source};
 use crate::manifest::default_disabled::DefaultDisabled;
+use crate::manifest::item::ItemId;
 use crate::manifest::remote::Remote;
 use crate::manifest::vars::VarSpec;
-use crate::tomlfile;
-use crate::var::VarName;
+use crate::vars::name::VarName;
 
 pub(crate) use crate::manifest::check::ManifestError;
 

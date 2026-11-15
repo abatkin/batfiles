@@ -126,7 +126,7 @@ impl<'de> Deserialize<'de> for CommandSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::var::VarName;
+    use crate::vars::name::VarName;
     use std::collections::BTreeMap;
 
     type Vars = BTreeMap<VarName, VarSpec>;

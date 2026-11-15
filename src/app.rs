@@ -7,28 +7,28 @@ use std::process::ExitCode;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::action::DestinationOptions;
-use crate::bootstrap::BootstrapDecisions;
 use crate::cli::{Cli, Command, ExecutionOptions, GlobalOptions, VarsCommand, color};
-use crate::clone;
-use crate::disabled::{self, Change};
-use crate::dynamic::{CachePolicy, refresh};
+use crate::commands::clone;
+use crate::commands::disabled;
+use crate::commands::init;
+use crate::commands::update;
+use crate::commands::vars;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::execute::{self, Invocation};
-use crate::init;
-use crate::item::ItemKind;
+use crate::filesystem::mode::RunMode;
+use crate::filesystem::replace::ConflictPolicy;
 use crate::location::{
     LocationInputs, Roots, StateRoots, detect_os_home, discover_working_repository, resolve_roots,
     resolve_state_roots,
 };
-use crate::machine_vars;
-use crate::mode::RunMode;
+use crate::manifest::disabled::Change;
+use crate::manifest::item::ItemKind;
 use crate::output::{Reporter, Verbosity};
-use crate::replace::ConflictPolicy;
-use crate::run_lock::RunLock;
-use crate::update;
-use crate::var_set;
+use crate::run::bootstrap::BootstrapDecisions;
+use crate::run::context::DestinationOptions;
+use crate::run::lock::RunLock;
+use crate::run::{self, Invocation};
+use crate::vars::dynamic::CachePolicy;
 
 /// A command that ran and failed.
 const EXIT_FAILURE: u8 = 1;
@@ -107,7 +107,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
             };
             let roots = locate_repository(cli, env, reporter)?;
             let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            execute::sync(
+            run::sync(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.selection.actions.skip_actions,
                 &args.selection.groups.skip_groups,
@@ -119,7 +119,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         Command::ApplyAction(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            execute::apply_action(
+            run::apply_action(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.id,
             )?;
@@ -128,7 +128,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         Command::ApplyGroup(args) => {
             let roots = locate_repository(cli, env, reporter)?;
             let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            execute::apply_group(
+            run::apply_group(
                 &invocation(&roots, args.dry_run, &args.action, env, reporter),
                 &args.group,
                 &args.selection.skip_actions,
@@ -170,18 +170,18 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         Command::Vars(VarsCommand::Set { key, value }) => {
             let roots = locate_state(cli, env, reporter)?;
             let _lock = RunLock::acquire(&roots.cache_dir)?;
-            machine_vars::set(key, value, &roots, reporter)?;
+            vars::set(key, value, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vars(VarsCommand::Get { key }) => {
             let roots = locate_state(cli, env, reporter)?;
-            machine_vars::get(key, &roots, reporter)?;
+            vars::get(key, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Vars(VarsCommand::Unset { key }) => {
             let roots = locate_state(cli, env, reporter)?;
             let _lock = RunLock::acquire(&roots.cache_dir)?;
-            machine_vars::unset(key, &roots, reporter)?;
+            vars::unset(key, &roots, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
         // `--machine-only` must work without a repository.
@@ -191,7 +191,7 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
         }) => {
             if *machine_only {
                 let state = locate_state(cli, env, reporter)?;
-                var_set::list_machine(&state, reporter)?;
+                vars::list_machine(&state, reporter)?;
             } else {
                 let roots = locate_repository(cli, env, reporter)?;
                 // Only a listing that may refresh the dynamic cache writes state.
@@ -201,14 +201,14 @@ fn dispatch(cli: &Cli, env: &Environment, reporter: &Reporter) -> Result<ExitCod
                     let lock = RunLock::acquire(&roots.state.cache_dir)?;
                     (CachePolicy::Auto, Some(lock))
                 };
-                var_set::list(&roots, env, policy, reporter)?;
+                vars::list(&roots, env, policy, reporter)?;
             }
             Ok(ExitCode::SUCCESS)
         }
         Command::Vars(VarsCommand::Refresh { keys }) => {
             let roots = locate_repository(cli, env, reporter)?;
             let _lock = RunLock::acquire(&roots.state.cache_dir)?;
-            refresh::run(keys, &roots, env, reporter)?;
+            vars::refresh::run(keys, &roots, env, reporter)?;
             Ok(ExitCode::SUCCESS)
         }
     }

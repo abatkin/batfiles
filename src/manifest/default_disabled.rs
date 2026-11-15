@@ -3,8 +3,8 @@
 use serde::Deserialize;
 
 use super::check::{ManifestError, RecordName};
-use crate::condition::{Condition, Gate};
-use crate::item::{ItemAddress, ItemKind};
+use crate::manifest::condition::{Condition, Gate};
+use crate::manifest::item::{ItemAddress, ItemKind};
 
 /// Action and group candidates for bootstrap disabled state.
 #[derive(Debug, Default, Deserialize)]

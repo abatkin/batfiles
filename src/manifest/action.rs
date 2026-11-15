@@ -11,11 +11,11 @@ use super::check::{
     check_source, check_url,
 };
 use super::remote::Remote;
-use crate::condition::{Condition, Gate};
-use crate::entry_filter::GlobFilter;
-use crate::item::{ItemAddress, ItemId, ItemIdList};
-use crate::repo_path::RepoPath;
-use crate::var::VarName;
+use crate::manifest::condition::{Condition, Gate};
+use crate::manifest::entry_filter::GlobFilter;
+use crate::manifest::item::{ItemAddress, ItemId, ItemIdList};
+use crate::manifest::repo_path::RepoPath;
+use crate::vars::name::VarName;
 
 /// One entry of `[[actions]]`.
 #[derive(Debug, Deserialize)]
@@ -188,7 +188,7 @@ pub(crate) enum Contributor<'a> {
     Inclusion(&'a ItemId),
     /// Contributed by an `include-remote` without an `id`. Nothing is
     /// qualified; the line names the inclusion by its
-    /// [label](crate::inclusion::Inclusion::at).
+    /// [label](crate::run::inclusion::Inclusion::at).
     UnnamedInclusion(&'a str),
 }
 
@@ -439,7 +439,7 @@ pub(crate) struct IncludeRemoteAction {
     pub exclude_groups: Option<ItemIdList>,
 
     /// Variable overrides for contributed records only, applied by
-    /// [`VarSet::with_inclusion`](crate::var_set::VarSet::with_inclusion).
+    /// [`VarSet::with_inclusion`](crate::vars::set::VarSet::with_inclusion).
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
 }

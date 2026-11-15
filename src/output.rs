@@ -1,6 +1,6 @@
 //! Format progress messages, diagnostics, and requested output.
 
-use crate::mode::RunMode;
+use crate::filesystem::mode::RunMode;
 
 /// An installation operation reported in the tense selected by the run mode.
 #[derive(Debug, Clone, Copy)]

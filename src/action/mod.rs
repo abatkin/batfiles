@@ -1,7 +1,6 @@
 //! Dispatch prepared actions.
 
 mod children;
-mod context;
 mod copy;
 mod create_dir;
 mod fetch_archive;
@@ -10,12 +9,12 @@ mod git_clone;
 mod git_clone_list;
 mod symlink;
 
-pub(crate) use context::{DestinationOptions, RunContext};
+use crate::run::context::RunContext;
 
-use crate::clone_list::PreparedList;
 use crate::error::Error;
-use crate::item::ItemId;
 use crate::manifest::action::Action;
+use crate::manifest::clone_list::PreparedList;
+use crate::manifest::item::ItemId;
 
 /// Inputs for executing an action.
 ///
@@ -63,9 +62,10 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filesystem::mode::RunMode;
     use crate::location::{Roots, StateRoots};
-    use crate::mode::RunMode;
     use crate::output::Reporter;
+    use crate::run::context::DestinationOptions;
 
     /// Dispatch `declaration` as `Declared`, bypassing preparation to exercise
     /// the dispatch boundary's invariants.

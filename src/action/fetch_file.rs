@@ -1,11 +1,11 @@
 //! `fetch-file`: seed a destination with a downloaded file.
 
-use super::RunContext;
 use crate::error::Error;
-use crate::fetch;
-use crate::install;
+use crate::filesystem::install;
 use crate::manifest::action::FetchFileAction;
 use crate::output::Verb;
+use crate::run::context::RunContext;
+use crate::source::fetch;
 
 /// Carry out one `fetch-file` action.
 pub(super) fn fetch_file(action: &FetchFileAction, context: &RunContext) -> Result<(), Error> {

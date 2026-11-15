@@ -36,11 +36,12 @@ where rendering requires it.
 
 **6. Shell out to Git.** Use the user's executable, configuration, credentials,
 and SSH agent. Keep Git's subprocess launch and environment handling in
-`git.rs`. The supported environment is specified in
+`source/git.rs`. The supported environment is specified in
 [environment.md](../environment.md#variables-passed-on-to-git). The only other
-subprocesses are a dynamic variable's command, launched in `dynamic/run.rs`, and
-in `update.rs` the `version` of a release `update` has downloaded and, on
-Windows, the hidden PowerShell that removes the executable it set aside.
+subprocesses are a dynamic variable's command, launched in
+`vars/dynamic/run.rs`, and in `commands/update.rs` the `version` of a release
+`update` has downloaded and, on Windows, the hidden PowerShell that removes the
+executable it set aside.
 
 **7. Dry-run never simulates a filesystem.** Use the same action implementations
 in both modes, with writes gated at helpers. See [Dry-run](#dry-run).
@@ -65,17 +66,17 @@ configuration are requirements for batfiles to support.
 Do not accept options that silently do nothing or promise unbuilt behavior.
 
 **13. Preserve existing user content.** Apply the destination policy in
-[safety.md](../safety.md). Settle an unmanaged node through `replace.rs`, which
-owns the conflict policy, backups, and putting a node back; refuse one at a
-tool-owned destination. Cleanup removes only paths created by the current
-operation.
+[safety.md](../safety.md). Settle an unmanaged node through
+`filesystem/replace.rs`, which owns the conflict policy, backups, and putting a
+node back; refuse one at a tool-owned destination. Cleanup removes only paths
+created by the current operation.
 
 **14. Centralize path resolution.** Anchor roots before storing symlink targets.
 Resolve existing targets relative to their link's directory for classification.
 Keep repository source resolution in `RunContext` and filesystem classification
-in `paths.rs`. Use the documented distinction between lexical path construction
-and filesystem target resolution. Separate inspecting a node from deciding
-whether to replace it: a caller that needs only what is at a path uses
+in `filesystem/paths.rs`. Use the documented distinction between lexical path
+construction and filesystem target resolution. Separate inspecting a node from
+deciding whether to replace it: a caller that needs only what is at a path uses
 `paths::symlink_metadata_if_present`, which never reads a symlink's target;
 only a caller that may replace a symlink uses `Occupancy::at`.
 
@@ -98,6 +99,24 @@ path; their replacement policy differs from seeds.
   parsing, serialization support, and display. Add conversion traits as needed.
 - Modules may access the filesystem or processes when they own the operation;
   register that ownership in `tests/hygiene.rs`.
+- Put a new module in the directory for its layer. Keep the crate root for
+  what every layer shares.
+
+### Layout
+
+| Directory | Holds |
+| --- | --- |
+| `cli/` | Clap definitions. |
+| `commands/` | Commands outside the run pipeline: `clone`'s checkout, `init`, `update`, editing `disabled.toml`, and `vars`. |
+| `run/` | The pipeline `sync`, `clone`'s bootstrap, and the apply commands share; see [Execution](#execution). |
+| `action/` | Each action type's implementation, and dispatch. |
+| `manifest/` | The manifest and its declarations: items, conditions, repository paths, entry filters, clone lists, and `disabled.toml`. |
+| `vars/` | Variable names, `vars.toml`, environment overrides, dynamic variables, and the resolved `VarSet`. |
+| `source/` | Downloads, archives, Git, and remote materialization. |
+| `filesystem/` | Path inspection, the write helpers, `RunMode`, and state-document replacement. |
+
+The crate root keeps `main.rs`, `app.rs` (command dispatch), and the shared
+`env`, `error`, `location`, `output`, `release`, and `version`.
 
 ### Vocabulary
 
@@ -123,17 +142,20 @@ Code names follow these terms beside the user-facing ones:
 
 ### Execution
 
-`sync`, `clone`'s bootstrap, and the apply commands share one pipeline:
+`sync`, `clone`'s bootstrap, and the apply commands share one pipeline, which
+`run/` holds:
 
 | Module | Owns |
 | --- | --- |
-| `execute/mod.rs` | Command entry points, phase order, clone-list preparation, and the execution loop. |
-| `execute/record.rs` | The run's list: each record's identity, heading, and disposition, and each inclusion's ownership of the records it contributed, with their scope. |
-| `execute/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
-| `execute/inclusion.rs` | What an opened inclusion contributes: its filters' verdicts, dropped nested inclusions, and the warnings composing it gives. |
-| `inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
-| `dynamic/` | Running dynamic variables' commands, and their cache. |
-| `selection.rs` | Targets and exclusions, decided on a record's or a clone-list entry's addresses and condition. |
+| `run/mod.rs` | Command entry points, phase order, clone-list preparation, and the execution loop. |
+| `run/bootstrap.rs` | Bootstrap adoption of `disabled.toml` for `clone` and `sync --bootstrap`. |
+| `run/context.rs` | `RunContext`: run settings, roots, and repository source and destination resolution. |
+| `run/record.rs` | The run's list: each record's identity, heading, and disposition, and each inclusion's ownership of the records it contributed, with their scope. |
+| `run/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
+| `run/compose.rs` | What an opened inclusion contributes: its filters' verdicts, dropped nested inclusions, and the warnings composing it gives. |
+| `run/inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
+| `run/selection.rs` | Targets and exclusions, decided on a record's or a clone-list entry's addresses and condition. |
+| `vars/dynamic/` | Running dynamic variables' commands, and their cache. |
 | `action/` | Dispatch of prepared install records. |
 
 A run proceeds in this order:
@@ -256,9 +278,9 @@ Actions must not implement an alternate dry-run path or simulate earlier writes.
 The user-visible contract, including source validation, shared destinations,
 per-child output, and reporting limits, is owned by
 [cmdline.md](../cmdline.md#dry-run-behavior). Batfiles bookkeeping runs in both
-modes: the state documents `tomlfile.rs` rewrites, and the dynamic-variable
-commands `dynamic/run.rs` runs, which never consult `RunMode` because the plan
-itself depends on their values.
+modes: the state documents `filesystem/tomlfile.rs` rewrites, and the
+dynamic-variable commands `vars/dynamic/run.rs` runs, which never consult
+`RunMode` because the plan itself depends on their values.
 
 ### Filesystem ownership checks
 
@@ -297,7 +319,7 @@ Keep each of these in one place, without building future abstractions:
    position.
 4. Repository source paths use one resolver, which takes the tree a record came
    from.
-5. The manifest owns declaration order; `execute` assembles the run's list from
+5. The manifest owns declaration order; `run` assembles the run's list from
    it, opening every inclusion it reaches. Each opened inclusion owns the
    records it contributed; inclusion is one level deep, so they are never
    inclusions themselves. Assembly and selection are one pass, and both finish
@@ -305,7 +327,8 @@ Keep each of these in one place, without building future abstractions:
    never becomes one: it is the same records, read from more than one file. See
    [Dry-run](#dry-run).
 6. Whether an inclusion is opened, and the reading of its manifest, belong to
-   `inclusion.rs`, which `execute` and `vars refresh` both call, admission
-   first. It takes the anchored repository path rather than a `RunContext`.
-   Composing what an inclusion contributes belongs to `execute` alone; refresh
+   `run/inclusion.rs`, which the pipeline and `vars refresh` both call,
+   admission first. It takes the anchored repository path rather than a
+   `RunContext`. Composing what an inclusion contributes belongs to
+   `run/compose.rs` alone; refresh
    folds admitted inclusions by remote instead.

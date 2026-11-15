@@ -6,9 +6,9 @@ use super::check::{
     ManifestError, RecordName, check_archive_root, check_digest, check_git_ref, check_git_source,
     check_url,
 };
-use crate::condition::{Condition, Gate};
-use crate::entry_filter::GlobFilter;
-use crate::item::ItemId;
+use crate::manifest::condition::{Condition, Gate};
+use crate::manifest::entry_filter::GlobFilter;
+use crate::manifest::item::ItemId;
 
 /// A remote declaration, selected by its required `type` field and identified by its map key.
 #[derive(Debug, Deserialize)]

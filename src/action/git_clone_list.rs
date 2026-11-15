@@ -1,10 +1,10 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
-use super::RunContext;
-use crate::clone_list::PreparedList;
 use crate::error::Error;
-use crate::git::{self, GitError};
-use crate::selection::Disposition;
+use crate::manifest::clone_list::PreparedList;
+use crate::run::context::RunContext;
+use crate::run::selection::Disposition;
+use crate::source::git::{self, GitError};
 
 /// Create the destination directory and process entries in list order. `list`
 /// was read during preparation; an empty one declares no repositories. Entries

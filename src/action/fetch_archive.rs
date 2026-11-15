@@ -1,13 +1,13 @@
 //! `fetch-archive`: seed a destination with a downloaded archive's contents.
 
-use super::RunContext;
-use crate::archive;
-use crate::entry_filter::{EntryFilter, Executable};
 use crate::error::Error;
-use crate::fetch;
-use crate::install;
+use crate::filesystem::install;
 use crate::manifest::action::FetchArchiveAction;
+use crate::manifest::entry_filter::{EntryFilter, Executable};
 use crate::output::Verb;
+use crate::run::context::RunContext;
+use crate::source::archive;
+use crate::source::fetch;
 
 /// Carry out one `fetch-archive` action.
 pub(super) fn fetch_archive(

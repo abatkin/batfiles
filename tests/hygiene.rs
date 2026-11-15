@@ -58,12 +58,12 @@ struct Owner {
 /// `std::process::Command`.
 const FILESYSTEM_OWNERS: [Owner; 15] = [
     Owner {
-        path: "src/clone_list.rs",
+        path: "src/manifest/clone_list.rs",
         kind: Kind::ReadOnly,
         reason: "reads the list a `git-clone-list` names, and never clones from it",
     },
     Owner {
-        path: "src/paths.rs",
+        path: "src/filesystem/paths.rs",
         kind: Kind::ReadOnly,
         reason: "what a path means, and what is already at one",
     },
@@ -73,32 +73,32 @@ const FILESYSTEM_OWNERS: [Owner; 15] = [
         reason: "reproduces a repository node into a staging tree install.rs made",
     },
     Owner {
-        path: "src/fetch.rs",
+        path: "src/source/fetch.rs",
         kind: Kind::Downstream,
         reason: "writes a download or a file:// source, or what it decompresses to, into a staging file install.rs opened, and widens its mode",
     },
     Owner {
-        path: "src/archive/mod.rs",
+        path: "src/source/archive/mod.rs",
         kind: Kind::Downstream,
         reason: "unpacks a downloaded archive into a staging tree, or decompresses a download into a staging file, that install.rs made",
     },
     Owner {
-        path: "src/directory.rs",
+        path: "src/filesystem/directory.rs",
         kind: Kind::ModeReader,
         reason: "creates installation containers and missing destination parents",
     },
     Owner {
-        path: "src/install.rs",
+        path: "src/filesystem/install.rs",
         kind: Kind::ModeReader,
         reason: "creates, publishes, compares, and cleans up seed staging nodes, and swaps rebuilt remote materializations into place",
     },
     Owner {
-        path: "src/replace.rs",
+        path: "src/filesystem/replace.rs",
         kind: Kind::ModeReader,
         reason: "renames a node in a destination's way to a backup or aside, and puts it back or removes it",
     },
     Owner {
-        path: "src/git.rs",
+        path: "src/source/git.rs",
         kind: Kind::ModeReader,
         reason: "runs git, and under DryRun runs none for any caller",
     },
@@ -108,28 +108,28 @@ const FILESYSTEM_OWNERS: [Owner; 15] = [
         reason: "the platform-specific call every symlink action makes",
     },
     Owner {
-        path: "src/dynamic/run.rs",
+        path: "src/vars/dynamic/run.rs",
         kind: Kind::Bookkeeping,
         reason: "runs dynamic-variable commands: arbitrary, unsandboxed subprocesses as the \
                  invoking user, in both modes and whatever they do",
     },
     Owner {
-        path: "src/tomlfile.rs",
+        path: "src/filesystem/tomlfile.rs",
         kind: Kind::Bookkeeping,
         reason: "reads, atomically rewrites, and removes the documents batfiles owns",
     },
     Owner {
-        path: "src/run_lock.rs",
+        path: "src/run/lock.rs",
         kind: Kind::Bookkeeping,
         reason: "creates and locks the empty run lock under the cache directory, in both modes",
     },
     Owner {
-        path: "src/init.rs",
+        path: "src/commands/init.rs",
         kind: Kind::Standalone,
         reason: "lays the leaf-repository skeleton into the directory `init` was run in",
     },
     Owner {
-        path: "src/update.rs",
+        path: "src/commands/update.rs",
         kind: Kind::Standalone,
         reason: "stages a release beside the running executable, runs its `version`, and renames \
                  it over that executable",

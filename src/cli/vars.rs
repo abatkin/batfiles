@@ -4,9 +4,9 @@
 
 use clap::Subcommand;
 
-use crate::dynamic::DynamicVarKey;
-use crate::item::ItemId;
-use crate::var::VarName;
+use crate::manifest::item::ItemId;
+use crate::vars::dynamic::DynamicVarKey;
+use crate::vars::name::VarName;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum VarsCommand {

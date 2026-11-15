@@ -5,15 +5,15 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
-use crate::entry_filter::{EntryFilter, Verdict};
 use crate::error::Error;
-use crate::install::{self, ContentKind};
-use crate::item::ItemId;
+use crate::filesystem::install::{self, ContentKind};
+use crate::filesystem::paths;
 use crate::manifest::action::{CopyAction, CopyDirAction};
+use crate::manifest::entry_filter::{EntryFilter, Verdict};
+use crate::manifest::item::ItemId;
 use crate::output::Verb;
-use crate::paths;
+use crate::run::context::RunContext;
 
 /// The entries an [`EntryFilter`] selects under a source directory, by their path relative to
 /// it, together with every directory holding one.

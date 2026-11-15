@@ -10,10 +10,10 @@ use thiserror::Error;
 
 use super::action::IncludeRemoteAction;
 use super::remote::Remote;
-use crate::entry_filter::GlobFilter;
-use crate::fetch::{FileUrlError, file_url_path};
-use crate::item::{ItemId, ItemKind};
-use crate::repo_path::{REMOTE_PREFIX, RepoPath};
+use crate::manifest::entry_filter::GlobFilter;
+use crate::manifest::item::{ItemId, ItemKind};
+use crate::manifest::repo_path::{REMOTE_PREFIX, RepoPath};
+use crate::source::fetch::{FileUrlError, file_url_path};
 
 /// Record identifier used in validation errors: a one-based position for actions and bootstrap
 /// candidates, or a remote ID.

@@ -3,7 +3,7 @@
 
 use clap::Args;
 
-use crate::var::VarName;
+use crate::vars::name::VarName;
 
 /// Options shared by commands that execute actions. `--interactive` conflicts with `--dry-run`.
 #[derive(Debug, Args)]

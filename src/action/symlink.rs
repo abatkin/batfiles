@@ -6,16 +6,16 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-use super::RunContext;
 use super::children::{ChildInstall, for_each_child};
-use crate::directory;
-use crate::entry_filter::EntryFilter;
 use crate::error::Error;
-use crate::item::ItemId;
+use crate::filesystem::directory;
+use crate::filesystem::paths::{self, Occupancy};
+use crate::filesystem::replace::ConflictDecision;
 use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
+use crate::manifest::entry_filter::EntryFilter;
+use crate::manifest::item::ItemId;
 use crate::output::Verb;
-use crate::paths::{self, Occupancy};
-use crate::replace::ConflictDecision;
+use crate::run::context::RunContext;
 
 #[cfg(not(unix))]
 fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {

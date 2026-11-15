@@ -5,19 +5,19 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::archive;
-use crate::clone_list;
-use crate::dynamic::refresh;
-use crate::fetch;
-use crate::git;
-use crate::init;
-use crate::item::{ItemAddress, ItemAddressError, ItemId, ItemKind};
+use crate::commands::init;
+use crate::commands::update;
+use crate::commands::vars::refresh;
+use crate::filesystem::paths::ExistingNode;
 use crate::manifest;
-use crate::paths::ExistingNode;
+use crate::manifest::clone_list;
+use crate::manifest::item::{ItemAddress, ItemAddressError, ItemId, ItemKind};
 use crate::release;
-use crate::remotes;
-use crate::update;
-use crate::var::{VarName, VarNameError};
+use crate::source::archive;
+use crate::source::fetch;
+use crate::source::git;
+use crate::source::remotes;
+use crate::vars::name::{VarName, VarNameError};
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
