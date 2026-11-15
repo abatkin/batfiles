@@ -116,7 +116,7 @@ path; their replacement policy differs from seeds.
 | `run/` | The pipeline `sync`, `clone`'s bootstrap, and the apply commands share; see [Execution](#execution). |
 | `action/` | Each action type's implementation, and dispatch. |
 | `manifest/` | The manifest and its declarations: items, conditions, repository paths, entry filters, clone lists, and `disabled.toml`. |
-| `vars/` | Variable names, `vars.toml`, environment overrides, dynamic variables, and the resolved `VarSet`. |
+| `vars/` | Variable names, `vars.toml`, environment overrides, dynamic variables, and the resolved `VarScope`. |
 | `source/` | Downloads, archives, Git, and remote materialization. |
 | `filesystem/` | Path inspection, the write helpers, `RunMode`, and state-document replacement. |
 

@@ -440,7 +440,7 @@ pub(crate) struct IncludeRemoteAction {
     pub exclude_groups: Option<ItemIdList>,
 
     /// Variable overrides for contributed records only, applied by
-    /// [`VarSet::with_inclusion`](crate::vars::set::VarSet::with_inclusion).
+    /// [`VarScope::with_inclusion`](crate::vars::scope::VarScope::with_inclusion).
     #[serde(default)]
     pub vars: BTreeMap<VarName, String>,
 }

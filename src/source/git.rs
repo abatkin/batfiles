@@ -337,7 +337,7 @@ fn branch(
         }
     }
 
-    let advanced = advance(dest, remote, reporter)?;
+    let advanced = fast_forward(dest, remote, reporter)?;
     // A branch switch takes precedence over any subsequent fast-forward in the report.
     Ok(if switching {
         UpdateOutcome::Switched
@@ -348,8 +348,8 @@ fn branch(
 
 /// Fast-forward to the target ref. Equal commits are unchanged; local commits
 /// or files that would be overwritten produce a warning and a skipped outcome.
-fn advance(dest: &Path, remote: &str, reporter: &Reporter) -> Result<UpdateOutcome, Error> {
-    if commit(dest, "HEAD")? == commit(dest, remote)? {
+fn fast_forward(dest: &Path, remote: &str, reporter: &Reporter) -> Result<UpdateOutcome, Error> {
+    if commit_id_of(dest, "HEAD")? == commit_id_of(dest, remote)? {
         return Ok(UpdateOutcome::Unchanged);
     }
     if !ancestor(dest, "HEAD", remote)? {
@@ -415,7 +415,7 @@ fn short_remote_ref(remote: &str) -> &str {
 
 /// Check out `commit_id` with a detached HEAD.
 fn detach(dest: &Path, commit_id: &str) -> Result<UpdateOutcome, Error> {
-    if head_branch(dest)?.is_none() && commit(dest, "HEAD")? == commit_id {
+    if head_branch(dest)?.is_none() && commit_id_of(dest, "HEAD")? == commit_id {
         return Ok(UpdateOutcome::Unchanged);
     }
     run_git(
@@ -472,7 +472,7 @@ fn update_tracking(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
     run_git(Some(dest), "fetch", &["fetch"], dest)?;
     report_update(
         dest,
-        advance(dest, &upstream, reporter)?,
+        fast_forward(dest, &upstream, reporter)?,
         &upstream,
         reporter,
     );
@@ -670,7 +670,7 @@ fn upstream(dest: &Path) -> Result<Option<String>, Error> {
 }
 
 /// The commit a revision names.
-fn commit(dest: &Path, revision: &str) -> Result<String, Error> {
+fn commit_id_of(dest: &Path, revision: &str) -> Result<String, Error> {
     let found = run_git(Some(dest), "rev-parse", &["rev-parse", revision], dest)?;
     Ok(String::from_utf8_lossy(&found.stdout).trim().to_owned())
 }

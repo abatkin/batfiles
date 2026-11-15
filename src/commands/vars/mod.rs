@@ -17,7 +17,7 @@ use crate::run::lock::RunLock;
 use crate::vars::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::vars::machine::MachineVars;
 use crate::vars::name::VarName;
-use crate::vars::set::VarSet;
+use crate::vars::scope::VarScope;
 
 /// Store `value` verbatim under `key`, replacing any previous machine-local value, under the run
 /// lock. Empty values are allowed.
@@ -172,7 +172,7 @@ fn list_leaf(
 ) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest_path())?;
     let mut dynamic = DynamicVarResolver::for_listing(&roots.state, policy, reporter);
-    let set = VarSet::resolve(
+    let scope = VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,
         &roots.state,
@@ -182,14 +182,14 @@ fn list_leaf(
         reporter,
     )?;
     dynamic.save();
-    set.list(reporter);
+    scope.list(reporter);
     Ok(())
 }
 
 /// List only persisted machine variables; do not read the repository or environment.
 fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
     let machine = MachineVars::load(&state.machine_vars_path())?;
-    VarSet::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
+    VarScope::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
     Ok(())
 }
 

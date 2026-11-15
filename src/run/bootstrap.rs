@@ -190,7 +190,7 @@ mod tests {
     use super::*;
     use crate::manifest::condition::HostNamespaces;
     use crate::output::Verbosity;
-    use crate::vars::set::VarSet;
+    use crate::vars::scope::VarScope;
     use std::collections::BTreeMap;
     use std::rc::Rc;
 
@@ -282,11 +282,16 @@ mod tests {
             .map(|(name, value)| {
                 (
                     crate::vars::name::VarName::try_from((*name).to_owned()).expect("valid name"),
-                    crate::vars::set::VarValue::Static((*value).to_owned()),
+                    crate::vars::scope::VarValue::Static((*value).to_owned()),
                 )
             })
             .collect();
-        let variables = Rc::new(VarSet::stack(values, BTreeMap::new(), BTreeMap::new(), &[]));
+        let variables = Rc::new(VarScope::stack(
+            values,
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        ));
         let host = HostNamespaces::capture(&env([]));
         let roots = machine(dir);
         let adopted = bootstrap

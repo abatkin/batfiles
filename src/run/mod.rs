@@ -9,7 +9,7 @@ mod compose;
 pub(crate) mod context;
 pub(crate) mod inclusion;
 pub(crate) mod lock;
-pub(crate) mod record;
+mod record;
 pub(crate) mod selection;
 
 use std::rc::Rc;
@@ -35,7 +35,7 @@ use crate::run::selection::{Disposition, Selection, Target};
 use crate::source::remotes;
 use crate::vars::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::vars::name::VarName;
-use crate::vars::set::VarSet;
+use crate::vars::scope::VarScope;
 
 /// What a command hands the pipeline: resolved roots, mode, `--var` values, and destination
 /// options, with the session's environment and reporter. Nothing in it depends on the manifest;
@@ -211,7 +211,7 @@ fn prepare<'a>(
     run_list: &'a RunList,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
-    scope: &Rc<VarSet>,
+    leaf_bindings: &Bindings<'_>,
     host: &HostNamespaces,
 ) -> Result<Vec<PlannedRecord<'a>>, Error> {
     run_list
@@ -224,21 +224,14 @@ fn prepare<'a>(
                 opened,
             } if record.disposition.is_allowed() => {
                 let remote = inclusion.remote();
-                let steps = opened
-                    .iter()
-                    .flat_map(|opened| {
-                        opened.records.iter().map(|included| {
-                            step(
-                                included,
-                                Tree::Remote(remote),
-                                selection,
-                                &opened.scope,
-                                context,
-                                host,
-                            )
-                        })
-                    })
-                    .collect::<Result<_, _>>()?;
+                let mut steps = Vec::new();
+                if let Some(opened) = opened {
+                    let tree = Tree::Remote(remote);
+                    let bindings = Bindings::new(&opened.scope, host);
+                    for record in &opened.records {
+                        steps.push(step(record, tree, selection, context, &bindings)?);
+                    }
+                }
                 Ok(PlannedRecord::Inclusion {
                     heading: &record.heading,
                     remote,
@@ -246,51 +239,48 @@ fn prepare<'a>(
                 })
             }
             TopLevelRecord::Action(record) | TopLevelRecord::Inclusion { record, .. } => Ok(
-                PlannedRecord::Step(step(record, Tree::Leaf, selection, scope, context, host)?),
+                PlannedRecord::Step(step(record, Tree::Leaf, selection, context, leaf_bindings)?),
             ),
         })
         .collect()
 }
 
-/// The step for one record, read from `tree` and decided in `scope`.
+/// The step for one record, read from `tree` and decided with `bindings`.
 fn step<'a>(
     record: &'a RunRecord,
     tree: Tree<&ItemId>,
     selection: &Selection<'_>,
-    scope: &Rc<VarSet>,
     context: &RunContext<'_>,
-    host: &HostNamespaces,
+    bindings: &Bindings<'_>,
 ) -> Result<Step<'a>, Error> {
     Ok(match &record.disposition {
         Disposition::NotRequested => Step::NotRequested,
         Disposition::Excluded(exclusion) => Step::ReportExclusion(record, exclusion),
         Disposition::Allowed | Disposition::AllowedInPart => Step::Run(
             record,
-            prepare_action(record, tree, selection, scope, context, host)?,
+            prepare_action(record, tree, selection, context, bindings)?,
         ),
     })
 }
 
 /// Prepare execution inputs for `record`. Clone lists are read from `tree`, with their entries
-/// decided by `selection` in `scope`; other actions use their declaration directly.
+/// decided by `selection` with `bindings`; other actions use their declaration directly.
 fn prepare_action<'a>(
     record: &'a RunRecord,
     tree: Tree<&ItemId>,
     selection: &Selection<'_>,
-    scope: &Rc<VarSet>,
     context: &RunContext<'_>,
-    host: &HostNamespaces,
+    bindings: &Bindings<'_>,
 ) -> Result<PreparedAction<'a>, Error> {
     let Action::GitCloneList(list) = &record.action else {
         return Ok(PreparedAction::Declared(&record.action));
     };
     let path = context.source(tree, &list.source)?;
-    let bindings = Bindings::new(scope, host);
     Ok(PreparedAction::CloneList(PreparedList::prepare(
         list,
         &path,
         record.address.as_ref(),
-        |entry| selection.entry_disposition(entry, &record.disposition, &bindings),
+        |entry| selection.entry_disposition(entry, &record.disposition, bindings),
     )?))
 }
 
@@ -350,7 +340,7 @@ fn run_pipeline(
     };
     let mut dynamic =
         DynamicVarResolver::for_run(&invocation.roots.state, policy, &manifest.remotes, reporter);
-    let scope = Rc::new(VarSet::resolve(
+    let scope = Rc::new(VarScope::resolve(
         &manifest.vars,
         &invocation.roots.batfiles_repo,
         &invocation.roots.state,
@@ -412,7 +402,7 @@ fn run_pipeline(
     dynamic.save();
     let run_list = run_list?;
 
-    let plan = prepare(&run_list, &selection, &context, &scope, &host)?;
+    let plan = prepare(&run_list, &selection, &context, &bindings, &host)?;
     // Included addresses are known only after assembly, and entry addresses after preparation.
     let list_entries = entry_addresses(&plan);
     run_list.warn_unmatched(&selection, &list_entries, reporter);

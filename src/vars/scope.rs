@@ -28,12 +28,12 @@ const MANIFEST_LABEL: &str = "batfiles.toml";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Origin {
     /// The `[vars]` of the manifest an `include-remote` opened, applying only to
-    /// that inclusion's records. Labeled by the inclusion. At most one per set.
+    /// that inclusion's records. Labeled by the inclusion. At most one per scope.
     IncludedManifest(String),
     /// The leaf repository's `[vars]`.
     LeafManifest,
     /// An `include-remote`'s `vars` overrides, applying only to that
-    /// inclusion's records. Labeled by the inclusion. At most one per set.
+    /// inclusion's records. Labeled by the inclusion. At most one per scope.
     InclusionOverrides(String),
     /// The machine-local `vars.toml`.
     Machine,
@@ -116,11 +116,11 @@ struct Layer {
 /// Variable layers for one condition scope, stored in increasing precedence
 /// order. A run has its own; inclusions may derive their own scopes.
 #[derive(Debug)]
-pub(crate) struct VarSet {
+pub(crate) struct VarScope {
     layers: Vec<Layer>,
 }
 
-impl VarSet {
+impl VarScope {
     /// Read the machine and environment layers and stack them with the leaf's
     /// `[vars]` (`manifest`, declared in `repository`) and every `--var`
     /// (`cli`, in written order). `dynamic` resolves the leaf's declarations.
@@ -178,7 +178,7 @@ impl VarSet {
     /// Derive an inclusion scope with remote variables below the leaf layer and inclusion
     /// overrides directly above it. `label` identifies both added layers.
     ///
-    /// Call on the run's base set, not a derived scope; each scope contains at most one layer
+    /// Call on the run's base scope. Each scope contains at most one layer
     /// of each kind.
     pub fn with_inclusion(
         &self,
@@ -207,12 +207,12 @@ impl VarSet {
 
     /// The run's own layers, from which an inclusion scope is derived.
     ///
-    /// Requires the run's own set. Panics in debug builds if it contains
+    /// Requires the run's base scope. Panics in debug builds if it contains
     /// inclusion layers; release builds omit those layers.
     fn base_layers(&self) -> impl Iterator<Item = &Layer> {
         debug_assert!(
             self.derived_layers().next().is_none(),
-            "an inclusion scope is derived from the run's own set, not from another scope"
+            "an inclusion scope is derived from the run's base scope, not from another scope"
         );
         self.layers
             .iter()
@@ -244,14 +244,14 @@ impl VarSet {
     }
 
     /// Report effective values and origins at `-vv`, indented under a heading.
-    /// An empty set produces no output. Values are quoted for single-line output.
+    /// An empty scope produces no output. Values are quoted for single-line output.
     pub fn report(&self, reporter: &Reporter) {
         self.report_lines("variables:", self.names(), reporter);
     }
 
     /// Report at `-vv`, under the inclusion's label, every name its two layers
     /// declare, each with the layer in force; an overridden declaration shows
-    /// as shadowed. Silent for the run's own set.
+    /// as shadowed. Silent for the run's base scope.
     pub fn report_inclusion(&self, reporter: &Reporter) {
         let Some((heading, names)) = self.inclusion_block() else {
             return;
@@ -260,7 +260,7 @@ impl VarSet {
     }
 
     /// The heading and names of the inclusion block, or `None` for the run's
-    /// own set.
+    /// base scope.
     fn inclusion_block(&self) -> Option<(String, BTreeSet<&VarName>)> {
         let mut inclusion = None;
         let mut names = BTreeSet::new();
@@ -274,7 +274,7 @@ impl VarSet {
 
     /// The layers [derived](Self::with_inclusion) for one inclusion: the
     /// included remote's `[vars]` and the inclusion's own overrides, lowest
-    /// first. Empty for the run's own set.
+    /// first. Empty for the run's base scope.
     fn derived_layers(&self) -> impl Iterator<Item = &Layer> {
         self.layers
             .iter()
@@ -298,7 +298,7 @@ impl VarSet {
     }
 
     /// Print effective values and origins to standard output.
-    /// An empty set produces only a status message on standard error.
+    /// An empty scope produces only a status message on standard error.
     pub fn list(&self, reporter: &Reporter) {
         let lines = self.lines();
         if lines.is_empty() {
@@ -394,8 +394,8 @@ mod tests {
         machine: [(&str, &str); B],
         environment: [(&str, &str); C],
         cli: [(&str, &str); D],
-    ) -> VarSet {
-        VarSet::stack(
+    ) -> VarScope {
+        VarScope::stack(
             statics(layer(manifest)),
             layer(machine),
             layer(environment),
@@ -404,8 +404,8 @@ mod tests {
     }
 
     /// The value in force and where it came from.
-    fn winner(set: &VarSet, key: &str) -> (String, Origin) {
-        let (origin, value) = set
+    fn winner(scope: &VarScope, key: &str) -> (String, Origin) {
+        let (origin, value) = scope
             .declaring(key)
             .next()
             .expect("some layer should declare it");
@@ -413,8 +413,9 @@ mod tests {
     }
 
     /// The layers that value overrode, highest first.
-    fn shadowed(set: &VarSet, key: &str) -> Vec<Origin> {
-        set.declaring(key)
+    fn shadowed(scope: &VarScope, key: &str) -> Vec<Origin> {
+        scope
+            .declaring(key)
             .skip(1)
             .map(|(origin, _)| origin.clone())
             .collect()
@@ -422,49 +423,50 @@ mod tests {
 
     #[test]
     fn each_layer_overrides_the_one_below_it() {
-        let set = stacked(
+        let scope = stacked(
             [("a", "manifest"), ("b", "manifest"), ("c", "manifest")],
             [("a", "machine"), ("b", "machine")],
             [("a", "environment")],
             [],
         );
         assert_eq!(
-            winner(&set, "a"),
+            winner(&scope, "a"),
             ("environment".to_owned(), Origin::Environment)
         );
-        assert_eq!(winner(&set, "b"), ("machine".to_owned(), Origin::Machine));
+        assert_eq!(winner(&scope, "b"), ("machine".to_owned(), Origin::Machine));
         assert_eq!(
-            winner(&set, "c"),
+            winner(&scope, "c"),
             ("manifest".to_owned(), Origin::LeafManifest)
         );
     }
 
     #[test]
     fn the_command_line_wins_over_every_other_layer() {
-        let set = stacked(
+        let scope = stacked(
             [("a", "manifest")],
             [("a", "machine")],
             [("a", "environment")],
             [("a", "cli")],
         );
-        assert_eq!(winner(&set, "a"), ("cli".to_owned(), Origin::CommandLine));
+        assert_eq!(winner(&scope, "a"), ("cli".to_owned(), Origin::CommandLine));
     }
 
     #[test]
     fn a_name_only_one_layer_declares_takes_that_layer_alone() {
-        let set = stacked([], [], [], [("only", "cli")]);
+        let scope = stacked([], [], [], [("only", "cli")]);
         assert_eq!(
-            winner(&set, "only"),
+            winner(&scope, "only"),
             ("cli".to_owned(), Origin::CommandLine)
         );
-        assert!(shadowed(&set, "only").is_empty());
+        assert!(shadowed(&scope, "only").is_empty());
     }
 
     #[test]
     fn the_set_is_the_union_of_the_layers() {
-        let set = stacked([("a", "1")], [("b", "2")], [("c", "3")], [("d", "4")]);
+        let scope = stacked([("a", "1")], [("b", "2")], [("c", "3")], [("d", "4")]);
         assert_eq!(
-            set.names()
+            scope
+                .names()
                 .into_iter()
                 .map(VarName::to_string)
                 .collect::<Vec<_>>(),
@@ -474,72 +476,75 @@ mod tests {
 
     #[test]
     fn a_name_no_layer_declares_is_declared_by_no_layer() {
-        let set = stacked([("a", "1")], [], [], []);
-        assert_eq!(set.declaring("absent").count(), 0);
-        assert_eq!(set.get("absent"), None);
+        let scope = stacked([("a", "1")], [], [], []);
+        assert_eq!(scope.declaring("absent").count(), 0);
+        assert_eq!(scope.get("absent"), None);
     }
 
     #[test]
     fn get_answers_with_the_value_in_force() {
-        let set = stacked(
+        let scope = stacked(
             [("a", "manifest"), ("b", "manifest")],
             [("a", "machine")],
             [],
             [],
         );
-        assert_eq!(set.get("a"), Some("machine"));
-        assert_eq!(set.get("b"), Some("manifest"));
+        assert_eq!(scope.get("a"), Some("machine"));
+        assert_eq!(scope.get("b"), Some("manifest"));
     }
 
     #[test]
     fn get_tells_a_declared_empty_value_from_an_undeclared_name() {
-        let set = stacked([], [], [], [("empty", "")]);
-        assert_eq!(set.get("empty"), Some(""));
-        assert_eq!(set.get("missing"), None);
+        let scope = stacked([], [], [], [("empty", "")]);
+        assert_eq!(scope.get("empty"), Some(""));
+        assert_eq!(scope.get("missing"), None);
     }
 
     #[test]
     fn a_value_outlives_the_name_it_was_looked_up_by() {
-        // Checked at compile time: the result borrows only from the set.
-        let set = stacked([("a", "1")], [], [], []);
+        // Checked at compile time: the result borrows only from the scope.
+        let scope = stacked([("a", "1")], [], [], []);
         let value = {
             let name = "a".to_owned();
-            set.get(&name)
+            scope.get(&name)
         };
         assert_eq!(value, Some("1"));
     }
 
     #[test]
     fn get_accepts_text_that_is_not_a_valid_name() {
-        let set = stacked([("a", "1")], [], [], []);
-        assert_eq!(set.get("has-dash"), None);
-        assert_eq!(set.get(""), None);
+        let scope = stacked([("a", "1")], [], [], []);
+        assert_eq!(scope.get("has-dash"), None);
+        assert_eq!(scope.get(""), None);
     }
 
     #[test]
     fn an_empty_value_overrides_like_any_other() {
-        let set = stacked([("profile", "personal")], [], [], [("profile", "")]);
+        let scope = stacked([("profile", "personal")], [], [], [("profile", "")]);
         assert_eq!(
-            winner(&set, "profile"),
+            winner(&scope, "profile"),
             (String::new(), Origin::CommandLine)
         );
     }
 
     #[test]
     fn a_repeated_command_line_value_keeps_the_last_one_written() {
-        let set = stacked([], [], [], [("p", "first"), ("p", "second"), ("q", "only")]);
+        let scope = stacked([], [], [], [("p", "first"), ("p", "second"), ("q", "only")]);
         assert_eq!(
-            winner(&set, "p"),
+            winner(&scope, "p"),
             ("second".to_owned(), Origin::CommandLine)
         );
-        assert_eq!(winner(&set, "q"), ("only".to_owned(), Origin::CommandLine));
+        assert_eq!(
+            winner(&scope, "q"),
+            ("only".to_owned(), Origin::CommandLine)
+        );
     }
 
     #[test]
     fn a_repeated_command_line_value_is_one_layer_and_not_two() {
-        let set = stacked([("p", "manifest")], [], [], [("p", "first"), ("p", "last")]);
+        let scope = stacked([("p", "manifest")], [], [], [("p", "first"), ("p", "last")]);
         assert_eq!(
-            shadowed(&set, "p"),
+            shadowed(&scope, "p"),
             [Origin::LeafManifest],
             "a repeated `--var` should not shadow itself"
         );
@@ -547,14 +552,14 @@ mod tests {
 
     #[test]
     fn a_variable_remembers_the_layers_it_overrode() {
-        let set = stacked(
+        let scope = stacked(
             [("a", "manifest")],
             [("a", "machine")],
             [("a", "environment")],
             [("a", "cli")],
         );
         assert_eq!(
-            shadowed(&set, "a"),
+            shadowed(&scope, "a"),
             [Origin::Environment, Origin::Machine, Origin::LeafManifest],
             "the layers should be listed highest first"
         );
@@ -562,12 +567,12 @@ mod tests {
 
     #[test]
     fn a_name_is_case_sensitive_across_layers() {
-        let set = stacked([("editor", "nvim")], [("EDITOR", "vi")], [], []);
+        let scope = stacked([("editor", "nvim")], [("EDITOR", "vi")], [], []);
         assert_eq!(
-            winner(&set, "editor"),
+            winner(&scope, "editor"),
             ("nvim".to_owned(), Origin::LeafManifest)
         );
-        assert_eq!(winner(&set, "EDITOR"), ("vi".to_owned(), Origin::Machine));
+        assert_eq!(winner(&scope, "EDITOR"), ("vi".to_owned(), Origin::Machine));
     }
 
     /// An inclusion label, as [`Inclusion::at`](crate::run::inclusion::Inclusion::at)
@@ -578,35 +583,36 @@ mod tests {
     const CORP_MANIFEST: &str = "batfiles.toml of include-remote `corp`";
 
     /// `base` derived for an inclusion with `overrides` and no remote `[vars]`.
-    fn derived<const N: usize>(base: &VarSet, overrides: [(&str, &str); N]) -> VarSet {
+    fn derived<const N: usize>(base: &VarScope, overrides: [(&str, &str); N]) -> VarScope {
         base.with_inclusion(&BTreeMap::new(), &layer(overrides), CORP)
     }
 
     /// `base` derived for an inclusion with remote `[vars]` and `overrides`.
     fn derived_from<const M: usize, const N: usize>(
-        base: &VarSet,
+        base: &VarScope,
         remote: [(&str, &str); M],
         overrides: [(&str, &str); N],
-    ) -> VarSet {
+    ) -> VarScope {
         base.with_inclusion(&statics(layer(remote)), &layer(overrides), CORP)
     }
 
-    /// The lines [`VarSet::report_inclusion`] would print.
-    fn override_lines(set: &VarSet) -> Vec<String> {
-        match set.inclusion_block() {
-            Some((_, names)) => set.lines_for(names),
+    /// The lines [`VarScope::report_inclusion`] would print.
+    fn override_lines(scope: &VarScope) -> Vec<String> {
+        match scope.inclusion_block() {
+            Some((_, names)) => scope.lines_for(names),
             None => Vec::new(),
         }
     }
 
     /// The heading that block is printed under.
-    fn block_heading(set: &VarSet) -> Option<String> {
-        set.inclusion_block().map(|(heading, _)| heading)
+    fn block_heading(scope: &VarScope) -> Option<String> {
+        scope.inclusion_block().map(|(heading, _)| heading)
     }
 
     /// Every layer's origin, lowest precedence first.
-    fn origins(set: &VarSet) -> Vec<Origin> {
-        set.layers
+    fn origins(scope: &VarScope) -> Vec<Origin> {
+        scope
+            .layers
             .iter()
             .map(|layer| layer.origin.clone())
             .collect()
@@ -614,9 +620,9 @@ mod tests {
 
     #[test]
     fn a_derived_scope_places_each_of_its_layers_by_origin() {
-        let set = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
+        let scope = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
         assert_eq!(
-            origins(&set),
+            origins(&scope),
             [
                 Origin::IncludedManifest(CORP.to_owned()),
                 Origin::LeafManifest,
@@ -630,7 +636,7 @@ mod tests {
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "derived from the run's own set")]
+    #[should_panic(expected = "derived from the run's base scope")]
     fn a_scope_is_not_derived_from_another_scope() {
         let corp = derived(&stacked([], [], [], []), [("profile", "work")]);
         let _ = derived(&corp, [("profile", "lab")]);
@@ -644,30 +650,30 @@ mod tests {
             [("c", "environment")],
             [("d", "cli")],
         );
-        let set = derived(
+        let scope = derived(
             &base,
             [("a", "corp"), ("b", "corp"), ("c", "corp"), ("d", "corp")],
         );
         assert_eq!(
-            winner(&set, "a"),
+            winner(&scope, "a"),
             (
                 "corp".to_owned(),
                 Origin::InclusionOverrides(CORP.to_owned())
             )
         );
-        assert_eq!(winner(&set, "b"), ("machine".to_owned(), Origin::Machine));
+        assert_eq!(winner(&scope, "b"), ("machine".to_owned(), Origin::Machine));
         assert_eq!(
-            winner(&set, "c"),
+            winner(&scope, "c"),
             ("environment".to_owned(), Origin::Environment)
         );
-        assert_eq!(winner(&set, "d"), ("cli".to_owned(), Origin::CommandLine));
+        assert_eq!(winner(&scope, "d"), ("cli".to_owned(), Origin::CommandLine));
     }
 
     #[test]
     fn an_override_adds_a_name_no_other_layer_declares() {
-        let set = derived(&stacked([], [], [], []), [("profile", "work")]);
-        assert_eq!(set.get("profile"), Some("work"));
-        assert!(shadowed(&set, "profile").is_empty());
+        let scope = derived(&stacked([], [], [], []), [("profile", "work")]);
+        assert_eq!(scope.get("profile"), Some("work"));
+        assert!(shadowed(&scope, "profile").is_empty());
     }
 
     #[test]
@@ -683,9 +689,9 @@ mod tests {
     #[test]
     fn an_override_block_lists_the_names_the_inclusion_declared() {
         let base = stacked([("editor", "vi"), ("profile", "personal")], [], [], []);
-        let set = derived(&base, [("profile", "work")]);
+        let scope = derived(&base, [("profile", "work")]);
         assert_eq!(
-            override_lines(&set),
+            override_lines(&scope),
             ["profile = \"work\" (include-remote `corp`; over batfiles.toml)"]
         );
     }
@@ -693,9 +699,9 @@ mod tests {
     #[test]
     fn an_override_a_higher_layer_beat_is_listed_with_the_layer_that_won() {
         let base = stacked([("profile", "personal")], [("profile", "machine")], [], []);
-        let set = derived(&base, [("profile", "work")]);
+        let scope = derived(&base, [("profile", "work")]);
         assert_eq!(
-            override_lines(&set),
+            override_lines(&scope),
             ["profile = \"machine\" (vars.toml; over include-remote `corp`, batfiles.toml)"]
         );
     }
@@ -707,9 +713,9 @@ mod tests {
 
     #[test]
     fn an_override_map_declaring_nothing_has_nothing_to_report() {
-        let set = derived(&stacked([("a", "1")], [], [], []), []);
-        assert!(override_lines(&set).is_empty());
-        assert_eq!(set.get("a"), Some("1"));
+        let scope = derived(&stacked([("a", "1")], [], [], []), []);
+        assert!(override_lines(&scope).is_empty());
+        assert_eq!(scope.get("a"), Some("1"));
     }
 
     #[test]
@@ -720,7 +726,7 @@ mod tests {
             [("d", "environment")],
             [("e", "cli")],
         );
-        let set = derived_from(
+        let scope = derived_from(
             &base,
             [
                 ("a", "remote"),
@@ -732,29 +738,32 @@ mod tests {
             [("a", "corp")],
         );
         assert_eq!(
-            winner(&set, "a"),
+            winner(&scope, "a"),
             (
                 "corp".to_owned(),
                 Origin::InclusionOverrides(CORP.to_owned())
             )
         );
-        assert_eq!(winner(&set, "b"), ("leaf".to_owned(), Origin::LeafManifest));
-        assert_eq!(winner(&set, "c"), ("machine".to_owned(), Origin::Machine));
         assert_eq!(
-            winner(&set, "d"),
+            winner(&scope, "b"),
+            ("leaf".to_owned(), Origin::LeafManifest)
+        );
+        assert_eq!(winner(&scope, "c"), ("machine".to_owned(), Origin::Machine));
+        assert_eq!(
+            winner(&scope, "d"),
             ("environment".to_owned(), Origin::Environment)
         );
-        assert_eq!(winner(&set, "e"), ("cli".to_owned(), Origin::CommandLine));
+        assert_eq!(winner(&scope, "e"), ("cli".to_owned(), Origin::CommandLine));
     }
 
     #[test]
     fn an_included_remotes_declaration_stands_where_nothing_overrides_it() {
-        let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
+        let scope = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
         assert_eq!(
-            winner(&set, "profile"),
+            winner(&scope, "profile"),
             ("work".to_owned(), Origin::IncludedManifest(CORP.to_owned()))
         );
-        assert!(shadowed(&set, "profile").is_empty());
+        assert!(shadowed(&scope, "profile").is_empty());
     }
 
     #[test]
@@ -769,9 +778,9 @@ mod tests {
 
     #[test]
     fn a_remotes_declaration_is_listed_under_the_inclusion_that_opened_it() {
-        let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
+        let scope = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
         assert_eq!(
-            override_lines(&set),
+            override_lines(&scope),
             [format!("profile = \"work\" ({CORP_MANIFEST})")]
         );
     }
@@ -779,9 +788,9 @@ mod tests {
     #[test]
     fn a_remotes_declaration_the_leaf_overrode_reads_as_having_lost() {
         let base = stacked([("profile", "personal")], [], [], []);
-        let set = derived_from(&base, [("profile", "work"), ("editor", "vi")], []);
+        let scope = derived_from(&base, [("profile", "work"), ("editor", "vi")], []);
         assert_eq!(
-            override_lines(&set),
+            override_lines(&scope),
             [
                 format!("editor  = \"vi\" ({CORP_MANIFEST})"),
                 format!("profile = \"personal\" (batfiles.toml; over {CORP_MANIFEST})"),
@@ -791,28 +800,28 @@ mod tests {
 
     #[test]
     fn the_block_is_headed_by_the_inclusion_and_not_by_either_document() {
-        let set = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
-        assert_eq!(block_heading(&set), Some(format!("{CORP} variables:")));
+        let scope = derived_from(&stacked([], [], [], []), [("a", "remote")], [("b", "corp")]);
+        assert_eq!(block_heading(&scope), Some(format!("{CORP} variables:")));
         assert_eq!(block_heading(&stacked([("a", "1")], [], [], [])), None);
     }
 
     #[test]
     fn an_inclusion_overriding_nothing_still_reports_what_its_remote_declared() {
-        let set = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
-        assert_eq!(set.derived_layers().count(), 2);
-        assert!(!override_lines(&set).is_empty());
+        let scope = derived_from(&stacked([], [], [], []), [("profile", "work")], []);
+        assert_eq!(scope.derived_layers().count(), 2);
+        assert!(!override_lines(&scope).is_empty());
     }
 
     #[test]
     fn a_line_gives_the_value_its_layer_and_what_it_overrode() {
-        let set = stacked(
+        let scope = stacked(
             [("editor", "vi"), ("profile", "personal")],
             [("editor", "nvim")],
             [],
             [("editor", "emacs")],
         );
         assert_eq!(
-            set.lines(),
+            scope.lines(),
             [
                 "editor  = \"emacs\" (--var; over vars.toml, batfiles.toml)",
                 "profile = \"personal\" (batfiles.toml)",
@@ -822,8 +831,8 @@ mod tests {
 
     #[test]
     fn an_empty_value_is_visible_in_a_line() {
-        let set = stacked([], [], [], [("profile", "")]);
-        assert_eq!(set.lines(), ["profile = \"\" (--var)"]);
+        let scope = stacked([], [], [], [("profile", "")]);
+        assert_eq!(scope.lines(), ["profile = \"\" (--var)"]);
     }
 
     #[test]

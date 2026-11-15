@@ -5,4 +5,4 @@ pub(crate) mod dynamic;
 pub(crate) mod env_overrides;
 pub(crate) mod machine;
 pub(crate) mod name;
-pub(crate) mod set;
+pub(crate) mod scope;

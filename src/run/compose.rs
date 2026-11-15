@@ -15,7 +15,7 @@ use crate::vars::name::VarName;
 /// Variables and records contributed by an opened inclusion.
 pub(super) struct InclusionContents {
     /// The included manifest's `[vars]`: the layer below the leaf's in the
-    /// inclusion's [scope](crate::vars::set::VarSet::with_inclusion). Empty when
+    /// inclusion's [scope](crate::vars::scope::VarScope::with_inclusion). Empty when
     /// the remote declares none.
     pub vars: BTreeMap<VarName, VarSpec>,
     pub records: Vec<IncludedRecord>,

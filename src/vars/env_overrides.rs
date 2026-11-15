@@ -1,6 +1,6 @@
 //! Read validated `BATFILES_VAR_*` overrides from the captured environment.
 //! Invalid names warn and are dropped; diagnostics quote names and omit values.
-//! [`crate::vars::set`] applies precedence relative to other layers.
+//! [`crate::vars::scope`] applies precedence relative to other layers.
 
 use std::collections::BTreeMap;
 

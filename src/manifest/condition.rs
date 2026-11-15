@@ -20,7 +20,7 @@ use simple_expressions::types::value::Value;
 
 use crate::env::Environment;
 use crate::output::{Reporter, quoted_value};
-use crate::vars::set::VarSet;
+use crate::vars::scope::VarScope;
 
 /// The reserved namespace of host facts.
 const FACTS: &str = "facts";
@@ -286,7 +286,7 @@ fn facts() -> BTreeMap<String, String> {
 
 /// Variable scope and captured host namespaces used to evaluate conditions.
 pub(crate) struct Bindings<'a> {
-    scope: Rc<VarSet>,
+    scope: Rc<VarScope>,
     /// The captured `facts` and `env` namespaces.
     host: &'a HostNamespaces,
     /// The `vars` namespace, backed by the same scope as bare-identifier lookup.
@@ -295,8 +295,8 @@ pub(crate) struct Bindings<'a> {
 
 impl<'a> Bindings<'a> {
     /// Bind variables and captured host namespaces for evaluation.
-    /// Bare identifiers and the `vars` namespace share the same variable set.
-    pub fn new(scope: &Rc<VarSet>, host: &'a HostNamespaces) -> Self {
+    /// Bare identifiers and the `vars` namespace share the same variable scope.
+    pub fn new(scope: &Rc<VarScope>, host: &'a HostNamespaces) -> Self {
         let vars_namespace = Rc::clone(scope);
         Self {
             scope: Rc::clone(scope),
@@ -471,18 +471,18 @@ mod tests {
 
     use crate::vars::name::VarName;
 
-    /// A single-layer variable set.
-    fn vars(bindings: &[(&str, &str)]) -> Rc<VarSet> {
+    /// A single-layer variable scope.
+    fn vars(bindings: &[(&str, &str)]) -> Rc<VarScope> {
         let manifest = bindings
             .iter()
             .map(|(name, value)| {
                 (
                     VarName::try_from((*name).to_owned()).expect("valid name"),
-                    crate::vars::set::VarValue::Static((*value).to_owned()),
+                    crate::vars::scope::VarValue::Static((*value).to_owned()),
                 )
             })
             .collect();
-        Rc::new(VarSet::stack(
+        Rc::new(VarScope::stack(
             manifest,
             BTreeMap::new(),
             BTreeMap::new(),
@@ -638,7 +638,7 @@ mod tests {
             .map(|(name, value)| {
                 (
                     VarName::try_from(name.to_owned()).expect("valid name"),
-                    crate::vars::set::VarValue::Static(value.to_owned()),
+                    crate::vars::scope::VarValue::Static(value.to_owned()),
                 )
             })
             .collect();
@@ -646,7 +646,7 @@ mod tests {
             VarName::try_from("editor".to_owned()).expect("valid name"),
             "emacs".to_owned(),
         )];
-        let vars = Rc::new(VarSet::stack(
+        let vars = Rc::new(VarScope::stack(
             manifest,
             BTreeMap::new(),
             BTreeMap::new(),

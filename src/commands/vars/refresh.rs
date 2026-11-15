@@ -27,7 +27,7 @@ use crate::source::remotes;
 use crate::vars::dynamic::{
     DynamicValueState, DynamicVarKey, DynamicVarResolver, ManifestSource, RefreshTargets,
 };
-use crate::vars::set::VarSet;
+use crate::vars::scope::VarScope;
 
 /// Refresh the named dynamic variables, or all eligible declarations if `keys` is empty, and
 /// save captured values.
@@ -76,7 +76,7 @@ fn refresh_with_remotes(
     dynamic: &mut DynamicVarResolver<'_>,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    let variables = Rc::new(VarSet::resolve(
+    let variables = Rc::new(VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,
         &roots.state,

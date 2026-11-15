@@ -16,7 +16,7 @@ use crate::run::inclusion::{self, Inclusion};
 use crate::run::selection::{Disposition, Selection};
 use crate::vars::dynamic::{DynamicVarResolver, ManifestSource};
 use crate::vars::name::VarName;
-use crate::vars::set::{VarSet, VarValue};
+use crate::vars::scope::{VarScope, VarValue};
 
 /// Assemble and select run records, expanding only admitted inclusions. Invalid targets,
 /// unreadable included manifests, and cache read failures return errors before any action
@@ -29,7 +29,7 @@ pub(super) fn assemble(
     actions: Vec<Action>,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
-    run_scope: &Rc<VarSet>,
+    run_scope: &Rc<VarScope>,
     host: &HostNamespaces,
     dynamic: &mut DynamicVarResolver<'_>,
 ) -> Result<RunList, Error> {
@@ -191,9 +191,9 @@ fn inclusion_scope(
     remote: &BTreeMap<VarName, VarValue>,
     overrides: &BTreeMap<VarName, String>,
     label: &str,
-    run: &Rc<VarSet>,
+    run: &Rc<VarScope>,
     reporter: &Reporter,
-) -> Rc<VarSet> {
+) -> Rc<VarScope> {
     if remote.is_empty() && overrides.is_empty() {
         return Rc::clone(run);
     }

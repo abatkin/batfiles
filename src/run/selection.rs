@@ -110,7 +110,7 @@ impl Target<'_> {
         match self {
             Self::Everything => true,
             Self::Action(target) | Self::Group(target) => {
-                address.is_some_and(|it| target.within(it))
+                address.is_some_and(|address| target.within(address))
             }
         }
     }
@@ -121,7 +121,7 @@ impl Target<'_> {
     /// itself.
     fn reaches_into_list(&self, address: Option<&ItemAddress>) -> bool {
         match self {
-            Self::Action(target) => address.is_some_and(|it| target.within(it)),
+            Self::Action(target) => address.is_some_and(|address| target.within(address)),
             Self::Everything | Self::Group(_) => false,
         }
     }
@@ -283,7 +283,7 @@ impl SkipList {
         reporter: &Reporter,
     ) {
         for (name, origin) in &self.names {
-            if present.contains(&name) || unread.iter().any(|it| name.within(it)) {
+            if present.contains(&name) || unread.iter().any(|parent| name.within(parent)) {
                 continue;
             }
             reporter.warn(&format!("{origin} `{name}` matched no {kind}"));
@@ -313,8 +313,8 @@ fn read_skip_list(
 #[derive(Debug)]
 pub(crate) struct Selection<'a> {
     target: Target<'a>,
-    actions: SkipList,
-    groups: SkipList,
+    skipped_actions: SkipList,
+    skipped_groups: SkipList,
     disabled: DisabledItems,
 }
 
@@ -329,7 +329,7 @@ impl<'a> Selection<'a> {
         reporter: &Reporter,
     ) -> Self {
         Self {
-            actions: read_skip_list(
+            skipped_actions: read_skip_list(
                 target.honors_action_exclusions(),
                 skip_actions,
                 "--skip-action",
@@ -337,7 +337,7 @@ impl<'a> Selection<'a> {
                 env,
                 reporter,
             ),
-            groups: read_skip_list(
+            skipped_groups: read_skip_list(
                 target.reads_group_skips(),
                 skip_groups,
                 "--skip-group",
@@ -355,8 +355,8 @@ impl<'a> Selection<'a> {
     pub fn without_run_skips(disabled: DisabledItems) -> Self {
         Self {
             target: Target::Everything,
-            actions: SkipList::default(),
-            groups: SkipList::default(),
+            skipped_actions: SkipList::default(),
+            skipped_groups: SkipList::default(),
             disabled,
         }
     }
@@ -412,9 +412,9 @@ impl<'a> Selection<'a> {
         unread: &[&ItemAddress],
         reporter: &Reporter,
     ) {
-        self.actions
+        self.skipped_actions
             .warn_unmatched(addresses, unread, ItemKind::Action, reporter);
-        self.groups
+        self.skipped_groups
             .warn_unmatched(group_addresses, unread, ItemKind::Group, reporter);
     }
 
@@ -495,25 +495,27 @@ impl<'a> Selection<'a> {
 
         let listed = |list: &BTreeSet<ItemAddress>, item: &ItemAddress| list.contains(item);
 
-        if let Some(name) = address.filter(|it| listed(&self.disabled.actions, it)) {
+        if let Some(name) = address.filter(|address| listed(&self.disabled.actions, address)) {
             return Some(SkipReason::Disabled {
                 kind: ItemKind::Action,
                 name,
             });
         }
-        if let Some(name) = group_address.filter(|it| listed(&self.disabled.groups, it)) {
+        if let Some(name) = group_address.filter(|address| listed(&self.disabled.groups, address)) {
             return Some(SkipReason::Disabled {
                 kind: ItemKind::Group,
                 name,
             });
         }
-        if let Some((name, origin)) = address.and_then(|it| Some((it, self.actions.origin(it)?))) {
+        if let Some((name, origin)) =
+            address.and_then(|address| Some((address, self.skipped_actions.origin(address)?)))
+        {
             return Some(SkipReason::RunOnly { name, origin });
         }
-        group_address.and_then(|it| {
+        group_address.and_then(|group| {
             Some(SkipReason::RunOnly {
-                name: it,
-                origin: self.groups.origin(it)?,
+                name: group,
+                origin: self.skipped_groups.origin(group)?,
             })
         })
     }
@@ -529,7 +531,7 @@ mod tests {
     use crate::run::inclusion::Inclusion;
     use crate::run::record::RunRecord;
     use crate::vars::name::VarName;
-    use crate::vars::set::VarSet;
+    use crate::vars::scope::VarScope;
 
     fn quiet() -> Reporter {
         let mut reporter = Reporter::new(false);
@@ -624,12 +626,12 @@ mod tests {
         vars: &[(&str, &str)],
         waivers: TargetWaivers,
     ) -> Option<Exclusion> {
-        let variables = Rc::new(VarSet::stack(
+        let variables = Rc::new(VarScope::stack(
             vars.iter()
                 .map(|(name, value)| {
                     (
                         VarName::try_from((*name).to_owned()).expect("valid name"),
-                        crate::vars::set::VarValue::Static((*value).to_owned()),
+                        crate::vars::scope::VarValue::Static((*value).to_owned()),
                     )
                 })
                 .collect(),
@@ -1146,10 +1148,10 @@ mod tests {
             group_address: None,
             gate: Some(Gate::When(&condition)),
         };
-        let variables = Rc::new(VarSet::stack(
+        let variables = Rc::new(VarScope::stack(
             BTreeMap::from([(
                 VarName::try_from("work".to_owned()).expect("valid name"),
-                crate::vars::set::VarValue::Static("false".to_owned()),
+                crate::vars::scope::VarValue::Static("false".to_owned()),
             )]),
             BTreeMap::new(),
             BTreeMap::new(),

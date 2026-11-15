@@ -22,7 +22,7 @@ use crate::manifest::remote::Tree;
 use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
 use crate::vars::name::VarName;
-use crate::vars::set::VarValue;
+use crate::vars::scope::VarValue;
 
 /// Resolve each dynamic declaration at most once per invocation, sharing remote results across
 /// inclusions. Load the cache on demand and save only captured values.

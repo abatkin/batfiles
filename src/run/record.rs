@@ -9,7 +9,7 @@ use crate::manifest::item::{ItemAddress, ItemId};
 use crate::output::Reporter;
 use crate::run::inclusion::Inclusion;
 use crate::run::selection::{Disposition, Selection, Subject, Unread};
-use crate::vars::set::VarSet;
+use crate::vars::scope::VarScope;
 
 /// An action's declaration, addresses, report heading, and disposition for this run.
 pub(crate) struct RunRecord {
@@ -83,7 +83,7 @@ pub(super) enum TopLevelRecord {
 pub(super) struct OpenedInclusion {
     /// Variable scope for included records and their clone-list entries. Derived for the
     /// inclusion, or shared with the run when neither inclusion nor remote declares variables.
-    pub scope: Rc<VarSet>,
+    pub scope: Rc<VarScope>,
     /// Every record the manifest declared, in its order, including those the
     /// inclusion's filters left out. Never an inclusion.
     pub records: Vec<RunRecord>,
