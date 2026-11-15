@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::env::Environment;
 use crate::error::Error;
-use crate::manifest::action::Action;
+use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, Gate};
 use crate::manifest::disabled::DisabledItems;
 use crate::manifest::item::{ItemAddress, ItemId, ItemKind};

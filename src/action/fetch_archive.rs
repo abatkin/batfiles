@@ -2,8 +2,8 @@
 
 use crate::error::Error;
 use crate::filesystem::install;
-use crate::manifest::action::FetchArchiveAction;
-use crate::manifest::entry_filter::{EntryFilter, Executable};
+use crate::manifest::actions::FetchArchiveAction;
+use crate::manifest::entry_filter::{EntryFilter, ExecutableFilter};
 use crate::output::Verb;
 use crate::run::context::RunContext;
 use crate::source::archive;
@@ -16,7 +16,7 @@ pub(super) fn fetch_archive(
 ) -> Result<(), Error> {
     let dest = context.destination(&action.dest);
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());
-    let mut executable = Executable::new(action.executable.as_ref());
+    let mut executable = ExecutableFilter::new(action.executable.as_ref());
     let mut extracted = false;
     install::seed_directory(
         install::SeedDescription {

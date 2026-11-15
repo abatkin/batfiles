@@ -18,7 +18,7 @@ use thiserror::Error;
 use std::os::unix::fs::symlink;
 
 use crate::error::Error;
-use crate::manifest::entry_filter::{EntryFilter, Executable};
+use crate::manifest::entry_filter::{EntryFilter, ExecutableFilter};
 pub(crate) use compressed::DecompressError;
 use detect::Format;
 
@@ -141,7 +141,7 @@ pub(crate) fn extract(
     into: &Path,
     root: Option<&str>,
     filter: Option<&mut EntryFilter>,
-    executable: Option<&mut Executable>,
+    executable: Option<&mut ExecutableFilter>,
     url: &str,
 ) -> Result<(), Error> {
     let archive = Archive::identify(archive, url)?;
@@ -320,7 +320,7 @@ fn plan(
     archive: &Archive<'_>,
     root: Option<&str>,
     filter: Option<&mut EntryFilter>,
-    executable: Option<&mut Executable>,
+    executable: Option<&mut ExecutableFilter>,
 ) -> Result<Vec<EntryPlan>, Error> {
     let mut declared: Vec<(PathBuf, EntryKind)> = Vec::new();
     for_each_entry(archive, &mut |entry| {

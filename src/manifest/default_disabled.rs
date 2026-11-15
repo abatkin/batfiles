@@ -2,7 +2,8 @@
 
 use serde::Deserialize;
 
-use super::check::{ManifestError, RecordName};
+use super::DeclarationName;
+use super::check::ManifestError;
 use crate::manifest::condition::{Condition, Gate};
 use crate::manifest::item::{ItemAddress, ItemKind};
 
@@ -38,7 +39,7 @@ fn one_condition(
 ) -> Result<(), ManifestError> {
     if when.is_some() && unless.is_some() {
         return Err(ManifestError::BothConditions {
-            record: RecordName::Candidate {
+            record: DeclarationName::Candidate {
                 kind,
                 number: index + 1,
             },

@@ -39,7 +39,7 @@ and SSH agent. Keep Git's subprocess launch and environment handling in
 `source/git.rs`. The supported environment is specified in
 [environment.md](../environment.md#variables-passed-on-to-git). The only other
 subprocesses are a dynamic variable's command, launched in
-`vars/dynamic/run.rs`, and in `commands/update.rs` the `version` of a release
+`vars/dynamic/command.rs`, and in `commands/update.rs` the `version` of a release
 `update` has downloaded and, on Windows, the hidden PowerShell that removes the
 executable it set aside.
 
@@ -125,11 +125,16 @@ Code names follow these terms beside the user-facing ones:
 
 - **Action**: a configured operation, as a manifest declares it. The everyday
   word, since users write `[[actions]]` and run `apply-action`.
+- **Declaration**: an entry as a manifest writes it, before any run: an action,
+  a remote, or a bootstrap candidate. Validation errors name one
+  (`DeclarationName`).
 - **Record**: an action's representation in a run, and its execution
-  bookkeeping (`RunRecord`, `IncludedRecord`, `RecordName`).
+  bookkeeping (`RunRecord`, `IncludedRecord`, `TopLevelRecord`,
+  `PlannedRecord`).
 - **Item**: only what actions and groups share (`ItemId`, `ItemAddress`).
   `ItemKind` says which of the two a name refers to, and displays as the word
-  output uses for it.
+  output uses for it. `ItemId` also keys `[remotes]`, whose IDs follow the same
+  syntax; a remote is not an item.
 - **Node**: whatever filesystem entry occupies a path, as
   [safety.md](../safety.md#path-resolution) defines it. A manifest entry is never
   a node.
@@ -280,7 +285,7 @@ The user-visible contract, including source validation, shared destinations,
 per-child output, and reporting limits, is owned by
 [cmdline.md](../cmdline.md#dry-run-behavior). Batfiles bookkeeping runs in both
 modes: the state documents `filesystem/tomlfile.rs` rewrites, and the
-dynamic-variable commands `vars/dynamic/run.rs` runs, which never consult
+dynamic-variable commands `vars/dynamic/command.rs` runs, which never consult
 `RunMode` because the plan itself depends on their values.
 
 ### Filesystem ownership checks

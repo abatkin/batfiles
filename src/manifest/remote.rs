@@ -2,13 +2,57 @@
 
 use serde::Deserialize;
 
+use super::DeclarationName;
 use super::check::{
-    ManifestError, RecordName, check_archive_root, check_digest, check_git_ref, check_git_source,
-    check_url,
+    ManifestError, check_archive_root, check_digest, check_git_ref, check_git_source, check_url,
 };
 use crate::manifest::condition::{Condition, Gate};
 use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::ItemId;
+
+/// The tree a declaration or record is read from: the leaf repository, or the materialization
+/// of the remote with this ID. `Id` is `&ItemId` where the ID is borrowed and `ItemId` where it
+/// is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Tree<Id> {
+    Leaf,
+    Remote(Id),
+}
+
+impl<Id> Tree<Id> {
+    /// The remote's ID, or `None` for the leaf.
+    pub fn remote(&self) -> Option<&Id> {
+        match self {
+            Self::Leaf => None,
+            Self::Remote(id) => Some(id),
+        }
+    }
+
+    /// The same tree, borrowing its ID.
+    pub fn as_ref(&self) -> Tree<&Id> {
+        match self {
+            Self::Leaf => Tree::Leaf,
+            Self::Remote(id) => Tree::Remote(id),
+        }
+    }
+}
+
+impl Tree<&ItemId> {
+    /// The same tree, owning its ID.
+    pub fn cloned(self) -> Tree<ItemId> {
+        match self {
+            Self::Leaf => Tree::Leaf,
+            Self::Remote(id) => Tree::Remote(id.clone()),
+        }
+    }
+}
+
+impl<Id> From<Option<Id>> for Tree<Id> {
+    /// `None` is the leaf.
+    fn from(remote: Option<Id>) -> Self {
+        remote.map_or(Self::Leaf, Self::Remote)
+    }
+}
 
 /// A remote declaration, selected by its required `type` field and identified by its map key.
 #[derive(Debug, Deserialize)]
@@ -22,7 +66,7 @@ pub(crate) enum Remote {
 impl Remote {
     /// Validate the remote's fields and condition combination, naming it by `id` in errors.
     pub fn validate(&self, id: &ItemId) -> Result<(), ManifestError> {
-        let record = RecordName::Remote(id.clone());
+        let record = DeclarationName::Remote(id.clone());
         let (when, unless) = self.gate_fields();
         if when.is_some() && unless.is_some() {
             return Err(ManifestError::BothConditions { record });
@@ -124,7 +168,7 @@ pub(crate) struct FileRemote {
 }
 
 /// `archive`: a tarball fetched from a URL and unpacked into `remotes/<id>`,
-/// by the rules a [`fetch-archive`](super::action::FetchArchiveAction) follows.
+/// by the rules a [`fetch-archive`](super::actions::FetchArchiveAction) follows.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct ArchiveRemote {

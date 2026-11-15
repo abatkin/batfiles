@@ -83,7 +83,7 @@ fn seed_content<T>(
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let resolver = context.resolver();
+    let resolver = context.conflict_resolver();
     let (mode, reporter) = (context.mode(), context.reporter());
     // Skip rebuilding occupied seeds under `--no-overwrite`.
     let refreshing = context.refresh_content() && !resolver.conflicts().skips();
@@ -104,7 +104,7 @@ fn seed_content<T>(
             if let Some(source) = seed.source {
                 paths::refuse_setting_aside_a_source(source, dest)?;
             }
-            if !refresh(kind, dest, existing, &resolver, make, fill)? {
+            if !refresh_seed(kind, dest, existing, &resolver, make, fill)? {
                 return Ok(());
             }
             Verb::Refresh
@@ -147,7 +147,7 @@ fn report_kept(dest: &Path, mode: RunMode, reporter: &Reporter) {
 /// Rebuild content and replace `dest` if it differs, returning whether replacement occurred.
 /// Resolve conflicts only after the new content is complete. Dry runs build nothing and report
 /// a possible replacement without comparing content.
-fn refresh<T>(
+fn refresh_seed<T>(
     kind: ContentKind,
     dest: &Path,
     existing: OccupiedDestination,

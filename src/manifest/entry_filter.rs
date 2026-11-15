@@ -254,12 +254,12 @@ impl<'a> EntryFilter<'a> {
 /// One action's `executable`, applied to the paths of the files a tree installs, relative to
 /// its root. Remembers which patterns have marked a file, for [`Self::report_unmatched`].
 #[derive(Debug)]
-pub(crate) struct Executable<'a> {
+pub(crate) struct ExecutableFilter<'a> {
     patterns: &'a [Pattern],
     matched: Vec<bool>,
 }
 
-impl<'a> Executable<'a> {
+impl<'a> ExecutableFilter<'a> {
     /// The marks the field describes, or `None` where it is not written.
     pub fn new(executable: Option<&'a GlobFilter>) -> Option<Self> {
         let patterns = executable?.as_slice();
@@ -437,14 +437,14 @@ mod tests {
     #[test]
     fn an_executable_pattern_marks_what_it_matches_and_what_is_under_it() {
         let patterns = filter(&["bin", "lib/*.so", "doc"]);
-        let mut executable = Executable::new(Some(&patterns)).expect("marks");
+        let mut executable = ExecutableFilter::new(Some(&patterns)).expect("marks");
         assert!(executable.marks(Path::new("bin/tool")));
         assert!(executable.marks(Path::new("bin/sub/tool")));
         assert!(executable.marks(Path::new("lib/libtool.so")));
         assert!(!executable.marks(Path::new("lib/libtool.a")));
         assert!(!executable.marks(Path::new("README.md")));
         assert_eq!(executable.matched, [true, true, false]);
-        assert!(Executable::new(None).is_none());
+        assert!(ExecutableFilter::new(None).is_none());
     }
 
     #[test]

@@ -14,18 +14,19 @@ pub(crate) mod selection;
 use std::rc::Rc;
 
 use self::assemble::assemble;
-use self::record::{LeafEntry, RunList, RunRecord};
-use crate::action::{self, Executable};
+use self::record::{RunList, RunRecord, TopLevelRecord};
+use crate::action::{self, PreparedAction};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::filesystem::mode::RunMode;
 use crate::location::Roots;
 use crate::manifest::Manifest;
-use crate::manifest::action::Action;
+use crate::manifest::actions::Action;
 use crate::manifest::clone_list::PreparedList;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::manifest::disabled::DisabledItems;
 use crate::manifest::item::{ItemAddress, ItemId};
+use crate::manifest::remote::Tree;
 use crate::output::Reporter;
 use crate::run::bootstrap::BootstrapDecisions;
 use crate::run::context::{DestinationOptions, RunContext};
@@ -60,7 +61,7 @@ pub(crate) fn sync(
     refresh_remotes: bool,
     bootstrap: Option<&BootstrapDecisions>,
 ) -> Result<(), Error> {
-    run(
+    run_pipeline(
         Target::Everything,
         Skips {
             actions: skip_actions,
@@ -128,7 +129,7 @@ impl RunKind<'_> {
 pub(crate) fn apply_action(invocation: &Invocation<'_>, id: &str) -> Result<(), Error> {
     let id = ItemAddress::try_from(id.to_owned())?;
     // Direct application still honors inclusion and remote conditions.
-    let processed_action_count = run(
+    let processed_action_count = run_pipeline(
         Target::Action(&id),
         Skips {
             actions: &[],
@@ -155,7 +156,7 @@ pub(crate) fn apply_group(
     skip_actions: &[String],
 ) -> Result<(), Error> {
     let group = ItemAddress::try_from(group.to_owned())?;
-    let processed_action_count = run(
+    let processed_action_count = run_pipeline(
         Target::Group(&group),
         Skips {
             actions: skip_actions,
@@ -181,11 +182,11 @@ enum Step<'a> {
     /// Report the exclusion under the record's heading.
     ReportExclusion(&'a RunRecord, &'a Exclusion),
     /// Execute the record.
-    Run(&'a RunRecord, Executable<'a>),
+    Run(&'a RunRecord, PreparedAction<'a>),
 }
 
 /// One record of the leaf manifest, prepared.
-enum PreparedLeafEntry<'a> {
+enum PlannedRecord<'a> {
     /// Any record but an admitted inclusion.
     Step(Step<'a>),
     /// An admitted inclusion's heading and ordered steps, with sources resolved against
@@ -209,12 +210,12 @@ fn prepare<'a>(
     context: &RunContext<'_>,
     scope: &Rc<VarSet>,
     host: &HostNamespaces,
-) -> Result<Vec<PreparedLeafEntry<'a>>, Error> {
+) -> Result<Vec<PlannedRecord<'a>>, Error> {
     run_list
         .entries
         .iter()
         .map(|entry| match entry {
-            LeafEntry::Inclusion {
+            TopLevelRecord::Inclusion {
                 record,
                 inclusion,
                 opened,
@@ -224,28 +225,34 @@ fn prepare<'a>(
                     .iter()
                     .flat_map(|opened| {
                         opened.records.iter().map(|it| {
-                            step(it, Some(remote), selection, &opened.scope, context, host)
+                            step(
+                                it,
+                                Tree::Remote(remote),
+                                selection,
+                                &opened.scope,
+                                context,
+                                host,
+                            )
                         })
                     })
                     .collect::<Result<_, _>>()?;
-                Ok(PreparedLeafEntry::Inclusion {
+                Ok(PlannedRecord::Inclusion {
                     heading: &record.heading,
                     remote,
                     steps,
                 })
             }
-            LeafEntry::Action(record) | LeafEntry::Inclusion { record, .. } => Ok(
-                PreparedLeafEntry::Step(step(record, None, selection, scope, context, host)?),
+            TopLevelRecord::Action(record) | TopLevelRecord::Inclusion { record, .. } => Ok(
+                PlannedRecord::Step(step(record, Tree::Leaf, selection, scope, context, host)?),
             ),
         })
         .collect()
 }
 
-/// The step for one record, from `remote`'s tree (`None`: the leaf's) and
-/// decided in `scope`.
+/// The step for one record, read from `tree` and decided in `scope`.
 fn step<'a>(
     record: &'a RunRecord,
-    remote: Option<&ItemId>,
+    tree: Tree<&ItemId>,
     selection: &Selection<'_>,
     scope: &Rc<VarSet>,
     context: &RunContext<'_>,
@@ -256,28 +263,27 @@ fn step<'a>(
         Disposition::Excluded(exclusion) => Step::ReportExclusion(record, exclusion),
         Disposition::Allowed | Disposition::AllowedInPart => Step::Run(
             record,
-            executable(record, remote, selection, scope, context, host)?,
+            prepare_action(record, tree, selection, scope, context, host)?,
         ),
     })
 }
 
-/// Prepare execution inputs for `record`. Clone lists are read from `remote`'s tree (`None` for
-/// the leaf), with their entries decided by `selection` in `scope`; other actions use their
-/// declaration directly.
-fn executable<'a>(
+/// Prepare execution inputs for `record`. Clone lists are read from `tree`, with their entries
+/// decided by `selection` in `scope`; other actions use their declaration directly.
+fn prepare_action<'a>(
     record: &'a RunRecord,
-    remote: Option<&ItemId>,
+    tree: Tree<&ItemId>,
     selection: &Selection<'_>,
     scope: &Rc<VarSet>,
     context: &RunContext<'_>,
     host: &HostNamespaces,
-) -> Result<Executable<'a>, Error> {
+) -> Result<PreparedAction<'a>, Error> {
     let Action::GitCloneList(list) = &record.action else {
-        return Ok(Executable::Declared(&record.action));
+        return Ok(PreparedAction::Declared(&record.action));
     };
-    let path = context.source(remote, &list.source)?;
+    let path = context.source(tree, &list.source)?;
     let bindings = Bindings::new(scope, host);
-    Ok(Executable::CloneList(PreparedList::prepare(
+    Ok(PreparedAction::CloneList(PreparedList::prepare(
         list,
         &path,
         record.address.as_ref(),
@@ -286,14 +292,14 @@ fn executable<'a>(
 }
 
 /// The address of every addressable entry in the clone lists `plan` prepared.
-fn entry_addresses<'a>(plan: &'a [PreparedLeafEntry<'_>]) -> Vec<&'a ItemAddress> {
+fn entry_addresses<'a>(plan: &'a [PlannedRecord<'_>]) -> Vec<&'a ItemAddress> {
     plan.iter()
         .flat_map(|entry| match entry {
-            PreparedLeafEntry::Step(step) => std::slice::from_ref(step),
-            PreparedLeafEntry::Inclusion { steps, .. } => steps.as_slice(),
+            PlannedRecord::Step(step) => std::slice::from_ref(step),
+            PlannedRecord::Inclusion { steps, .. } => steps.as_slice(),
         })
         .filter_map(|step| match step {
-            Step::Run(_, Executable::CloneList(list)) => Some(list.entries()),
+            Step::Run(_, PreparedAction::CloneList(list)) => Some(list.entries()),
             _ => None,
         })
         .flatten()
@@ -301,22 +307,18 @@ fn entry_addresses<'a>(plan: &'a [PreparedLeafEntry<'_>]) -> Vec<&'a ItemAddress
         .collect()
 }
 
-/// Carry out one step, whose record is read from `remote`'s tree (`None`: the
-/// leaf's). Returns whether the record was dispatched.
-fn execute(
-    step: &Step<'_>,
-    remote: Option<&ItemId>,
-    context: &RunContext<'_>,
-) -> Result<bool, Error> {
+/// Carry out one step, whose record is read from `tree`. Returns whether the record was
+/// dispatched.
+fn execute(step: &Step<'_>, tree: Tree<&ItemId>, context: &RunContext<'_>) -> Result<bool, Error> {
     match step {
         Step::NotRequested => Ok(false),
         Step::ReportExclusion(record, exclusion) => {
             exclusion.report_heading(context.reporter(), &record.heading);
             Ok(false)
         }
-        Step::Run(record, executable) => {
+        Step::Run(record, prepared) => {
             context.reporter().detail(1, &record.heading);
-            action::run(executable, remote, context)?;
+            action::dispatch(prepared, tree, context)?;
             Ok(true)
         }
     }
@@ -330,7 +332,7 @@ fn execute(
 /// Dynamic-variable captures and bootstrap state may be saved before selection or preparation
 /// fails. Leaf variables resolve before bootstrap adoption; allowed remote variables resolve
 /// when their inclusions open.
-fn run(
+fn run_pipeline(
     target: Target<'_>,
     skips: Skips<'_>,
     kind: RunKind<'_>,
@@ -422,17 +424,18 @@ fn run(
 
     for prepared in &plan {
         match prepared {
-            PreparedLeafEntry::Step(step) => {
-                processed_action_count += usize::from(execute(step, None, &context)?);
+            PlannedRecord::Step(step) => {
+                processed_action_count += usize::from(execute(step, Tree::Leaf, &context)?);
             }
-            PreparedLeafEntry::Inclusion {
+            PlannedRecord::Inclusion {
                 heading,
                 remote,
                 steps,
             } => {
                 reporter.detail(1, heading);
                 for step in steps {
-                    processed_action_count += usize::from(execute(step, Some(remote), &context)?);
+                    processed_action_count +=
+                        usize::from(execute(step, Tree::Remote(remote), &context)?);
                 }
             }
         }

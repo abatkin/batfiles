@@ -7,7 +7,7 @@ use std::path::Path;
 use thiserror::Error;
 
 use crate::error::Error;
-use crate::manifest::action::GitCloneListAction;
+use crate::manifest::actions::GitCloneListAction;
 use crate::manifest::condition::{Condition, ConditionError, Gate};
 use crate::manifest::item::{ItemAddress, ItemId, ItemIdError};
 use crate::run::selection::{Disposition, Subject};

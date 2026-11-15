@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::location::StateRoots;
+use crate::manifest::remote::Tree;
 use crate::manifest::vars::VarSpec;
 use crate::output::{Reporter, quoted_value};
 use crate::vars::dynamic::{DynamicVarResolver, ManifestSource, ResolvedDynamicVar};
@@ -138,7 +139,7 @@ impl VarSet {
         let machine = MachineVars::load(&roots.machine_vars_path())?;
         let environment = env_overrides::overrides(env, reporter);
         let source = ManifestSource {
-            remote: None,
+            tree: Tree::Leaf,
             root: repository,
         };
         let manifest = dynamic.layer(manifest, &source, &machine.values)?;

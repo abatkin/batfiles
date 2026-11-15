@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::error::Error;
 use crate::filesystem::paths;
 use crate::manifest::Manifest;
-use crate::manifest::action::{Contributor, IncludeRemoteAction};
+use crate::manifest::actions::{Contributor, IncludeRemoteAction};
 use crate::manifest::condition::{Bindings, Exclusion};
 use crate::manifest::item::ItemId;
 use crate::output::Reporter;

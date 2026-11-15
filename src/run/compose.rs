@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::manifest::Manifest;
-use crate::manifest::action::{Action, IncludeRemoteAction};
+use crate::manifest::actions::{Action, IncludeRemoteAction};
 use crate::manifest::condition::Exclusion;
 use crate::manifest::item::{ItemId, ItemIdList, ItemKind};
 use crate::manifest::vars::VarSpec;

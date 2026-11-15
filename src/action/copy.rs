@@ -9,34 +9,35 @@ use super::children::{ChildInstall, for_each_child};
 use crate::error::Error;
 use crate::filesystem::install::{self, ContentKind};
 use crate::filesystem::paths;
-use crate::manifest::action::{CopyAction, CopyDirAction};
+use crate::manifest::actions::{CopyAction, CopyDirAction};
 use crate::manifest::entry_filter::{EntryFilter, Verdict};
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Tree;
 use crate::output::Verb;
 use crate::run::context::RunContext;
 
 /// The entries an [`EntryFilter`] selects under a source directory, by their path relative to
 /// it, together with every directory holding one.
-type Selection = BTreeSet<PathBuf>;
+type SelectedPaths = BTreeSet<PathBuf>;
 
 /// Carry out one `copy` action: one file or one directory, at one destination.
 pub(super) fn copy(
     action: &CopyAction,
-    remote: Option<&ItemId>,
+    tree: Tree<&ItemId>,
     context: &RunContext,
 ) -> Result<(), Error> {
-    let source = context.source(remote, &action.source)?;
+    let source = context.source(tree, &action.source)?;
     let dest = context.destination(&action.dest);
     let kind = kind_of_source(&source)?;
     let Some(mut filter) = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref())
     else {
-        return seed(&source, kind, &dest, &Scope::Everything, context);
+        return seed(&source, kind, &dest, &Copied::All, context);
     };
     if let ContentKind::File = kind {
         return Err(Error::FilteredSourceIsAFile { path: source });
     }
-    let selection = select(&source, &mut filter)?;
-    seed(&source, kind, &dest, &Scope::root(&selection), context)?;
+    let selected = select(&source, &mut filter)?;
+    seed(&source, kind, &dest, &Copied::root(&selected), context)?;
     filter.report_unmatched(&source.display().to_string(), context.reporter());
     Ok(())
 }
@@ -45,15 +46,15 @@ pub(super) fn copy(
 /// all of them in one destination directory.
 pub(super) fn copy_dir(
     action: &CopyDirAction,
-    remote: Option<&ItemId>,
+    tree: Tree<&ItemId>,
     context: &RunContext,
 ) -> Result<(), Error> {
-    let source_dir = context.source_directory(remote, &action.source_dir)?;
+    let source_dir = context.source_directory(tree, &action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());
-    let selection = match &mut filter {
+    let selected = match &mut filter {
         Some(filter) => Some(select(&source_dir, filter)?),
         None => None,
     };
@@ -66,19 +67,19 @@ pub(super) fn copy_dir(
             verb: Verb::Copy,
         },
         |child| {
-            selection
+            selected
                 .as_ref()
-                .is_none_or(|selection| selection.contains(Path::new(child)))
+                .is_none_or(|selected| selected.contains(Path::new(child)))
         },
         |source, dest| {
-            let scope = match &selection {
-                Some(selection) => Scope::Selected {
-                    selection,
+            let copied = match &selected {
+                Some(selected) => Copied::Within {
+                    selected,
                     at: source.file_name().map(PathBuf::from).unwrap_or_default(),
                 },
-                None => Scope::Everything,
+                None => Copied::All,
             };
-            seed(source, kind_of_child(source)?, dest, &scope, context)
+            seed(source, kind_of_child(source)?, dest, &copied, context)
         },
     )?;
     if let Some(filter) = &filter {
@@ -88,35 +89,36 @@ pub(super) fn copy_dir(
 }
 
 /// Which of a copied directory's contents are copied.
-enum Scope<'a> {
+enum Copied<'a> {
     /// All of them.
-    Everything,
-    /// Those in `selection`, where the directory is at `at` relative to the selection's root.
-    Selected {
-        selection: &'a Selection,
+    All,
+    /// Those in `selected`, where the directory is at `at` relative to the directory the
+    /// paths were selected in.
+    Within {
+        selected: &'a SelectedPaths,
         at: PathBuf,
     },
 }
 
-impl<'a> Scope<'a> {
-    /// The scope of the directory a selection was made in.
-    fn root(selection: &'a Selection) -> Self {
-        Self::Selected {
-            selection,
+impl<'a> Copied<'a> {
+    /// What is copied of the directory the paths were selected in.
+    fn root(selected: &'a SelectedPaths) -> Self {
+        Self::Within {
+            selected,
             at: PathBuf::new(),
         }
     }
 
-    /// The scope of `child`, within the directory this is the scope of, or `None` where the
-    /// child is not copied.
+    /// What is copied of `child`, a child of the directory this describes, or `None` where
+    /// the child is not copied.
     fn of(&self, child: &Path) -> Option<Self> {
         match self {
-            Self::Everything => Some(Self::Everything),
-            Self::Selected { selection, at } => {
+            Self::All => Some(Self::All),
+            Self::Within { selected, at } => {
                 let at = at.join(child);
-                selection
+                selected
                     .contains(&at)
-                    .then_some(Self::Selected { selection, at })
+                    .then_some(Self::Within { selected, at })
             }
         }
     }
@@ -124,19 +126,19 @@ impl<'a> Scope<'a> {
 
 /// Decide every entry under `dir` against `filter`, descending into directories but not
 /// through symlinks, and return what it selects. Reads the source in either run mode.
-fn select(dir: &Path, filter: &mut EntryFilter) -> Result<Selection, Error> {
-    let mut selection = Selection::new();
-    select_under(dir, Path::new(""), filter, &mut selection)?;
-    Ok(selection)
+fn select(dir: &Path, filter: &mut EntryFilter) -> Result<SelectedPaths, Error> {
+    let mut selected = SelectedPaths::new();
+    select_under(dir, Path::new(""), filter, &mut selected)?;
+    Ok(selected)
 }
 
-/// Add to `selection` what `filter` selects under `dir`, which is at `at` relative to the
-/// selection's root, and return whether anything was added.
+/// Add to `selected` what `filter` selects under `dir`, which is at `at` relative to the
+/// directory selection started in, and return whether anything was added.
 fn select_under(
     dir: &Path,
     at: &Path,
     filter: &mut EntryFilter,
-    selection: &mut Selection,
+    selected: &mut SelectedPaths,
 ) -> Result<bool, Error> {
     let mut added = false;
     for child in paths::children_of(dir)? {
@@ -152,9 +154,9 @@ fn select_under(
                 source: error,
             })?
             .is_dir();
-        let beneath = is_directory && select_under(&from, &path, filter, selection)?;
+        let beneath = is_directory && select_under(&from, &path, filter, selected)?;
         if verdict == Verdict::Selected || beneath {
-            selection.insert(path);
+            selected.insert(path);
             added = true;
         }
     }
@@ -162,12 +164,12 @@ fn select_under(
 }
 
 /// Seed `dest` with a copy of `source`, using its classified content kind and copying what
-/// `scope` holds of a directory.
+/// `copied` says of a directory.
 fn seed(
     source: &Path,
     kind: ContentKind,
     dest: &Path,
-    scope: &Scope,
+    copied: &Copied,
     context: &RunContext,
 ) -> Result<(), Error> {
     let seed = install::SeedDescription {
@@ -180,7 +182,7 @@ fn seed(
             copy_file(source, into, staging)
         }),
         ContentKind::Directory => install::seed_directory(seed, dest, context, |staging| {
-            copy_children(source, staging, scope)
+            copy_children(source, staging, copied)
         }),
     }
 }
@@ -242,10 +244,10 @@ fn copy_file(source: &Path, mut into: fs::File, built_at: &Path) -> Result<(), E
     mirror_permissions(source, built_at)
 }
 
-/// Copy what `scope` holds under a source directory into a directory being built.
-fn copy_children(source: &Path, built_at: &Path, scope: &Scope) -> Result<(), Error> {
+/// Copy what `copied` says of a source directory's children into a directory being built.
+fn copy_children(source: &Path, built_at: &Path, copied: &Copied) -> Result<(), Error> {
     for child in paths::children_of(source)? {
-        let Some(within) = scope.of(Path::new(&child)) else {
+        let Some(within) = copied.of(Path::new(&child)) else {
             continue;
         };
         let from = source.join(&child);

@@ -13,7 +13,7 @@ use crate::filesystem::install;
 use crate::filesystem::paths;
 use crate::filesystem::tomlfile;
 use crate::manifest::condition::{Bindings, Exclusion};
-use crate::manifest::entry_filter::{EntryFilter, Executable, GlobFilter};
+use crate::manifest::entry_filter::{EntryFilter, ExecutableFilter, GlobFilter};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::{ArchiveRemote, FileRemote, Remote};
 use crate::output::Verb;
@@ -54,14 +54,14 @@ pub(crate) fn excluded(
 }
 
 /// Materialize admitted remotes in ID order. Update Git clones; fetch missing or changed
-/// file/archive declarations, or all of them when `refresh` is set.
+/// file/archive declarations, or all of them when `refetch` is set, current or not.
 ///
 /// Report exclusions without reading their trees. Dry runs report intent without Git or
 /// downloads. Stop on the first failure.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
     context: &RunContext<'_>,
-    refresh: bool,
+    refetch: bool,
 ) -> Result<(), Error> {
     for (id, remote) in remotes {
         let heading = format!("remote {id}");
@@ -86,28 +86,28 @@ pub(crate) fn materialize(
                 }
             }
             Remote::File(remote) => {
-                fetch(id, Stamp::file(remote), None, None, &dest, refresh, context)?;
+                fetch(id, Stamp::file(remote), None, None, &dest, refetch, context)?;
             }
             Remote::Archive(remote) => {
                 let filter = EntryFilter::new(remote.include.as_ref(), remote.exclude.as_ref());
-                let executable = Executable::new(remote.executable.as_ref());
+                let executable = ExecutableFilter::new(remote.executable.as_ref());
                 let wanted = Stamp::archive(remote);
-                fetch(id, wanted, filter, executable, &dest, refresh, context)?;
+                fetch(id, wanted, filter, executable, &dest, refetch, context)?;
             }
         }
     }
     Ok(())
 }
 
-/// Fetch a file or archive unless its stamp matches `wanted` and `refresh` is false. Refuse
+/// Fetch a file or archive unless its stamp matches `wanted` and `refetch` is false. Refuse
 /// occupied destinations without a matching ownership stamp.
 fn fetch(
     id: &ItemId,
     wanted: Stamp,
     mut filter: Option<EntryFilter<'_>>,
-    mut executable: Option<Executable<'_>>,
+    mut executable: Option<ExecutableFilter<'_>>,
     dest: &Path,
-    refresh: bool,
+    refetch: bool,
     context: &RunContext<'_>,
 ) -> Result<(), Error> {
     let stamp = stamp_path(dest);
@@ -115,7 +115,7 @@ fn fetch(
     let recorded = read_stamp(&stamp)?;
     let (mode, reporter) = (context.mode(), context.reporter());
 
-    let replacing = match decide(found.as_ref(), recorded.as_ref(), &wanted, refresh) {
+    let replacing = match decide(found.as_ref(), recorded.as_ref(), &wanted, refetch) {
         Plan::Unchanged => {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
             return Ok(());
@@ -356,20 +356,20 @@ enum Plan {
 }
 
 /// Decide from what is at the materialization's path and the stamp beside it.
-/// Only a node of the kind its stamp records is batfiles' own, and `refresh`
+/// Only a node of the kind its stamp records is batfiles' own, and `refetch`
 /// replaces one that is current.
 fn decide(
     found: Option<&FilesystemEntryKind>,
     recorded: Option<&Stamp>,
     wanted: &Stamp,
-    refresh: bool,
+    refetch: bool,
 ) -> Plan {
     let Some(found) = found else {
         return Plan::Fetch;
     };
     match recorded {
         Some(recorded) if recorded.describes(found) => {
-            if recorded == wanted && !refresh {
+            if recorded == wanted && !refetch {
                 Plan::Unchanged
             } else {
                 Plan::Replace

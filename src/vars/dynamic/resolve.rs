@@ -9,9 +9,10 @@ use std::time::Duration;
 use jiff::Timestamp;
 
 use super::cache::{CachedVar, DynamicVarCache};
-use super::run::{CaptureError, CaptureOutcome, capture};
+use super::command::{CaptureError, CaptureOutcome, capture};
 use crate::manifest::duration::FriendlyDuration;
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Tree;
 use crate::manifest::vars::DynamicVarSpec;
 use crate::output::Reporter;
 use crate::vars::name::VarName;
@@ -126,9 +127,8 @@ pub(crate) struct PendingDeclaration<'a> {
 /// Which declaration a value came from.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DynamicVarKey {
-    /// The declaring remote's key in the leaf's `[remotes]`, or `None` for a
-    /// leaf declaration.
-    pub remote: Option<ItemId>,
+    /// The declaring tree: the leaf, or a remote by its key in the leaf's `[remotes]`.
+    pub tree: Tree<ItemId>,
     pub name: VarName,
 }
 
@@ -136,9 +136,9 @@ impl DynamicVarKey {
     /// The entry's key in `dynamic-vars.toml`: the bare name for a leaf
     /// declaration, `remote:<remote-id>.<name>` for a remote's.
     pub fn cache_key(&self) -> String {
-        match &self.remote {
-            Some(remote) => format!("remote:{remote}.{}", self.name),
-            None => self.name.to_string(),
+        match &self.tree {
+            Tree::Remote(remote) => format!("remote:{remote}.{}", self.name),
+            Tree::Leaf => self.name.to_string(),
         }
     }
 }
@@ -146,9 +146,9 @@ impl DynamicVarKey {
 /// How a message names the declaration: `name`, or `remote.name`.
 impl fmt::Display for DynamicVarKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.remote {
-            Some(remote) => write!(f, "{remote}.{}", self.name),
-            None => self.name.fmt(f),
+        match &self.tree {
+            Tree::Remote(remote) => write!(f, "{remote}.{}", self.name),
+            Tree::Leaf => self.name.fmt(f),
         }
     }
 }
@@ -328,14 +328,14 @@ mod tests {
 
     fn leaf(text: &str) -> DynamicVarKey {
         DynamicVarKey {
-            remote: None,
+            tree: Tree::Leaf,
             name: name(text),
         }
     }
 
     fn remote(id: &str, text: &str) -> DynamicVarKey {
         DynamicVarKey {
-            remote: Some(ItemId::try_from(id.to_owned()).expect("valid id")),
+            tree: Tree::Remote(ItemId::try_from(id.to_owned()).expect("valid id")),
             name: name(text),
         }
     }

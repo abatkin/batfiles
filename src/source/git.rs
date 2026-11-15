@@ -178,7 +178,7 @@ pub(crate) fn clone_repository(
     git_ref: Option<&str>,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    run(
+    run_git(
         None,
         "clone",
         &[
@@ -216,7 +216,7 @@ fn update(dest: &Path, git_ref: Option<&str>, reporter: &Reporter) -> Result<(),
 
 /// Bring a clone to the `ref` its record declares, and say what that took.
 fn update_to_ref(dest: &Path, git_ref: &str, reporter: &Reporter) -> Result<(), Error> {
-    run(Some(dest), "fetch", &["fetch", "--all"], dest)?;
+    run_git(Some(dest), "fetch", &["fetch", "--all"], dest)?;
 
     report_update(dest, follow(dest, git_ref, reporter)?, git_ref, reporter);
     Ok(())
@@ -296,7 +296,7 @@ fn resolve(dest: &Path, git_ref: &str) -> Result<RefTarget, Error> {
 
 /// The clone's remotes, `origin` first where it has one.
 fn remotes(dest: &Path) -> Result<Vec<String>, Error> {
-    let listed = run(Some(dest), "remote", &["remote"], dest)?;
+    let listed = run_git(Some(dest), "remote", &["remote"], dest)?;
     let mut names: Vec<String> = String::from_utf8_lossy(&listed.stdout)
         .lines()
         .map(str::trim)
@@ -321,14 +321,14 @@ fn branch(
         if has_ref(dest, &format!("refs/heads/{git_ref}"))? {
             // Spelled with a trailing `--` so a file of the same name in the
             // worktree cannot be read as a path to check out instead.
-            run(
+            run_git(
                 Some(dest),
                 "checkout",
                 &["checkout", KEEP_IGNORED, git_ref, "--"],
                 dest,
             )?;
         } else {
-            run(
+            run_git(
                 Some(dest),
                 "checkout",
                 &["checkout", KEEP_IGNORED, "-b", git_ref, "--track", remote],
@@ -364,13 +364,13 @@ fn advance(dest: &Path, remote: &str, reporter: &Reporter) -> Result<UpdateOutco
         warn_skipped_update(reporter, dest, &in_the_way(&path, short_remote_ref(remote)));
         return Ok(UpdateOutcome::Skipped);
     }
-    run(Some(dest), "merge", &["merge", "--ff-only", remote], dest)?;
+    run_git(Some(dest), "merge", &["merge", "--ff-only", remote], dest)?;
     Ok(UpdateOutcome::Advanced)
 }
 
 /// Return the first occupied path that a fast-forward would create, if any.
 fn overwritten_by(dest: &Path, target: &str) -> Result<Option<PathBuf>, Error> {
-    let listed = run(
+    let listed = run_git(
         Some(dest),
         "diff",
         &[
@@ -418,7 +418,7 @@ fn detach(dest: &Path, commit_id: &str) -> Result<UpdateOutcome, Error> {
     if head_branch(dest)?.is_none() && commit(dest, "HEAD")? == commit_id {
         return Ok(UpdateOutcome::Unchanged);
     }
-    run(
+    run_git(
         Some(dest),
         "checkout",
         &["checkout", KEEP_IGNORED, "--detach", commit_id, "--"],
@@ -469,7 +469,7 @@ fn update_tracking(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
         warn_skipped_update(reporter, dest, "it is not on a branch that tracks a remote");
         return Ok(());
     };
-    run(Some(dest), "fetch", &["fetch"], dest)?;
+    run_git(Some(dest), "fetch", &["fetch"], dest)?;
     report_update(
         dest,
         advance(dest, &upstream, reporter)?,
@@ -512,7 +512,7 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
 
     // After layout validation, propagate Git failures instead of classifying them as
     // destination conflicts.
-    let toplevel = run(
+    let toplevel = run_git(
         Some(dest),
         "rev-parse",
         &["rev-parse", "--show-toplevel"],
@@ -626,7 +626,7 @@ fn as_path(printed: &[u8]) -> Option<PathBuf> {
 /// Check staged, unstaged, and untracked content, regardless of Git display
 /// preferences. Ignored content does not make a worktree dirty.
 fn is_dirty(dest: &Path) -> Result<bool, Error> {
-    let status = run(
+    let status = run_git(
         Some(dest),
         "status",
         &["status", "--porcelain", "--untracked-files=normal"],
@@ -653,7 +653,7 @@ fn upstream(dest: &Path) -> Result<Option<String>, Error> {
         return Ok(None);
     }
 
-    let found = run(
+    let found = run_git(
         Some(dest),
         "rev-parse",
         &[
@@ -671,7 +671,7 @@ fn upstream(dest: &Path) -> Result<Option<String>, Error> {
 
 /// The commit a revision names.
 fn commit(dest: &Path, revision: &str) -> Result<String, Error> {
-    let found = run(Some(dest), "rev-parse", &["rev-parse", revision], dest)?;
+    let found = run_git(Some(dest), "rev-parse", &["rev-parse", revision], dest)?;
     Ok(String::from_utf8_lossy(&found.stdout).trim().to_owned())
 }
 
@@ -692,7 +692,7 @@ fn ancestor(dest: &Path, earlier: &str, later: &str) -> Result<bool, Error> {
 
 /// Run a `git` command that has to succeed, and turn a failure into one error
 /// carrying git's own diagnostic.
-fn run<S: AsRef<OsStr>>(
+fn run_git<S: AsRef<OsStr>>(
     dir: Option<&Path>,
     command: &'static str,
     args: &[S],

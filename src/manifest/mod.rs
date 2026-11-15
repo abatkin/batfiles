@@ -2,7 +2,7 @@
 //! made of: item names, conditions, repository paths, entry filters, clone
 //! lists, and the `disabled.toml` that switches items off on this machine.
 
-pub(crate) mod action;
+pub(crate) mod actions;
 pub(crate) mod check;
 pub(crate) mod clone_list;
 pub(crate) mod condition;
@@ -16,21 +16,44 @@ pub(crate) mod repo_path;
 pub(crate) mod vars;
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 
 use serde::Deserialize;
 
 use crate::error::Error as CrateError;
 use crate::filesystem::tomlfile;
-use crate::manifest::action::Action;
-use crate::manifest::check::{RecordName, check_included_source};
+use crate::manifest::actions::Action;
+use crate::manifest::check::check_included_source;
 use crate::manifest::default_disabled::DefaultDisabled;
-use crate::manifest::item::ItemId;
+use crate::manifest::item::{ItemId, ItemKind};
 use crate::manifest::remote::Remote;
 use crate::manifest::vars::VarSpec;
 use crate::vars::name::VarName;
 
 pub(crate) use crate::manifest::check::ManifestError;
+
+/// What a manifest declares, as validation errors name it: a one-based position for actions and
+/// bootstrap candidates, or a remote ID.
+#[derive(Debug, Clone)]
+pub(crate) enum DeclarationName {
+    /// An action, by its one-based position in `[[actions]]`.
+    Action(usize),
+    /// A `[default-disabled]` candidate, by its array and one-based position.
+    Candidate { kind: ItemKind, number: usize },
+    /// A `[remotes]` entry, by the ID it was declared under.
+    Remote(ItemId),
+}
+
+impl fmt::Display for DeclarationName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Action(number) => write!(f, "action {number}"),
+            Self::Candidate { kind, number } => write!(f, "default-disabled {kind} {number}"),
+            Self::Remote(id) => write!(f, "remote `{id}`"),
+        }
+    }
+}
 
 /// Manifest validation context. Included manifests cannot source from remotes; their nested
 /// inclusions need not reference declared remotes, and their `[remotes]` declarations are
@@ -111,7 +134,7 @@ impl Manifest {
         let mut seen: BTreeMap<&ItemId, usize> = BTreeMap::new();
         for (index, action) in self.actions.iter().enumerate() {
             let action_number = index + 1;
-            let record = RecordName::Action(action_number);
+            let record = DeclarationName::Action(action_number);
 
             if let Some(id) = action.id()
                 && let Some(first) = seen.insert(id, action_number)

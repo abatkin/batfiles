@@ -48,7 +48,7 @@ pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> R
             &dest,
             declared.git_ref.as_deref(),
             context.repository(),
-            &context.resolver(),
+            &context.conflict_resolver(),
         ) {
             Ok(()) => {}
             Err(failure) if is_recoverable_entry_error(&failure) => {

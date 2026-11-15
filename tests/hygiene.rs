@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// The enum that decides which action types a manifest may declare.
-const ACTIONS: &str = "src/manifest/action.rs";
+const ACTIONS: &str = "src/manifest/actions.rs";
 
 /// Documents listing implemented action types on an [`IMPLEMENTED`] line.
 const ACTION_TYPE_DOCS: [&str; 1] = ["README.md"];
@@ -108,7 +108,7 @@ const FILESYSTEM_OWNERS: [Owner; 15] = [
         reason: "the platform-specific call every symlink action makes",
     },
     Owner {
-        path: "src/vars/dynamic/run.rs",
+        path: "src/vars/dynamic/command.rs",
         kind: Kind::Bookkeeping,
         reason: "runs dynamic-variable commands: arbitrary, unsandboxed subprocesses as the \
                  invoking user, in both modes and whatever they do",

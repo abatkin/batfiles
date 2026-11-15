@@ -12,6 +12,7 @@ use crate::filesystem::replace::{self, ConflictPolicy, ConflictResolver, Conflic
 use crate::location::Roots;
 use crate::manifest::condition::Exclusion;
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Tree;
 use crate::manifest::repo_path::RepoPath;
 use crate::output::{Reporter, Verb};
 use crate::source::remotes;
@@ -72,14 +73,16 @@ impl<'a> RunContext<'a> {
         self.excluded_remotes.get(id)
     }
 
-    /// Resolve a validated source to an absolute path, preserving repository symlinks. `remote`
-    /// identifies an included record's materialization, or is `None` for a leaf record. Only
-    /// leaf sources may name their own remote.
+    /// Resolve a validated source to an absolute path, preserving repository symlinks. `tree` is
+    /// the tree the record came from. Only leaf sources may name their own remote.
     ///
     /// The final node must exist; broken symlinks count as present. Excluded or missing remote
     /// materializations are errors.
-    pub fn source(&self, remote: Option<&ItemId>, source: &RepoPath) -> Result<PathBuf, Error> {
-        let root = self.tree_root(remote.or(source.remote()))?;
+    pub fn source(&self, tree: Tree<&ItemId>, source: &RepoPath) -> Result<PathBuf, Error> {
+        let root = self.tree_root(match tree {
+            Tree::Leaf => Tree::from(source.remote()),
+            remote => remote,
+        })?;
         let resolved = if source.path().is_empty() {
             root
         } else {
@@ -98,10 +101,10 @@ impl<'a> RunContext<'a> {
     /// Fails if the source is missing, unreadable, or does not resolve to a directory.
     pub fn source_directory(
         &self,
-        remote: Option<&ItemId>,
+        tree: Tree<&ItemId>,
         source_dir: &RepoPath,
     ) -> Result<PathBuf, Error> {
-        let resolved = self.source(remote, source_dir)?;
+        let resolved = self.source(tree, source_dir)?;
         if paths::reaches_directory(&resolved)? {
             Ok(resolved)
         } else {
@@ -111,8 +114,8 @@ impl<'a> RunContext<'a> {
 
     /// Return the declaring repository root or an existing remote materialization.
     /// Refuse excluded remotes before checking whether their trees exist.
-    fn tree_root(&self, remote: Option<&ItemId>) -> Result<PathBuf, Error> {
-        let Some(id) = remote else {
+    fn tree_root(&self, tree: Tree<&ItemId>) -> Result<PathBuf, Error> {
+        let Tree::Remote(id) = tree else {
             return Ok(self.repository.path().to_path_buf());
         };
         if let Some(exclusion) = self.excluded_remote(id) {
@@ -158,7 +161,7 @@ impl<'a> RunContext<'a> {
     }
 
     /// The run's conflict policy, for a destination an action installs to.
-    pub fn resolver(&self) -> ConflictResolver<'_> {
+    pub fn conflict_resolver(&self) -> ConflictResolver<'_> {
         ConflictResolver::new(&self.conflicts, self.mode, self.reporter)
     }
 
@@ -175,7 +178,7 @@ impl<'a> RunContext<'a> {
     /// Ensure a destination directory exists and report changes. Return `false` if a conflict
     /// along the path was skipped.
     pub fn ensure_directory(&self, dir: &Path) -> Result<bool, Error> {
-        let outcome = directory::ensure_directory(dir, &self.resolver())?;
+        let outcome = directory::ensure_directory(dir, &self.conflict_resolver())?;
         outcome.report_removals(self.mode, self.reporter);
         match outcome {
             DirectoryOutcome::Created { .. } => self.reporter.info(&format!(

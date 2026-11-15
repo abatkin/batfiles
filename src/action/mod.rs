@@ -12,15 +12,16 @@ mod symlink;
 use crate::run::context::RunContext;
 
 use crate::error::Error;
-use crate::manifest::action::Action;
+use crate::manifest::actions::Action;
 use crate::manifest::clone_list::PreparedList;
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Tree;
 
 /// Inputs for executing an action.
 ///
 /// Clone lists require prepared entries. Other executable actions use `Declared`; inclusions
 /// must be expanded before dispatch.
-pub(crate) enum Executable<'a> {
+pub(crate) enum PreparedAction<'a> {
     /// An action that needs only its manifest declaration.
     Declared(&'a Action),
     /// A clone list, read for this run.
@@ -29,24 +30,23 @@ pub(crate) enum Executable<'a> {
 
 /// Execute a prepared action.
 ///
-/// `remote` identifies the materialization containing an included record, or is `None` for a
-/// leaf record. Symlink and copy actions resolve sources against it; clone lists are already
-/// prepared.
-pub(crate) fn run(
-    executable: &Executable<'_>,
-    remote: Option<&ItemId>,
+/// `tree` is the tree the record came from. Symlink and copy actions resolve sources against
+/// it; clone lists are already prepared.
+pub(crate) fn dispatch(
+    prepared: &PreparedAction<'_>,
+    tree: Tree<&ItemId>,
     context: &RunContext,
 ) -> Result<(), Error> {
-    let action = match executable {
-        Executable::CloneList(list) => return git_clone_list::git_clone_list(list, context),
-        Executable::Declared(action) => action,
+    let action = match prepared {
+        PreparedAction::CloneList(list) => return git_clone_list::git_clone_list(list, context),
+        PreparedAction::Declared(action) => action,
     };
     match action {
-        Action::Symlink(action) => symlink::link(action, remote, context),
-        Action::SymlinkDir(action) => symlink::link_dir(action, remote, context),
+        Action::Symlink(action) => symlink::link(action, tree, context),
+        Action::SymlinkDir(action) => symlink::link_dir(action, tree, context),
         Action::CreateDir(action) => create_dir::create_dir(action, context),
-        Action::Copy(action) => copy::copy(action, remote, context),
-        Action::CopyDir(action) => copy::copy_dir(action, remote, context),
+        Action::Copy(action) => copy::copy(action, tree, context),
+        Action::CopyDir(action) => copy::copy_dir(action, tree, context),
         Action::FetchFile(action) => fetch_file::fetch_file(action, context),
         Action::FetchArchive(action) => fetch_archive::fetch_archive(action, context),
         Action::GitClone(action) => git_clone::git_clone(action, context),
@@ -90,7 +90,7 @@ mod tests {
         .expect("the roots resolve");
         let action = toml::from_str(declaration).expect("the declaration parses");
 
-        let _ = run(&Executable::Declared(&action), None, &context);
+        let _ = dispatch(&PreparedAction::Declared(&action), Tree::Leaf, &context);
     }
 
     #[test]

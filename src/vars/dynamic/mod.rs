@@ -3,8 +3,8 @@
 //! execution](../../../docs/environment.md#how-dynamic-commands-are-run).
 
 mod cache;
+mod command;
 mod resolve;
-mod run;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -18,6 +18,7 @@ use crate::error::Error;
 use crate::location::StateRoots;
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Remote;
+use crate::manifest::remote::Tree;
 use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
 use crate::vars::name::VarName;
@@ -74,7 +75,7 @@ impl RefreshSelection {
     /// The keys naming one of `remote`'s declarations.
     pub fn keys_for<'a>(&'a self, remote: &'a ItemId) -> impl Iterator<Item = &'a DynamicVarKey> {
         self.keys()
-            .filter(move |key| key.remote.as_ref() == Some(remote))
+            .filter(move |key| key.tree.as_ref() == Tree::Remote(remote))
     }
 
     /// Whether any remote's declarations can be refreshed: always for
@@ -82,7 +83,7 @@ impl RefreshSelection {
     pub fn reaches_remotes(&self) -> bool {
         match self {
             Self::All => true,
-            Self::Named(keys) => keys.iter().any(|key| key.remote.is_some()),
+            Self::Named(keys) => keys.iter().any(|key| matches!(key.tree, Tree::Remote(_))),
         }
     }
 
@@ -96,8 +97,8 @@ impl RefreshSelection {
 
 /// Where a manifest's `[vars]` came from.
 pub(crate) struct ManifestSource<'a> {
-    /// The declaring remote, or `None` for the leaf repository.
-    pub remote: Option<&'a ItemId>,
+    /// The tree that declared them.
+    pub tree: Tree<&'a ItemId>,
     /// That repository's root, where its commands run.
     pub root: &'a Path,
 }
@@ -171,7 +172,7 @@ impl<'a> DynamicVarResolver<'a> {
         source: &ManifestSource<'_>,
         machine: &BTreeMap<VarName, String>,
     ) -> Result<BTreeMap<VarName, VarValue>, Error> {
-        if let Some(remote) = source.remote
+        if let Tree::Remote(remote) = source.tree
             && !self.allowed.contains(remote)
         {
             return Ok(self.refuse(vars, remote));
@@ -202,7 +203,7 @@ impl<'a> DynamicVarResolver<'a> {
         vars: &BTreeMap<VarName, VarSpec>,
         source: &ManifestSource<'_>,
     ) -> Result<(), Error> {
-        if let Some(remote) = source.remote
+        if let Tree::Remote(remote) = source.tree
             && !self.allowed.contains(remote)
         {
             self.refuse(vars, remote);
@@ -322,7 +323,7 @@ impl<'a> DynamicVarResolver<'a> {
 
 fn identity(source: &ManifestSource<'_>, name: &VarName) -> DynamicVarKey {
     DynamicVarKey {
-        remote: source.remote.cloned(),
+        tree: source.tree.cloned(),
         name: name.clone(),
     }
 }

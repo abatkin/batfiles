@@ -11,9 +11,10 @@ use crate::error::Error;
 use crate::filesystem::directory;
 use crate::filesystem::paths::{self, Occupancy};
 use crate::filesystem::replace::ConflictDecision;
-use crate::manifest::action::{SymlinkAction, SymlinkDirAction};
+use crate::manifest::actions::{SymlinkAction, SymlinkDirAction};
 use crate::manifest::entry_filter::EntryFilter;
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Tree;
 use crate::output::Verb;
 use crate::run::context::RunContext;
 
@@ -25,12 +26,12 @@ fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
 /// Create or repair the symlink declared by one `symlink` action.
 pub(super) fn link(
     action: &SymlinkAction,
-    remote: Option<&ItemId>,
+    tree: Tree<&ItemId>,
     context: &RunContext,
 ) -> Result<(), Error> {
     require_symlink_support("symlink")?;
 
-    let target = context.source(remote, &action.source)?;
+    let target = context.source(tree, &action.source)?;
     let dest = context.destination(&action.dest);
     link_one(&target, &dest, context)
 }
@@ -39,12 +40,12 @@ pub(super) fn link(
 /// directory, all of them in one destination directory.
 pub(super) fn link_dir(
     action: &SymlinkDirAction,
-    remote: Option<&ItemId>,
+    tree: Tree<&ItemId>,
     context: &RunContext,
 ) -> Result<(), Error> {
     require_symlink_support("symlink-dir")?;
 
-    let source_dir = context.source_directory(remote, &action.source_dir)?;
+    let source_dir = context.source_directory(tree, &action.source_dir)?;
     let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
@@ -84,7 +85,7 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
     let reporter = context.reporter();
     let mode = context.mode();
-    let resolver = context.resolver();
+    let resolver = context.conflict_resolver();
     match Occupancy::at(dest, context.repository())? {
         Occupancy::Replaceable { points_at, .. }
             if points_at == paths::canonicalize_or_normalize(target) =>

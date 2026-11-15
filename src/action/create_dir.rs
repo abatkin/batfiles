@@ -1,7 +1,7 @@
 //! `create-dir`: ensure a destination directory exists.
 
 use crate::error::Error;
-use crate::manifest::action::CreateDirAction;
+use crate::manifest::actions::CreateDirAction;
 use crate::run::context::RunContext;
 
 /// Create the destination directory if needed, following the run's conflict policy.

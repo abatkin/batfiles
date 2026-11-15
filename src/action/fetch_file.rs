@@ -2,7 +2,7 @@
 
 use crate::error::Error;
 use crate::filesystem::install;
-use crate::manifest::action::FetchFileAction;
+use crate::manifest::actions::FetchFileAction;
 use crate::output::Verb;
 use crate::run::context::RunContext;
 use crate::source::fetch;

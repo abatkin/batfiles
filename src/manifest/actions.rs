@@ -4,11 +4,12 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use super::DeclarationName;
 use super::ReadAs;
 use super::check::{
-    ManifestError, RecordName, SourceShape, check_archive_root, check_child_filter, check_dest,
-    check_digest, check_git_ref, check_git_source, check_inclusion_filters, check_inclusion_remote,
-    check_source, check_url,
+    ManifestError, SourceShape, check_archive_root, check_child_filter, check_dest, check_digest,
+    check_git_ref, check_git_source, check_inclusion_filters, check_inclusion_remote, check_source,
+    check_url,
 };
 use super::remote::Remote;
 use crate::manifest::condition::{Condition, Gate};
@@ -62,7 +63,7 @@ impl Action {
     /// declaration only for [`ReadAs::Leaf`].
     pub fn validate(
         &self,
-        record: &RecordName,
+        record: &DeclarationName,
         remotes: &BTreeMap<ItemId, Remote>,
         read_as: ReadAs,
     ) -> Result<(), ManifestError> {

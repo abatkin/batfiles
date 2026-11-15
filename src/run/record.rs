@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::error::Error;
-use crate::manifest::action::{Action, Contributor};
+use crate::manifest::actions::{Action, Contributor};
 use crate::manifest::item::{ItemAddress, ItemId};
 use crate::output::Reporter;
 use crate::run::inclusion::Inclusion;
@@ -67,7 +67,7 @@ impl RunRecord {
 }
 
 /// One record of the leaf manifest, in declaration order.
-pub(super) enum LeafEntry {
+pub(super) enum TopLevelRecord {
     /// Any record but an inclusion.
     Action(RunRecord),
     /// An inclusion and its contributed records. `opened` is `None` if it was unrequested,
@@ -91,7 +91,7 @@ pub(super) struct OpenedInclusion {
 
 /// The run's list, and what reports need to know about its assembly.
 pub(crate) struct RunList {
-    pub(super) entries: Vec<LeafEntry>,
+    pub(super) entries: Vec<TopLevelRecord>,
     /// Whether the target named a record in the list. An inclusion opened only
     /// to reach inside it does not count.
     pub(super) target_found: bool,
@@ -103,8 +103,8 @@ impl RunList {
     pub fn records(&self) -> impl Iterator<Item = &RunRecord> {
         self.entries.iter().flat_map(|entry| {
             let (record, opened) = match entry {
-                LeafEntry::Action(record) => (record, None),
-                LeafEntry::Inclusion { record, opened, .. } => (record, opened.as_ref()),
+                TopLevelRecord::Action(record) => (record, None),
+                TopLevelRecord::Inclusion { record, opened, .. } => (record, opened.as_ref()),
             };
             std::iter::once(record).chain(opened.into_iter().flat_map(|it| &it.records))
         })
@@ -114,7 +114,7 @@ impl RunList {
     /// unread. Addresses inside them cannot be classified as unmatched.
     pub fn unread(&self) -> impl Iterator<Item = (&ItemAddress, Unread<'_>)> {
         let inclusions = self.entries.iter().filter_map(|entry| match entry {
-            LeafEntry::Inclusion {
+            TopLevelRecord::Inclusion {
                 record,
                 inclusion,
                 opened: None,

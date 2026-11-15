@@ -5,6 +5,7 @@
 use clap::Subcommand;
 
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Tree;
 use crate::vars::dynamic::DynamicVarKey;
 use crate::vars::name::VarName;
 
@@ -51,7 +52,10 @@ fn parse_key(raw: &str) -> Result<DynamicVarKey, String> {
     };
     let name = VarName::try_from(name.to_owned())
         .map_err(|error| format!("`{name}` is not a valid variable name: {error}"))?;
-    Ok(DynamicVarKey { remote, name })
+    Ok(DynamicVarKey {
+        tree: Tree::from(remote),
+        name,
+    })
 }
 
 #[cfg(test)]

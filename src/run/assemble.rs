@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::compose::{IncludedRecord, InclusionContents, compose, not_selected};
-use super::record::{LeafEntry, OpenedInclusion, RunList, RunRecord};
+use super::record::{OpenedInclusion, RunList, RunRecord, TopLevelRecord};
 use crate::error::Error;
-use crate::manifest::action::Action;
+use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
+use crate::manifest::remote::Tree;
 use crate::output::Reporter;
 use crate::run::context::RunContext;
 use crate::run::inclusion::{self, Inclusion};
@@ -48,7 +49,7 @@ pub(super) fn assemble(
 
         let Action::IncludeRemote(declaration) = &record.action else {
             decide(&mut record, target_names_record, None, selection, &bindings);
-            run_list.entries.push(LeafEntry::Action(record));
+            run_list.entries.push(TopLevelRecord::Action(record));
             continue;
         };
         let inclusion = Inclusion::at(declaration, index + 1);
@@ -80,7 +81,7 @@ pub(super) fn assemble(
             None
         };
         let Some(included) = included else {
-            run_list.entries.push(LeafEntry::Inclusion {
+            run_list.entries.push(TopLevelRecord::Inclusion {
                 record,
                 inclusion,
                 opened: None,
@@ -92,10 +93,10 @@ pub(super) fn assemble(
             records: included_records,
         } = compose(&inclusion, declaration, included, context.reporter());
         // Resolve remote variables only after the inclusion's gate passes in the leaf scope.
-        let tree = context.materialization(inclusion.remote());
+        let materialized = context.materialization(inclusion.remote());
         let source = ManifestSource {
-            remote: Some(inclusion.remote()),
-            root: &tree,
+            tree: Tree::Remote(inclusion.remote()),
+            root: &materialized,
         };
         let remote_vars = dynamic.layer(&remote_vars, &source, &BTreeMap::new())?;
         let scope = inclusion_scope(
@@ -128,7 +129,7 @@ pub(super) fn assemble(
             );
             records.push(contributed);
         }
-        run_list.entries.push(LeafEntry::Inclusion {
+        run_list.entries.push(TopLevelRecord::Inclusion {
             record,
             inclusion,
             opened: Some(OpenedInclusion { scope, records }),

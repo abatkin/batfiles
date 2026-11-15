@@ -14,10 +14,11 @@ use crate::error::Error;
 use crate::filesystem::paths;
 use crate::location::Roots;
 use crate::manifest::Manifest;
-use crate::manifest::action::Action;
+use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::manifest::disabled::DisabledItems;
 use crate::manifest::item::{ItemAddress, ItemId};
+use crate::manifest::remote::Tree;
 use crate::manifest::vars::VarSpec;
 use crate::output::Reporter;
 use crate::run::inclusion::{self, Inclusion};
@@ -60,7 +61,7 @@ pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), E
         refresh_with_remotes(manifest, &selection, &roots, env, &mut dynamic, reporter)?;
     } else {
         let leaf = ManifestSource {
-            remote: None,
+            tree: Tree::Leaf,
             root: &roots.batfiles_repo,
         };
         dynamic.force(&manifest.vars, &leaf)?;
@@ -100,7 +101,7 @@ fn refresh_with_remotes(
 
     let wanted: BTreeSet<&ItemId> = match asked {
         RefreshSelection::All => reach.keys().collect(),
-        RefreshSelection::Named(_) => asked.keys().filter_map(|key| key.remote.as_ref()).collect(),
+        RefreshSelection::Named(_) => asked.keys().filter_map(|key| key.tree.remote()).collect(),
     };
 
     let mut refusals = Vec::new();
@@ -134,7 +135,9 @@ fn refresh_with_remotes(
                 },
                 Some(included) => {
                     for key in asked.keys_for(remote) {
-                        if let Some(reason) = declared(included.vars.get(&key.name), Some(remote)) {
+                        if let Some(reason) =
+                            declared(included.vars.get(&key.name), Tree::Remote(remote))
+                        {
                             refusals.push(UnrefreshableKey::of(key, reason));
                         }
                     }
@@ -151,10 +154,10 @@ fn refresh_with_remotes(
     refuse(refusals)?;
 
     for (remote, vars) in &opened {
-        let tree = remotes::materialization(&repository, remote);
+        let materialized = remotes::materialization(&repository, remote);
         let source = ManifestSource {
-            remote: Some(remote),
-            root: &tree,
+            tree: Tree::Remote(remote),
+            root: &materialized,
         };
         dynamic.force(vars, &source)?;
     }
@@ -215,8 +218,8 @@ fn reachability(
 
 /// Why a key cannot be refreshed, as far as the leaf manifest alone can tell.
 fn declared_in_leaf(key: &DynamicVarKey, manifest: &Manifest) -> Option<UnrefreshableReason> {
-    let Some(remote) = &key.remote else {
-        return declared(manifest.vars.get(&key.name), None);
+    let Tree::Remote(remote) = &key.tree else {
+        return declared(manifest.vars.get(&key.name), Tree::Leaf);
     };
     match manifest.remotes.get(remote) {
         None => Some(UnrefreshableReason::UnknownRemote {
@@ -231,12 +234,11 @@ fn declared_in_leaf(key: &DynamicVarKey, manifest: &Manifest) -> Option<Unrefres
     }
 }
 
-/// Why `spec`, looked up in the leaf's or `remote`'s `[vars]`, is not a
-/// dynamic declaration.
-fn declared(spec: Option<&VarSpec>, remote: Option<&ItemId>) -> Option<UnrefreshableReason> {
+/// Why `spec`, looked up in `tree`'s `[vars]`, is not a dynamic declaration.
+fn declared(spec: Option<&VarSpec>, tree: Tree<&ItemId>) -> Option<UnrefreshableReason> {
     match spec {
         None => Some(UnrefreshableReason::NotDeclared {
-            remote: remote.cloned(),
+            tree: tree.cloned(),
         }),
         Some(VarSpec::Static(_)) => Some(UnrefreshableReason::Static),
         Some(VarSpec::Dynamic(_)) => None,
@@ -308,8 +310,8 @@ impl UnrefreshableKey {
 /// Why a key cannot be refreshed.
 #[derive(Debug, Clone, ThisError)]
 pub(crate) enum UnrefreshableReason {
-    #[error("{} does not declare it", declarer(.remote.as_ref()))]
-    NotDeclared { remote: Option<ItemId> },
+    #[error("{} does not declare it", declarer(.tree.as_ref()))]
+    NotDeclared { tree: Tree<ItemId> },
 
     #[error("it is a static variable, with no command to run")]
     Static,
@@ -341,10 +343,10 @@ pub(crate) enum UnrefreshableReason {
 }
 
 /// How a reason names the manifest a declaration was looked up in.
-fn declarer(remote: Option<&ItemId>) -> String {
-    match remote {
-        Some(remote) => format!("batfiles.toml of remote `{remote}`"),
-        None => "batfiles.toml".to_owned(),
+fn declarer(tree: Tree<&ItemId>) -> String {
+    match tree {
+        Tree::Remote(remote) => format!("batfiles.toml of remote `{remote}`"),
+        Tree::Leaf => "batfiles.toml".to_owned(),
     }
 }
 

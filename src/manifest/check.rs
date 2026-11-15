@@ -3,39 +3,17 @@
 //! validation](../../docs/repoformat.md#reading-the-manifest).
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::path::{Component, Path};
 
 use thiserror::Error;
 
-use super::action::IncludeRemoteAction;
+use super::DeclarationName;
+use super::actions::IncludeRemoteAction;
 use super::remote::Remote;
 use crate::manifest::entry_filter::GlobFilter;
-use crate::manifest::item::{ItemId, ItemKind};
+use crate::manifest::item::ItemId;
 use crate::manifest::repo_path::{REMOTE_PREFIX, RepoPath};
 use crate::source::fetch::{FileUrlError, file_url_path};
-
-/// Record identifier used in validation errors: a one-based position for actions and bootstrap
-/// candidates, or a remote ID.
-#[derive(Debug, Clone)]
-pub(crate) enum RecordName {
-    /// An action, by its one-based position in `[[actions]]`.
-    Action(usize),
-    /// A `[default-disabled]` candidate, by its array and one-based position.
-    Candidate { kind: ItemKind, number: usize },
-    /// A `[remotes]` entry, by the ID it was declared under.
-    Remote(ItemId),
-}
-
-impl fmt::Display for RecordName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Action(number) => write!(f, "action {number}"),
-            Self::Candidate { kind, number } => write!(f, "default-disabled {kind} {number}"),
-            Self::Remote(id) => write!(f, "remote `{id}`"),
-        }
-    }
-}
 
 /// How a message names the tree a path is read from.
 fn tree_of(written: &RepoPath) -> String {
@@ -87,22 +65,22 @@ pub(crate) enum ManifestError {
 
     /// A record declares both `when` and `unless`.
     #[error("{record}: writes both `when` and `unless`; a record has one condition or none")]
-    BothConditions { record: RecordName },
+    BothConditions { record: DeclarationName },
 
     // Repository source paths.
     #[error("{record}: source is empty; a source names a path within the repository")]
-    SourceEmpty { record: RecordName },
+    SourceEmpty { record: DeclarationName },
 
     /// A source path has a root or platform prefix instead of being tree-relative.
     #[error("{record}: source `{written}` is not relative to {}", root_of(.written))]
     SourceNotRelative {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
     #[error("{record}: source `{written}` resolves outside {}", tree_of(.written))]
     SourceOutsideTree {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -112,7 +90,7 @@ pub(crate) enum ManifestError {
         whole_of(.written)
     )]
     SourceIsWholeTree {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -123,7 +101,7 @@ pub(crate) enum ManifestError {
          reference and cannot start a path within one"
     )]
     SourceStartsWithRemotePrefix {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -135,7 +113,7 @@ pub(crate) enum ManifestError {
         named_remote_of(.written)
     )]
     SourceRemoteUndeclared {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -146,7 +124,7 @@ pub(crate) enum ManifestError {
          from the repository that declared it"
     )]
     IncludedSourceNamesRemote {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -158,7 +136,7 @@ pub(crate) enum ManifestError {
         named_remote_of(.written)
     )]
     SourceInsideFileRemote {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -169,7 +147,7 @@ pub(crate) enum ManifestError {
         tree_of(.written)
     )]
     SourceDirIsFileRemote {
-        record: RecordName,
+        record: DeclarationName,
         written: RepoPath,
     },
 
@@ -179,7 +157,7 @@ pub(crate) enum ManifestError {
          an include-remote reads the manifest of a `git` remote"
     )]
     InclusionRemoteNotGit {
-        record: RecordName,
+        record: DeclarationName,
         remote: ItemId,
         kind: &'static str,
     },
@@ -189,7 +167,10 @@ pub(crate) enum ManifestError {
         "{record}: remote `{remote}` is not declared by this manifest; \
          add a `[remotes.{remote}]` record"
     )]
-    InclusionRemoteUndeclared { record: RecordName, remote: ItemId },
+    InclusionRemoteUndeclared {
+        record: DeclarationName,
+        remote: ItemId,
+    },
 
     /// An inclusion declares incompatible selection filters.
     #[error(
@@ -198,25 +179,28 @@ pub(crate) enum ManifestError {
          goes with either group filter or alone"
     )]
     InclusionFiltersConflict {
-        record: RecordName,
+        record: DeclarationName,
         one: &'static str,
         other: &'static str,
     },
 
     // Destination paths.
     #[error("{record}: dest is empty; write `~` for the home directory itself")]
-    DestinationEmpty { record: RecordName },
+    DestinationEmpty { record: DeclarationName },
 
     #[error(
         "{record}: dest `{value}` names another user's home; \
          `~` expands only to the selected home"
     )]
-    DestinationOtherHome { record: RecordName, value: String },
+    DestinationOtherHome {
+        record: DeclarationName,
+        value: String,
+    },
 
     // Fetch URLs and digests.
     #[error("{record}: {field} `{value}` is not an http://, https://, or file:// URL")]
     SourceNotAUrl {
-        record: RecordName,
+        record: DeclarationName,
         /// What the record spells it: `source` on an action, `url` on a remote.
         field: &'static str,
         value: String,
@@ -224,33 +208,39 @@ pub(crate) enum ManifestError {
 
     #[error("{record}: {field} `{value}` {source}")]
     FileUrl {
-        record: RecordName,
+        record: DeclarationName,
         field: &'static str,
         value: String,
         source: FileUrlError,
     },
 
     #[error("{record}: sha256 `{value}` is not 64 hexadecimal digits")]
-    DigestNotSha256 { record: RecordName, value: String },
+    DigestNotSha256 {
+        record: DeclarationName,
+        value: String,
+    },
 
     // Git sources and refs.
     #[error("{record}: {field} is empty; it names a repository for git to clone")]
     GitSourceEmpty {
-        record: RecordName,
+        record: DeclarationName,
         /// What the record spells it: `source` on an action, `url` on a remote.
         field: &'static str,
     },
 
     /// An explicitly empty Git ref.
     #[error("{record}: ref is empty; a ref names a branch, tag, or commit to follow")]
-    GitRefEmpty { record: RecordName },
+    GitRefEmpty { record: DeclarationName },
 
     /// An archive root is not a valid path inside the archive.
     #[error(
         "{record}: archive-root `{value}` is not a path inside the archive; \
          write a prefix such as `tool-1.0`, or `*` for the archive's single top-level directory"
     )]
-    ArchiveRootNotInside { record: RecordName, value: String },
+    ArchiveRootNotInside {
+        record: DeclarationName,
+        value: String,
+    },
 
     /// A filter over direct children whose pattern could only match below one.
     #[error(
@@ -258,7 +248,7 @@ pub(crate) enum ManifestError {
          the names of the direct children of source-dir"
     )]
     ChildFilterNested {
-        record: RecordName,
+        record: DeclarationName,
         field: &'static str,
         pattern: String,
     },
@@ -276,7 +266,7 @@ pub(super) enum SourceShape {
 pub(super) fn check_source(
     written: &RepoPath,
     shape: SourceShape,
-    record: &RecordName,
+    record: &DeclarationName,
     remotes: &BTreeMap<ItemId, Remote>,
 ) -> Result<(), ManifestError> {
     let path = written.path();
@@ -341,7 +331,7 @@ pub(super) fn check_source(
 /// Require the inclusion to reference a Git remote declared in the same manifest.
 pub(super) fn check_inclusion_remote(
     remote: &ItemId,
-    record: &RecordName,
+    record: &DeclarationName,
     remotes: &BTreeMap<ItemId, Remote>,
 ) -> Result<(), ManifestError> {
     match remotes.get(remote) {
@@ -362,7 +352,7 @@ pub(super) fn check_inclusion_remote(
 /// and `exclude-groups` may be present; `exclude-actions` cannot accompany `install-actions`.
 pub(super) fn check_inclusion_filters(
     action: &IncludeRemoteAction,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     // A diagnostic names the conflicting pair in this order.
     let selectors = [
@@ -393,7 +383,7 @@ pub(super) fn check_inclusion_filters(
 /// when reading an included manifest.
 pub(super) fn check_included_source(
     written: &RepoPath,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     if written.remote().is_none() {
         Ok(())
@@ -430,7 +420,7 @@ fn depth_within_tree(source: &str) -> Option<usize> {
 }
 
 /// Reject empty destinations and unsupported `~user` prefixes.
-pub(super) fn check_dest(dest: &str, record: &RecordName) -> Result<(), ManifestError> {
+pub(super) fn check_dest(dest: &str, record: &DeclarationName) -> Result<(), ManifestError> {
     if dest.is_empty() {
         return Err(ManifestError::DestinationEmpty {
             record: record.clone(),
@@ -453,7 +443,7 @@ pub(super) fn check_dest(dest: &str, record: &RecordName) -> Result<(), Manifest
 pub(super) fn check_url(
     source: &str,
     field: &'static str,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     let scheme = |prefix: &str| {
         let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
@@ -483,7 +473,7 @@ pub(super) fn check_url(
 pub(super) fn check_git_source(
     source: &str,
     field: &'static str,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     if source.trim().is_empty() {
         return Err(ManifestError::GitSourceEmpty {
@@ -497,7 +487,7 @@ pub(super) fn check_git_source(
 /// Reject an empty or whitespace-only Git ref; allow an absent ref.
 pub(super) fn check_git_ref(
     git_ref: Option<&str>,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     if git_ref.is_some_and(|value| value.trim().is_empty()) {
         return Err(ManifestError::GitRefEmpty {
@@ -508,7 +498,10 @@ pub(super) fn check_git_ref(
 }
 
 /// Require a declared SHA-256 digest to contain exactly 64 hexadecimal digits.
-pub(super) fn check_digest(sha256: Option<&str>, record: &RecordName) -> Result<(), ManifestError> {
+pub(super) fn check_digest(
+    sha256: Option<&str>,
+    record: &DeclarationName,
+) -> Result<(), ManifestError> {
     match sha256 {
         Some(value) if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
             Err(ManifestError::DigestNotSha256 {
@@ -523,7 +516,7 @@ pub(super) fn check_digest(sha256: Option<&str>, record: &RecordName) -> Result<
 /// Validate an optional archive-root path or the `*` automatic-root selector.
 pub(super) fn check_archive_root(
     archive_root: Option<&str>,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     let Some(value) = archive_root else {
         return Ok(());
@@ -545,7 +538,7 @@ pub(super) fn check_archive_root(
 pub(super) fn check_child_filter(
     field: &'static str,
     filter: Option<&GlobFilter>,
-    record: &RecordName,
+    record: &DeclarationName,
 ) -> Result<(), ManifestError> {
     match filter.and_then(GlobFilter::first_nested) {
         None => Ok(()),
@@ -576,10 +569,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::manifest::item::ItemKind;
 
     /// The record the checks below report against.
-    fn record() -> RecordName {
-        RecordName::Action(1)
+    fn record() -> DeclarationName {
+        DeclarationName::Action(1)
     }
 
     /// A manifest's `[remotes]` declaring `ids`; their contents do not matter.
@@ -609,9 +603,9 @@ mod tests {
 
     #[test]
     fn every_kind_of_record_is_named_the_way_its_document_names_it() {
-        assert_eq!(RecordName::Action(3).to_string(), "action 3");
+        assert_eq!(DeclarationName::Action(3).to_string(), "action 3");
         assert_eq!(
-            RecordName::Candidate {
+            DeclarationName::Candidate {
                 kind: ItemKind::Group,
                 number: 1
             }
@@ -619,7 +613,7 @@ mod tests {
             "default-disabled group 1"
         );
         let core = ItemId::try_from("core".to_owned()).expect("valid ID");
-        assert_eq!(RecordName::Remote(core).to_string(), "remote `core`");
+        assert_eq!(DeclarationName::Remote(core).to_string(), "remote `core`");
     }
 
     #[test]

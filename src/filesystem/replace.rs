@@ -30,16 +30,16 @@ pub(crate) enum ConflictPolicy {
 #[derive(Debug)]
 pub(crate) struct ConflictSettings {
     policy: ConflictPolicy,
-    stamp: String,
+    backup_timestamp: String,
 }
 
 impl ConflictSettings {
-    /// The policy for destinations an action installs to, stamping backups
+    /// The policy for destinations an action installs to, naming backups
     /// with `now`.
     pub fn new(policy: ConflictPolicy, now: SystemTime) -> Self {
         Self {
             policy,
-            stamp: utc_stamp(now),
+            backup_timestamp: utc_timestamp(now),
         }
     }
 
@@ -52,7 +52,7 @@ impl ConflictSettings {
 /// The policy for tool-owned destinations, which makes no backups.
 pub(crate) static REFUSE_CONFLICTS: ConflictSettings = ConflictSettings {
     policy: ConflictPolicy::Refuse,
-    stamp: String::new(),
+    backup_timestamp: String::new(),
 };
 
 /// What to do about one conflict.
@@ -168,7 +168,7 @@ impl<'a> ConflictResolver<'a> {
     /// the old node as `keep` says.
     ///
     /// The node is renamed aside before `install` runs, and the rename is
-    /// reported: a backup at `<dest>.batfiles-backup-<stamp>`, with `-2`, `-3`, …
+    /// reported: a backup at `<dest>.batfiles-backup-<timestamp>`, with `-2`, `-3`, …
     /// appended where that is taken; a discard at `<dest>.batfiles-old`, which
     /// must be vacant. If `install` fails and `dest` is vacant again, the node is
     /// renamed back and that is reported; otherwise the error names where it is.
@@ -226,9 +226,9 @@ impl<'a> ConflictResolver<'a> {
         Ok(())
     }
 
-    /// The first vacant backup path for `dest` under this run's stamp.
+    /// The first vacant backup path for `dest` under this run's backup timestamp.
     fn backup_path(&self, dest: &Path) -> Result<PathBuf, Error> {
-        let base = format!("{BACKUP_SUFFIX}{}", self.conflicts.stamp);
+        let base = format!("{BACKUP_SUFFIX}{}", self.conflicts.backup_timestamp);
         let mut candidate = paths::beside(dest, &base);
         let mut attempt = 1;
         while paths::occupied(&candidate)? {
@@ -239,7 +239,7 @@ impl<'a> ConflictResolver<'a> {
     }
 }
 
-/// What names a backup, ahead of its stamp.
+/// What names a backup, ahead of its timestamp.
 const BACKUP_SUFFIX: &str = ".batfiles-backup-";
 
 /// Return `<dest>.batfiles-old`, failing if it is already occupied.
@@ -291,7 +291,7 @@ pub(crate) fn remove_aside(aside: &Path, reporter: &Reporter) {
 }
 
 /// `now` in UTC as `YYYYMMDDTHHMMSSZ`, to the second.
-fn utc_stamp(now: SystemTime) -> String {
+fn utc_timestamp(now: SystemTime) -> String {
     // Clamp pre-epoch timestamps to the epoch.
     let seconds = now
         .duration_since(UNIX_EPOCH)
@@ -330,15 +330,15 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn stamp_at(seconds: u64) -> String {
-        utc_stamp(UNIX_EPOCH + Duration::from_secs(seconds))
+    fn timestamp_at(seconds: u64) -> String {
+        utc_timestamp(UNIX_EPOCH + Duration::from_secs(seconds))
     }
 
     #[test]
-    fn a_stamp_is_the_utc_time_to_the_second() {
-        assert_eq!(stamp_at(0), "19700101T000000Z");
-        assert_eq!(stamp_at(951_782_400), "20000229T000000Z");
-        assert_eq!(stamp_at(4_102_444_799), "20991231T235959Z");
+    fn a_backup_timestamp_is_the_utc_time_to_the_second() {
+        assert_eq!(timestamp_at(0), "19700101T000000Z");
+        assert_eq!(timestamp_at(951_782_400), "20000229T000000Z");
+        assert_eq!(timestamp_at(4_102_444_799), "20991231T235959Z");
     }
 
     #[test]
@@ -347,7 +347,7 @@ mod tests {
         let dest = dir.path().join("rc");
         let conflicts = ConflictSettings {
             policy: ConflictPolicy::Backup,
-            stamp: "STAMP".to_owned(),
+            backup_timestamp: "STAMP".to_owned(),
         };
         let reporter = Reporter::new(false);
         let resolver = ConflictResolver::new(&conflicts, RunMode::Perform, &reporter);
