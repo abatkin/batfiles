@@ -1,5 +1,6 @@
 //! CLI tests for file/archive remote fetching, refresh, ownership, and source references.
-//! Local-server request counts verify skipped downloads.
+//! Local-server request counts verify skipped downloads. Git remotes are covered in
+//! `git_remotes`.
 
 use std::fs;
 use std::path::PathBuf;

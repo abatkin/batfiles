@@ -36,7 +36,7 @@ where rendering requires it.
 
 **6. Shell out to Git.** Use the user's executable, configuration, credentials,
 and SSH agent. Keep Git's subprocess launch and environment handling in
-`source/git.rs`. The supported environment is specified in
+`source/git/process.rs`. The supported environment is specified in
 [environment.md](../environment.md#variables-passed-on-to-git). The only other
 subprocesses are a dynamic variable's command, launched in
 `vars/dynamic/command.rs`, and in `commands/update.rs` the `version` of a release

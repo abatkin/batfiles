@@ -3,18 +3,19 @@
 
 mod support;
 
-mod actions;
 mod apply;
 mod bootstrap;
 mod clone;
 mod clone_list_addresses;
 mod clone_lists;
 mod conditions;
+mod create_dir_and_copy;
 mod decompressing;
 mod disabled;
 mod documentation;
-mod fetching;
+mod fetch_actions;
 mod git_clone_action;
+mod git_remotes;
 mod groups;
 mod inclusion;
 mod inclusion_addresses;
@@ -25,7 +26,6 @@ mod init;
 mod locations;
 mod manifest;
 mod refresh_content;
-mod remotes;
 mod run_lock;
 mod selection;
 mod surface;
@@ -40,7 +40,7 @@ mod dry_run;
 #[cfg(unix)]
 mod dynamic_vars;
 #[cfg(unix)]
-mod fetched_remotes;
+mod file_and_archive_remotes;
 // Symlink actions, which are Unix-only.
 #[cfg(unix)]
 mod inclusion_composition;

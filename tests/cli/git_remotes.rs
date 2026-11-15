@@ -1,5 +1,5 @@
 //! CLI tests for Git remote validation, materialization, and dry runs using local bare
-//! repositories. File and archive remotes are covered in `fetched_remotes`.
+//! repositories. File and archive remotes are covered in `file_and_archive_remotes`.
 
 use std::fs;
 

@@ -24,7 +24,7 @@ enum Kind {
     ReadOnly,
     /// Checks `RunMode` before performing action writes.
     ModeReader,
-    /// Writes content only within nodes created by a mode-checking caller.
+    /// Performs filesystem or subprocess work after the caller authorizes writes.
     Downstream,
     /// Maintains state or resolves inputs in both run modes.
     Bookkeeping,
@@ -55,7 +55,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 15] = [
+const FILESYSTEM_OWNERS: [Owner; 17] = [
     Owner {
         path: "src/manifest/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -97,9 +97,19 @@ const FILESYSTEM_OWNERS: [Owner; 15] = [
         reason: "renames a node in a destination's way to a backup or aside, and puts it back or removes it",
     },
     Owner {
-        path: "src/source/git.rs",
+        path: "src/source/git/clone.rs",
         kind: Kind::ModeReader,
-        reason: "runs git, and under DryRun runs none for any caller",
+        reason: "checks the run mode before removing replaceable links or cloning and updating for actions",
+    },
+    Owner {
+        path: "src/source/git/update.rs",
+        kind: Kind::Downstream,
+        reason: "checks for files a fast-forward would overwrite and updates the checkout through Git",
+    },
+    Owner {
+        path: "src/source/git/process.rs",
+        kind: Kind::Downstream,
+        reason: "launches Git for writing runs and the standalone clone and init commands",
     },
     Owner {
         path: "src/action/symlink.rs",

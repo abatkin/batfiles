@@ -38,7 +38,7 @@ pub(crate) fn run(args: &CloneArgs, session: &Session<'_>) -> Result<(), Error> 
         "{} {} from {url}{}",
         Verb::Clone.for_mode(RunMode::Perform),
         dest.display(),
-        git::at(git_ref)
+        git::ref_suffix(git_ref)
     ));
 
     // Report a missing manifest as a clone error before entering synchronization.

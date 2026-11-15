@@ -274,9 +274,9 @@ impl Stamp {
             url: remote.url.clone(),
             sha256: digest(remote.sha256.as_deref()),
             archive_root: remote.archive_root.clone(),
-            include: written(remote.include.as_ref()),
-            exclude: written(remote.exclude.as_ref()),
-            executable: written(remote.executable.as_ref()),
+            include: patterns_as_written(remote.include.as_ref()),
+            exclude: patterns_as_written(remote.exclude.as_ref()),
+            executable: patterns_as_written(remote.executable.as_ref()),
         }
     }
 
@@ -298,7 +298,7 @@ impl Stamp {
 
 /// A declared filter's patterns as a stamp records them: a list, however the manifest
 /// spelled it.
-fn written(filter: Option<&GlobFilter>) -> Option<Vec<String>> {
+fn patterns_as_written(filter: Option<&GlobFilter>) -> Option<Vec<String>> {
     filter.map(|filter| {
         filter
             .as_slice()
