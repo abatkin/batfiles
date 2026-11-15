@@ -86,10 +86,7 @@ pub(crate) fn download(
                 url: url.to_owned(),
                 source,
             })?;
-            let unreadable = |error| Error::Read {
-                path: path.clone(),
-                source: error,
-            };
+            let unreadable = Error::reading(&path);
             let file = fs::File::open(&path).map_err(unreadable)?;
             copy_hashed(file, into, built_at, unreadable)?
         }
@@ -143,10 +140,7 @@ fn copy_hashed(
     built_at: &Path,
     unreadable: impl Fn(io::Error) -> Error,
 ) -> Result<Vec<u8>, Error> {
-    let written = |error| Error::Write {
-        path: built_at.to_path_buf(),
-        source: error,
-    };
+    let written = Error::writing(built_at);
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
@@ -296,10 +290,7 @@ fn set_download_permissions(
         FETCHED_MODE
     };
     into.set_permissions(fs::Permissions::from_mode(mode))
-        .map_err(|error| Error::Write {
-            path: built_at.to_path_buf(),
-            source: error,
-        })
+        .map_err(Error::writing(built_at))
 }
 
 /// Keep platform-default permissions on non-Unix systems.

@@ -731,10 +731,7 @@ fn ask(dest: &Path, command: &'static str, args: &[&str]) -> Result<Option<Strin
 
 /// Remove a symlink [`Occupancy`] classified as holding no content of its own.
 fn remove(dest: &Path) -> Result<(), Error> {
-    fs::remove_file(dest).map_err(|source| Error::Write {
-        path: dest.to_path_buf(),
-        source,
-    })
+    fs::remove_file(dest).map_err(Error::writing(dest))
 }
 
 /// Initialize a repository in `dir` unless it is already inside a worktree. Return whether a

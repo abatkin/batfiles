@@ -15,10 +15,7 @@ use crate::error::Error;
 
 /// Read and parse one document. A missing file is an error.
 pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
-    let text = fs::read_to_string(path).map_err(|source| Error::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let text = fs::read_to_string(path).map_err(Error::reading(path))?;
     toml::from_str(&text).map_err(|source| Error::Parse {
         path: path.to_path_buf(),
         source,
@@ -42,10 +39,7 @@ pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(),
         source,
     })?;
 
-    let write_error = |source| Error::Write {
-        path: path.to_path_buf(),
-        source,
-    };
+    let write_error = Error::writing(path);
 
     if let Some(parent) = path
         .parent()

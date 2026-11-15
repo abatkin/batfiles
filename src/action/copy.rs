@@ -149,10 +149,7 @@ fn select_under(
         }
         let from = dir.join(&child);
         let is_directory = fs::symlink_metadata(&from)
-            .map_err(|error| Error::Read {
-                path: from.clone(),
-                source: error,
-            })?
+            .map_err(Error::reading(&from))?
             .is_dir();
         let beneath = is_directory && select_under(&from, &path, filter, selected)?;
         if verdict == Verdict::Selected || beneath {
@@ -208,10 +205,7 @@ fn kind_of_source(source: &Path) -> Result<ContentKind, Error> {
 
 /// Classify a copied directory child without following symlinks.
 fn kind_of_child(source: &Path) -> Result<ContentKind, Error> {
-    let found = fs::symlink_metadata(source).map_err(|error| Error::Read {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
+    let found = fs::symlink_metadata(source).map_err(Error::reading(source))?;
     if found.is_symlink() {
         return Err(Error::SourceIsSymlink {
             path: source.to_path_buf(),
@@ -235,14 +229,8 @@ fn classify(found: &fs::Metadata, source: &Path) -> Result<ContentKind, Error> {
 
 /// Write a source file's contents into the file already opened for it.
 fn copy_file(source: &Path, mut into: fs::File, built_at: &Path) -> Result<(), Error> {
-    let mut from = fs::File::open(source).map_err(|error| Error::Read {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
-    io::copy(&mut from, &mut into).map_err(|error| Error::Write {
-        path: built_at.to_path_buf(),
-        source: error,
-    })?;
+    let mut from = fs::File::open(source).map_err(Error::reading(source))?;
+    io::copy(&mut from, &mut into).map_err(Error::writing(built_at))?;
     mirror_permissions(source, built_at)
 }
 
@@ -259,10 +247,7 @@ fn copy_children(source: &Path, built_at: &Path, copied: &Copied) -> Result<(), 
                 copy_file(&from, create_new_file(&to)?, &to)?;
             }
             ContentKind::Directory => {
-                fs::create_dir(&to).map_err(|error| Error::Write {
-                    path: to.clone(),
-                    source: error,
-                })?;
+                fs::create_dir(&to).map_err(Error::writing(&to))?;
                 copy_children(&from, &to, &within)?;
             }
         }
@@ -278,20 +263,11 @@ fn create_new_file(path: &Path) -> Result<fs::File, Error> {
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|error| Error::Write {
-            path: path.to_path_buf(),
-            source: error,
-        })
+        .map_err(Error::writing(path))
 }
 
 /// Apply the source file or directory permissions to the copy.
 fn mirror_permissions(source: &Path, built_at: &Path) -> Result<(), Error> {
-    let found = fs::metadata(source).map_err(|error| Error::Read {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
-    fs::set_permissions(built_at, found.permissions()).map_err(|error| Error::Write {
-        path: built_at.to_path_buf(),
-        source: error,
-    })
+    let found = fs::metadata(source).map_err(Error::reading(source))?;
+    fs::set_permissions(built_at, found.permissions()).map_err(Error::writing(built_at))
 }

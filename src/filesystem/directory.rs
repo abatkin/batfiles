@@ -132,10 +132,7 @@ fn make_directory(dir: &Path, resolver: &ConflictResolver<'_>) -> Result<Directo
 /// Create one directory whose parent is there, in perform mode.
 fn create(dir: &Path, mode: RunMode) -> Result<(), Error> {
     if mode.writes() {
-        fs::create_dir(dir).map_err(|source| Error::Write {
-            path: dir.to_path_buf(),
-            source,
-        })?;
+        fs::create_dir(dir).map_err(Error::writing(dir))?;
     }
     Ok(())
 }
@@ -146,20 +143,14 @@ fn broken_link_at(path: &Path) -> Result<Option<PathBuf>, Error> {
     if !fs::symlink_metadata(path).is_ok_and(|node| node.is_symlink()) {
         return Ok(None);
     }
-    let written = fs::read_link(path).map_err(|source| Error::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let written = fs::read_link(path).map_err(Error::reading(path))?;
     Ok(Some(written))
 }
 
 /// Clear a link [`broken_link_at`] found, so the directory can be made where it
 /// was.
 fn remove_link(path: &Path) -> Result<(), Error> {
-    fs::remove_file(path).map_err(|source| Error::Write {
-        path: path.to_path_buf(),
-        source,
-    })
+    fs::remove_file(path).map_err(Error::writing(path))
 }
 
 /// Ensure the destination's parent directories exist and report removed broken links. Return

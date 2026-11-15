@@ -176,10 +176,7 @@ pub(crate) fn decompress(
         .map_err(unreadable)?;
     compressed::not_a_tar(&head, compression).map_err(fault)?;
 
-    let written = |source| Error::Write {
-        path: built_at.to_path_buf(),
-        source,
-    };
+    let written = Error::writing(built_at);
     let mut decoder = compression.decoder(rewound(file).map_err(unreadable)?);
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
@@ -586,10 +583,7 @@ fn unpack(archive: &Archive<'_>, records: &[EntryPlan], into: &Path) -> Result<(
             EntryKind::File => {
                 create_parents(&built_at)?;
                 let mut file = create_private_file(&built_at)?;
-                io::copy(entry.content, &mut file).map_err(|source| Error::Write {
-                    path: built_at.clone(),
-                    source,
-                })?;
+                io::copy(entry.content, &mut file).map_err(Error::writing(&built_at))?;
                 // Keep the file private until its contents are complete.
                 set_mode(&built_at, file_mode(entry.mode, record.executable))?;
             }
@@ -637,10 +631,7 @@ fn for_each_entry(
 
 /// Create a directory and any missing parents under the private staging root.
 fn create_directory(at: &Path) -> Result<(), Error> {
-    fs::create_dir_all(at).map_err(|source| Error::Write {
-        path: at.to_path_buf(),
-        source,
-    })
+    fs::create_dir_all(at).map_err(Error::writing(at))
 }
 
 /// Create any missing parent directories for an entry.
@@ -661,10 +652,7 @@ fn create_private_file(at: &Path) -> Result<fs::File, Error> {
         .create_new(true)
         .mode(BUILDING_MODE)
         .open(at)
-        .map_err(|source| Error::Write {
-            path: at.to_path_buf(),
-            source,
-        })
+        .map_err(Error::writing(at))
 }
 
 /// Create a file exclusively, without applying Unix permissions.
@@ -674,10 +662,7 @@ fn create_private_file(at: &Path) -> Result<fs::File, Error> {
         .write(true)
         .create_new(true)
         .open(at)
-        .map_err(|source| Error::Write {
-            path: at.to_path_buf(),
-            source,
-        })
+        .map_err(Error::writing(at))
 }
 
 /// The permission bits an entry asks for, with the ones batfiles will not grant
@@ -718,10 +703,7 @@ fn file_mode(_recorded: Option<u32>, _executable: bool) -> u32 {
 fn set_mode(at: &Path, mode: u32) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt as _;
 
-    fs::set_permissions(at, fs::Permissions::from_mode(mode)).map_err(|source| Error::Write {
-        path: at.to_path_buf(),
-        source,
-    })
+    fs::set_permissions(at, fs::Permissions::from_mode(mode)).map_err(Error::writing(at))
 }
 
 #[cfg(not(unix))]

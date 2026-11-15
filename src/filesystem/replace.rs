@@ -184,7 +184,7 @@ impl<'a> ConflictResolver<'a> {
     ) -> Result<(), Error> {
         let aside = match keep {
             ExistingContent::BackUp => self.backup_path(dest)?,
-            ExistingContent::Discard => discard_path(dest)?,
+            ExistingContent::Discard => vacant_discard_path(dest)?,
         };
         let (mode, reporter) = (self.mode, self.reporter);
         if mode.writes() {
@@ -242,9 +242,14 @@ impl<'a> ConflictResolver<'a> {
 /// What names a backup, ahead of its timestamp.
 const BACKUP_SUFFIX: &str = ".batfiles-backup-";
 
-/// Return `<dest>.batfiles-old`, failing if it is already occupied.
-fn discard_path(dest: &Path) -> Result<PathBuf, Error> {
-    let aside = paths::beside(dest, ".batfiles-old");
+/// Where an old destination is set aside for removal.
+pub(crate) fn discard_path(dest: &Path) -> PathBuf {
+    paths::beside(dest, ".batfiles-old")
+}
+
+/// Return the discard path if it is vacant.
+pub(crate) fn vacant_discard_path(dest: &Path) -> Result<PathBuf, Error> {
+    let aside = discard_path(dest);
     if paths::occupied(&aside)? {
         return Err(Error::StagingPathTaken { path: aside });
     }
@@ -253,10 +258,7 @@ fn discard_path(dest: &Path) -> Result<PathBuf, Error> {
 
 /// Rename the node at `dest` to `aside`, which the caller has found vacant.
 pub(crate) fn set_aside(dest: &Path, aside: &Path) -> Result<(), Error> {
-    fs::rename(dest, aside).map_err(|source| Error::Write {
-        path: dest.to_path_buf(),
-        source,
-    })
+    fs::rename(dest, aside).map_err(Error::writing(dest))
 }
 
 /// Restore `aside` after an installation failure if `dest` is vacant. Return the error to

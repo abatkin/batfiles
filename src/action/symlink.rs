@@ -155,15 +155,9 @@ fn report_link(target: &Path, dest: &Path, context: &RunContext) {
 }
 
 fn create(target: &Path, dest: &Path) -> Result<(), Error> {
-    symlink(target, dest).map_err(|source| Error::Write {
-        path: dest.to_path_buf(),
-        source,
-    })
+    symlink(target, dest).map_err(Error::writing(dest))
 }
 
 fn remove(dest: &Path) -> Result<(), Error> {
-    fs::remove_file(dest).map_err(|source| Error::Write {
-        path: dest.to_path_buf(),
-        source,
-    })
+    fs::remove_file(dest).map_err(Error::writing(dest))
 }

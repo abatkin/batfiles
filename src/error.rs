@@ -1,7 +1,7 @@
 //! The crate's error type.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
@@ -367,6 +367,22 @@ pub(crate) enum Error {
 }
 
 impl Error {
+    /// Attach the path of a failed read to its I/O error.
+    pub fn reading(path: &Path) -> impl Fn(io::Error) -> Self + Copy {
+        move |source| Self::Read {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+
+    /// Attach the path of a failed write to its I/O error.
+    pub fn writing(path: &Path) -> impl Fn(io::Error) -> Self + Copy {
+        move |source| Self::Write {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+
     /// Whether the failure was simply that the file does not exist.
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)

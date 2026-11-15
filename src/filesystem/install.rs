@@ -167,25 +167,22 @@ fn refresh_seed<T>(
     if !mode.writes() {
         return settle(dest, existing, resolver, || Ok(()));
     }
-    let staging = staging_path(dest);
-    let node = create_staging(&staging, make)?;
-    let refreshed = fill(node, &staging).and_then(|()| {
+    with_staging(dest, kind, reporter, make, |node, staging| {
+        fill(node, staging)?;
         if let OccupiedDestination::Unmanaged(_) = existing
-            && same_content(&staging, dest)?
+            && same_content(staging, dest)?
         {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
             return Ok(false);
         }
         settle(dest, existing, resolver, || {
-            publish_vacated(&staging, kind, dest)
+            publish_vacated(staging, kind, dest)
         })
-    });
-    discard(&staging, kind, reporter);
-    refreshed
+    })
 }
 
 /// Settle what is at `dest` and, unless that was skipped, `install` in its
-/// place. Answers whether it was installed.
+/// place. Returns true if the conflict policy allowed installation.
 fn settle(
     dest: &Path,
     existing: OccupiedDestination,
@@ -214,23 +211,13 @@ fn settle(
 /// target, and for a directory the same children holding the same content.
 /// Follows no symlink.
 fn same_content(built: &Path, existing: &Path) -> Result<bool, Error> {
-    let inspect = |path: &Path| {
-        fs::symlink_metadata(path).map_err(|source| Error::Read {
-            path: path.to_path_buf(),
-            source,
-        })
-    };
+    let inspect = |path: &Path| fs::symlink_metadata(path).map_err(Error::reading(path));
     let (ours, theirs) = (inspect(built)?, inspect(existing)?);
     if ours.file_type() != theirs.file_type() {
         return Ok(false);
     }
     if ours.is_symlink() {
-        let target = |path: &Path| {
-            fs::read_link(path).map_err(|source| Error::Read {
-                path: path.to_path_buf(),
-                source,
-            })
-        };
+        let target = |path: &Path| fs::read_link(path).map_err(Error::reading(path));
         return Ok(target(built)? == target(existing)?);
     }
     if ours.permissions() != theirs.permissions() {
@@ -259,27 +246,18 @@ fn same_bytes(built: &Path, existing: &Path) -> Result<bool, Error> {
     let open = |path: &Path| {
         fs::File::open(path)
             .map(io::BufReader::new)
-            .map_err(|source| Error::Read {
-                path: path.to_path_buf(),
-                source,
-            })
+            .map_err(Error::reading(path))
     };
     let (mut ours, mut theirs) = (open(built)?, open(existing)?);
     let mut buffers = ([0_u8; 8192], [0_u8; 8192]);
     loop {
-        let read = ours.read(&mut buffers.0).map_err(|source| Error::Read {
-            path: built.to_path_buf(),
-            source,
-        })?;
+        let read = ours.read(&mut buffers.0).map_err(Error::reading(built))?;
         if read == 0 {
             return Ok(true);
         }
         theirs
             .read_exact(&mut buffers.1[..read])
-            .map_err(|source| Error::Read {
-                path: existing.to_path_buf(),
-                source,
-            })?;
+            .map_err(Error::reading(existing))?;
         if buffers.0[..read] != buffers.1[..read] {
             return Ok(false);
         }
@@ -333,27 +311,21 @@ fn rebuild<T>(
     if !mode.writes() {
         return Ok(());
     }
-    let staging = staging_path(dest);
-    let node = create_staging(&staging, make)?;
-    let built = fill(node, &staging).and_then(|()| {
+    with_staging(dest, kind, reporter, make, |node, staging| {
+        fill(node, staging)?;
         if replacing {
-            swap(&staging, kind, dest, reporter)
+            swap(staging, kind, dest, reporter)
         } else {
-            publish_vacated(&staging, kind, dest)
+            publish_vacated(staging, kind, dest)
         }
-    });
-    discard(&staging, kind, reporter);
-    built
+    })
 }
 
 /// Replace `dest` with staged content, moving the existing node to `<dest>.batfiles-old` first.
 /// That path must be vacant. Remove the old node after success; attempt to restore it if
 /// publication fails.
 fn swap(staging: &Path, kind: ContentKind, dest: &Path, reporter: &Reporter) -> Result<(), Error> {
-    let aside = paths::beside(dest, ".batfiles-old");
-    if paths::occupied(&aside)? {
-        return Err(Error::StagingPathTaken { path: aside });
-    }
+    let aside = replace::vacant_discard_path(dest)?;
     replace::set_aside(dest, &aside)?;
     if let Err(error) = publish_vacated(staging, kind, dest) {
         return Err(replace::put_back(dest, &aside, error).0);
@@ -385,13 +357,25 @@ fn build_and_publish<T>(
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
 ) -> Result<bool, Error> {
+    with_staging(dest, kind, reporter, make, |node, staging| {
+        fill(node, staging)?;
+        publish(staging, kind, dest)
+    })
+}
+
+/// Create a private staging node and clean it up after the callback returns, including on error.
+fn with_staging<T, R>(
+    dest: &Path,
+    kind: ContentKind,
+    reporter: &Reporter,
+    make: impl FnOnce(&Path) -> io::Result<T>,
+    work: impl FnOnce(T, &Path) -> Result<R, Error>,
+) -> Result<R, Error> {
     let staging = staging_path(dest);
     let node = create_staging(&staging, make)?;
-
-    let installed = fill(node, &staging).and_then(|()| publish(&staging, kind, dest));
-
+    let result = work(node, &staging);
     discard(&staging, kind, reporter);
-    installed
+    result
 }
 
 /// Create a private staging node using `make`. Fail if the path is already occupied.
@@ -465,10 +449,7 @@ fn publish(staging: &Path, kind: ContentKind, dest: &Path) -> Result<bool, Error
     if paths::occupied(dest)? {
         return Ok(false);
     }
-    fs::rename(staging, dest).map_err(|error| Error::Write {
-        path: dest.to_path_buf(),
-        source: error,
-    })?;
+    fs::rename(staging, dest).map_err(Error::writing(dest))?;
     Ok(true)
 }
 
@@ -512,7 +493,7 @@ pub(crate) struct Scratch {
 }
 
 impl Scratch {
-    /// Where it is, for naming it in a diagnostic.
+    /// The scratch file's path for diagnostics.
     pub fn path(&self) -> &Path {
         &self.path
     }

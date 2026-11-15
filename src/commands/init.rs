@@ -274,10 +274,7 @@ fn is_os_home(dir: &Path, os_home: impl FnOnce() -> Result<PathBuf, Error>) -> b
 fn create(dir: &Path, missing: &[SkeletonEntry], base: &ReleaseBase) -> Result<(), Error> {
     for entry in missing {
         let path = dir.join(entry.name());
-        let failed = |source| Error::Write {
-            path: path.clone(),
-            source,
-        };
+        let failed = Error::writing(&path);
         match entry {
             SkeletonEntry::Directory { .. } => fs::create_dir(&path).map_err(failed)?,
             SkeletonEntry::File { content, .. } => fs::write(&path, content).map_err(failed)?,

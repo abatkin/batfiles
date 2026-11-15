@@ -180,17 +180,7 @@ fn replace(
     _env: &Environment,
     _reporter: &Reporter,
 ) -> Result<(), Error> {
-    fs::rename(staged, exe).map_err(|source| Error::Write {
-        path: exe.to_path_buf(),
-        source,
-    })
-}
-
-/// Where Windows' running executable is set aside, since nothing may replace or remove it while
-/// it runs.
-#[cfg(windows)]
-fn set_aside_path(exe: &Path) -> PathBuf {
-    paths::beside(exe, ".batfiles-old")
+    fs::rename(staged, exe).map_err(Error::writing(exe))
 }
 
 /// Rename the running executable aside, then the staged release into its place, putting the
@@ -198,7 +188,7 @@ fn set_aside_path(exe: &Path) -> PathBuf {
 /// this one exits.
 #[cfg(windows)]
 fn replace(staged: &Path, exe: &Path, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
-    let aside = set_aside_path(exe);
+    let aside = crate::filesystem::replace::discard_path(exe);
     fs::rename(exe, &aside).map_err(|source| UpdateError::SetAside {
         exe: exe.to_path_buf(),
         aside: aside.clone(),
@@ -271,7 +261,7 @@ fn remove_once_exited(aside: &Path, env: &Environment, reporter: &Reporter) {
 /// not.
 #[cfg(windows)]
 fn remove_set_aside(exe: &Path, reporter: &Reporter) {
-    let aside = set_aside_path(exe);
+    let aside = crate::filesystem::replace::discard_path(exe);
     match fs::remove_file(&aside) {
         Ok(()) => reporter.detail(
             1,
@@ -361,10 +351,7 @@ fn make_executable(file: &fs::File, staged: &Path) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
 
     file.set_permissions(fs::Permissions::from_mode(0o755))
-        .map_err(|source| Error::Write {
-            path: staged.to_path_buf(),
-            source,
-        })
+        .map_err(Error::writing(staged))
 }
 
 /// Windows decides executability by name, which the staged file does not need.

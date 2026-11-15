@@ -65,10 +65,7 @@ impl Occupancy {
         if !existing.is_symlink() {
             return Ok(Self::Unmanaged(ExistingNode::of(&existing)));
         }
-        let written = fs::read_link(dest).map_err(|source| Error::Read {
-            path: dest.to_path_buf(),
-            source,
-        })?;
+        let written = fs::read_link(dest).map_err(Error::reading(dest))?;
         let points_at = target_of(dest, &written);
         Ok(if repository.contains(&points_at) || is_broken(dest) {
             Self::Replaceable { written, points_at }
@@ -158,10 +155,7 @@ pub(crate) fn occupied(path: &Path) -> Result<bool, Error> {
 pub(crate) fn reaches_directory(path: &Path) -> Result<bool, Error> {
     fs::metadata(path)
         .map(|found| found.is_dir())
-        .map_err(|source| Error::Read {
-            path: path.to_path_buf(),
-            source,
-        })
+        .map_err(Error::reading(path))
 }
 
 /// Refuse a destination that lands inside the source it installs from.
@@ -245,10 +239,7 @@ fn passes_through(path: &Path, node: &Path) -> Result<bool, Error> {
                 if followed > MAX_LINKS {
                     return Ok(false);
                 }
-                let target = fs::read_link(&candidate).map_err(|source| Error::Read {
-                    path: candidate.clone(),
-                    source,
-                })?;
+                let target = fs::read_link(&candidate).map_err(Error::reading(&candidate))?;
                 // Read from the link's directory, which `current` still is;
                 // an absolute target resets it.
                 pending.extend(
@@ -359,16 +350,10 @@ pub(crate) fn beside(dest: &Path, suffix: &str) -> PathBuf {
 
 /// The direct children of a directory, sorted by name.
 pub(crate) fn children_of(dir: &Path) -> Result<Vec<OsString>, Error> {
-    let read = fs::read_dir(dir).map_err(|source| Error::Read {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+    let read = fs::read_dir(dir).map_err(Error::reading(dir))?;
     let mut names = Vec::new();
     for entry in read {
-        let entry = entry.map_err(|source| Error::Read {
-            path: dir.to_path_buf(),
-            source,
-        })?;
+        let entry = entry.map_err(Error::reading(dir))?;
         names.push(entry.file_name());
     }
     names.sort();

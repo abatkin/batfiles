@@ -48,10 +48,7 @@ impl CloneListEntry {
 
 /// Read and check the list at `path`. A missing or malformed list is an error.
 pub(crate) fn read(path: &Path) -> Result<Vec<CloneListEntry>, Error> {
-    let text = fs::read_to_string(path).map_err(|source| Error::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let text = fs::read_to_string(path).map_err(Error::reading(path))?;
     parse(&text).map_err(|(line, source)| Error::CloneList {
         path: path.to_path_buf(),
         line,
