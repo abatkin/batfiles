@@ -370,7 +370,7 @@ fn a_symlink_dirs_paths_follow_the_same_rules_as_a_symlinks() {
         ("/etc", "~", "not relative to the repository root"),
         (".", "~", "names the whole repository"),
         ("", "~", "source is empty"),
-        ("files", "", "dest is empty"),
+        ("files", "", "dest-dir is empty"),
         ("files", "~other/x", "another user's home"),
     ] {
         let stderr = rejected(&one_symlink_dir(source_dir, dest_dir, false));

@@ -188,7 +188,7 @@ fn validate_clone(dest: &Path) -> Result<(), Error> {
 }
 
 /// What sits at `<dest>/.git`, judged without following it.
-enum GitDirectory {
+pub(super) enum GitDirectory {
     /// Nothing: a directory that is not a clone at all.
     Missing,
     /// A real directory, which is what `git clone` makes.
@@ -199,7 +199,7 @@ enum GitDirectory {
     Indirect,
 }
 
-fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
+pub(super) fn own_git_directory(dest: &Path) -> Result<GitDirectory, Error> {
     let git_dir = dest.join(".git");
     Ok(match paths::symlink_metadata_if_present(&git_dir)? {
         None => GitDirectory::Missing,

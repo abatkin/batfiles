@@ -12,9 +12,11 @@ use crate::filesystem::directory;
 use crate::filesystem::paths::{self, Occupancy};
 use crate::filesystem::replace::ConflictDecision;
 use crate::manifest::actions::{SymlinkAction, SymlinkDirAction};
+use crate::manifest::check::ValueRule;
 use crate::manifest::entry_filter::EntryFilter;
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Tree;
+use crate::manifest::template::Resolver;
 use crate::output::Verb;
 use crate::run::context::RunContext;
 
@@ -27,12 +29,13 @@ fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
 pub(super) fn link(
     action: &SymlinkAction,
     tree: Tree<&ItemId>,
+    fields: &Resolver<'_, '_>,
     context: &RunContext,
 ) -> Result<(), Error> {
     require_symlink_support("symlink")?;
 
+    let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);
     let target = context.source(tree, &action.source)?;
-    let dest = context.destination(&action.dest);
     link_one(&target, &dest, context)
 }
 
@@ -41,12 +44,14 @@ pub(super) fn link(
 pub(super) fn link_dir(
     action: &SymlinkDirAction,
     tree: Tree<&ItemId>,
+    fields: &Resolver<'_, '_>,
     context: &RunContext,
 ) -> Result<(), Error> {
     require_symlink_support("symlink-dir")?;
 
+    let dest_dir = fields.field("dest-dir", &action.dest_dir, ValueRule::Destination)?;
+    let dest_dir = context.destination(&dest_dir);
     let source_dir = context.source_directory(tree, &action.source_dir)?;
-    let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());

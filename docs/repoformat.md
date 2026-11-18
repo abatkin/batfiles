@@ -5,7 +5,8 @@ Manifest syntax and action fields. Start with the [README example](https://githu
 [Layout](#repository-layout) · [Schema](#top-level-schema) · [Names](#names-and-ids) ·
 [Remotes](#remotes) · [Paths](#sources-and-destinations) · [Filters](#entry-filters) ·
 [Actions](#actions) · [Clone lists](#the-clone-list-format) ·
-[Variables](#variables) · [Conditions](#conditions) · [Bootstrap defaults](#default-disabled-bootstrap-entries)
+[Variables](#variables) · [Conditions](#conditions) · [Templates](#templates) ·
+[Bootstrap defaults](#default-disabled-bootstrap-entries)
 
 ## Repository layout
 
@@ -97,11 +98,12 @@ does not have.
 
 A repository for git to clone.
 
-| Field                | Type    | Required | Description                                                                 |
-|----------------------|---------|:--------:|-----------------------------------------------------------------------------|
-| `url`                | string  |   yes    | A repository for git to clone. Never empty.                                 |
-| `ref`                | string  |    no    | A branch, tag, or commit to follow. Never empty.                            |
-| `allow-dynamic-vars` | boolean |    no    | Whether an included manifest's [dynamic variables](#dynamic-variables) run. Defaults to `false`. |
+| Field                 | Type    | Required | Description                                                                 |
+|-----------------------|---------|:--------:|-----------------------------------------------------------------------------|
+| `url`                 | [template string](#templates) |   yes    | A repository for git to clone. Never empty.                                 |
+| `ref`                 | [template string](#templates) |    no    | A branch, tag, or commit to follow. Never empty.                            |
+| `allow-dynamic-vars`  | boolean |    no    | Whether an included manifest's [dynamic variables](#dynamic-variables) run. Defaults to `false`. |
+| `allow-env-templates` | boolean |    no    | Whether an included manifest's templates may read `env`; see [templates and the host environment](actions/include-remote.md#templates-and-the-host-environment). Defaults to `false`. |
 
 `url` follows [`git-clone` source syntax](actions/git-clone.md#git-clone), and `ref` follows its
 [ref rules](actions/git-clone.md#ref-following-one-branch-tag-or-commit). `branch` is not a field.
@@ -110,6 +112,9 @@ A repository for git to clone.
 dynamic declarations there declare nothing, and `-v` names those skipped.
 Leaf declarations need no such permission. See
 [dynamic-command execution](environment.md#how-dynamic-commands-are-run).
+
+Either permission applies only to a checkout of the repository `url` names; see
+[permissions follow the origin](safety.md#permissions-follow-the-origin).
 
 A remote supplies content; an action decides where to install it. Only the
 leaf's `[remotes]` is materialized. An included manifest's map is
@@ -127,8 +132,8 @@ url = "https://raw.githubusercontent.com/tpope/vim-pathogen/master/autoload/path
 
 | Field    | Type   | Required | Description                                                     |
 |----------|--------|:--------:|-----------------------------------------------------------------|
-| `url`    | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.       |
-| `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.  |
+| `url`    | [template string](#templates) |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.       |
+| `sha256` | [template string](#templates) |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.  |
 | `executable` | boolean | no  | Whether the file lands executable. Defaults to `false`.         |
 | `decompress` | boolean | no  | Whether the download is a gzip or bzip2 stream holding the file. Defaults to `false`. |
 
@@ -161,8 +166,8 @@ archive-root = "*"
 
 | Field          | Type   | Required | Description                                                            |
 |----------------|--------|:--------:|------------------------------------------------------------------------|
-| `url`          | string |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.              |
-| `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
+| `url`          | [template string](#templates) |   yes    | An `http://`, `https://`, or [`file://`](#file-urls) URL.              |
+| `sha256`       | [template string](#templates) |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
 | `archive-root` | string |    no    | A prefix every entry is written without, or `*` for the archive's single top-level directory. |
 | `include`      | glob or list | no | Entries to unpack, by their path once the root is stripped; absent, every entry. See [entry filters](#entry-filters). |
 | `exclude`      | glob or list | no | Entries not to unpack.                                                 |
@@ -196,8 +201,9 @@ to record their fetching declaration and detect changes:
 | Node of the stamp's recorded kind | Differs from declaration | Refetch and replace |
 | Anything else | Missing, unreadable, invalid, or wrong kind | Refuse before fetching |
 
-The stamp covers the type, URL, digest, and type-specific options. Digests
-compare case-insensitively; a single pattern and a one-element list compare
+The stamp covers the type, URL, digest, and type-specific options. It records
+[resolved](#templates) values, so a changed URL refetches. Digests compare
+case-insensitively; a single pattern and a one-element list compare
 equally, but pattern order matters. [Replacement](safety.md#replacing-a-materialization)
 is staged and verified; a failed fetch leaves the old materialization and stamp
 in place and fails the run. [`sync --refresh-remotes`](commands/sync.md#sync) forces
@@ -207,7 +213,8 @@ An unclaimed node, including a clone left under an ID now declared as a file
 or archive, must be moved aside or removed before retrying. A Git
 materialization removes any obsolete stamp beside it.
 
-Materialization failure stops the run before any action. Apply commands and
+Materialization failure, including a failed [template](#templates), stops the
+run before any action. Apply commands and
 [dry runs](cmdline.md#dry-run-behavior) fetch nothing and use existing trees,
 however stale. An action whose source remote is absent fails naming the remote;
 a missing inclusion is handled by [plan completeness](cmdline.md#plan-completeness).
@@ -263,7 +270,8 @@ including dry runs. A final broken symlink counts as present for linking; copies
 must read its target. `source-dir` must resolve to a directory. Clone-list
 sources are read during [preparation](cmdline.md#clone-list-preparation).
 
-`dest` and `dest-dir` use the selected home as their relative base:
+`dest` and `dest-dir` are [template strings](#templates) whose resolved values
+use the selected home as their relative base:
 
 | Form | Resolution |
 | --- | --- |
@@ -456,9 +464,10 @@ rank = "3"
 email = { command = ["git", "config", "user.email"], cache = "1d" }
 ```
 
-Variables feed `when` and `unless` only; no field interpolates them. Static
-values must be strings, including empty strings: `work = true` and `rank = 3`
-are load errors. A table must match the dynamic-variable schema.
+Variables feed `when`, `unless`, and [templates](#templates). A `[vars]` value
+is not a template, so one variable cannot refer to another. Static values must
+be strings, including empty strings: `work = true` and `rank = 3` are load
+errors. A table must match the dynamic-variable schema.
 
 See [variable precedence](environment.md#variable-precedence) for machine
 values, environment and CLI overrides, and inclusion scopes. Dynamic commands
@@ -543,11 +552,12 @@ when = "work && facts.os == 'macos'"
 
 Values use [Simple Expressions](https://github.com/abatkin/expressions-rs).
 Every expression is parsed during document loading, even if never evaluated;
-syntax errors identify the file, line, and position in the expression.
+a syntax error names the file, the record or clone-list line, and the position
+in the expression.
 
 User variables are string-valued bare identifiers. Reserved namespaces
-[`facts`](environment.md#host-facts-in-conditions),
-[`env`](environment.md#host-environment-in-conditions), and `vars` also return
+[`facts`](environment.md#host-facts),
+[`env`](environment.md#host-environment), and `vars` also return
 strings. Use member syntax for identifier-compatible keys (`facts.os`) or
 index syntax for any key (`env["XDG_CURRENT_DESKTOP"]`).
 
@@ -598,6 +608,67 @@ as the empty string; it does not cause an undeclared-name error.
 [Selection](cmdline.md#selection-by-command) determines when action conditions
 are evaluated or waived. Bootstrap conditions are evaluated only when their
 candidates are offered.
+
+## Templates
+
+A **template string** is a field in which each `${...}` is an
+[expression](#the-expression) whose value is written into the text:
+
+```toml
+[remotes.tool]
+type = "file"
+url = "https://downloads.example.com/tool/${facts.os}-${facts.arch}/tool.gz"
+decompress = true
+```
+
+`$${` writes a literal `${`; any other `$` is ordinary text.
+
+### Template fields
+
+| Record | Template fields |
+| --- | --- |
+| [`git`](#git) remote | `url`, `ref` |
+| [`file`](#file) and [`archive`](#archive) remotes | `url`, `sha256` |
+| [`fetch-file`](actions/fetch-file.md#fetch-file), [`fetch-archive`](actions/fetch-archive.md#fetch-archive) | `source`, `dest`, `sha256` |
+| [`git-clone`](actions/git-clone.md#git-clone) | `source`, `dest`, `ref` |
+| [`symlink`](actions/symlink.md#symlink), [`copy`](actions/copy.md#copy), [`create-dir`](actions/create-dir.md#create-dir) | `dest` |
+| [`symlink-dir`](actions/symlink-dir.md#symlink-dir), [`copy-dir`](actions/copy-dir.md#copy-dir), [`git-clone-list`](actions/git-clone-list.md#git-clone-list) | `dest-dir` |
+
+No other field is a template.
+
+### When a template is evaluated
+
+A template reads what a [condition](#identifiers) on the same record reads.
+Remotes and leaf actions use the leaf's variables; an
+[inclusion's](actions/include-remote.md#variables-for-one-inclusion) actions use
+the inclusion's. A template in an included manifest reads `env` only with its
+remote's [permission](actions/include-remote.md#templates-and-the-host-environment).
+Each `${...}` must give a string, number, or boolean.
+
+Templates are parsed when the manifest loads, so a syntax error is a load error
+naming the record and field.
+Each is evaluated once, when needed, including in dry runs:
+
+- a remote's when `sync` or `clone` [materializes](#materialization) it;
+- an action's when the action is dispatched, including by
+  [`apply-action`](commands/apply-action.md#apply-action).
+
+Output shows resolved values. A literal value is checked when the manifest
+loads; a templated one is checked by the same rule once it resolves.
+
+### When a template cannot be used
+
+A template that fails to evaluate, or resolves to an invalid value, fails its
+record instead of skipping it as a [condition](#when-a-condition-cannot-be-evaluated)
+does: an [execution failure](cmdline.md#execution-failures) for an action, a
+[materialization failure](#materialization) for a remote.
+
+```text
+error: create-dir action 2: dest "~/${nope}" cannot be evaluated at character 3: `nope` is not declared. ...
+```
+
+Errors never show a variable's value or anything computed from it, including
+an invalid resolved value.
 
 ## Default-disabled bootstrap entries
 

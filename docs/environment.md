@@ -4,8 +4,8 @@ Environment parsing, precedence, host inputs, and subprocess execution.
 
 [Locations](#location-selection) · [Skips](#run-only-skips) ·
 [Bootstrap](#bootstrap-enable-and-disable-lists) · [Variables](#variable-precedence) ·
-[Dynamic commands](#how-dynamic-commands-are-run) · [Host facts](#host-facts-in-conditions) ·
-[Host environment](#host-environment-in-conditions) · [Color](#color) ·
+[Dynamic commands](#how-dynamic-commands-are-run) · [Host facts](#host-facts) ·
+[Host environment](#host-environment) · [Color](#color) ·
 [Releases](#release-base) · [Git](#variables-passed-on-to-git)
 
 The environment is captured once at startup. Names are case-sensitive on Unix;
@@ -155,9 +155,10 @@ the command and closes the pipe, refusing further writes rather than storing
 them. [Cache rules](state.md#freshness-and-refresh-behavior) define fallback and
 how failure to start differs from a captured nonzero status.
 
-## Host facts in conditions
+## Host facts
 
-`facts` is a read-only string namespace, separate from user-variable precedence.
+`facts` is a read-only string namespace for [conditions](repoformat.md#conditions)
+and [templates](repoformat.md#templates), separate from user-variable precedence.
 Member and index access both work: `facts.os` or `facts["os"]`.
 
 | Key | Value |
@@ -177,10 +178,13 @@ and Windows machines should compare the short name, or test the domain
 separately. A qualified Windows name is tracked in
 [enhancements](https://github.com/abatkin/batfiles/blob/main/docs/contributing/enhancements.md#fully-qualified-windows-host-name).
 
-## Host environment in conditions
+## Host environment
 
 `env` exposes the captured process environment as read-only strings, separate
-from user variables. An unset key is the empty string. Use member syntax for
+from user variables, to [conditions](repoformat.md#conditions) and
+[templates](repoformat.md#templates) (in an included manifest, only with
+[permission](actions/include-remote.md#templates-and-the-host-environment)).
+An unset key is the empty string. Use member syntax for
 identifier-compatible names or index syntax for any name:
 
 ```toml

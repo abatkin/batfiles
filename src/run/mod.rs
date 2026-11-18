@@ -12,6 +12,7 @@ pub(crate) mod lock;
 mod record;
 pub(crate) mod selection;
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use self::assemble::assemble;
@@ -26,7 +27,8 @@ use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::manifest::disabled::DisabledItems;
 use crate::manifest::item::{ItemAddress, ItemId};
-use crate::manifest::remote::Tree;
+use crate::manifest::remote::{Remote, Tree};
+use crate::manifest::template::{EnvAccess, Resolver};
 use crate::output::Reporter;
 use crate::run::bootstrap::BootstrapDecisions;
 use crate::run::clone_list::PreparedList;
@@ -193,11 +195,14 @@ enum PlannedRecord<'a> {
     /// Any record but an admitted inclusion.
     Step(Step<'a>),
     /// An admitted inclusion's heading and ordered steps, with sources resolved against
-    /// `remote`. Steps are empty if its manifest was unread or contributed no records.
+    /// `remote`. Steps are empty if its manifest was unread or contributed no records. Its
+    /// records' templates resolve against `bindings`, reading `env` as `env` allows.
     Inclusion {
         heading: &'a str,
         remote: &'a ItemId,
         steps: Vec<Step<'a>>,
+        bindings: Bindings<'a>,
+        env: EnvAccess<'a>,
     },
 }
 
@@ -206,14 +211,17 @@ enum PlannedRecord<'a> {
 /// Unrequested and excluded lists are not read.
 ///
 /// Bootstrap adoption and remote materialization have already run; their writes are retained on
-/// failure. Files that an earlier action would create are not available yet.
+/// failure. Files that an earlier action would create are not available yet. `remotes` decides
+/// whether an inclusion's templates may read `env`.
 fn prepare<'a>(
     run_list: &'a RunList,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
-    leaf_bindings: &Bindings<'_>,
-    host: &HostNamespaces,
+    leaf_scope: &'a Rc<VarScope>,
+    host: &'a HostNamespaces,
+    remotes: &BTreeMap<ItemId, Remote>,
 ) -> Result<Vec<PlannedRecord<'a>>, Error> {
+    let leaf_bindings = Bindings::new(leaf_scope, host);
     run_list
         .top_level
         .iter()
@@ -225,22 +233,36 @@ fn prepare<'a>(
             } if record.disposition.is_allowed() => {
                 let remote = inclusion.remote();
                 let mut steps = Vec::new();
+                // An unopened inclusion has no steps, so its bindings go unused.
+                let scope = opened.as_ref().map_or(leaf_scope, |opened| &opened.scope);
+                let bindings = Bindings::new(scope, host);
                 if let Some(opened) = opened {
                     let tree = Tree::Remote(remote);
-                    let bindings = Bindings::new(&opened.scope, host);
                     for record in &opened.records {
                         steps.push(step(record, tree, selection, context, &bindings)?);
                     }
                 }
+                let env = match remotes.get(remote) {
+                    Some(declared) if declared.allows_env_templates() => EnvAccess::Allowed,
+                    _ => EnvAccess::DeniedBy(remote),
+                };
                 Ok(PlannedRecord::Inclusion {
                     heading: &record.heading,
                     remote,
                     steps,
+                    bindings,
+                    env,
                 })
             }
-            TopLevelRecord::Action(record) | TopLevelRecord::Inclusion { record, .. } => Ok(
-                PlannedRecord::Step(step(record, Tree::Leaf, selection, context, leaf_bindings)?),
-            ),
+            TopLevelRecord::Action(record) | TopLevelRecord::Inclusion { record, .. } => {
+                Ok(PlannedRecord::Step(step(
+                    record,
+                    Tree::Leaf,
+                    selection,
+                    context,
+                    &leaf_bindings,
+                )?))
+            }
         })
         .collect()
 }
@@ -300,9 +322,15 @@ fn entry_addresses<'a>(plan: &'a [PlannedRecord<'_>]) -> Vec<&'a ItemAddress> {
         .collect()
 }
 
-/// Carry out one step, whose record is read from `tree`. Returns whether the record was
-/// dispatched.
-fn execute(step: &Step<'_>, tree: Tree<&ItemId>, context: &RunContext<'_>) -> Result<bool, Error> {
+/// Carry out one step, whose record is read from `tree` and whose templates resolve against
+/// `bindings`, reading `env` as `env` allows. Returns whether the record was dispatched.
+fn execute(
+    step: &Step<'_>,
+    tree: Tree<&ItemId>,
+    bindings: &Bindings<'_>,
+    env: EnvAccess<'_>,
+    context: &RunContext<'_>,
+) -> Result<bool, Error> {
     match step {
         Step::NotRequested => Ok(false),
         Step::ReportExclusion(record, exclusion) => {
@@ -311,7 +339,8 @@ fn execute(step: &Step<'_>, tree: Tree<&ItemId>, context: &RunContext<'_>) -> Re
         }
         Step::Run(record, prepared) => {
             context.reporter().detail(1, &record.heading);
-            action::dispatch(prepared, tree, context)?;
+            let fields = Resolver::new(&record.heading, bindings, env);
+            action::dispatch(prepared, tree, &fields, context)?;
             Ok(true)
         }
     }
@@ -387,11 +416,12 @@ fn run_pipeline(
 
     // Materializations must exist before opening inclusions and preparing clone lists.
     if kind.materializes() {
-        context.materialize(&manifest.remotes, kind.refreshes_remotes())?;
+        context.materialize(&manifest.remotes, &bindings, kind.refreshes_remotes())?;
     }
 
     let run_list = assemble(
         manifest.actions,
+        &manifest.remotes,
         &selection,
         &context,
         &scope,
@@ -402,7 +432,14 @@ fn run_pipeline(
     dynamic.save();
     let run_list = run_list?;
 
-    let plan = prepare(&run_list, &selection, &context, &bindings, &host)?;
+    let plan = prepare(
+        &run_list,
+        &selection,
+        &context,
+        &scope,
+        &host,
+        &manifest.remotes,
+    )?;
     // Included addresses are known only after assembly, and entry addresses after preparation.
     let list_entries = entry_addresses(&plan);
     run_list.warn_unmatched(&selection, &list_entries, reporter);
@@ -418,17 +455,30 @@ fn run_pipeline(
     for prepared in &plan {
         match prepared {
             PlannedRecord::Step(step) => {
-                processed_action_count += usize::from(execute(step, Tree::Leaf, &context)?);
+                processed_action_count += usize::from(execute(
+                    step,
+                    Tree::Leaf,
+                    &bindings,
+                    EnvAccess::Allowed,
+                    &context,
+                )?);
             }
             PlannedRecord::Inclusion {
                 heading,
                 remote,
                 steps,
+                bindings,
+                env,
             } => {
                 reporter.detail(1, heading);
                 for step in steps {
-                    processed_action_count +=
-                        usize::from(execute(step, Tree::Remote(remote), &context)?);
+                    processed_action_count += usize::from(execute(
+                        step,
+                        Tree::Remote(remote),
+                        bindings,
+                        *env,
+                        &context,
+                    )?);
                 }
             }
         }

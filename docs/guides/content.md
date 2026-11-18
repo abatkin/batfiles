@@ -55,6 +55,18 @@ source = "https://downloads.example.com/editor/theme.toml"
 dest = "~/.config/my-editor/theme.toml"
 ```
 
+A [template](../repoformat.md#templates) can fetch each machine's build:
+
+```toml
+[[actions]]
+type = "fetch-file"
+id = "tool"
+source = "https://downloads.example.com/tool/tool-${facts.os}-${facts.arch}.gz"
+dest = "~/.local/bin/tool"
+decompress = true
+executable = true
+```
+
 Add `sha256` with the expected 64-digit digest to verify the downloaded bytes.
 Without a digest, identity depends on the chosen source and transport. Use
 `fetch-archive` to unpack an archive, and `decompress = true` on `fetch-file`

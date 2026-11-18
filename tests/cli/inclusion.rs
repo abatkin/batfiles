@@ -485,19 +485,21 @@ remote = "corporate"
 
 #[test]
 fn an_included_manifests_remotes_are_ignored_and_reported_once() {
-    // Invalid digests expose accidental validation of the included manifest's remote
-    // declarations.
+    // An invalid digest, a malformed template, and a malformed condition expose accidental
+    // validation of the included manifest's remote declarations.
     let origin = BareRepo::from_fixture("corporate");
     origin.publish(
         "batfiles.toml",
         r#"[remotes.shared]
 type = "git"
 url = "https://e.example/shared.git"
+ref = "${branch"
 
 [remotes.vendor]
 type = "file"
 url = "https://e.example/v.vim"
 sha256 = "00"
+when = "work &&"
 
 [[actions]]
 type = "create-dir"

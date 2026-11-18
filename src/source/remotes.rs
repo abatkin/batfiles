@@ -2,6 +2,7 @@
 //! processes all admitted remotes, including unreferenced ones; apply commands use existing
 //! materializations.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -13,10 +14,12 @@ use crate::filesystem::install;
 use crate::filesystem::paths::{self, RepositoryRoot};
 use crate::filesystem::replace::ConflictResolver;
 use crate::filesystem::tomlfile;
+use crate::manifest::check::ValueRule;
 use crate::manifest::condition::{Bindings, Exclusion};
 use crate::manifest::entry_filter::{EntryFilter, ExecutableFilter, GlobFilter};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::{ArchiveRemote, FileRemote, Remote};
+use crate::manifest::template::{EnvAccess, Resolver};
 use crate::output::Verb;
 use crate::source::archive;
 use crate::source::fetch;
@@ -56,12 +59,14 @@ pub(crate) fn excluded(
 /// Materialize admitted remotes in ID order. Update Git clones; fetch missing or changed
 /// file/archive declarations, or all of them when `refetch` is set, current or not.
 ///
-/// Report the remotes in `excluded` without reading their trees. Materializations go under
+/// Report the remotes in `excluded` without reading their trees or evaluating their templates.
+/// An admitted remote's templates resolve against the leaf's `bindings`. Materializations go under
 /// the leaf root `repository`; `tool_owned` refuses an unmanaged node at one, and carries the
 /// run's mode and reporter. Dry runs report intent without Git or downloads. Stop on the first
 /// failure.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
+    bindings: &Bindings<'_>,
     excluded: &BTreeMap<ItemId, Exclusion>,
     repository: &RepositoryRoot,
     tool_owned: &ConflictResolver<'_>,
@@ -75,16 +80,13 @@ pub(crate) fn materialize(
             continue;
         }
         reporter.detail(1, &heading);
+        let fields = Resolver::new(&heading, bindings, EnvAccess::Allowed);
         let dest = materialization(repository.path(), id);
         match remote {
             Remote::Git(remote) => {
-                git::clone_or_update(
-                    &remote.url,
-                    &dest,
-                    remote.git_ref.as_deref(),
-                    repository,
-                    tool_owned,
-                )?;
+                let url = fields.field("url", &remote.url, ValueRule::GitSource)?;
+                let git_ref = fields.optional("ref", remote.git_ref.as_ref(), ValueRule::GitRef)?;
+                git::clone_or_update(&url, &dest, git_ref.as_deref(), repository, tool_owned)?;
                 // A successful Git materialization invalidates any earlier file/archive stamp.
                 if tool_owned.mode().writes() {
                     tomlfile::remove(&stamp_path(&dest))?;
@@ -93,7 +95,7 @@ pub(crate) fn materialize(
             Remote::File(remote) => {
                 fetch(
                     id,
-                    Stamp::file(remote),
+                    Stamp::file(remote, &fields)?,
                     None,
                     None,
                     &dest,
@@ -104,7 +106,7 @@ pub(crate) fn materialize(
             Remote::Archive(remote) => {
                 let filter = EntryFilter::new(remote.include.as_ref(), remote.exclude.as_ref());
                 let executable = ExecutableFilter::new(remote.executable.as_ref());
-                let wanted = Stamp::archive(remote);
+                let wanted = Stamp::archive(remote, &fields)?;
                 fetch(id, wanted, filter, executable, &dest, refetch, tool_owned)?;
             }
         }
@@ -258,26 +260,32 @@ enum Stamp {
 }
 
 impl Stamp {
-    /// Create a file-remote stamp with a lowercase digest.
-    fn file(remote: &FileRemote) -> Self {
-        Self::File {
-            url: remote.url.clone(),
-            sha256: digest(remote.sha256.as_deref()),
+    /// Create a file-remote stamp with its templates resolved by `fields` and a lowercase
+    /// digest.
+    fn file(remote: &FileRemote, fields: &Resolver<'_, '_>) -> Result<Self, Error> {
+        Ok(Self::File {
+            url: fields
+                .field("url", &remote.url, ValueRule::Url)?
+                .into_owned(),
+            sha256: digest(fields.optional("sha256", remote.sha256.as_ref(), ValueRule::Digest)?),
             executable: remote.executable,
             decompress: remote.decompress,
-        }
+        })
     }
 
-    /// Create an archive-remote stamp with a lowercase digest.
-    fn archive(remote: &ArchiveRemote) -> Self {
-        Self::Archive {
-            url: remote.url.clone(),
-            sha256: digest(remote.sha256.as_deref()),
+    /// Create an archive-remote stamp with its templates resolved by `fields` and a lowercase
+    /// digest.
+    fn archive(remote: &ArchiveRemote, fields: &Resolver<'_, '_>) -> Result<Self, Error> {
+        Ok(Self::Archive {
+            url: fields
+                .field("url", &remote.url, ValueRule::Url)?
+                .into_owned(),
+            sha256: digest(fields.optional("sha256", remote.sha256.as_ref(), ValueRule::Digest)?),
             archive_root: remote.archive_root.clone(),
             include: patterns_as_written(remote.include.as_ref()),
             exclude: patterns_as_written(remote.exclude.as_ref()),
             executable: patterns_as_written(remote.executable.as_ref()),
-        }
+        })
     }
 
     fn url(&self) -> &str {
@@ -313,9 +321,9 @@ fn is_false(flag: &bool) -> bool {
     !flag
 }
 
-/// A declared digest as a stamp records it.
-fn digest(sha256: Option<&str>) -> Option<String> {
-    sha256.map(str::to_ascii_lowercase)
+/// A resolved digest as a stamp records it.
+fn digest(sha256: Option<Cow<'_, str>>) -> Option<String> {
+    sha256.map(|sha256| sha256.to_ascii_lowercase())
 }
 
 /// What is at a materialization's path, where something is.
@@ -394,7 +402,47 @@ fn decide(
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
+    use crate::env::Environment;
+    use crate::manifest::condition::HostNamespaces;
+    use crate::vars::name::VarName;
+    use crate::vars::scope::{VarScope, VarValue};
+
+    /// Resolve `remote`'s stamp with `version` declared as `1.2`.
+    fn resolved<T>(
+        remote: T,
+        stamp: impl Fn(T, &Resolver<'_, '_>) -> Result<Stamp, Error>,
+    ) -> Stamp {
+        let version = VarName::try_from("version".to_owned()).expect("valid name");
+        let scope = Rc::new(VarScope::stack(
+            BTreeMap::from([(version, VarValue::Static("1.2".to_owned()))]),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        ));
+        let host =
+            HostNamespaces::capture(&Environment::from_pairs(std::iter::empty::<(&str, &str)>()));
+        let bindings = Bindings::new(&scope, &host);
+        let fields = Resolver::new("remote core", &bindings, EnvAccess::Allowed);
+        stamp(remote, &fields).expect("the remote's templates resolve")
+    }
+
+    fn file_stamp(remote: &FileRemote) -> Stamp {
+        resolved(remote, Stamp::file)
+    }
+
+    fn archive_stamp(remote: &ArchiveRemote) -> Stamp {
+        resolved(remote, Stamp::archive)
+    }
+
+    #[test]
+    fn a_stamp_records_the_url_its_template_resolved_to() {
+        let remote: FileRemote =
+            toml::from_str("url = \"https://e.example/${version}/a\"\n").expect("a remote");
+        assert_eq!(file_stamp(&remote), file("https://e.example/1.2/a"));
+    }
 
     fn file(url: &str) -> Stamp {
         Stamp::File {
@@ -514,7 +562,7 @@ mod tests {
             toml::from_str("url = \"https://e.example/a\"\nsha256 = \"ABC\"\nwhen = \"work\"\n")
                 .expect("a well-formed remote");
         assert_eq!(
-            Stamp::file(&remote),
+            file_stamp(&remote),
             Stamp::File {
                 url: "https://e.example/a".to_owned(),
                 sha256: Some("abc".to_owned()),
@@ -529,7 +577,7 @@ mod tests {
         let executable: FileRemote =
             toml::from_str("url = \"https://e.example/a\"\nexecutable = true\n")
                 .expect("a well-formed remote");
-        let stamp = Stamp::file(&executable);
+        let stamp = file_stamp(&executable);
         assert_ne!(stamp, file("https://e.example/a"));
         let written = toml::to_string(&stamp).expect("a stamp");
         assert!(written.contains("executable = true"), "{written}");
@@ -549,8 +597,8 @@ mod tests {
         let listed: ArchiveRemote =
             toml::from_str("url = \"https://e.example/a.tar.gz\"\ninclude = [\"bin\"]\n")
                 .expect("a well-formed remote");
-        assert_eq!(Stamp::archive(&one), Stamp::archive(&listed));
-        assert_ne!(Stamp::archive(&one), archive("https://e.example/a.tar.gz"));
+        assert_eq!(archive_stamp(&one), archive_stamp(&listed));
+        assert_ne!(archive_stamp(&one), archive("https://e.example/a.tar.gz"));
     }
 
     #[test]
@@ -568,7 +616,7 @@ mod tests {
         )
         .expect("a well-formed remote");
         assert_ne!(
-            Stamp::archive(&marking),
+            archive_stamp(&marking),
             archive("https://e.example/a.tar.gz")
         );
         let earlier =

@@ -12,9 +12,9 @@ dest = "~/.oh-my-zsh"
 
 | Field    | Type   | Required | Description                                                   |
 |----------|--------|:--------:|---------------------------------------------------------------|
-| `source` | string |   yes    | A repository for git to clone. Not a repository path.         |
-| `dest`   | string |   yes    | The clone directory, exactly. Never empty; `~` is the home.   |
-| `ref`    | string |    no    | A branch, tag, or commit to follow. Never empty.              |
+| `source` | [template string](../repoformat.md#templates) |   yes    | A repository for git to clone. Not a repository path.         |
+| `dest`   | [template string](../repoformat.md#templates) |   yes    | The clone directory, exactly. Never empty; `~` is the home.   |
+| `ref`    | [template string](../repoformat.md#templates) |    no    | A branch, tag, or commit to follow. Never empty.              |
 
 `source` is passed unchanged to Git: HTTPS, SSH/scp-style, `git://`, or a local
 path. Only empty sources are rejected by the manifest; repository path rules

@@ -13,6 +13,7 @@ use crate::error::Error;
 use crate::manifest::actions::Action;
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Tree;
+use crate::manifest::template::Resolver;
 use crate::run::clone_list::PreparedList;
 use crate::run::context::RunContext;
 
@@ -30,25 +31,29 @@ pub(crate) enum PreparedAction<'a> {
 /// Execute a prepared action.
 ///
 /// `tree` is the tree the record came from. Symlink and copy actions resolve sources against
-/// it; clone lists are already prepared.
+/// it; clone lists are already prepared. Each action resolves its template fields with `fields`
+/// once, before it does anything else.
 pub(crate) fn dispatch(
     prepared: &PreparedAction<'_>,
     tree: Tree<&ItemId>,
+    fields: &Resolver<'_, '_>,
     context: &RunContext,
 ) -> Result<(), Error> {
     let action = match prepared {
-        PreparedAction::CloneList(list) => return git_clone_list::git_clone_list(list, context),
+        PreparedAction::CloneList(list) => {
+            return git_clone_list::git_clone_list(list, fields, context);
+        }
         PreparedAction::Declared(action) => action,
     };
     match action {
-        Action::Symlink(action) => symlink::link(action, tree, context),
-        Action::SymlinkDir(action) => symlink::link_dir(action, tree, context),
-        Action::CreateDir(action) => create_dir::create_dir(action, context),
-        Action::Copy(action) => copy::copy(action, tree, context),
-        Action::CopyDir(action) => copy::copy_dir(action, tree, context),
-        Action::FetchFile(action) => fetch_file::fetch_file(action, context),
-        Action::FetchArchive(action) => fetch_archive::fetch_archive(action, context),
-        Action::GitClone(action) => git_clone::git_clone(action, context),
+        Action::Symlink(action) => symlink::link(action, tree, fields, context),
+        Action::SymlinkDir(action) => symlink::link_dir(action, tree, fields, context),
+        Action::CreateDir(action) => create_dir::create_dir(action, fields, context),
+        Action::Copy(action) => copy::copy(action, tree, fields, context),
+        Action::CopyDir(action) => copy::copy_dir(action, tree, fields, context),
+        Action::FetchFile(action) => fetch_file::fetch_file(action, fields, context),
+        Action::FetchArchive(action) => fetch_archive::fetch_archive(action, fields, context),
+        Action::GitClone(action) => git_clone::git_clone(action, fields, context),
         Action::IncludeRemote(_) => {
             unreachable!("an inclusion is expanded during assembly and never dispatched")
         }
@@ -60,11 +65,18 @@ pub(crate) fn dispatch(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
     use super::*;
+    use crate::env::Environment;
     use crate::filesystem::mode::RunMode;
     use crate::location::{Roots, StateRoots};
+    use crate::manifest::condition::{Bindings, HostNamespaces};
+    use crate::manifest::template::EnvAccess;
     use crate::output::Reporter;
     use crate::run::context::DestinationOptions;
+    use crate::vars::scope::VarScope;
 
     /// Dispatch `declaration` as `Declared`, bypassing preparation to exercise
     /// the dispatch boundary's invariants.
@@ -89,7 +101,23 @@ mod tests {
         .expect("the roots resolve");
         let action = toml::from_str(declaration).expect("the declaration parses");
 
-        let _ = dispatch(&PreparedAction::Declared(&action), Tree::Leaf, &context);
+        let scope = Rc::new(VarScope::stack(
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        ));
+        let host =
+            HostNamespaces::capture(&Environment::from_pairs(std::iter::empty::<(&str, &str)>()));
+        let bindings = Bindings::new(&scope, &host);
+        let fields = Resolver::new("the record", &bindings, EnvAccess::Allowed);
+
+        let _ = dispatch(
+            &PreparedAction::Declared(&action),
+            Tree::Leaf,
+            &fields,
+            &context,
+        );
     }
 
     #[test]

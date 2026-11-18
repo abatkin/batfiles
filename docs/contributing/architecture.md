@@ -115,7 +115,7 @@ path; their replacement policy differs from seeds.
 | `commands/` | Every command's entry point: it takes the parsed arguments and the `Session`, resolves roots, and takes the run lock if it writes state. `sync`, `clone`, and the apply commands then hand an `Invocation` to `run/`. |
 | `run/` | The pipeline `sync`, `clone`'s bootstrap, and the apply commands share; see [Execution](#execution). |
 | `action/` | Each action type's implementation, and dispatch. |
-| `manifest/` | The manifest and its declarations: items, conditions, repository paths, entry filters, clone lists, and `disabled.toml`. |
+| `manifest/` | The manifest and its declarations: items, conditions, templates, repository paths, entry filters, clone lists, and `disabled.toml`. |
 | `vars/` | Variable names, `vars.toml`, environment overrides, dynamic variables, and the resolved `VarScope`. |
 | `source/` | Downloads, archives, Git, and remote materialization. |
 | `filesystem/` | Path inspection, the write helpers, `RunMode`, and state-document replacement. |
@@ -307,14 +307,13 @@ code review and behavioral tests. Keep the scanner small.
 
 ## Variables
 
-Variables feed `when` and `unless`; they do not interpolate paths or strings.
-The leaf's four sources resolve into one flat scope, in which a name resolves
-the same way whatever declared it. The representation is not prescribed; the
+Variables feed conditions and templates. The leaf's four sources resolve into
+one flat scope, in which a name resolves the same way whatever declared it. The representation is not prescribed; the
 seam below is. Each opened inclusion derives its own scope from that one, adding
 its `vars` overrides and the included remote's `[vars]`; the scope is held
 beside the records the inclusion contributed and decides every condition on
-them. Conditions and precedence are specified in
-[repoformat.md](../repoformat.md#conditions) and
+them and resolves their templates. Conditions, templates, and precedence are
+specified in [repoformat.md](../repoformat.md#conditions) and
 [environment.md](../environment.md#variable-precedence). A manifest's layer holds
 its dynamic variables' resolved values beside its static ones; one
 `DynamicVarResolver` per command resolves each declaration once and owns the

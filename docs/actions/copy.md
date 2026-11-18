@@ -13,7 +13,7 @@ dest = "~/.gitconfig.local"
 | Field    | Type   | Required | Description                                                     |
 |----------|--------|:--------:|-------------------------------------------------------------------|
 | `source` | repository path |   yes    | The file or directory to copy, within this repository or a remote it names. |
-| `dest`   | string |   yes    | Where the copy goes, exactly. Never empty; `~` is the home.     |
+| `dest`   | [template string](../repoformat.md#templates) |   yes    | Where the copy goes, exactly. Never empty; `~` is the home.     |
 | `include` | glob or list | no | Entries of a directory source to copy; absent, every entry. See [entry filters](../repoformat.md#entry-filters). |
 | `exclude` | glob or list | no | Entries of a directory source not to copy.                     |
 

@@ -9,7 +9,8 @@ use super::record::{OpenedInclusion, RunList, RunRecord, TopLevelRecord};
 use crate::error::Error;
 use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
-use crate::manifest::remote::Tree;
+use crate::manifest::item::ItemId;
+use crate::manifest::remote::{Remote, Tree};
 use crate::output::Reporter;
 use crate::run::context::RunContext;
 use crate::run::inclusion::{self, Inclusion};
@@ -24,9 +25,11 @@ use crate::vars::scope::{VarScope, VarValue};
 ///
 /// `context` must contain this command's materializations. Leaf records use `run_scope`;
 /// included records use a scope derived from it. `host` supplies captured host inputs, and
-/// `dynamic` resolves each opened manifest's dynamic variables.
+/// `dynamic` resolves each opened manifest's dynamic variables. `remotes`, the leaf's
+/// declarations, decide which checkouts are verified before they are opened.
 pub(super) fn assemble(
     actions: Vec<Action>,
+    remotes: &BTreeMap<ItemId, Remote>,
     selection: &Selection<'_>,
     context: &RunContext<'_>,
     run_scope: &Rc<VarScope>,
@@ -68,7 +71,7 @@ pub(super) fn assemble(
             };
         }
         let included = if record.disposition.is_allowed() {
-            let included = inclusion.manifest(context.repository().path())?;
+            let included = inclusion.manifest(context.repository().path(), remotes, &bindings)?;
             if included.is_none() {
                 inclusion::warn_not_materialized(
                     inclusion.remote(),

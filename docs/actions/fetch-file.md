@@ -12,9 +12,9 @@ dest = "~/.vim/autoload/pathogen.vim"
 
 | Field    | Type   | Required | Description                                                          |
 |----------|--------|:--------:|----------------------------------------------------------------------|
-| `source` | string |   yes    | An `http://`, `https://`, or [`file://`](../repoformat.md#file-urls) URL. Not a repository path. |
-| `dest`   | string |   yes    | Where the file goes, exactly. Never empty; `~` is the home.          |
-| `sha256` | string |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.       |
+| `source` | [template string](../repoformat.md#templates) |   yes    | An `http://`, `https://`, or [`file://`](../repoformat.md#file-urls) URL. Not a repository path. |
+| `dest`   | [template string](../repoformat.md#templates) |   yes    | Where the file goes, exactly. Never empty; `~` is the home.          |
+| `sha256` | [template string](../repoformat.md#templates) |    no    | 64 hexadecimal digits: the digest the fetched bytes must have.       |
 | `executable` | boolean | no  | Whether the file lands executable. Defaults to `false`.              |
 | `decompress` | boolean | no  | Whether the download is a gzip or bzip2 stream holding the file. Defaults to `false`. |
 
@@ -42,6 +42,18 @@ executable = true
 Uncompressed data, a zip, or content that decompresses to a tar fails; use
 `fetch-archive` for archives. `sha256` checks the downloaded bytes before
 decompression.
+
+With [templates](../repoformat.md#templates), one record can fetch each
+machine's build:
+
+```toml
+[[actions]]
+type = "fetch-file"
+source = "https://example.com/releases/tool-${facts.os}-${facts.arch}.gz"
+dest = "~/.local/bin/tool"
+decompress = true
+executable = true
+```
 
 See [common action fields](../repoformat.md#actions) for `id`, `group`, and
 conditions.

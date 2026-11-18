@@ -274,17 +274,46 @@ when = "work &&"
 
     let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
     let stderr = stderr_of(&assertion);
-    for expected in [
-        display(&tree.manifest()),
-        "is not a valid condition".to_owned(),
-        "at character".to_owned(),
-    ] {
-        assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
-    }
+    let expected = format!(
+        "invalid configuration in {}: action 2: when \"work &&\" is not a valid condition: ",
+        display(&tree.manifest())
+    );
+    assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+    assert!(stderr.contains("at character 8"), "no position:\n{stderr}");
     assert!(
         !tree.home("first").exists(),
         "the action before the malformed condition ran anyway"
     );
+}
+
+#[test]
+fn a_malformed_condition_names_the_record_and_spelling_that_hold_it() {
+    for (manifest, expected) in [
+        (
+            r#"[remotes.tools]
+type = "git"
+url = "https://git.example.com/tools.git"
+unless = "work ||"
+"#,
+            "remote `tools`: unless \"work ||\" is not a valid condition",
+        ),
+        (
+            r#"[[default-disabled.groups]]
+group = "gui"
+
+[[default-disabled.groups]]
+group = "work"
+when = "(work"
+"#,
+            "default-disabled group 2: when \"(work\" is not a valid condition",
+        ),
+    ] {
+        let tree = Tree::new();
+        tree.write_manifest(manifest);
+        let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+        let stderr = stderr_of(&assertion);
+        assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+    }
 }
 
 #[test]
@@ -338,6 +367,29 @@ fn a_value_outside_the_truthiness_table_closes_without_repeating_the_value() {
     assert!(
         !stderr.contains("s3cret-value"),
         "the value was echoed:\n{stderr}"
+    );
+    assert_eq!(entries(&tree.path("home")), ["plain"]);
+}
+
+#[test]
+fn a_lookup_that_fails_closes_without_showing_the_key() {
+    let tree = Tree::new();
+    gated(
+        &tree,
+        "when",
+        "{'home': true}[token]",
+        "[vars]\ntoken = \"s3cret-value\"\n\n",
+    );
+
+    let assertion = tree.batfiles().arg("sync").assert().success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains("a dictionary has no entry for the key looked up in it"),
+        "the lookup should have failed:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("s3cret-value"),
+        "the key was echoed:\n{stderr}"
     );
     assert_eq!(entries(&tree.path("home")), ["plain"]);
 }

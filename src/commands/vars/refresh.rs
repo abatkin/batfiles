@@ -119,28 +119,30 @@ fn refresh_with_remotes(
                         .collect(),
                 }
             }
-            Some(Reach::InPlay(inclusion)) => match inclusion.manifest(&repository)? {
-                None if matches!(asked, RefreshTargets::All) => {
-                    let path = remotes::materialization(&repository, remote);
-                    inclusion::warn_not_materialized(remote, &path, reporter);
-                    continue;
-                }
-                None => UnrefreshableReason::NotMaterialized {
-                    remote: remote.clone(),
-                    path: remotes::materialization(&repository, remote),
-                },
-                Some(included) => {
-                    for key in asked.keys_for(remote) {
-                        if let Some(reason) =
-                            declared(included.vars.get(&key.name), Tree::Remote(remote))
-                        {
-                            refusals.push(UnrefreshableKey::of(key, reason));
-                        }
+            Some(Reach::InPlay(inclusion)) => {
+                match inclusion.manifest(&repository, &manifest.remotes, &bindings)? {
+                    None if matches!(asked, RefreshTargets::All) => {
+                        let path = remotes::materialization(&repository, remote);
+                        inclusion::warn_not_materialized(remote, &path, reporter);
+                        continue;
                     }
-                    opened.push((remote, included.vars));
-                    continue;
+                    None => UnrefreshableReason::NotMaterialized {
+                        remote: remote.clone(),
+                        path: remotes::materialization(&repository, remote),
+                    },
+                    Some(included) => {
+                        for key in asked.keys_for(remote) {
+                            if let Some(reason) =
+                                declared(included.vars.get(&key.name), Tree::Remote(remote))
+                            {
+                                refusals.push(UnrefreshableKey::of(key, reason));
+                            }
+                        }
+                        opened.push((remote, included.vars));
+                        continue;
+                    }
                 }
-            },
+            }
         };
         for key in asked.keys_for(remote) {
             refusals.push(UnrefreshableKey::of(key, reason.clone()));

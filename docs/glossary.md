@@ -23,4 +23,5 @@ reference that defines it.
 | Partial plan | A dry run that could not read some included actions because their remote has not been materialized yet. See [plan completeness](cmdline.md#plan-completeness). |
 | Remote | A Git repository, file, or archive declared under `[remotes]`, used as a source of files or for an inclusion. See [remotes](repoformat.md#remotes). |
 | Seed | Content installed once and then allowed to diverge: copies and downloads. Later runs keep it unless you refresh it. See [seeds](safety.md#seeds-do-not-replace-and-so-do-not-refuse). |
-| Variable | A named string value from the manifest, machine state, environment, or `--var`, used in conditions. See [variables](repoformat.md#variables). |
+| Template | A field value containing `${...}` expressions, such as a per-machine `dest` or download URL. See [templates](repoformat.md#templates). |
+| Variable | A named string value from the manifest, machine state, environment, or `--var`, used in conditions and templates. See [variables](repoformat.md#variables). |

@@ -13,7 +13,7 @@ dest = "~/.zshrc"
 | Field    | Type   | Required | Description                                                        |
 |----------|--------|:--------:|--------------------------------------------------------------------|
 | `source` | repository path |   yes    | The source, within this repository or a remote it names. Never empty. |
-| `dest`   | string |   yes    | The destination path, as written. Never empty; `~` is the home.    |
+| `dest`   | [template string](../repoformat.md#templates) |   yes    | The destination path, as written. Never empty; `~` is the home.    |
 
 `source` is the target; `dest` is the link. Follow the shared
 [path rules](../repoformat.md#sources-and-destinations), [destination policy](../safety.md#replacing-what-is-already-there),

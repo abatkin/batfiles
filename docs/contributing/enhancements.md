@@ -34,7 +34,7 @@ as `lzma-rust2` and `ruzstd`, and add format detection and extraction coverage.
 ## Fully qualified Windows host name
 
 Consider exposing the DNS-qualified Windows host name. The current
-[`facts.hostname`](../environment.md#host-facts-in-conditions) uses `gethostname`,
+[`facts.hostname`](../environment.md#host-facts) uses `gethostname`,
 whose Windows implementation requests `ComputerNamePhysicalDnsHostname` and
 drops the DNS suffix. Calling `GetComputerNameExW` with
 `ComputerNameDnsFullyQualified` would require a Windows API dependency and an
@@ -48,6 +48,20 @@ Review support for `GIT_CONFIG_COUNT` values such as one-off proxy or header
 settings. The current [Git environment policy](../environment.md#variables-passed-on-to-git)
 clears these values. Any change must preserve destination isolation and update
 that policy.
+
+## Templates in more fields
+
+[Templates](../repoformat.md#templates) cover destinations, fetch and clone
+sources, refs, and digests. Candidates for more:
+
+- `[vars]` values, so a variable can be built from others. Needs an evaluation
+  order across layers and inclusion scopes, and cycle detection.
+- Clone-list fields: an entry's repository, `ref`, and `dest-name`. Entries are
+  read during preparation, so failures and scope need defining there.
+- `include-remote` variable overrides, resolved in the leaf scope before the
+  inclusion's scope is built.
+- Repository-path `source` and `source-dir`. These are checked against declared
+  remotes at load, which a templated remote reference would defer.
 
 ## Per-inclusion variable listings
 

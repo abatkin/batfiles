@@ -15,7 +15,7 @@ dot-prefix = true
 | Field        | Type    | Required | Description                                                          |
 |--------------|---------|:--------:|------------------------------------------------------------------------|
 | `source-dir` | repository path  |   yes    | The directory whose direct children are copied. |
-| `dest-dir`   | string  |   yes    | The directory the copies are made in. Created if it is missing.       |
+| `dest-dir`   | [template string](../repoformat.md#templates)  |   yes    | The directory the copies are made in. Created if it is missing.       |
 | `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.             |
 | `include`    | glob or list | no  | Entries under `source-dir` to copy, at any depth; absent, every entry. See [entry filters](../repoformat.md#entry-filters). |
 | `exclude`    | glob or list | no  | Entries under `source-dir` not to copy, at any depth.                 |

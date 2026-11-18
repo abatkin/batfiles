@@ -10,9 +10,11 @@ use thiserror::Error;
 use super::DeclarationName;
 use super::actions::IncludeRemoteAction;
 use super::remote::Remote;
+use crate::manifest::condition::{Condition, SyntaxError};
 use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::ItemId;
 use crate::manifest::repo_path::{REMOTE_PREFIX, RepoPath};
+use crate::manifest::template::TemplateString;
 use crate::source::fetch::{FileUrlError, file_url_path};
 
 /// How a message names the tree a path is read from.
@@ -184,53 +186,22 @@ pub(crate) enum ManifestError {
         other: &'static str,
     },
 
-    // Destination paths.
-    #[error("{record}: dest is empty; write `~` for the home directory itself")]
-    DestinationEmpty { record: DeclarationName },
-
-    #[error(
-        "{record}: dest `{value}` names another user's home; \
-         `~` expands only to the selected home"
-    )]
-    DestinationOtherHome {
+    /// A condition or template field's value does not parse.
+    #[error("{record}: {field} {source}")]
+    Syntax {
         record: DeclarationName,
-        value: String,
-    },
-
-    // Fetch URLs and digests.
-    #[error("{record}: {field} `{value}` is not an http://, https://, or file:// URL")]
-    SourceNotAUrl {
-        record: DeclarationName,
-        /// What the record spells it: `source` on an action, `url` on a remote.
         field: &'static str,
-        value: String,
+        source: Box<SyntaxError>,
     },
 
-    #[error("{record}: {field} `{value}` {source}")]
-    FileUrl {
+    /// A template field's literal value breaks its field's rule.
+    #[error("{record}: {field}{} {source}", written(.value))]
+    Value {
         record: DeclarationName,
         field: &'static str,
         value: String,
-        source: FileUrlError,
+        source: ValueError,
     },
-
-    #[error("{record}: sha256 `{value}` is not 64 hexadecimal digits")]
-    DigestNotSha256 {
-        record: DeclarationName,
-        value: String,
-    },
-
-    // Git sources and refs.
-    #[error("{record}: {field} is empty; it names a repository for git to clone")]
-    GitSourceEmpty {
-        record: DeclarationName,
-        /// What the record spells it: `source` on an action, `url` on a remote.
-        field: &'static str,
-    },
-
-    /// An explicitly empty Git ref.
-    #[error("{record}: ref is empty; a ref names a branch, tag, or commit to follow")]
-    GitRefEmpty { record: DeclarationName },
 
     /// An archive root is not a valid path inside the archive.
     #[error(
@@ -252,6 +223,140 @@ pub(crate) enum ManifestError {
         field: &'static str,
         pattern: String,
     },
+}
+
+/// What a [template field](crate::manifest::template::TemplateString)'s value must be. A
+/// literal value is checked when its manifest loads; a templated one after it is evaluated.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ValueRule {
+    /// A destination: never empty, and `~` only for the selected home.
+    Destination,
+    /// An `http://`, `https://`, or `file://` URL to fetch.
+    Url,
+    /// A repository for git to clone: never blank.
+    GitSource,
+    /// A branch, tag, or commit: never blank.
+    GitRef,
+    /// A SHA-256 digest.
+    Digest,
+}
+
+impl ValueRule {
+    /// Check `value`.
+    pub fn check(self, value: &str) -> Result<(), ValueError> {
+        match self {
+            Self::Destination => check_dest(value),
+            Self::Url => check_url(value),
+            Self::GitSource if value.trim().is_empty() => Err(ValueError::GitSourceEmpty),
+            Self::GitRef if value.trim().is_empty() => Err(ValueError::GitRefEmpty),
+            Self::Digest
+                if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+            {
+                Err(ValueError::DigestNotSha256)
+            }
+            Self::GitSource | Self::GitRef | Self::Digest => Ok(()),
+        }
+    }
+}
+
+/// Why a value breaks its field's [`ValueRule`]. Messages follow the value and name neither
+/// it nor its field, so a resolved template value need not be shown.
+#[derive(Debug, Error)]
+pub(crate) enum ValueError {
+    #[error("is empty; write `~` for the home directory itself")]
+    DestinationEmpty,
+
+    #[error("names another user's home; `~` expands only to the selected home")]
+    DestinationOtherHome,
+
+    #[error("is not an http://, https://, or file:// URL")]
+    NotAUrl,
+
+    #[error(transparent)]
+    FileUrl(FileUrlError),
+
+    #[error("is not 64 hexadecimal digits")]
+    DigestNotSha256,
+
+    #[error("is empty; it names a repository for git to clone")]
+    GitSourceEmpty,
+
+    #[error("is empty; a ref names a branch, tag, or commit to follow")]
+    GitRefEmpty,
+}
+
+/// A literal value as a diagnostic shows it after its field name: nothing if it is blank.
+fn written(value: &str) -> String {
+    if value.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" `{value}`")
+    }
+}
+
+/// Check that a template field's value parses and, if it is literal, that it satisfies
+/// `rule`. A templated value is checked when it is evaluated.
+pub(super) fn check_template(
+    value: &TemplateString,
+    field: &'static str,
+    rule: ValueRule,
+    record: &DeclarationName,
+) -> Result<(), ManifestError> {
+    value
+        .syntax()
+        .map_err(|error| syntax_error(record, field, error))?;
+    match value.literal() {
+        Some(literal) => rule.check(literal).map_err(|source| ManifestError::Value {
+            record: record.clone(),
+            field,
+            value: value.source().to_owned(),
+            source,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Check a record's `when` and `unless`: at most one is written, and it parses.
+pub(super) fn check_conditions(
+    when: Option<&Condition>,
+    unless: Option<&Condition>,
+    record: &DeclarationName,
+) -> Result<(), ManifestError> {
+    if when.is_some() && unless.is_some() {
+        return Err(ManifestError::BothConditions {
+            record: record.clone(),
+        });
+    }
+    for (spelling, condition) in [("when", when), ("unless", unless)] {
+        if let Some(condition) = condition {
+            condition
+                .syntax()
+                .map_err(|error| syntax_error(record, spelling, error))?;
+        }
+    }
+    Ok(())
+}
+
+fn syntax_error(
+    record: &DeclarationName,
+    field: &'static str,
+    error: &SyntaxError,
+) -> ManifestError {
+    ManifestError::Syntax {
+        record: record.clone(),
+        field,
+        source: Box::new(error.clone()),
+    }
+}
+
+/// [`check_template`] for a field that may be absent.
+pub(super) fn check_optional_template(
+    value: Option<&TemplateString>,
+    field: &'static str,
+    rule: ValueRule,
+    record: &DeclarationName,
+) -> Result<(), ManifestError> {
+    value.map_or(Ok(()), |value| check_template(value, field, rule, record))
 }
 
 /// Required source kind: any file or directory, or a directory only.
@@ -420,31 +525,21 @@ fn depth_within_tree(source: &str) -> Option<usize> {
 }
 
 /// Reject empty destinations and unsupported `~user` prefixes.
-pub(super) fn check_dest(dest: &str, record: &DeclarationName) -> Result<(), ManifestError> {
+fn check_dest(dest: &str) -> Result<(), ValueError> {
     if dest.is_empty() {
-        return Err(ManifestError::DestinationEmpty {
-            record: record.clone(),
-        });
+        return Err(ValueError::DestinationEmpty);
     }
     // Allow `~` and `~/...`, but do not expand other users' homes.
     match dest.strip_prefix('~') {
         Some(rest) if !rest.is_empty() && !rest.starts_with('/') => {
-            Err(ManifestError::DestinationOtherHome {
-                record: record.clone(),
-                value: dest.to_owned(),
-            })
+            Err(ValueError::DestinationOtherHome)
         }
         _ => Ok(()),
     }
 }
 
-/// Validate a fetch URL. `field` identifies `source` on actions or `url` on remotes in
-/// diagnostics.
-pub(super) fn check_url(
-    source: &str,
-    field: &'static str,
-    record: &DeclarationName,
-) -> Result<(), ManifestError> {
+/// Validate a fetch URL.
+fn check_url(source: &str) -> Result<(), ValueError> {
     let scheme = |prefix: &str| {
         let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
         source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
@@ -454,62 +549,8 @@ pub(super) fn check_url(
     }
     match file_url_path(source) {
         Some(Ok(_)) => Ok(()),
-        Some(Err(error)) => Err(ManifestError::FileUrl {
-            record: record.clone(),
-            field,
-            value: source.to_owned(),
-            source: error,
-        }),
-        None => Err(ManifestError::SourceNotAUrl {
-            record: record.clone(),
-            field,
-            value: source.to_owned(),
-        }),
-    }
-}
-
-/// Reject an empty or whitespace-only Git source. `field` identifies `source` on actions or
-/// `url` on remotes in diagnostics.
-pub(super) fn check_git_source(
-    source: &str,
-    field: &'static str,
-    record: &DeclarationName,
-) -> Result<(), ManifestError> {
-    if source.trim().is_empty() {
-        return Err(ManifestError::GitSourceEmpty {
-            record: record.clone(),
-            field,
-        });
-    }
-    Ok(())
-}
-
-/// Reject an empty or whitespace-only Git ref; allow an absent ref.
-pub(super) fn check_git_ref(
-    git_ref: Option<&str>,
-    record: &DeclarationName,
-) -> Result<(), ManifestError> {
-    if git_ref.is_some_and(|value| value.trim().is_empty()) {
-        return Err(ManifestError::GitRefEmpty {
-            record: record.clone(),
-        });
-    }
-    Ok(())
-}
-
-/// Require a declared SHA-256 digest to contain exactly 64 hexadecimal digits.
-pub(super) fn check_digest(
-    sha256: Option<&str>,
-    record: &DeclarationName,
-) -> Result<(), ManifestError> {
-    match sha256 {
-        Some(value) if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
-            Err(ManifestError::DigestNotSha256 {
-                record: record.clone(),
-                value: value.to_owned(),
-            })
-        }
-        _ => Ok(()),
+        Some(Err(error)) => Err(ValueError::FileUrl(error)),
+        None => Err(ValueError::NotAUrl),
     }
 }
 

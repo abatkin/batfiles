@@ -2,16 +2,24 @@
 
 use crate::error::Error;
 use crate::manifest::actions::GitCloneAction;
+use crate::manifest::check::ValueRule;
+use crate::manifest::template::Resolver;
 use crate::run::context::RunContext;
 use crate::source::git;
 
 /// Carry out one `git-clone` action.
-pub(super) fn git_clone(action: &GitCloneAction, context: &RunContext) -> Result<(), Error> {
-    let dest = context.destination(&action.dest);
+pub(super) fn git_clone(
+    action: &GitCloneAction,
+    fields: &Resolver<'_, '_>,
+    context: &RunContext,
+) -> Result<(), Error> {
+    let source = fields.field("source", &action.source, ValueRule::GitSource)?;
+    let git_ref = fields.optional("ref", action.git_ref.as_ref(), ValueRule::GitRef)?;
+    let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);
     git::clone_or_update(
-        &action.source,
+        &source,
         &dest,
-        action.git_ref.as_deref(),
+        git_ref.as_deref(),
         context.repository(),
         &context.conflict_resolver(),
     )

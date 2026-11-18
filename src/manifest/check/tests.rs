@@ -362,7 +362,7 @@ fn an_included_action_installs_from_the_repository_that_declared_it() {
 fn a_dest_may_be_anywhere_the_selected_home_can_reach() {
     for accepted in ["~", "~/.zshrc", ".zshrc", "/etc/hosts", "~/../shared/rc"] {
         assert!(
-            check_dest(accepted, &record()).is_ok(),
+            ValueRule::Destination.check(accepted).is_ok(),
             "`{accepted}` was refused"
         );
     }
@@ -371,8 +371,10 @@ fn a_dest_may_be_anywhere_the_selected_home_can_reach() {
 #[test]
 fn a_dest_is_written_out_rather_than_left_empty() {
     assert!(matches!(
-        check_dest("", &record()).expect_err("expected an empty dest to be refused"),
-        ManifestError::DestinationEmpty { .. }
+        ValueRule::Destination
+            .check("")
+            .expect_err("expected an empty dest to be refused"),
+        ValueError::DestinationEmpty
     ));
 }
 
@@ -385,7 +387,7 @@ fn a_fetched_source_names_a_scheme_batfiles_can_fetch() {
         "https://example.com/a b?c=d#e",
     ] {
         assert!(
-            check_url(accepted, "source", &record()).is_ok(),
+            ValueRule::Url.check(accepted).is_ok(),
             "`{accepted}` was refused"
         );
     }
@@ -405,9 +407,10 @@ fn a_fetched_source_that_is_not_a_url_is_refused_as_written() {
     ] {
         assert!(
             matches!(
-                check_url(refused, "source", &record())
+                ValueRule::Url
+                    .check(refused)
                     .expect_err("expected the source to be refused"),
-                ManifestError::SourceNotAUrl { .. }
+                ValueError::NotAUrl
             ),
             "`{refused}` was accepted"
         );
@@ -417,12 +420,13 @@ fn a_fetched_source_that_is_not_a_url_is_refused_as_written() {
 #[test]
 #[cfg(unix)]
 fn a_file_url_names_a_file_on_this_machine() {
-    assert!(check_url("file:///etc/hosts", "source", &record()).is_ok());
-    let message = check_url("file://server/etc/hosts", "url", &record())
+    assert!(ValueRule::Url.check("file:///etc/hosts").is_ok());
+    let message = ValueRule::Url
+        .check("file://server/etc/hosts")
         .expect_err("expected a file URL naming a host to be refused")
         .to_string();
     assert!(
-        message.contains("url `file://server/etc/hosts` names a host other than `localhost`"),
+        message.starts_with("names a host other than `localhost`"),
         "{message}"
     );
 }
@@ -430,18 +434,18 @@ fn a_file_url_names_a_file_on_this_machine() {
 #[test]
 fn a_digest_is_sixty_four_hexadecimal_digits_or_absent() {
     let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    assert!(check_digest(None, &record()).is_ok());
-    assert!(check_digest(Some(sha), &record()).is_ok());
+    assert!(ValueRule::Digest.check(sha).is_ok());
     assert!(
-        check_digest(Some(&sha.to_uppercase()), &record()).is_ok(),
+        ValueRule::Digest.check(&sha.to_uppercase()).is_ok(),
         "a digest written in capitals is the same digest"
     );
     for refused in [&sha[..63], &format!("{sha}0")[..], &sha.replace('e', "g")] {
         assert!(
             matches!(
-                check_digest(Some(refused), &record())
+                ValueRule::Digest
+                    .check(refused)
                     .expect_err("expected the digest to be refused"),
-                ManifestError::DigestNotSha256 { .. }
+                ValueError::DigestNotSha256
             ),
             "`{refused}` was accepted"
         );
@@ -481,8 +485,9 @@ fn an_archive_root_that_could_match_no_entry_is_refused_as_written() {
 #[test]
 fn only_the_selected_home_is_spelled_with_a_tilde() {
     assert!(matches!(
-        check_dest("~other/.zshrc", &record())
+        ValueRule::Destination
+            .check("~other/.zshrc")
             .expect_err("expected another user's home to be refused"),
-        ManifestError::DestinationOtherHome { .. }
+        ValueError::DestinationOtherHome
     ));
 }

@@ -29,6 +29,7 @@ mod refresh_content;
 mod run_lock;
 mod selection;
 mod surface;
+mod templates;
 mod unzipping;
 mod update;
 mod vars;
@@ -46,5 +47,7 @@ mod file_and_archive_remotes;
 mod inclusion_composition;
 #[cfg(unix)]
 mod linking;
+#[cfg(unix)]
+mod remote_origins;
 #[cfg(unix)]
 mod vars_refresh;

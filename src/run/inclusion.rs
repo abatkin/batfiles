@@ -2,16 +2,21 @@
 //! materializations. [`crate::run::compose`] composes records;
 //! [`crate::commands::vars::refresh`] selects remotes for variable refresh.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::error::Error;
 use crate::filesystem::paths;
 use crate::manifest::Manifest;
 use crate::manifest::actions::{Contributor, IncludeRemoteAction};
+use crate::manifest::check::ValueRule;
 use crate::manifest::condition::{Bindings, Exclusion};
 use crate::manifest::item::ItemId;
+use crate::manifest::remote::Remote;
+use crate::manifest::template::{EnvAccess, Resolver};
 use crate::output::Reporter;
 use crate::run::selection::{Selection, Subject};
+use crate::source::git::{self, Origin};
 use crate::source::remotes;
 
 /// A leaf `include-remote` declaration's identity, independent of manifest loading.
@@ -97,13 +102,25 @@ impl Inclusion {
     /// Read and validate the included manifest from `repository`, the anchored leaf root. Call
     /// only after [`exclusion`](Self::exclusion) admits the inclusion.
     ///
-    /// Return `None` if the remote materialization is absent. Inspection failures and missing,
-    /// unreadable, or invalid manifests are errors. Report nothing; callers may use
-    /// [`warn_not_materialized`] for an absent materialization.
-    pub fn manifest(&self, repository: &Path) -> Result<Option<Manifest>, Error> {
+    /// If the leaf's declaration in `remotes` grants the remote a permission, first
+    /// [verify](Self::verify_checkout) the checkout's origin against the `url` it resolves with
+    /// the leaf's `bindings`.
+    ///
+    /// Return `None` if the remote materialization is absent. Inspection failures, an
+    /// unverified checkout, and missing, unreadable, or invalid manifests are errors. Report
+    /// nothing; callers may use [`warn_not_materialized`] for an absent materialization.
+    pub fn manifest(
+        &self,
+        repository: &Path,
+        remotes: &BTreeMap<ItemId, Remote>,
+        bindings: &Bindings<'_>,
+    ) -> Result<Option<Manifest>, Error> {
         let tree = remotes::materialization(repository, &self.remote);
         if !paths::occupied(&tree)? {
             return Ok(None);
+        }
+        if let Some(declared) = remotes.get(&self.remote) {
+            self.verify_checkout(declared, &tree, bindings)?;
         }
         let manifest = tree.join(Manifest::FILE_NAME);
         if !paths::occupied(&manifest)? {
@@ -113,6 +130,56 @@ impl Inclusion {
             });
         }
         Manifest::load_included(&manifest).map(Some)
+    }
+}
+
+impl Inclusion {
+    /// Refuse `checkout`, a Git remote's materialization, if `declared` grants the remote a
+    /// permission and the checkout's recorded origin is not the repository `declared`'s `url`
+    /// names. A missing, ambiguous, or unreadable origin is refused too. Either permission
+    /// triggers the check; a remote granted neither, or not a Git remote, is not checked.
+    fn verify_checkout(
+        &self,
+        declared: &Remote,
+        checkout: &Path,
+        bindings: &Bindings<'_>,
+    ) -> Result<(), Error> {
+        let Remote::Git(git) = declared else {
+            return Ok(());
+        };
+        let permissions = match (git.allow_dynamic_vars, git.allow_env_templates) {
+            (false, false) => return Ok(()),
+            (true, false) => "allow-dynamic-vars",
+            (false, true) => "allow-env-templates",
+            (true, true) => "allow-dynamic-vars and allow-env-templates",
+        };
+        let heading = format!("remote {}", self.remote);
+        let url = Resolver::new(&heading, bindings, EnvAccess::Allowed).field(
+            "url",
+            &git.url,
+            ValueRule::GitSource,
+        )?;
+        let reason = match git::recorded_origin(checkout)? {
+            Origin::Url(recorded) => {
+                let here =
+                    std::env::current_dir().map_err(|source| Error::WorkingDirectory { source })?;
+                if git::same_origin(&url, &recorded, &here) {
+                    return Ok(());
+                }
+                "its origin is a different repository"
+            }
+            Origin::Missing => "it has no origin",
+            Origin::Ambiguous => "its origin has more than one URL",
+            Origin::NotItsOwn => "it has no .git directory of its own",
+            Origin::Unreadable => "git cannot read its origin",
+        };
+        Err(Error::CheckoutUnverified {
+            inclusion: self.label.clone(),
+            remote: self.remote.clone(),
+            path: checkout.to_path_buf(),
+            reason,
+            permissions,
+        })
     }
 }
 

@@ -85,12 +85,23 @@ fn a_condition_deserializes_as_a_field_of_a_document() {
     let record: Record = toml::from_str("when = \"work\"\n").expect("deserialize");
     assert_eq!(record.when.source(), "work");
 
-    let error = toml::from_str::<Record>("when = \"work &&\"\n")
-        .expect_err("a malformed condition should fail the document");
+    // A malformed condition deserializes, keeping its error for validation to report.
+    let record = toml::from_str::<Record>("when = \"work &&\"\n")
+        .expect("a malformed condition is still a string");
+    let error = record.when.syntax().expect_err("it does not parse");
     assert!(
         error.to_string().contains("is not a valid condition"),
         "{error}"
     );
+
+    // Validation refuses it at load; evaluation would close the gate with the same error.
+    let vars = vars(&[("work", "true")]);
+    let host = host(&[]);
+    let bindings = Bindings::new(&vars, &host);
+    let EvalError::Failed { message } = eval(&record.when, &bindings).expect_err("no value") else {
+        panic!("expected an evaluation failure");
+    };
+    assert!(message.starts_with("is not a valid condition"), "{message}");
 }
 
 #[test]
@@ -480,6 +491,27 @@ fn an_evaluation_fault_that_is_neither_is_flattened_and_names_the_condition() {
     ));
     let line = reported("vars.keys()", &bindings);
     assert!(line.contains(&quoted_value("vars.keys()")), "{line}");
+}
+
+#[test]
+fn a_failed_lookup_is_reported_without_the_key_or_index_it_computed() {
+    let vars = vars(&[("token", "s3cret-value")]);
+    let host = host(&[]);
+    let bindings = Bindings::new(&vars, &host);
+
+    for source in [
+        "{'a': true}[token]",
+        "[true][token == 's3cret-value']",
+        "[true][7]",
+    ] {
+        let error = failure(source, &bindings);
+        let EvalError::Failed { message } = &error else {
+            panic!("{source}: {error:?}");
+        };
+        for operand in ["s3cret-value", "true", "7", "len"] {
+            assert!(!message.contains(operand), "{source}: {message}");
+        }
+    }
 }
 
 #[test]

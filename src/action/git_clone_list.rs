@@ -1,6 +1,8 @@
 //! Execute a validated clone list in order, warning on recoverable entry failures.
 
 use crate::error::Error;
+use crate::manifest::check::ValueRule;
+use crate::manifest::template::Resolver;
 use crate::run::clone_list::PreparedList;
 use crate::run::context::RunContext;
 use crate::run::selection::Disposition;
@@ -9,8 +11,13 @@ use crate::source::git::{self, GitError};
 /// Create the destination directory and process entries in list order. `list`
 /// was read during preparation; an empty one declares no repositories. Entries
 /// the command did not request are passed over without a word.
-pub(super) fn git_clone_list(list: &PreparedList<'_>, context: &RunContext) -> Result<(), Error> {
-    let dest_dir = context.destination(list.dest_dir());
+pub(super) fn git_clone_list(
+    list: &PreparedList<'_>,
+    fields: &Resolver<'_, '_>,
+    context: &RunContext,
+) -> Result<(), Error> {
+    let dest_dir = fields.field("dest-dir", list.dest_dir(), ValueRule::Destination)?;
+    let dest_dir = context.destination(&dest_dir);
     if !context.ensure_directory(&dest_dir)? {
         return Ok(());
     }

@@ -24,7 +24,7 @@ when = "work"
 ```
 
 Variables are strings, including `"true"` and `"false"`. They control
-conditions; they do not interpolate into paths or other strings.
+conditions and [templates](#write-a-value-into-a-path).
 
 ## Choose locally or for one run
 
@@ -83,7 +83,23 @@ when = "facts.os == 'linux'"
 Other OS values include `macos` and `windows`. Use `unless` for the inverse
 condition; an action cannot declare both. For named profiles, compare strings:
 `when = "profile == 'work'"`, with a declared `profile` variable.
-See [conditions](../repoformat.md#conditions) and [host facts](../environment.md#host-facts-in-conditions).
+See [conditions](../repoformat.md#conditions) and [host facts](../environment.md#host-facts).
+
+## Write a value into a path
+
+Destinations, download URLs, and Git refs can be templates, with `${...}`
+around an expression:
+
+```toml
+[[actions]]
+type = "create-dir"
+id = "os-cache"
+dest = "~/.cache/my-tools-${facts.os}"
+```
+
+On Linux this creates `~/.cache/my-tools-linux`. A template that cannot be
+resolved fails its action. Write `$${` for a literal `${`. See
+[templates](../repoformat.md#templates).
 
 ## Set bootstrap defaults
 

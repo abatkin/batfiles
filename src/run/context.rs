@@ -11,7 +11,7 @@ use crate::filesystem::mode::RunMode;
 use crate::filesystem::paths::{self, RepositoryRoot};
 use crate::filesystem::replace::{self, ConflictPolicy, ConflictResolver, ConflictSettings};
 use crate::location::Roots;
-use crate::manifest::condition::Exclusion;
+use crate::manifest::condition::{Bindings, Exclusion};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::{Remote, Tree};
 use crate::manifest::repo_path::RepoPath;
@@ -138,7 +138,7 @@ impl<'a> RunContext<'a> {
         }
     }
 
-    /// An action's `dest`, resolved against this run's selected home.
+    /// A destination, as written or as its template resolved, under this run's selected home.
     pub fn destination(&self, dest: &str) -> PathBuf {
         destination(&self.home, dest)
     }
@@ -148,10 +148,12 @@ impl<'a> RunContext<'a> {
     pub fn materialize(
         &self,
         declared: &BTreeMap<ItemId, Remote>,
+        bindings: &Bindings<'_>,
         refetch: bool,
     ) -> Result<(), Error> {
         remotes::materialize(
             declared,
+            bindings,
             &self.excluded_remotes,
             &self.repository,
             &self.tool_owned(),

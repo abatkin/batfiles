@@ -254,6 +254,8 @@ original filesystem; earlier reported writes are not simulated.
 
 Bookkeeping still runs, including the [run lock](state.md#run-lock) and
 [dynamic-variable evaluation](state.md#when-declarations-are-evaluated).
+[Templates](repoformat.md#when-a-template-is-evaluated) are evaluated, and
+reports show their resolved values.
 Dynamic commands are arbitrary programs and can themselves change files or
 contact the network. Their captures are saved in the cache.
 
@@ -270,7 +272,7 @@ one for a whole installed tree. Exclusion reports are identical in both modes.
 | Git clone/update | Run no Git, including read-only commands; report cloning at a vacant destination or updating a directory |
 | File/archive remote | Inspect node and stamp to decide whether to fetch, refetch, keep, or refuse |
 | Source inside a remote | Read the existing materialization, however stale; fail if missing or excluded |
-| Included manifest | Read the existing materialization; if absent, warn and mark the [plan partial](#plan-completeness) |
+| Included manifest | Read the existing materialization, first [verifying a permitted checkout's origin](safety.md#permissions-follow-the-origin) with a local Git query; if absent, warn and mark the [plan partial](#plan-completeness) |
 
 Clone-list entries are read during [preparation](#clone-list-preparation) and
 reported individually; refs are printed as declared without resolving them.
@@ -317,8 +319,10 @@ plan. Materialize the remote and repeat the command to see the remaining work.
 ## Execution failures
 
 An action failure stops `sync` or an apply command with status 1. Earlier
-changes remain; nothing is rolled back. Directory-wide actions likewise stop
-at the first failed child, preserving work already completed for earlier children.
+changes remain; nothing is rolled back. A
+[failed template](repoformat.md#when-a-template-cannot-be-used) is an action
+failure, in dry runs too. Directory-wide actions likewise stop at the first
+failed child, preserving work already completed for earlier children.
 
 ### Clone-list entry failures
 

@@ -4,11 +4,13 @@ use serde::Deserialize;
 
 use super::DeclarationName;
 use super::check::{
-    ManifestError, check_archive_root, check_digest, check_git_ref, check_git_source, check_url,
+    ManifestError, ValueRule, check_archive_root, check_conditions, check_optional_template,
+    check_template,
 };
 use crate::manifest::condition::{Condition, Gate};
 use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::ItemId;
+use crate::manifest::template::TemplateString;
 
 /// The tree a declaration or record is read from: the leaf repository, or the materialization
 /// of the remote with this ID. `Id` is `&ItemId` where the ID is borrowed and `ItemId` where it
@@ -68,21 +70,29 @@ impl Remote {
     pub fn validate(&self, id: &ItemId) -> Result<(), ManifestError> {
         let record = DeclarationName::Remote(id.clone());
         let (when, unless) = self.gate_fields();
-        if when.is_some() && unless.is_some() {
-            return Err(ManifestError::BothConditions { record });
-        }
+        check_conditions(when, unless, &record)?;
         match self {
             Self::Git(remote) => {
-                check_git_source(&remote.url, "url", &record)?;
-                check_git_ref(remote.git_ref.as_deref(), &record)
+                check_template(&remote.url, "url", ValueRule::GitSource, &record)?;
+                check_optional_template(remote.git_ref.as_ref(), "ref", ValueRule::GitRef, &record)
             }
             Self::File(remote) => {
-                check_url(&remote.url, "url", &record)?;
-                check_digest(remote.sha256.as_deref(), &record)
+                check_template(&remote.url, "url", ValueRule::Url, &record)?;
+                check_optional_template(
+                    remote.sha256.as_ref(),
+                    "sha256",
+                    ValueRule::Digest,
+                    &record,
+                )
             }
             Self::Archive(remote) => {
-                check_url(&remote.url, "url", &record)?;
-                check_digest(remote.sha256.as_deref(), &record)?;
+                check_template(&remote.url, "url", ValueRule::Url, &record)?;
+                check_optional_template(
+                    remote.sha256.as_ref(),
+                    "sha256",
+                    ValueRule::Digest,
+                    &record,
+                )?;
                 check_archive_root(remote.archive_root.as_deref(), &record)
             }
         }
@@ -102,6 +112,15 @@ impl Remote {
     pub fn allows_dynamic_vars(&self) -> bool {
         match self {
             Self::Git(remote) => remote.allow_dynamic_vars,
+            Self::File(_) | Self::Archive(_) => false,
+        }
+    }
+
+    /// Whether templates in an included manifest's records may read `env`. Only a `git`
+    /// remote has a manifest to include.
+    pub fn allows_env_templates(&self) -> bool {
+        match self {
+            Self::Git(remote) => remote.allow_env_templates,
             Self::File(_) | Self::Archive(_) => false,
         }
     }
@@ -127,18 +146,23 @@ impl Remote {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct GitRemote {
     /// Repository source passed to Git unchanged.
-    pub url: String,
+    pub url: TemplateString,
 
     /// The branch, tag, or commit the materialization should be on, following
     /// [`git-clone`](../../docs/repoformat.md#ref-following-one-branch-tag-or-commit)'s
     /// rules. Absent, the materialization follows whatever branch it is on.
     #[serde(rename = "ref")]
-    pub git_ref: Option<String>,
+    pub git_ref: Option<TemplateString>,
 
     /// Whether the manifest an `include-remote` reads from this remote may run
     /// its dynamic variables' commands.
     #[serde(default)]
     pub allow_dynamic_vars: bool,
+
+    /// Whether templates in the manifest an `include-remote` reads from this remote may read
+    /// the `env` namespace.
+    #[serde(default)]
+    pub allow_env_templates: bool,
 
     /// The condition under which this machine materializes the remote at all.
     pub when: Option<Condition>,
@@ -151,9 +175,9 @@ pub(crate) struct GitRemote {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct FileRemote {
     /// An `http://`, `https://`, or `file://` URL.
-    pub url: String,
+    pub url: TemplateString,
     /// The digest the fetched bytes must have, if the manifest pins one.
-    pub sha256: Option<String>,
+    pub sha256: Option<TemplateString>,
     /// Whether the file lands executable.
     #[serde(default)]
     pub executable: bool,
@@ -173,9 +197,9 @@ pub(crate) struct FileRemote {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct ArchiveRemote {
     /// An `http://`, `https://`, or `file://` URL.
-    pub url: String,
+    pub url: TemplateString,
     /// The digest the fetched archive must have, if the manifest pins one.
-    pub sha256: Option<String>,
+    pub sha256: Option<TemplateString>,
     /// Prefix to strip from entry paths, or `*` for the archive's single top-level directory.
     pub archive_root: Option<String>,
     /// Entries to unpack, by their path with the root stripped; absent, every entry.

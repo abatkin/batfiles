@@ -13,9 +13,9 @@ archive-root = "*"
 
 | Field          | Type   | Required | Description                                                            |
 |----------------|--------|:--------:|------------------------------------------------------------------------|
-| `source`       | string |   yes    | An `http://`, `https://`, or [`file://`](../repoformat.md#file-urls) URL. Not a repository path. |
-| `dest`         | string |   yes    | Where the unpacked directory goes, exactly. Never empty; `~` is the home. |
-| `sha256`       | string |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
+| `source`       | [template string](../repoformat.md#templates) |   yes    | An `http://`, `https://`, or [`file://`](../repoformat.md#file-urls) URL. Not a repository path. |
+| `dest`         | [template string](../repoformat.md#templates) |   yes    | Where the unpacked directory goes, exactly. Never empty; `~` is the home. |
+| `sha256`       | [template string](../repoformat.md#templates) |    no    | 64 hexadecimal digits: the digest the fetched archive must have.       |
 | `archive-root` | string |    no    | A prefix every entry is written without, spelled as an entry path is, or `*` for the archive's single top-level directory. |
 | `include`      | glob or list | no | Entries to unpack, by their path once the root is stripped; absent, every entry. See [entry filters](../repoformat.md#entry-filters). |
 | `exclude`      | glob or list | no | Entries not to unpack.                                                 |

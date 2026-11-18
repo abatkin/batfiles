@@ -12,6 +12,8 @@ use crate::filesystem::paths::ExistingNode;
 use crate::manifest;
 use crate::manifest::clone_list;
 use crate::manifest::item::{ItemAddress, ItemAddressError, ItemId, ItemKind};
+use crate::manifest::template::TemplateError;
+use crate::output::quoted_value;
 use crate::release;
 use crate::source::archive;
 use crate::source::fetch;
@@ -63,6 +65,17 @@ pub(crate) enum Error {
     Serialize {
         path: PathBuf,
         source: toml::ser::Error,
+    },
+
+    /// A template field of a record that has no usable value.
+    #[error("{record}: {field} {} {source}", quoted_value(.template))]
+    Template {
+        /// The record's heading, as run output names it.
+        record: String,
+        field: &'static str,
+        /// The template as written.
+        template: String,
+        source: Box<TemplateError>,
     },
 
     /// A manifest that is valid TOML but breaks a rule serde cannot express.
@@ -179,6 +192,23 @@ pub(crate) enum Error {
     /// An action source refers to a remote excluded by its condition.
     #[error("remote `{remote}` is excluded on this machine: {reason}")]
     RemoteExcluded { remote: ItemId, reason: String },
+
+    /// A Git remote's checkout whose origin cannot be shown to be the repository the leaf
+    /// declares, so the permissions the leaf grants that remote cannot apply to it. Names no
+    /// URL, which may carry credentials.
+    #[error(
+        "{inclusion}: cannot use the checkout of remote `{remote}` at {}: {reason}, so it cannot \
+         be shown to be the repository `[remotes.{remote}]` names, and its {permissions} cannot \
+         apply; move the checkout aside and run `batfiles sync` to clone that repository",
+        .path.display()
+    )]
+    CheckoutUnverified {
+        inclusion: String,
+        remote: ItemId,
+        path: PathBuf,
+        reason: &'static str,
+        permissions: &'static str,
+    },
 
     /// An included remote's materialization has no manifest.
     #[error(

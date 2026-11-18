@@ -7,15 +7,16 @@ use serde::Deserialize;
 use super::DeclarationName;
 use super::ReadAs;
 use super::check::{
-    ManifestError, SourceShape, check_archive_root, check_child_filter, check_dest, check_digest,
-    check_git_ref, check_git_source, check_inclusion_filters, check_inclusion_remote, check_source,
-    check_url,
+    ManifestError, SourceShape, ValueRule, check_archive_root, check_child_filter,
+    check_inclusion_filters, check_inclusion_remote, check_optional_template, check_source,
+    check_template,
 };
 use super::remote::Remote;
 use crate::manifest::condition::{Condition, Gate};
 use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::{ItemAddress, ItemId, ItemIdList};
 use crate::manifest::repo_path::RepoPath;
+use crate::manifest::template::TemplateString;
 use crate::vars::name::VarName;
 
 /// One entry of `[[actions]]`.
@@ -70,42 +71,54 @@ impl Action {
         match self {
             Self::Symlink(action) => {
                 check_source(&action.source, SourceShape::Any, record, remotes)?;
-                check_dest(&action.dest, record)
+                check_template(&action.dest, "dest", ValueRule::Destination, record)
             }
             Self::SymlinkDir(action) => {
                 check_source(&action.source_dir, SourceShape::Directory, record, remotes)?;
                 check_child_filter("include", action.include.as_ref(), record)?;
                 check_child_filter("exclude", action.exclude.as_ref(), record)?;
-                check_dest(&action.dest_dir, record)
+                check_template(&action.dest_dir, "dest-dir", ValueRule::Destination, record)
             }
-            Self::CreateDir(action) => check_dest(&action.dest, record),
+            Self::CreateDir(action) => {
+                check_template(&action.dest, "dest", ValueRule::Destination, record)
+            }
             Self::Copy(action) => {
                 check_source(&action.source, SourceShape::Any, record, remotes)?;
-                check_dest(&action.dest, record)
+                check_template(&action.dest, "dest", ValueRule::Destination, record)
             }
             Self::CopyDir(action) => {
                 check_source(&action.source_dir, SourceShape::Directory, record, remotes)?;
-                check_dest(&action.dest_dir, record)
+                check_template(&action.dest_dir, "dest-dir", ValueRule::Destination, record)
             }
             Self::FetchFile(action) => {
-                check_url(&action.source, "source", record)?;
-                check_digest(action.sha256.as_deref(), record)?;
-                check_dest(&action.dest, record)
+                check_template(&action.source, "source", ValueRule::Url, record)?;
+                check_optional_template(
+                    action.sha256.as_ref(),
+                    "sha256",
+                    ValueRule::Digest,
+                    record,
+                )?;
+                check_template(&action.dest, "dest", ValueRule::Destination, record)
             }
             Self::FetchArchive(action) => {
-                check_url(&action.source, "source", record)?;
-                check_digest(action.sha256.as_deref(), record)?;
+                check_template(&action.source, "source", ValueRule::Url, record)?;
+                check_optional_template(
+                    action.sha256.as_ref(),
+                    "sha256",
+                    ValueRule::Digest,
+                    record,
+                )?;
                 check_archive_root(action.archive_root.as_deref(), record)?;
-                check_dest(&action.dest, record)
+                check_template(&action.dest, "dest", ValueRule::Destination, record)
             }
             Self::GitClone(action) => {
-                check_git_source(&action.source, "source", record)?;
-                check_git_ref(action.git_ref.as_deref(), record)?;
-                check_dest(&action.dest, record)
+                check_template(&action.source, "source", ValueRule::GitSource, record)?;
+                check_optional_template(action.git_ref.as_ref(), "ref", ValueRule::GitRef, record)?;
+                check_template(&action.dest, "dest", ValueRule::Destination, record)
             }
             Self::GitCloneList(action) => {
                 check_source(&action.source, SourceShape::Any, record, remotes)?;
-                check_dest(&action.dest_dir, record)
+                check_template(&action.dest_dir, "dest-dir", ValueRule::Destination, record)
             }
             // Nested inclusions are dropped later, so their remote references need not resolve.
             Self::IncludeRemote(action) => {
@@ -231,11 +244,6 @@ impl<'a> ActionMetadata<'a> {
     pub fn gate(self) -> Option<Gate<'a>> {
         Gate::from_fields(self.when, self.unless)
     }
-
-    /// Return whether both `when` and `unless` are declared.
-    pub fn writes_both_conditions(self) -> bool {
-        self.when.is_some() && self.unless.is_some()
-    }
 }
 
 /// `symlink`: one symlink, from a path in the repository to a destination.
@@ -251,7 +259,7 @@ pub(crate) struct SymlinkAction {
     pub source: RepoPath,
     /// The destination path as written, resolved against the selected home when
     /// the action runs.
-    pub dest: String,
+    pub dest: TemplateString,
 }
 
 /// `symlink-dir`: one symlink per direct child of a directory in the
@@ -268,7 +276,7 @@ pub(crate) struct SymlinkDirAction {
     pub source_dir: RepoPath,
     /// The directory the links are made in, resolved against the selected home
     /// when the action runs and created if it is missing.
-    pub dest_dir: String,
+    pub dest_dir: TemplateString,
     /// Whether to prepend `.` to each installed link name.
     #[serde(default)]
     pub dot_prefix: bool,
@@ -288,7 +296,7 @@ pub(crate) struct CreateDirAction {
     pub unless: Option<Condition>,
     /// The directory to create, resolved against the selected home when the
     /// action runs. Missing parents are created with it.
-    pub dest: String,
+    pub dest: TemplateString,
 }
 
 /// `copy`: seed a destination with a file or directory copy.
@@ -303,7 +311,7 @@ pub(crate) struct CopyAction {
     /// action or within a remote it names.
     pub source: RepoPath,
     /// Exact destination path, resolved against the selected home at execution.
-    pub dest: String,
+    pub dest: TemplateString,
     /// Entries of a directory source to copy; absent, every entry.
     pub include: Option<GlobFilter>,
     /// Entries of a directory source not to copy.
@@ -324,7 +332,7 @@ pub(crate) struct CopyDirAction {
     pub source_dir: RepoPath,
     /// The directory the copies are made in, resolved against the selected home
     /// when the action runs and created if it is missing.
-    pub dest_dir: String,
+    pub dest_dir: TemplateString,
     /// Whether to prepend `.` to each installed child name.
     #[serde(default)]
     pub dot_prefix: bool,
@@ -343,11 +351,11 @@ pub(crate) struct FetchFileAction {
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
     /// The URL to fetch, as written; not a repository path.
-    pub source: String,
+    pub source: TemplateString,
     /// Exact destination path, resolved against the selected home. Missing parents are created.
-    pub dest: String,
+    pub dest: TemplateString,
     /// The digest the fetched bytes must have, if the repository pins one.
-    pub sha256: Option<String>,
+    pub sha256: Option<TemplateString>,
     /// Whether the file lands executable.
     #[serde(default)]
     pub executable: bool,
@@ -365,12 +373,12 @@ pub(crate) struct FetchArchiveAction {
     pub when: Option<Condition>,
     pub unless: Option<Condition>,
     /// The URL to fetch, as written; not a repository path.
-    pub source: String,
+    pub source: TemplateString,
     /// Exact extraction destination, resolved against the selected home. Missing parents are
     /// created.
-    pub dest: String,
+    pub dest: TemplateString,
     /// The digest the fetched archive must have, if the repository pins one.
-    pub sha256: Option<String>,
+    pub sha256: Option<TemplateString>,
     /// Prefix to strip from entry paths, or `*` to detect a single top-level directory.
     pub archive_root: Option<String>,
     /// Entries to unpack, by their path with the root stripped; absent, every entry.
@@ -391,14 +399,14 @@ pub(crate) struct GitCloneAction {
     pub unless: Option<Condition>,
     /// The repository to clone, passed to git as written. Not checked as a URL:
     /// git also accepts `git@host:path`, plain directories, and other schemes.
-    pub source: String,
+    pub source: TemplateString,
     /// Exact clone destination, resolved against the selected home. Missing parents are
     /// created.
-    pub dest: String,
+    pub dest: TemplateString,
     /// The branch, tag, or commit to follow. Absent, an update follows whatever
     /// branch the clone is on.
     #[serde(rename = "ref")]
-    pub git_ref: Option<String>,
+    pub git_ref: Option<TemplateString>,
 }
 
 /// `git-clone-list`: clone repositories from a list into one parent directory.
@@ -414,7 +422,7 @@ pub(crate) struct GitCloneListAction {
     pub source: RepoPath,
     /// The directory the clones are made in, one child per entry, resolved
     /// against the selected home when the action runs.
-    pub dest_dir: String,
+    pub dest_dir: TemplateString,
 }
 
 /// `include-remote`: insert another repository's actions at this declaration's position.

@@ -29,33 +29,39 @@ const ENV: &str = "env";
 /// Reserved namespace for user variables; missing keys return empty strings.
 const VARS: &str = "vars";
 
-/// A parsed condition with its original text retained for diagnostics.
+/// A condition, parsed as it is read. A condition that does not parse is kept with its error,
+/// so that manifest validation can report it with the record that holds it.
 #[derive(Clone, Deserialize)]
-#[serde(try_from = "String")]
+#[serde(from = "String")]
 pub(crate) struct Condition {
     source: String,
-    expr: Expr,
+    parsed: Result<Expr, SyntaxError>,
 }
 
 impl Condition {
     /// Parse a condition, returning an error for invalid syntax.
-    pub fn new(source: &str) -> Result<Self, ConditionError> {
-        Self::try_from(source.to_owned())
+    pub fn new(source: &str) -> Result<Self, SyntaxError> {
+        let condition = Self::from(source.to_owned());
+        condition.syntax().map_err(SyntaxError::clone)?;
+        Ok(condition)
     }
 
     /// The condition exactly as written, whitespace and quote style included.
     pub fn source(&self) -> &str {
         &self.source
     }
+
+    /// Why the condition does not parse, if it does not.
+    pub fn syntax(&self) -> Result<(), &SyntaxError> {
+        self.parsed.as_ref().map(|_| ())
+    }
 }
 
-impl TryFrom<String> for Condition {
-    type Error = ConditionError;
-
-    fn try_from(source: String) -> Result<Self, Self::Error> {
-        let expr =
-            parse_expression(&source).map_err(|error| ConditionError::new(&source, &error))?;
-        Ok(Self { source, expr })
+impl From<String> for Condition {
+    fn from(source: String) -> Self {
+        let parsed = parse_expression(&source)
+            .map_err(|error| SyntaxError::new("condition", &source, &error));
+        Self { source, parsed }
     }
 }
 
@@ -184,26 +190,39 @@ impl Exclusion {
     }
 }
 
-/// A condition parse error, formatted on one line without a caret diagram.
+/// A condition or template parse error, formatted on one line without a caret diagram.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ConditionError {
+pub(crate) struct SyntaxError {
+    /// What the text was meant to be: `condition` or `template`.
+    what: &'static str,
     candidate: String,
     /// Parser error position, if available.
     position: Option<Position>,
     message: String,
 }
 
-/// Where within the condition the parser stopped.
+/// Where within a condition or template an error is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Position {
-    /// One-based line number within the condition.
-    line: usize,
+pub(crate) struct Position {
+    /// One-based line number within the text.
+    pub line: usize,
     /// 1-based, in characters.
-    column: usize,
+    pub column: usize,
 }
 
-impl ConditionError {
-    fn new(candidate: &str, error: &ExpressionError) -> Self {
+/// `line L, character C`, or `character C` on the first line.
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self { line, column } if *line > 1 => write!(f, "line {line}, character {column}"),
+            Self { column, .. } => write!(f, "character {column}"),
+        }
+    }
+}
+
+impl SyntaxError {
+    /// The parse `error` in `candidate`, which was meant to be a `what`.
+    pub(super) fn new(what: &'static str, candidate: &str, error: &ExpressionError) -> Self {
         // Non-parse errors have no position but still retain their message.
         let (position, message) = match error {
             ExpressionError::ParseError {
@@ -221,6 +240,7 @@ impl ConditionError {
             other => (None, other.to_string()),
         };
         Self {
+            what,
             candidate: candidate.to_owned(),
             position,
             message,
@@ -228,30 +248,34 @@ impl ConditionError {
     }
 }
 
-impl fmt::Display for ConditionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Escape condition text so embedded newlines cannot alter the enclosing TOML
-        // diagnostic.
-        write!(
-            f,
-            "{} is not a valid condition: {}",
-            quoted_value(&self.candidate),
-            self.message
-        )?;
-        match self.position {
-            Some(Position { line, column }) if line > 1 => {
-                write!(f, " at line {line}, character {column}")
-            }
-            Some(Position { column, .. }) => write!(f, " at character {column}"),
-            None => Ok(()),
+impl SyntaxError {
+    /// The failure without the text it was found in: `is not a valid <what>: <message>`, with
+    /// its position.
+    pub(crate) fn problem(&self) -> String {
+        let Self {
+            what,
+            message,
+            position,
+            ..
+        } = self;
+        match position {
+            Some(position) => format!("is not a valid {what}: {message} at {position}"),
+            None => format!("is not a valid {what}: {message}"),
         }
     }
 }
 
-impl std::error::Error for ConditionError {}
+impl fmt::Display for SyntaxError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Escape the text so embedded newlines cannot alter the enclosing TOML diagnostic.
+        write!(f, "{} {}", quoted_value(&self.candidate), self.problem())
+    }
+}
+
+impl std::error::Error for SyntaxError {}
 
 /// Host facts and environment values captured once per invocation for condition evaluation. See
-/// [host facts](../../docs/environment.md#host-facts-in-conditions).
+/// [host facts](../../docs/environment.md#host-facts).
 pub(crate) struct HostNamespaces {
     facts: Value,
     env: Value,
@@ -377,10 +401,10 @@ fn string(text: String) -> Value {
 /// (zero is false), and the strings `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off`, and
 /// empty. Reject other values without disclosing them. Arithmetic and comparisons use the
 /// evaluator's standard rules.
-struct BatfilesCoercions;
+pub(super) struct BatfilesCoercions;
 
 /// Shared boolean-conversion policy.
-static COERCIONS: BatfilesCoercions = BatfilesCoercions;
+pub(super) static COERCIONS: BatfilesCoercions = BatfilesCoercions;
 
 impl Coercions for BatfilesCoercions {
     fn to_bool(&self, value: &Value) -> ExpressionResult<bool> {
@@ -411,9 +435,16 @@ const NOT_BOOLEAN: &str = "a value in it is not a boolean. Write a comparison, \
 /// Evaluate one condition against one set of bindings. [`Gate::admits`] applies
 /// `when` or `unless` to the result.
 fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalError> {
+    // Manifest validation refuses a condition that does not parse before any evaluation.
+    let expr = condition
+        .parsed
+        .as_ref()
+        .map_err(|error| EvalError::Failed {
+            message: error.problem(),
+        })?;
     let evaluator = Evaluator::new_with_coercions(bindings, &COERCIONS);
     let value = evaluator
-        .evaluate(&condition.expr)
+        .evaluate(expr)
         .map_err(|error| EvalError::from_expression(&error))?;
 
     // The same policy the evaluator applies inside `!`, `&&`, and `||`.
@@ -429,24 +460,42 @@ pub(crate) enum EvalError {
     /// The condition's own value is outside the truthiness table.
     NotBoolean,
     /// Any other evaluator error, such as a divide by zero, an index out of
-    /// bounds, or a truthiness failure inside an operator, with its message.
+    /// bounds, or a truthiness failure inside an operator. The message names
+    /// no value computed at run time.
     Failed { message: String },
 }
 
 impl EvalError {
-    fn from_expression(error: &ExpressionError) -> Self {
-        match error {
-            ExpressionError::ResolveFailed(name) => Self::Undeclared { name: name.clone() },
+    /// Classify an evaluator error. A key, index, or operand computed at run time may come
+    /// from a variable or the host environment, so the message never carries one.
+    pub(super) fn from_expression(error: &ExpressionError) -> Self {
+        let message = match error {
+            ExpressionError::ResolveFailed(name) => return Self::Undeclared { name: name.clone() },
             // Use the message without the evaluator's "evaluation failed:" prefix.
-            ExpressionError::EvaluationFailed(message) => Self::Failed {
-                message: message.clone(),
-            },
-            other => Self::Failed {
-                message: other.to_string(),
-            },
-        }
+            // Batfiles and the evaluator build these from fixed text.
+            ExpressionError::EvaluationFailed(message) => message.clone(),
+            // These name only types, operators, and members written in the expression.
+            ExpressionError::NotCallable
+            | ExpressionError::TypeMismatch(_)
+            | ExpressionError::NotCoercible { .. }
+            | ExpressionError::DivideByZero
+            | ExpressionError::IntegerOverflow { .. }
+            | ExpressionError::UnknownMember { .. } => error.to_string(),
+            ExpressionError::NoSuchKey(_) => NO_SUCH_KEY.to_owned(),
+            ExpressionError::IndexOutOfBounds { .. } => INDEX_OUT_OF_RANGE.to_owned(),
+            ExpressionError::NotIndexable(_) => NOT_INDEXABLE.to_owned(),
+            // An error kind this list does not know may carry a value.
+            _ => UNKNOWN_FAILURE.to_owned(),
+        };
+        Self::Failed { message }
     }
 }
+
+const NO_SUCH_KEY: &str = "a dictionary has no entry for the key looked up in it";
+const INDEX_OUT_OF_RANGE: &str = "a list index is out of range";
+const NOT_INDEXABLE: &str =
+    "a value is indexed by something other than a string or integer, or cannot be indexed";
+const UNKNOWN_FAILURE: &str = "the expression could not be evaluated";
 
 /// Format the failure reason without the condition or field name.
 impl fmt::Display for EvalError {

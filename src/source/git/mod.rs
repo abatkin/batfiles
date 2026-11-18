@@ -1,8 +1,10 @@
-//! Clone repositories and update existing clones conservatively.
-//! Dry runs report intent without running Git. Git configuration and credentials
-//! are inherited; repository redirects are cleared.
+//! Clone repositories, update existing clones conservatively, and read the origin a checkout
+//! records. Dry runs report clones and updates without running Git; reading an origin is a
+//! local query they make. Git configuration and credentials are inherited; repository
+//! redirects are cleared.
 
 mod clone;
+mod origin;
 mod process;
 mod update;
 
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error as ThisError;
 
 pub(crate) use clone::{clone_or_update, clone_repository, ref_suffix};
+pub(crate) use origin::{Origin, recorded_origin, same_origin};
 use process::{launch, stderr_summary};
 
 /// Failures when cloning or updating a repository.

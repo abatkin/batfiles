@@ -122,6 +122,7 @@ Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `
 | Manage repositories or plugin lists | `git-clone`, `git-clone-list` |
 | Compose repositories | `[remotes]` supplies content; `include-remote` includes actions |
 | Choose content per machine | Groups, persistent disables, run-only skips, variables and conditions |
+| Vary paths and URLs per machine | [Templates](docs/repoformat.md#templates) such as `dest = "~/.cache/${facts.os}"` |
 | Discover machine values | Cached [dynamic variables](docs/repoformat.md#dynamic-variables) |
 
 See the [action reference](docs/repoformat.md#actions) for fields, filters, and

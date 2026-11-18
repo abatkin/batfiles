@@ -10,7 +10,7 @@ dest = "~/.local/share/zsh-plugins"
 
 | Field  | Type   | Required | Description                                             |
 |--------|--------|:--------:|-----------------------------------------------------------|
-| `dest` | string |   yes    | The directory to create. Never empty; `~` is the home.    |
+| `dest` | [template string](../repoformat.md#templates) |   yes    | The directory to create. Never empty; `~` is the home.    |
 
 The only action with no `source`, because it installs nothing. It is for a
 directory whose contents come from somewhere else — a plugin root another tool

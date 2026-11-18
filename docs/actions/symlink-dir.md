@@ -15,7 +15,7 @@ dot-prefix = true
 | Field        | Type    | Required | Description                                                             |
 |--------------|---------|:--------:|---------------------------------------------------------------------------|
 | `source-dir` | repository path  |   yes    | The directory whose direct children are linked. |
-| `dest-dir`   | string  |   yes    | The directory the links are made in. Created if it is missing.            |
+| `dest-dir`   | [template string](../repoformat.md#templates)  |   yes    | The directory the links are made in. Created if it is missing.            |
 | `dot-prefix` | boolean |    no    | Prefix each installed name with `.`. Defaults to `false`.                 |
 | `include`    | glob or list |  no | Children to link; absent, every child. See [entry filters](../repoformat.md#entry-filters). |
 | `exclude`    | glob or list |  no | Children not to link.                                                    |

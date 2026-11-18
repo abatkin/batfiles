@@ -13,7 +13,7 @@ dest-dir = "~/.oh-my-zsh/custom/plugins"
 | Field      | Type   | Required | Description                                                        |
 |------------|--------|:--------:|--------------------------------------------------------------------|
 | `source`   | repository path |   yes    | The list, within this repository or a remote it names. Never empty. |
-| `dest-dir` | string |   yes    | The directory the clones are made in. Never empty; `~` is the home. |
+| `dest-dir` | [template string](../repoformat.md#templates) |   yes    | The directory the clones are made in. Never empty; `~` is the home. |
 
 The source uses [repository path syntax](../repoformat.md#sources-and-destinations) and the
 [clone list format](../repoformat.md#the-clone-list-format). Each entry's repository is passed

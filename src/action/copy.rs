@@ -10,9 +10,11 @@ use crate::error::Error;
 use crate::filesystem::install::{self, ContentKind};
 use crate::filesystem::paths;
 use crate::manifest::actions::{CopyAction, CopyDirAction};
+use crate::manifest::check::ValueRule;
 use crate::manifest::entry_filter::{EntryFilter, Verdict};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Tree;
+use crate::manifest::template::Resolver;
 use crate::output::Verb;
 use crate::run::context::RunContext;
 
@@ -24,10 +26,11 @@ type SelectedPaths = BTreeSet<PathBuf>;
 pub(super) fn copy(
     action: &CopyAction,
     tree: Tree<&ItemId>,
+    fields: &Resolver<'_, '_>,
     context: &RunContext,
 ) -> Result<(), Error> {
+    let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);
     let source = context.source(tree, &action.source)?;
-    let dest = context.destination(&action.dest);
     let kind = kind_of_source(&source)?;
     let Some(mut filter) = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref())
     else {
@@ -47,10 +50,12 @@ pub(super) fn copy(
 pub(super) fn copy_dir(
     action: &CopyDirAction,
     tree: Tree<&ItemId>,
+    fields: &Resolver<'_, '_>,
     context: &RunContext,
 ) -> Result<(), Error> {
+    let dest_dir = fields.field("dest-dir", &action.dest_dir, ValueRule::Destination)?;
+    let dest_dir = context.destination(&dest_dir);
     let source_dir = context.source_directory(tree, &action.source_dir)?;
-    let dest_dir = context.destination(&action.dest_dir);
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());

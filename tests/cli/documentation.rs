@@ -72,7 +72,7 @@ fn the_first_repository_tutorial_previews_installs_keeps_and_refreshes() {
 
 #[test]
 fn the_machine_guide_selects_work_and_adopts_bootstrap_choices() {
-    let guide = toml_blocks(include_str!("../../docs/guides/machines.md"), 4);
+    let guide = toml_blocks(include_str!("../../docs/guides/machines.md"), 5);
     let tree = Tree::new();
     tree.write_manifest(&format!("{}\n{}", guide[0], guide[1]));
     tree.batfiles().arg("sync").assert().success();
@@ -95,7 +95,14 @@ fn the_machine_guide_selects_work_and_adopts_bootstrap_choices() {
     tree.batfiles().arg("sync").assert().success();
     assert!(tree.home("work-notes").is_dir());
 
-    tree.write_manifest(&format!("{}\n{}\n{}", guide[0], guide[1], guide[3]));
+    tree.write_manifest(&format!("{}\n{}", guide[0], guide[3]));
+    tree.batfiles().arg("sync").assert().success();
+    assert!(
+        tree.home(&format!(".cache/my-tools-{}", std::env::consts::OS))
+            .is_dir()
+    );
+
+    tree.write_manifest(&format!("{}\n{}\n{}", guide[0], guide[1], guide[4]));
     tree.batfiles()
         .args(["sync", "--bootstrap"])
         .assert()
@@ -110,7 +117,7 @@ fn the_machine_guide_selects_work_and_adopts_bootstrap_choices() {
 
 #[test]
 fn the_content_guide_examples_preview_without_network_access() {
-    let guide = toml_blocks(include_str!("../../docs/guides/content.md"), 3);
+    let guide = toml_blocks(include_str!("../../docs/guides/content.md"), 4);
     for example in guide {
         let tree = Tree::new();
         tree.repo_file("files/editor.toml", "theme = \"dark\"\n");

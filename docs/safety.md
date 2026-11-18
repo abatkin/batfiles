@@ -18,6 +18,10 @@ its included repositories. Those repositories can name destinations outside the
 home directory and contribute installation actions. Git and filesystem access
 are not sandboxed, and batfiles does not elevate privileges.
 
+A [template](repoformat.md#templates) can send what it reads to the server in a
+URL, so one in an included manifest reads the host environment only with
+[`allow-env-templates`](repoformat.md#git) on its remote.
+
 A configured SHA-256 digest verifies downloaded bytes. Without one, content
 identity and authenticity depend on the transport and source the user selected.
 Batfiles does not require signed Git commits or make branches immutable; pin a
@@ -308,8 +312,9 @@ for digest verification.
 Both Git action types and a declared remote's
 [materialization](repoformat.md#materialization) use the same clone and update
 rules. Existing clones keep their configured remotes: changing a manifest's
-`source` or a remote's `url` does not repoint one. Move the clone aside if it
-needs to be cloned from a different source.
+`source` or a remote's `url` does not repoint one, and a remote's
+[permissions stop applying](#permissions-follow-the-origin). Move the clone aside
+if it needs to be cloned from a different source.
 
 | Checkout state | Result |
 | --- | --- |
@@ -363,3 +368,28 @@ afresh in its place.
 Destination symlinks use the replacement rules above and are never followed to
 update another checkout. Git inherits configuration and credentials subject to
 [the environment policy](environment.md#variables-passed-on-to-git).
+
+### Permissions follow the origin
+
+[`allow-dynamic-vars` and `allow-env-templates`](repoformat.md#git) grant a
+permission to the repository a Git remote's `url` names, not to whatever is
+checked out at `remotes/<id>`. Before an inclusion of a remote granted either one
+is used, batfiles compares the `origin` URL recorded in the checkout's own
+`.git` with `url` as it resolves now. `sync`, `clone`, apply commands, and
+`vars refresh` check, dry runs included: reading that configuration is the one
+Git command a dry run runs. A remote granted neither permission is not checked.
+
+- A URL with a scheme, or a `host:path` address, must match exactly.
+- A local path matches once a relative one is resolved against the working
+  directory, where `git clone` ran, and both are normalized: `../dotfiles.git`
+  matches the absolute path Git recorded.
+
+A different origin, no origin, more than one origin URL, one Git cannot read,
+or a checkout without a `.git` directory of its own fails the run before the
+inclusion's variables or actions are used. The error names the remote and the
+checkout but no URL. Move the checkout aside and run `sync` to clone the
+declared repository.
+
+The check catches a checkout left behind when `url` changes. It does not verify
+the checkout's files or Git configuration, which batfiles trusts like the rest
+of the leaf.

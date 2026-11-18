@@ -1,5 +1,5 @@
 //! Parse and validate `batfiles.toml` manifests, and the declarations they are
-//! made of: item names, conditions, repository paths, entry filters, clone
+//! made of: item names, conditions, templates, repository paths, entry filters, clone
 //! lists, and the `disabled.toml` that switches items off on this machine.
 
 pub(crate) mod actions;
@@ -13,6 +13,7 @@ pub(crate) mod entry_filter;
 pub(crate) mod item;
 pub(crate) mod remote;
 pub(crate) mod repo_path;
+pub(crate) mod template;
 pub(crate) mod vars;
 
 use std::collections::BTreeMap;
@@ -24,7 +25,7 @@ use serde::Deserialize;
 use crate::error::Error as CrateError;
 use crate::filesystem::tomlfile;
 use crate::manifest::actions::Action;
-use crate::manifest::check::check_included_source;
+use crate::manifest::check::{check_conditions, check_included_source};
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::manifest::item::{ItemId, ItemKind};
 use crate::manifest::remote::Remote;
@@ -146,9 +147,8 @@ impl Manifest {
                 });
             }
 
-            if action.metadata().writes_both_conditions() {
-                return Err(ManifestError::BothConditions { record });
-            }
+            let metadata = action.metadata();
+            check_conditions(metadata.when, metadata.unless, &record)?;
 
             // Report the forbidden remote reference before checking whether that remote exists.
             if let ReadAs::Included = read_as

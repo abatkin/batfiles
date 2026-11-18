@@ -6,6 +6,7 @@ use crate::error::Error;
 use crate::manifest::actions::GitCloneListAction;
 use crate::manifest::clone_list::{self, CloneListEntry};
 use crate::manifest::item::ItemAddress;
+use crate::manifest::template::TemplateString;
 use crate::run::selection::{Disposition, Subject};
 
 /// A validated clone list with each entry decided. An empty list declares no repositories.
@@ -57,7 +58,7 @@ impl<'a> PreparedList<'a> {
     }
 
     /// The directory the clones are made in, as the record wrote it.
-    pub fn dest_dir(&self) -> &str {
+    pub fn dest_dir(&self) -> &TemplateString {
         &self.action.dest_dir
     }
 

@@ -8,7 +8,7 @@ use std::path::Path;
 use thiserror::Error;
 
 use crate::error::Error;
-use crate::manifest::condition::{Condition, ConditionError, Gate};
+use crate::manifest::condition::{Condition, Gate, SyntaxError};
 use crate::manifest::item::{ItemId, ItemIdError};
 
 /// One repository the list names.
@@ -187,7 +187,7 @@ fn condition(
         .get(key)
         .map(|source| Condition::new(source))
         .transpose()
-        .map_err(CloneListError::from)
+        .map_err(|error| CloneListError::Condition(Box::new(error)))
 }
 
 /// The directory an entry clones into when it does not name one.
@@ -285,7 +285,7 @@ pub(crate) enum CloneListError {
 
     /// An invalid `when` or `unless` expression, with the parser's diagnostic.
     #[error(transparent)]
-    Condition(#[from] ConditionError),
+    Condition(Box<SyntaxError>),
 
     /// An entry declaring both `when` and `unless`.
     #[error("writes both `when` and `unless`; a line has one condition or none")]
