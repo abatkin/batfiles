@@ -62,7 +62,7 @@ pub(crate) fn resolve(
             }
         };
         let (entry, cached) = match cached {
-            Some(entry) if entry.from.as_ref().is_none_or(|from| *from == provenance) => {
+            Some(entry) if provenance.owns(entry.from.as_ref()) => {
                 let age = age_of(entry.captured_at, judged_at);
                 let state = if is_fresh(entry.captured_at, declaration.cache, judged_at) {
                     CacheEntryState::Fresh(age)

@@ -182,7 +182,9 @@ GET <github-url>/OWNER/REPO/releases/latest
 [`github-url`](repoformat.md#the-github-url-field), `https://github.com` by
 default. The request follows the shared
 [transfer's](repoformat.md#the-transfer-both-fetching-actions-share) proxy and
-TLS trust rules, and sends no credentials, so it sees only public repositories. It runs no code, and needs no permission in an included manifest.
+TLS trust rules, and sends no credentials, so it sees only public repositories;
+a `github-url` holding any is refused rather than sent. It runs no code, and
+needs no permission in an included manifest.
 Lookups run one at a time, in real and dry runs, like commands.
 
 The lookup succeeds when the answer is a redirect (301, 302, 303, 307, or 308)

@@ -310,8 +310,9 @@ pub(crate) enum ValueRule {
     GitRef,
     /// A SHA-256 digest.
     Digest,
-    /// An `http://` or `https://` URL to ask.
-    HttpUrl,
+    /// The `http://` or `https://` base a release path is appended to: it names a host, and
+    /// has no credentials, query, or fragment.
+    ReleaseHost,
     /// Any text, such as part of a command.
     Text,
 }
@@ -322,7 +323,7 @@ impl ValueRule {
         match self {
             Self::Destination => check_dest(value),
             Self::Url => check_url(value),
-            Self::HttpUrl if !is_http_url(value) => Err(ValueError::NotAnHttpUrl),
+            Self::ReleaseHost => check_release_host(value),
             Self::GitSource if value.trim().is_empty() => Err(ValueError::GitSourceEmpty),
             Self::GitRef if value.trim().is_empty() => Err(ValueError::GitRefEmpty),
             Self::Digest
@@ -330,7 +331,7 @@ impl ValueRule {
             {
                 Err(ValueError::DigestNotSha256)
             }
-            Self::GitSource | Self::GitRef | Self::Digest | Self::HttpUrl | Self::Text => Ok(()),
+            Self::GitSource | Self::GitRef | Self::Digest | Self::Text => Ok(()),
         }
     }
 }
@@ -350,6 +351,15 @@ pub(crate) enum ValueError {
 
     #[error("is not an http:// or https:// URL")]
     NotAnHttpUrl,
+
+    #[error("names no host")]
+    NoHost,
+
+    #[error("contains credentials before `@`; a release lookup sends none")]
+    Credentials,
+
+    #[error("has a query or fragment, so the release path cannot be appended to it")]
+    QueryOrFragment,
 
     #[error(transparent)]
     FileUrl(FileUrlError),
@@ -708,6 +718,25 @@ fn is_http_url(source: &str) -> bool {
     scheme("http://") || scheme("https://")
 }
 
+/// Check a release lookup's base URL: `http://` or `https://`, then a host with no
+/// credentials, then an optional path with no query or fragment.
+fn check_release_host(value: &str) -> Result<(), ValueError> {
+    if !is_http_url(value) {
+        return Err(ValueError::NotAnHttpUrl);
+    }
+    let (_, rest) = value.split_once("://").unwrap_or_default();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        Err(ValueError::Credentials)
+    } else if authority.is_empty() || authority.starts_with(':') {
+        Err(ValueError::NoHost)
+    } else if rest.contains(['?', '#']) {
+        Err(ValueError::QueryOrFragment)
+    } else {
+        Ok(())
+    }
+}
+
 /// Check a `[vars]` entry: a `github-url` parses, reads only `env` and `facts`, and, if it is
 /// literal, is an http(s) URL.
 pub(super) fn check_var(spec: &VarSpec, record: &DeclarationName) -> Result<(), ManifestError> {
@@ -721,7 +750,7 @@ pub(super) fn check_var(spec: &VarSpec, record: &DeclarationName) -> Result<(), 
     let Some(url) = &release.github_url else {
         return Ok(());
     };
-    check_template(url, "github-url", ValueRule::HttpUrl, record)?;
+    check_template(url, "github-url", ValueRule::ReleaseHost, record)?;
     match url
         .roots()
         .into_iter()

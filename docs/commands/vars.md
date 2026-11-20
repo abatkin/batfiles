@@ -137,18 +137,22 @@ Remote eligibility uses the leaf scope. Its declarations resolve first, reusing
 fresh values and capturing stale ones; explicitly named leaf keys are refreshed
 before deciding eligibility. Naming only leaf keys reads no remote.
 
-Keys are checked before anything is captured. All invalid requests are collected
-in one error with a reason per key; exit status is 1. A key is refused if it:
+Keys are checked in two passes. The leaf manifest alone decides, before
+anything is captured, whether a leaf key is a dynamic declaration and whether a
+remote key's remote is declared and named by some `include-remote`. A remote
+key's other checks wait for the leaf resolution above, whose captures are saved
+even when a remote key is then refused. All invalid requests are collected in
+one error with a reason per key; exit status is 1. A key is refused if it:
 
 - Is undeclared or static.
-- Names an undeclared remote, one out of play, or one not materialized.
+- Names an undeclared remote, or one no `include-remote` includes, before
+  anything is captured.
+- Names a remote out of play, or one not materialized.
 - Names a command declaration in a remote without
   [`allow-dynamic-vars`](../repoformat.md#git). A `github-release` declaration
   there is refreshed, and a remote a key names is read to tell which kind it is.
 
-Leaf values already refreshed to decide remote eligibility remain refreshed
-when a remote key is refused. With no keys, an unmaterialized remote in play
-warns and is skipped. This command fetches nothing; use `sync` first.
+With no keys, an unmaterialized remote in play warns and is skipped. This command fetches nothing; use `sync` first.
 
 Each capture reports a line such as ``refreshed `email` `` on standard error, without its value;
 `--quiet` suppresses it. A command with nothing to refresh says so. Capture

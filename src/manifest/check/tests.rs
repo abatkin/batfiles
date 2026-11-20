@@ -453,6 +453,39 @@ fn a_digest_is_sixty_four_hexadecimal_digits_or_absent() {
 }
 
 #[test]
+fn a_release_host_is_a_base_the_release_path_can_be_appended_to() {
+    for accepted in [
+        "https://github.com",
+        "HTTPS://ghe.example/",
+        "http://127.0.0.1:8080",
+        "https://[::1]:8443/github",
+        "https://ghe.example/a@b",
+    ] {
+        assert!(
+            ValueRule::ReleaseHost.check(accepted).is_ok(),
+            "`{accepted}` was refused"
+        );
+    }
+    for (refused, reason) in [
+        ("ftp://ghe.example", "is not an http:// or https:// URL"),
+        ("https://", "is not an http:// or https:// URL"),
+        ("https:///", "names no host"),
+        ("https://:443/x", "names no host"),
+        ("https://user:token@ghe.example", "contains credentials"),
+        ("https://token@ghe.example/x?y", "contains credentials"),
+        ("https://ghe.example?a=1", "has a query or fragment"),
+        ("https://ghe.example/path#top", "has a query or fragment"),
+    ] {
+        let message = ValueRule::ReleaseHost
+            .check(refused)
+            .expect_err("expected the host to be refused")
+            .to_string();
+        assert!(message.starts_with(reason), "`{refused}`: {message}");
+        assert!(!message.contains("token"), "{message}");
+    }
+}
+
+#[test]
 fn an_archive_root_names_a_prefix_or_asks_for_the_only_one() {
     for accepted in [
         None,

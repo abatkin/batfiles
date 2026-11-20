@@ -121,9 +121,12 @@ a list), and its `capture`, written even when it is the default; or a
 `github-release` declaration's repository and its resolved `github-url`, with
 no trailing `/`, written even when it is the default, never the template as
 written. `cache`, `timeout`, and `command-timeout` are left out, since they do
-not change the value. Every capture writes `from`; an entry without one serves
-any declaration. Unknown fields, in an entry or in `from`, and TOML datetime
-values are invalid.
+not change the value. A `from` must hold exactly one of those pairs, both
+fields of it, and nothing else. Every capture writes `from`; an entry without
+one was written before entries recorded their declarations, when only commands
+captured, so it serves any command declaration and no `github-release` one.
+Unknown fields, in an entry or in `from`, an incomplete or mixed `from`, and
+TOML datetime values are invalid.
 
 ### Freshness and refresh behavior
 

@@ -333,7 +333,28 @@ fn a_failed_capture_never_falls_back_on_another_commands_value() {
 }
 
 #[test]
-fn an_entry_recording_no_declaration_serves_any() {
+fn an_incomplete_or_mixed_record_is_a_malformed_cache_and_is_left_alone() {
+    for from in [
+        "{}",
+        r#"{ command = "echo ran >> runs; printf work" }"#,
+        r#"{ command = "echo ran >> runs; printf work", capture = "stdout", github-release = "o/r" }"#,
+    ] {
+        let tree = declaring(COUNTED);
+        seed_from(&tree, "lab", from);
+        let before = cache_document(&tree);
+        let assertion = tree.batfiles().arg("sync").assert().failure().code(1);
+        let stderr = stderr_of(&assertion);
+        assert!(
+            stderr.contains("`from` must hold `command` and `capture`, or `github-release` and"),
+            "{from}: {stderr}"
+        );
+        assert_eq!(runs(&tree), 0, "{from}");
+        assert_eq!(cache_document(&tree), before, "{from}");
+    }
+}
+
+#[test]
+fn an_entry_recording_no_declaration_serves_a_command() {
     let tree = declaring(COUNTED);
     seed(&tree, "profile", "work", SignedDuration::from_hours(1));
     sync(&tree, &[]);

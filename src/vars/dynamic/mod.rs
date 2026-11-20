@@ -356,7 +356,7 @@ impl<'a> DynamicVarResolver<'a> {
             &[],
         ));
         let bindings = Bindings::new(&no_variables, self.host);
-        match url.evaluate(ValueRule::HttpUrl, &bindings, env) {
+        match url.evaluate(ValueRule::ReleaseHost, &bindings, env) {
             Ok(resolved) => Ok(resolved.strip_suffix('/').unwrap_or(&resolved).to_owned()),
             Err(error) => Err(format!(
                 "`github-url` {} {error}",

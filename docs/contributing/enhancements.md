@@ -107,8 +107,15 @@ REST API rather than the release page's redirect, and probably a token.
 ## Verifying a release asset's digest
 
 GitHub publishes a digest for each release asset. A download built from a
-`github-release` tag cannot pin `sha256`, but it could be checked against that
-published digest.
+`github-release` tag that follows every new release unattended has no fixed
+`sha256` to pin, but it could be checked against that published digest.
+
+## Private repositories
+
+A lookup sends no credentials, and a `github-url` holding any is refused, so a
+private repository, on github.com or an Enterprise Server, cannot be followed.
+A token read from the environment, sent as an `Authorization` header and never
+recorded in the cache, would reach them.
 
 ## Refetching a seed when its URL changes
 

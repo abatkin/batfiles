@@ -602,8 +602,10 @@ manifest, reading `env` needs the remote's
 [`allow-env-templates`](actions/include-remote.md#templates-and-the-host-environment),
 as any template there does; a literal URL needs nothing.
 
-The value must be an `http://` or `https://` URL, and one trailing `/` is
-removed. A literal is checked when the manifest loads, a templated value each
+The value must be an `http://` or `https://` URL naming a host, optionally
+followed by a path; one trailing `/` is removed. The release path is appended to
+it, so a query or fragment is refused, as are credentials before an `@`: a
+lookup sends none, and the resolved URL is recorded in the cache. A literal is checked when the manifest loads, a templated value each
 time the declaration resolves, including under `vars list --no-refresh`, because
 the resolved URL is part of what a cache entry
 [records](state.md#dynamic-varstoml-dynamic-variable-cache).

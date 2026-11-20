@@ -137,7 +137,7 @@ fn a_fresh_tag_is_reused_and_a_stale_one_is_looked_up_again() {
     let stderr = sync(&tree, &["-vv"]);
     assert_eq!(server.requests(), 1, "a fresh tag was looked up again");
     assert!(
-        stderr.contains(r#"tag = "v1" (batfiles.toml, cached just now)"#),
+        stderr.contains(r#"tag = "v1" (batfiles.toml, cached "#),
         "{stderr}"
     );
 
@@ -279,13 +279,34 @@ fn a_failed_lookup_keeps_a_cached_tag_and_says_so() {
 
 #[test]
 fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
-    for (value, case) in [(None, "unset"), (Some("ftp://ghe.example"), "not http")] {
+    let server = releasing("v1");
+    let not_a_url = "resolves to a value that is not an http:// or https:// URL";
+    for (value, reason) in [
+        (None, not_a_url.to_owned()),
+        (Some("ftp://ghe.example".to_owned()), not_a_url.to_owned()),
+        (
+            Some("https:///".to_owned()),
+            "resolves to a value that names no host".to_owned(),
+        ),
+        (
+            Some(format!("https://user:sekrit@{}", &server.address()[7..])),
+            "resolves to a value that contains credentials before `@`; a release lookup sends \
+             none"
+                .to_owned(),
+        ),
+        (
+            Some(format!("{}?sekrit", server.address())),
+            "resolves to a value that has a query or fragment, so the release path cannot be \
+             appended to it"
+                .to_owned(),
+        ),
+    ] {
         let tree = declaring("${env.BATFILES_TEST_GHE}", "");
         seed(&tree, "v0", an_hour(), None);
         for args in [&[][..], &["--no-refresh"][..]] {
             let mut command = tree.batfiles();
             command.args(["vars", "list"]).args(args);
-            match value {
+            match &value {
                 Some(value) => command.env("BATFILES_TEST_GHE", value),
                 None => command.env_remove("BATFILES_TEST_GHE"),
             };
@@ -293,19 +314,26 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
             let (stdout, stderr) = (stdout_of(&assertion), stderr_of(&assertion));
             assert_eq!(
                 stdout, "tag = no value (batfiles.toml, github-release failed)\n",
-                "{case}: {stderr}"
+                "{value:?}: {stderr}"
             );
             assert!(
-                stderr.contains(
+                stderr.contains(&format!(
                     "dynamic variable `tag` could not be refreshed: `github-url` \
-                     \"${env.BATFILES_TEST_GHE}\" resolves to a value that is not an http:// \
-                     or https:// URL; it has no value, and reads as empty"
-                ),
-                "{case}: {stderr}"
+                     \"${{env.BATFILES_TEST_GHE}}\" {reason}; it has no value, and reads as empty"
+                )),
+                "{value:?}: {stderr}"
             );
-            assert!(!stderr.contains("ghe.example"), "{case}: {stderr}");
+            assert!(
+                !stderr.contains("ghe.example") && !stderr.contains("sekrit"),
+                "{value:?}: {stderr}"
+            );
         }
+        assert!(
+            !cache_document(&tree).contains("sekrit"),
+            "{value:?} was cached"
+        );
     }
+    assert_eq!(server.requests(), 0, "an invalid github-url was asked");
 }
 
 #[test]
@@ -406,6 +434,19 @@ fn a_malformed_declaration_is_rejected_when_the_manifest_loads() {
         (
             "github-release = \"o/r\"\ngithub-url = \"ftp://ghe.example\"",
             "variable `tag`: github-url `ftp://ghe.example` is not an http:// or https:// URL",
+        ),
+        (
+            "github-release = \"o/r\"\ngithub-url = \"https://me:sekrit@ghe.example\"",
+            "variable `tag`: github-url `https://me:sekrit@ghe.example` contains credentials \
+             before `@`",
+        ),
+        (
+            "github-release = \"o/r\"\ngithub-url = \"https:///\"",
+            "variable `tag`: github-url `https:///` names no host",
+        ),
+        (
+            "github-release = \"o/r\"\ngithub-url = \"https://ghe.example/#x\"",
+            "variable `tag`: github-url `https://ghe.example/#x` has a query or fragment",
         ),
         (
             "github-release = \"o/r\"\ngithub-url = \"${env.\"",
@@ -523,13 +564,18 @@ fn a_failed_lookup_never_falls_back_on_another_declarations_tag() {
 }
 
 #[test]
-fn an_entry_recording_no_declaration_is_reused() {
+fn an_entry_recording_no_declaration_was_a_commands_and_is_looked_up_again() {
     let server = releasing("v1");
     let tree = declaring(server.address(), "");
     seed(&tree, "v0", an_hour(), None);
+    let (stdout, _) = list(&tree, &["--no-refresh"]);
+    assert_eq!(
+        stdout,
+        "tag = no value (batfiles.toml, cached for a different declaration)\n"
+    );
     let (stdout, _) = list(&tree, &[]);
-    assert_eq!(stdout, "tag = \"v0\" (batfiles.toml, cached 1h ago)\n");
-    assert_eq!(server.requests(), 0);
+    assert_eq!(stdout, "tag = \"v1\" (batfiles.toml, github-release)\n");
+    assert_eq!(server.requests(), 1);
 }
 
 #[test]

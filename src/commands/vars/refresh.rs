@@ -234,17 +234,23 @@ fn reachability(
     reach
 }
 
-/// Why a key cannot be refreshed, as far as the leaf manifest alone can tell.
+/// Why a key cannot be refreshed, as far as the leaf manifest alone can tell: a remote key
+/// needs a declared remote that some `include-remote` names, which only a Git remote can be.
 fn declared_in_leaf(key: &DynamicVarKey, manifest: &Manifest) -> Option<UnrefreshableReason> {
     let Tree::Remote(remote) = &key.tree else {
         return declared(manifest.vars.get(&key.name), Tree::Leaf, true);
     };
-    if manifest.remotes.contains_key(remote) {
-        None
-    } else {
+    let named = |action: &Action| matches!(action, Action::IncludeRemote(declaration) if declaration.remote == *remote);
+    if !manifest.remotes.contains_key(remote) {
         Some(UnrefreshableReason::UnknownRemote {
             remote: remote.clone(),
         })
+    } else if !manifest.actions.iter().any(named) {
+        Some(UnrefreshableReason::NotIncluded {
+            remote: remote.clone(),
+        })
+    } else {
+        None
     }
 }
 

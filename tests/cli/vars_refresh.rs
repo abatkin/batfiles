@@ -376,6 +376,26 @@ fn a_remote_no_inclusion_names_is_not_in_play() {
 }
 
 #[test]
+fn a_remote_no_inclusion_could_name_is_refused_before_anything_is_captured() {
+    let tree = Tree::new();
+    tree.write_manifest(&format!(
+        "[vars]\nemail = {}\n\n[remotes.assets]\ntype = \"archive\"\n\
+         url = \"https://downloads.example.com/assets.tar.gz\"\n\n\
+         [remotes.corporate]\ntype = \"git\"\nurl = \"https://git.example.com/c.git\"\n",
+        counted("email", "me@example.com"),
+    ));
+    let stderr = refused(&tree, &["assets.tag", "corporate.team"]);
+    assert_eq!(
+        stderr,
+        "error: cannot refresh 2 dynamic variables:\n  \
+         `assets.tag`: no include-remote in batfiles.toml includes remote `assets`\n  \
+         `corporate.team`: no include-remote in batfiles.toml includes remote `corporate`\n"
+    );
+    assert_eq!(runs(&tree, "email-runs"), 0);
+    assert!(!cache(&tree).exists());
+}
+
+#[test]
 fn a_remote_in_play_is_refreshed_without_reading_what_it_contributes() {
     let (origin, tree) = unsynchronized(ALLOWED, "");
     origin.publish(

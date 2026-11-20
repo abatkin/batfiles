@@ -28,8 +28,8 @@ pub(crate) struct CachedVar {
     pub value: String,
     /// When the value was captured, as an RFC 3339 string.
     pub captured_at: Timestamp,
-    /// The declaration that captured it. Every capture writes one; an entry without one
-    /// serves any declaration.
+    /// The declaration that captured it. Every capture writes one; see [`Provenance::owns`]
+    /// for an entry without one.
     #[serde(default)]
     pub from: Option<Provenance>,
 }
@@ -43,10 +43,53 @@ struct EntryLines<'a> {
 }
 
 /// A declaration's value-determining fields, as an entry records them: `command` and
-/// `capture`, or `github-release` and the resolved `github-url`.
+/// `capture`, or `github-release` and the resolved `github-url`. A record with neither pair
+/// complete, or with fields of both, is invalid.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ProvenanceFields", into = "ProvenanceFields")]
+pub(crate) enum Provenance {
+    Command {
+        command: CommandSpec,
+        capture: CaptureMode,
+    },
+    Release {
+        repository: String,
+        host: String,
+    },
+}
+
+impl Provenance {
+    /// A command declaration's, with its capture mode spelled out.
+    pub fn command(source: &CommandSource) -> Self {
+        Self::Command {
+            command: source.command.clone(),
+            capture: source.capture,
+        }
+    }
+
+    /// A `github-release` declaration's, asking `host`.
+    pub fn release(repository: &GithubRepository, host: &str) -> Self {
+        Self::Release {
+            repository: repository.as_str().to_owned(),
+            host: host.to_owned(),
+        }
+    }
+
+    /// Whether `entry`, recorded as `from`, is this declaration's. An entry recording no
+    /// declaration was written before entries recorded one, when only commands captured, so
+    /// it serves a command declaration and no other.
+    pub fn owns(&self, from: Option<&Provenance>) -> bool {
+        match from {
+            Some(from) => from == self,
+            None => matches!(self, Self::Command { .. }),
+        }
+    }
+}
+
+/// `from` as written.
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct Provenance {
+struct ProvenanceFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     command: Option<CommandSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,24 +100,46 @@ pub(crate) struct Provenance {
     github_url: Option<String>,
 }
 
-impl Provenance {
-    /// A command declaration's, with its capture mode spelled out.
-    pub fn command(source: &CommandSource) -> Self {
-        Self {
-            command: Some(source.command.clone()),
-            capture: Some(source.capture),
-            github_release: None,
-            github_url: None,
+impl TryFrom<ProvenanceFields> for Provenance {
+    type Error = &'static str;
+
+    fn try_from(fields: ProvenanceFields) -> Result<Self, Self::Error> {
+        match fields {
+            ProvenanceFields {
+                command: Some(command),
+                capture: Some(capture),
+                github_release: None,
+                github_url: None,
+            } => Ok(Self::Command { command, capture }),
+            ProvenanceFields {
+                command: None,
+                capture: None,
+                github_release: Some(repository),
+                github_url: Some(host),
+            } => Ok(Self::Release { repository, host }),
+            _ => Err(
+                "`from` must hold `command` and `capture`, or `github-release` and \
+                      `github-url`, and nothing else",
+            ),
         }
     }
+}
 
-    /// A `github-release` declaration's, asking `host`.
-    pub fn release(repository: &GithubRepository, host: &str) -> Self {
-        Self {
-            command: None,
-            capture: None,
-            github_release: Some(repository.as_str().to_owned()),
-            github_url: Some(host.to_owned()),
+impl From<Provenance> for ProvenanceFields {
+    fn from(provenance: Provenance) -> Self {
+        match provenance {
+            Provenance::Command { command, capture } => Self {
+                command: Some(command),
+                capture: Some(capture),
+                github_release: None,
+                github_url: None,
+            },
+            Provenance::Release { repository, host } => Self {
+                command: None,
+                capture: None,
+                github_release: Some(repository),
+                github_url: Some(host),
+            },
         }
     }
 }
@@ -186,6 +251,43 @@ captured-at = "2026-06-19T12:00:00Z"
             error.to_string().contains("unknown field `cache`"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_record_is_one_complete_declaration() {
+        for from in [
+            "{}",
+            "{ command = 'true' }",
+            "{ github-release = 'o/r' }",
+            "{ command = 'true', capture = 'stdout', github-release = 'o/r' }",
+            "{ github-release = 'o/r', github-url = 'https://github.com', capture = 'stdout' }",
+        ] {
+            let error = parse(&format!(
+                "[a]\nvalue = 'x'\ncaptured-at = '2026-06-19T12:00:00Z'\nfrom = {from}\n"
+            ))
+            .expect_err("an incomplete or mixed record");
+            assert!(
+                error
+                    .to_string()
+                    .contains("`from` must hold `command` and `capture`, or `github-release`"),
+                "{from}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_entry_recording_nothing_belongs_to_a_command_only() {
+        let command = Provenance::command(&CommandSource {
+            command: CommandSpec::Shell("true".to_owned()),
+            capture: CaptureMode::Stdout,
+            command_timeout: None,
+        });
+        let repository = GithubRepository::try_from("o/r".to_owned()).expect("valid");
+        let release = Provenance::release(&repository, "https://github.com");
+        assert!(command.owns(None));
+        assert!(!release.owns(None));
+        assert!(release.owns(Some(&release.clone())));
+        assert!(!release.owns(Some(&command)));
     }
 
     #[test]
