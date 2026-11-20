@@ -475,14 +475,20 @@ fn a_release_host_is_a_base_the_release_path_can_be_appended_to() {
         ("https://token@ghe.example/x?y", "contains credentials"),
         ("https://ghe.example?a=1", "has a query or fragment"),
         ("https://ghe.example/path#top", "has a query or fragment"),
+        ("https://bad host", "is not a valid URL"),
+        ("https://ghe.example/a b", "is not a valid URL"),
+        ("https://ghe.example:port", "is not a valid URL"),
     ] {
         let message = ValueRule::ReleaseHost
             .check(refused)
-            .expect_err("expected the host to be refused")
+            .expect_err(refused)
             .to_string();
         assert!(message.starts_with(reason), "`{refused}`: {message}");
         assert!(!message.contains("token"), "{message}");
     }
+    assert!(ValueRule::ReleaseHost.may_show("https://ghe.example"));
+    assert!(!ValueRule::ReleaseHost.may_show("htps://me:token@ghe.example"));
+    assert!(ValueRule::Url.may_show("https://me@ghe.example"));
 }
 
 #[test]

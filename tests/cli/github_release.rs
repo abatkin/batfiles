@@ -295,14 +295,21 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
                 .to_owned(),
         ),
         (
+            Some("https://bad host".to_owned()),
+            "resolves to a value that is not a valid URL".to_owned(),
+        ),
+        (
             Some(format!("{}?sekrit", server.address())),
             "resolves to a value that has a query or fragment, so the release path cannot be \
              appended to it"
                 .to_owned(),
         ),
     ] {
+        // An entry recording the very host resolved, as if an earlier version had cached it.
         let tree = declaring("${env.BATFILES_TEST_GHE}", "");
-        seed(&tree, "v0", an_hour(), None);
+        let from = from_release(value.as_deref().unwrap_or_default());
+        seed(&tree, "v0", an_hour(), Some(&from));
+        let seeded = cache_document(&tree);
         for args in [&[][..], &["--no-refresh"][..]] {
             let mut command = tree.batfiles();
             command.args(["vars", "list"]).args(args);
@@ -328,10 +335,7 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
                 "{value:?}: {stderr}"
             );
         }
-        assert!(
-            !cache_document(&tree).contains("sekrit"),
-            "{value:?} was cached"
-        );
+        assert_eq!(cache_document(&tree), seeded, "{value:?}");
     }
     assert_eq!(server.requests(), 0, "an invalid github-url was asked");
 }
@@ -437,8 +441,15 @@ fn a_malformed_declaration_is_rejected_when_the_manifest_loads() {
         ),
         (
             "github-release = \"o/r\"\ngithub-url = \"https://me:sekrit@ghe.example\"",
-            "variable `tag`: github-url `https://me:sekrit@ghe.example` contains credentials \
-             before `@`",
+            "variable `tag`: github-url contains credentials before `@`",
+        ),
+        (
+            "github-release = \"o/r\"\ngithub-url = \"htps://me:sekrit@ghe.example\"",
+            "variable `tag`: github-url is not an http:// or https:// URL",
+        ),
+        (
+            "github-release = \"o/r\"\ngithub-url = \"https://bad host\"",
+            "variable `tag`: github-url `https://bad host` is not a valid URL",
         ),
         (
             "github-release = \"o/r\"\ngithub-url = \"https:///\"",
@@ -455,6 +466,7 @@ fn a_malformed_declaration_is_rejected_when_the_manifest_loads() {
     ] {
         let stderr = rejected(&format!("[vars.tag]\n{fields}\n"));
         assert!(stderr.contains(expected), "no `{expected}` in:\n{stderr}");
+        assert!(!stderr.contains("sekrit"), "{stderr}");
     }
 }
 

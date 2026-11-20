@@ -318,6 +318,11 @@ pub(crate) enum ValueRule {
 }
 
 impl ValueRule {
+    /// Whether an error may quote `value`: not a release host that could hold credentials.
+    pub fn may_show(self, value: &str) -> bool {
+        !matches!(self, Self::ReleaseHost) || !value.contains('@')
+    }
+
     /// Check `value`.
     pub fn check(self, value: &str) -> Result<(), ValueError> {
         match self {
@@ -361,6 +366,9 @@ pub(crate) enum ValueError {
     #[error("has a query or fragment, so the release path cannot be appended to it")]
     QueryOrFragment,
 
+    #[error("is not a valid URL")]
+    MalformedUrl,
+
     #[error(transparent)]
     FileUrl(FileUrlError),
 
@@ -398,7 +406,11 @@ pub(super) fn check_template(
         Some(literal) => rule.check(literal).map_err(|source| ManifestError::Value {
             record: record.clone(),
             field,
-            value: value.source().to_owned(),
+            value: if rule.may_show(literal) {
+                value.source().to_owned()
+            } else {
+                String::new()
+            },
             source,
         }),
         None => Ok(()),
@@ -719,7 +731,8 @@ fn is_http_url(source: &str) -> bool {
 }
 
 /// Check a release lookup's base URL: `http://` or `https://`, then a host with no
-/// credentials, then an optional path with no query or fragment.
+/// credentials, then an optional path with no query or fragment, all of it a URI the HTTP
+/// client can request.
 fn check_release_host(value: &str) -> Result<(), ValueError> {
     if !is_http_url(value) {
         return Err(ValueError::NotAnHttpUrl);
@@ -732,9 +745,22 @@ fn check_release_host(value: &str) -> Result<(), ValueError> {
         Err(ValueError::NoHost)
     } else if rest.contains(['?', '#']) {
         Err(ValueError::QueryOrFragment)
+    } else if !requestable(value) {
+        Err(ValueError::MalformedUrl)
     } else {
         Ok(())
     }
+}
+
+/// Whether the HTTP client parses `value` as a URI whose authority is a host and, if it has
+/// one, a numeric port.
+fn requestable(value: &str) -> bool {
+    let Ok(uri) = value.parse::<ureq::http::Uri>() else {
+        return false;
+    };
+    uri.authority().is_some_and(|authority| {
+        authority.port_u16().is_some() || authority.as_str() == authority.host()
+    })
 }
 
 /// Check a `[vars]` entry: a `github-url` parses, reads only `env` and `facts`, and, if it is

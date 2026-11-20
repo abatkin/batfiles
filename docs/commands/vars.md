@@ -141,8 +141,10 @@ Keys are checked in two passes. The leaf manifest alone decides, before
 anything is captured, whether a leaf key is a dynamic declaration and whether a
 remote key's remote is declared and named by some `include-remote`. A remote
 key's other checks wait for the leaf resolution above, whose captures are saved
-even when a remote key is then refused. All invalid requests are collected in
-one error with a reason per key; exit status is 1. A key is refused if it:
+even when a remote key is then refused. Each pass collects the invalid keys it
+finds into one error, with a reason per key, and exit status 1; a request the
+first pass refuses is not checked by the second, so a remote key's own reason
+can appear only once the first-pass problems are fixed. A key is refused if it:
 
 - Is undeclared or static.
 - Names an undeclared remote, or one no `include-remote` includes, before

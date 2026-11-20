@@ -580,8 +580,8 @@ fetches it. A [file or archive remote](#materialization) refetches when its
 resolved URL changes, so the next `sync` after a release downloads it. A
 [seed](safety.md#seeds-do-not-replace-and-so-do-not-refuse), such as
 `fetch-archive`, keeps what it first installed until
-[`--refresh-content`](safety.md#refreshing-seeds). A fixed `sha256` matches only one
-release, so a download following the latest has none; see
+[`--refresh-content`](safety.md#refreshing-seeds). A fixed `sha256` matches one
+release, and a templated one can select a known digest for each tag; see
 [what is not sandboxed](safety.md#what-is-not-sandboxed).
 
 ##### The `github-url` field
@@ -603,10 +603,12 @@ manifest, reading `env` needs the remote's
 [`allow-env-templates`](actions/include-remote.md#templates-and-the-host-environment),
 as any template there does; a literal URL needs nothing.
 
-The value must be an `http://` or `https://` URL naming a host, optionally
-followed by a path; one trailing `/` is removed. The release path is appended to
-it, so a query or fragment is refused, as are credentials before an `@`: a
-lookup sends none, and the resolved URL is recorded in the cache. A literal is checked when the manifest loads, a templated value each
+The value must be an `http://` or `https://` URL naming a host, with a numeric
+port if any, optionally followed by a path; one trailing `/` is removed. The
+release path is appended to it, so a query or fragment is refused, as are
+credentials before an `@`: a lookup sends none, and the resolved URL is
+recorded in the cache. A literal is checked when the manifest loads, and its
+error quotes it unless it holds an `@`; a templated value is checked each
 time the declaration resolves, including under `vars list --no-refresh`, because
 the resolved URL is part of what a cache entry
 [records](state.md#dynamic-varstoml-dynamic-variable-cache).
