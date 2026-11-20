@@ -763,23 +763,32 @@ fn check_release_host(value: &str) -> Result<(), ValueError> {
         Err(ValueError::NoHost)
     } else if rest.contains(['?', '#']) {
         Err(ValueError::QueryOrFragment)
-    } else if !requestable(value) {
+    } else if !is_authority(authority) || value.parse::<ureq::http::Uri>().is_err() {
         Err(ValueError::MalformedUrl)
     } else {
         Ok(())
     }
 }
 
-/// Whether the HTTP client parses `value` as a URI whose authority is a [host](is_host) and,
-/// if it has one, a numeric port.
-fn requestable(value: &str) -> bool {
-    let Ok(uri) = value.parse::<ureq::http::Uri>() else {
-        return false;
+/// Whether `authority` is, in full, a [host](is_host) followed by nothing or by `:` and a
+/// decimal port from 1 to 65535.
+fn is_authority(authority: &str) -> bool {
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(bracketed) => match bracketed.split_once(']') {
+            Some((address, rest)) => (&authority[..address.len() + 2], rest),
+            None => return false,
+        },
+        None => authority.split_at(authority.find(':').unwrap_or(authority.len())),
     };
-    uri.authority().is_some_and(|authority| {
-        is_host(authority.host())
-            && (authority.port_u16().is_some() || authority.as_str() == authority.host())
-    })
+    let port_ok = match port.strip_prefix(':') {
+        None => port.is_empty(),
+        Some(digits) => {
+            !digits.is_empty()
+                && digits.bytes().all(|byte| byte.is_ascii_digit())
+                && digits.parse::<u16>().is_ok_and(|port| port > 0)
+        }
+    };
+    port_ok && is_host(host)
 }
 
 /// Whether `host` is a bracketed IPv6 address or a name of ASCII letters, digits, `-`, `.`,

@@ -303,6 +303,14 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
             "resolves to a value that is not a valid URL".to_owned(),
         ),
         (
+            Some("https://[::1]extra:443".to_owned()),
+            "resolves to a value that is not a valid URL".to_owned(),
+        ),
+        (
+            Some("https://ghe.example:+443".to_owned()),
+            "resolves to a value that is not a valid URL".to_owned(),
+        ),
+        (
             Some(format!("{}?sekrit", server.address())),
             "resolves to a value that has a query or fragment, so the release path cannot be \
              appended to it"

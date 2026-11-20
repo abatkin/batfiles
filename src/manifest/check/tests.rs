@@ -462,6 +462,8 @@ fn a_release_host_is_a_base_the_release_path_can_be_appended_to() {
         "https://[2001:db8::7]",
         "http://10.0.0.7/api_v3",
         "https://ghe-01.corp_net.example",
+        "https://ghe.example:65535/api",
+        "http://[::ffff:10.0.0.7]:1",
         "https://ghe.example/a@b",
     ] {
         assert!(
@@ -486,6 +488,14 @@ fn a_release_host_is_a_base_the_release_path_can_be_appended_to() {
         ("https://[v1.x]:443", "is not a valid URL"),
         ("https://gh%65.example", "is not a valid URL"),
         ("https://ghe!.example", "is not a valid URL"),
+        ("https://[::1]extra:443", "is not a valid URL"),
+        ("https://[::1]:443x", "is not a valid URL"),
+        ("https://ghe.example:+443", "is not a valid URL"),
+        ("https://ghe.example:", "is not a valid URL"),
+        ("https://ghe.example:0", "is not a valid URL"),
+        ("https://ghe.example:65536", "is not a valid URL"),
+        ("https://ghe.example:443:443", "is not a valid URL"),
+        ("https://::1/x", "names no host"),
     ] {
         let message = ValueRule::ReleaseHost
             .check(refused)

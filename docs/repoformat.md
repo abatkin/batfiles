@@ -603,8 +603,8 @@ manifest, reading `env` needs the remote's
 [`allow-env-templates`](actions/include-remote.md#templates-and-the-host-environment),
 as any template there does; a literal URL needs nothing.
 
-The value must be an `http://` or `https://` URL naming a host, with a numeric
-port if any, optionally followed by a path; one trailing `/` is removed. The
+The value must be an `http://` or `https://` URL naming a host, then
+optionally `:` and a decimal port from 1 to 65535, then optionally a path; one trailing `/` is removed. The
 host is a name of ASCII letters, digits, `-`, `.`, and `_`, which includes an
 IPv4 address, or an IPv6 address in brackets. The release path is appended to
 it, so a query or fragment is refused, as are credentials before an `@`: a
