@@ -59,7 +59,7 @@ globset = { version = "0.4.20", default-features = false }
 [dev-dependencies]
 # Inspect Rust imports and paths in the source-layer hygiene check.
 proc-macro2 = "1"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 
 # Run the binary in CLI tests.
 assert_cmd = "2"
