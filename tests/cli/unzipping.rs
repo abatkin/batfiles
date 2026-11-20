@@ -203,6 +203,63 @@ fn a_zip_entry_named_with_a_backslash_is_refused() {
     assert!(said.contains("`bin\\\\tool`"), "{said}");
 }
 
+/// A single-entry zip with the same raw name and encoding flag in both headers.
+fn zip_with_encoded_name(name: &[u8], utf8: bool) -> Vec<u8> {
+    use std::io::{Cursor, Write as _};
+
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    writer
+        .start_file(
+            "x".repeat(name.len()),
+            zip::write::SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+        )
+        .expect("a zip entry");
+    writer.write_all(b"contents\n").expect("the entry's body");
+    let mut zip = writer.finish().expect("a finished zip").into_inner();
+    for (signature, flags_at, name_at) in [(b"PK\x03\x04", 6, 30), (b"PK\x01\x02", 8, 46)] {
+        let at = zip
+            .windows(4)
+            .position(|bytes| bytes == signature)
+            .expect("the entry's header");
+        zip[at + flags_at + 1] = if utf8 { 0x08 } else { 0 };
+        zip[at + name_at..at + name_at + name.len()].copy_from_slice(name);
+    }
+    zip
+}
+
+#[test]
+fn zip_names_use_utf8_when_valid_and_otherwise_unflagged_code_page_437() {
+    for (name, utf8) in [
+        ("café".as_bytes(), true),
+        ("café".as_bytes(), false),
+        (b"caf\x82".as_slice(), false),
+    ] {
+        let server = serving(zip_with_encoded_name(name, utf8));
+        let tree = one_zip(&server, "");
+
+        tree.batfiles().arg("sync").assert().success();
+
+        assert_eq!(entries(&tree.home(".local/tool")), ["café"]);
+        assert_eq!(
+            fs::read_to_string(tree.home(".local/tool/café")).expect("the decoded entry"),
+            "contents\n"
+        );
+    }
+}
+
+#[test]
+fn a_zip_name_flagged_as_utf8_with_invalid_bytes_is_refused() {
+    let server = serving(zip_with_encoded_name(b"caf\x82", true));
+    let tree = one_zip(&server, "");
+
+    let said = refused(&tree);
+
+    assert!(
+        said.contains("bytes that are not the UTF-8 it is flagged as"),
+        "{said}"
+    );
+}
+
 #[test]
 fn an_encrypted_zip_entry_is_refused_by_name() {
     let zip = with_entry_encrypted(
