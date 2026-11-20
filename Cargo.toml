@@ -51,7 +51,7 @@ zip = { version = "9.0", default-features = false, features = ["deflate-flate2",
 # The friendly duration grammar of a dynamic variable's `cache` and
 # `command-timeout`, and the RFC 3339 `captured-at` of its cache entry. No time
 # zones are needed, so the bundled database and system lookup are left out.
-jiff = { version = "0.2.37", default-features = false, features = ["std", "serde"] }
+jiff = { version = "1.0.0", default-features = false, features = ["std", "serde"] }
 
 # The globs an entry filter's `include` and `exclude` are written in.
 globset = { version = "0.4.20", default-features = false }
