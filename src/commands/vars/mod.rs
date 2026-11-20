@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use crate::commands::Session;
 use crate::env::Environment;
 use crate::error::Error;
-use crate::location::{Roots, StateRoots};
+use crate::location::{MachineRoots, Roots};
 use crate::manifest::Manifest;
 use crate::output::Reporter;
 use crate::run::lock::RunLock;
@@ -22,7 +22,7 @@ use crate::vars::scope::VarScope;
 /// Store `value` verbatim under `key`, replacing any previous machine-local value, under the run
 /// lock. Empty values are allowed.
 pub(crate) fn set(key: &str, value: &str, session: &Session<'_>) -> Result<(), Error> {
-    let (roots, _lock) = session.locked_state_roots()?;
+    let (roots, _lock) = session.locked_machine_roots()?;
     // Reject invalid keys before touching state.
     let key = parse(key)?;
 
@@ -41,7 +41,7 @@ pub(crate) fn set(key: &str, value: &str, session: &Session<'_>) -> Result<(), E
 /// Print the machine-local value of `key`, or fail because it has none. Takes no lock: it only
 /// reads.
 pub(crate) fn get(key: &str, session: &Session<'_>) -> Result<(), Error> {
-    let roots = session.state_roots()?;
+    let roots = session.machine_roots()?;
     let key = parse(key)?;
     let vars = MachineVars::load(&roots.machine_vars_path())?;
 
@@ -57,7 +57,7 @@ pub(crate) fn get(key: &str, session: &Session<'_>) -> Result<(), Error> {
 
 /// Remove the machine-local value of `key`, if it has one, under the run lock.
 pub(crate) fn unset(key: &str, session: &Session<'_>) -> Result<(), Error> {
-    let (roots, _lock) = session.locked_state_roots()?;
+    let (roots, _lock) = session.locked_machine_roots()?;
     let key = parse(key)?;
 
     let path = roots.machine_vars_path();
@@ -148,14 +148,14 @@ pub(crate) fn list(
     session: &Session<'_>,
 ) -> Result<(), Error> {
     if machine_only {
-        return list_machine(&session.state_roots()?, session.reporter);
+        return list_machine(&session.machine_roots()?, session.reporter);
     }
     let roots = session.repository_roots()?;
     // Only a listing that may refresh the dynamic cache writes state.
     let (policy, _lock) = if no_refresh {
         (CachePolicy::Never, None)
     } else {
-        let lock = RunLock::acquire(&roots.state.cache_dir)?;
+        let lock = RunLock::acquire(&roots.machine.cache_dir)?;
         (CachePolicy::Auto, Some(lock))
     };
     list_leaf(&roots, session.env, policy, session.reporter)
@@ -171,11 +171,11 @@ fn list_leaf(
     reporter: &Reporter,
 ) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest_path())?;
-    let mut dynamic = DynamicVarResolver::for_listing(&roots.state, policy, reporter);
+    let mut dynamic = DynamicVarResolver::for_listing(&roots.machine, policy, reporter);
     let scope = VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,
-        &roots.state,
+        &roots.machine,
         env,
         &[],
         &mut dynamic,
@@ -187,7 +187,7 @@ fn list_leaf(
 }
 
 /// List only persisted machine variables; do not read the repository or environment.
-fn list_machine(state: &StateRoots, reporter: &Reporter) -> Result<(), Error> {
+fn list_machine(state: &MachineRoots, reporter: &Reporter) -> Result<(), Error> {
     let machine = MachineVars::load(&state.machine_vars_path())?;
     VarScope::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
     Ok(())

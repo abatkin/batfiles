@@ -196,6 +196,14 @@ is_file "$cache" "the capture wrote no cache under the XDG default"
 contains "$cache" "[has_git]" "the leaf's variable was not cached"
 contains "$cache" 'value = "true"' "git ran, so the status capture is true"
 
+step "the leaf's run action ran, and was recorded under the XDG state default"
+
+reported "$log" "run batgrep-check (group bin): sh -n bin/batgrep"
+runs=$HOME/.local/state/batfiles/runs.toml
+is_file "$runs" "the command's success was not recorded under the XDG default"
+contains "$runs" "[actions.batgrep-check]" "the command's success was not recorded"
+contains "$runs" "last-success = " "the command's success was not recorded"
+
 step "the bootstrap policy was adopted before the first action, not after it"
 
 disabled=$HOME/.config/batfiles/disabled.toml

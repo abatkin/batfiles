@@ -143,13 +143,14 @@ impl<'a> RunContext<'a> {
         destination(&self.home, dest)
     }
 
-    /// Materialize the declared remotes this run does not exclude; see
-    /// [`remotes::materialize`].
+    /// Materialize the declared remotes this run does not exclude, calling `changed` with each
+    /// that changed; see [`remotes::materialize`].
     pub fn materialize(
         &self,
         declared: &BTreeMap<ItemId, Remote>,
         bindings: &Bindings<'_>,
         refetch: bool,
+        changed: impl FnMut(&ItemId),
     ) -> Result<(), Error> {
         remotes::materialize(
             declared,
@@ -158,6 +159,7 @@ impl<'a> RunContext<'a> {
             &self.repository,
             &self.tool_owned(),
             refetch,
+            changed,
         )
     }
 
@@ -200,9 +202,8 @@ impl<'a> RunContext<'a> {
         ConflictResolver::new(&replace::REFUSE_CONFLICTS, self.mode, self.reporter)
     }
 
-    /// Ensure a destination directory exists and report changes. Return `false` if a conflict
-    /// along the path was skipped.
-    pub fn ensure_directory(&self, dir: &Path) -> Result<bool, Error> {
+    /// Ensure a destination directory exists, report what that took, and return what it found.
+    pub fn ensure_directory(&self, dir: &Path) -> Result<DirectoryOutcome, Error> {
         let outcome = directory::ensure_directory(dir, &self.conflict_resolver())?;
         outcome.report_removals(self.mode, self.reporter);
         match outcome {
@@ -214,9 +215,15 @@ impl<'a> RunContext<'a> {
             DirectoryOutcome::AlreadyThere => self
                 .reporter
                 .detail(1, &format!("unchanged {}", dir.display())),
-            DirectoryOutcome::Skipped => return Ok(false),
+            DirectoryOutcome::Skipped => {}
         }
-        Ok(true)
+        Ok(outcome)
+    }
+
+    /// The root of the tree a record came from: the leaf repository, or a remote's existing
+    /// materialization. Excluded or missing materializations are errors.
+    pub fn working_directory(&self, tree: Tree<&ItemId>) -> Result<PathBuf, Error> {
+        self.tree_root(tree)
     }
 }
 

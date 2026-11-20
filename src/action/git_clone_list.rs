@@ -10,17 +10,19 @@ use crate::source::git::{self, GitError};
 
 /// Create the destination directory and process entries in list order. `list`
 /// was read during preparation; an empty one declares no repositories. Entries
-/// the command did not request are passed over without a word.
+/// the command did not request are passed over without a word. Return whether an entry was
+/// cloned or its checkout moved.
 pub(super) fn git_clone_list(
     list: &PreparedList<'_>,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let dest_dir = fields.field("dest-dir", list.dest_dir(), ValueRule::Destination)?;
     let dest_dir = context.destination(&dest_dir);
-    if !context.ensure_directory(&dest_dir)? {
-        return Ok(());
+    if !context.ensure_directory(&dest_dir)?.usable() {
+        return Ok(false);
     }
+    let mut changed = false;
 
     let name = list.name();
 
@@ -57,7 +59,7 @@ pub(super) fn git_clone_list(
             context.repository(),
             &context.conflict_resolver(),
         ) {
-            Ok(()) => {}
+            Ok(moved) => changed |= moved,
             Err(failure) if is_recoverable_entry_error(&failure) => {
                 context.reporter().warn(&format!(
                     "not cloning {} ({}): {failure}",
@@ -68,7 +70,7 @@ pub(super) fn git_clone_list(
             Err(failure) => return Err(failure),
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 /// Return whether an entry failure allows processing to continue. Git launch and filesystem

@@ -5,32 +5,21 @@
 use std::fmt;
 use std::io::{self, PipeReader, Read as _};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::manifest::vars::{CaptureMode, CommandSpec, DynamicVarSpec};
+use crate::manifest::vars::{CaptureMode, DynamicVarSpec};
+use crate::subprocess::{self, WaitOutcome, stop};
 
 /// `command-timeout`'s default.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Initial interval between checks for command completion.
-const FIRST_POLL_INTERVAL: Duration = Duration::from_millis(1);
-
-/// Maximum interval between checks for command completion.
-const MAX_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 const MIB: u64 = 1024 * 1024;
 
 /// The most captured stdout a value may hold.
 const MAX_OUTPUT: u64 = MIB;
-
-/// Shell and execution flag used for string commands.
-#[cfg(unix)]
-const SHELL: (&str, &str) = ("sh", "-c");
-#[cfg(windows)]
-const SHELL: (&str, &str) = ("cmd", "/C");
 
 /// The two strings a `capture = "status"` variable can hold.
 const TRUE: &str = "true";
@@ -54,12 +43,8 @@ pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> Capture
     } else {
         Stdio::inherit()
     };
-    let mut command = build(&spec.command);
-    command
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr);
+    let mut command = subprocess::build(&spec.command, cwd);
+    command.stdin(Stdio::null()).stdout(stdout).stderr(stderr);
     let spawned = command.spawn();
     // Drop the builder's pipe writer so the reader can observe EOF.
     drop(command);
@@ -77,11 +62,12 @@ pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> Capture
     };
     let mut output = reader.map(OutputCollector::read);
 
-    let status = match wait_until(&mut child, started, timeout, output.as_mut()) {
+    let too_large = || output.as_mut().is_some_and(OutputCollector::too_large);
+    let status = match subprocess::wait_until(&mut child, started, timeout, too_large) {
         Ok(WaitOutcome::Exited(status)) => status,
         // A timeout fails status capture instead of yielding false.
         Ok(WaitOutcome::TimedOut) => return stopped(&mut child, CaptureError::TimedOut(timeout)),
-        Ok(WaitOutcome::TooLarge) => return stopped(&mut child, CaptureError::TooLarge),
+        Ok(WaitOutcome::GaveUp) => return stopped(&mut child, CaptureError::TooLarge),
         Err(error) => {
             // A failed wait does not prove the child exited.
             let _ = stop(&mut child);
@@ -252,76 +238,11 @@ impl OutputCollector {
     }
 }
 
-/// How the wait for the direct child ended.
-#[derive(Debug)]
-enum WaitOutcome {
-    Exited(ExitStatus),
-    TimedOut,
-    TooLarge,
-}
-
-/// Wait for the direct child until `timeout` after `started`. Stop waiting early if captured
-/// output exceeds the limit.
-fn wait_until(
-    child: &mut Child,
-    started: Instant,
-    timeout: Duration,
-    mut output: Option<&mut OutputCollector>,
-) -> io::Result<WaitOutcome> {
-    let mut interval = FIRST_POLL_INTERVAL;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(WaitOutcome::Exited(status));
-        }
-        if output.as_mut().is_some_and(|output| output.too_large()) {
-            return Ok(WaitOutcome::TooLarge);
-        }
-        let remaining = timeout.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
-            return Ok(WaitOutcome::TimedOut);
-        }
-        thread::sleep(remaining.min(interval));
-        interval = next_poll_interval(interval);
-    }
-}
-
-/// Double the interval, up to [`MAX_POLL_INTERVAL`].
-fn next_poll_interval(current: Duration) -> Duration {
-    (current * 2).min(MAX_POLL_INTERVAL)
-}
-
-/// Kill and reap the direct child. Descendant processes are not stopped.
-fn stop(child: &mut Child) -> io::Result<()> {
-    child.kill()?;
-    child.wait()?;
-    Ok(())
-}
-
 /// Stop a child and report `reason`, unless stopping it failed.
 fn stopped(child: &mut Child, reason: CaptureError) -> CaptureOutcome {
     match stop(child) {
         Ok(()) => CaptureOutcome::Failed(reason),
         Err(error) => CaptureOutcome::Failed(CaptureError::NotStopped(error)),
-    }
-}
-
-/// The command to spawn, before its streams and working directory are set.
-fn build(spec: &CommandSpec) -> Command {
-    match spec {
-        CommandSpec::Shell(line) => {
-            let (program, flag) = SHELL;
-            let mut command = Command::new(program);
-            command.arg(flag).arg(line);
-            command
-        }
-        CommandSpec::Args(args) => {
-            let (program, rest) = args
-                .split_first()
-                .expect("an empty `command` list is rejected when it deserializes");
-            let mut command = Command::new(program);
-            command.args(rest);
-            command
-        }
     }
 }
 

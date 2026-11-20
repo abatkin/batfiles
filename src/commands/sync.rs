@@ -18,7 +18,7 @@ pub(crate) fn run(args: &SyncArgs, session: &Session<'_>) -> Result<(), Error> {
     } else {
         None
     };
-    let (roots, _lock) = session.locked_repository_roots()?;
+    let (roots, _lock) = session.locked_run_roots()?;
     run::sync(
         &session.invocation(&roots, args.dry_run, &args.execution),
         &args.skips.actions.skip_actions,

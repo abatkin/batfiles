@@ -59,9 +59,9 @@ fn candidates(manifest: &str) -> DefaultDisabled {
         .default_disabled
 }
 
-/// A machine whose state roots are a fresh temporary directory.
-fn machine(dir: &tempfile::TempDir) -> StateRoots {
-    StateRoots {
+/// A machine whose machine roots are a fresh temporary directory.
+fn machine(dir: &tempfile::TempDir) -> MachineRoots {
+    MachineRoots {
         config_dir: dir.path().to_path_buf(),
         cache_dir: dir.path().to_path_buf(),
     }

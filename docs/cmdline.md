@@ -45,6 +45,7 @@ directory and does not use any selected roots.
 | `--home-dir <path>`             | Select the destination home directory. Defaults to the current user's home directory.                             |
 | `--config-dir <path>`           | Select the directory containing `vars.toml` and `disabled.toml`. Defaults to the XDG config location.             |
 | `--cache-dir <path>`            | Select the directory containing `dynamic-vars.toml` and the [run lock](state.md#run-lock). Defaults to the XDG cache location. |
+| `--state-dir <path>`            | Select the directory containing [`runs.toml`](state.md#runstoml-run-action-history). Defaults to the XDG state location. |
 
 `-v` prints the roots the command resolves, unchanged destinations, and action
 headings and exclusions. `-vv` also prints the [effective variables](commands/vars.md#vars-list).
@@ -84,7 +85,7 @@ exclusive, and `--interactive` cannot accompany `--dry-run`.
 
 | Stream | Content | Effect of `--quiet` |
 | --- | --- | --- |
-| Standard output | Requested data: `version`, `vars get`, `vars list`, `update --check` | None |
+| Standard output | Requested data: `version`, `vars get`, `vars list`, `update --check`; the standard output of `run` actions' commands | None for requested data; disconnects commands' standard output |
 | Standard error | Changes, progress, prompts, warnings, errors | Suppresses informational lines; keeps warnings and errors |
 
 Requested data has no labels or color. Errors and warnings raised by batfiles
@@ -94,6 +95,11 @@ use `error:` and `warning:` labels, colored bold red and bold yellow when
 Dynamic commands inherit standard error unless `--quiet` disconnects it; their
 output is otherwise captured or discarded. See
 [dynamic-command execution](environment.md#how-dynamic-commands-are-run).
+
+Sync and apply commands print no requested data, so a [`run`
+action's](actions/run.md#how-the-command-runs) command inherits both streams
+directly and its output never mixes with batfiles' own. Under `--quiet` its
+standard output is disconnected and its standard error kept.
 
 ## Selecting what a run does
 
@@ -128,6 +134,8 @@ Persistent names matching nothing are always silent.
 | `--skip-action` / `BATFILES_SKIP_ACTIONS` | Honor | Option rejected; environment ignored | Honor |
 | `--skip-group` / `BATFILES_SKIP_GROUPS` | Honor | Option rejected; environment ignored | Option rejected; environment ignored |
 | The action's `when` / `unless` | Evaluate if otherwise selected | Do not evaluate | Evaluate if otherwise selected |
+| A `run` action's [`trigger`](actions/run.md#triggers) | Honor | Waive | Honor |
+| A contributed `run` action's missing [`allow-commands`](actions/run.md#in-an-included-manifest) | Honor | Honor; naming the action fails | Honor |
 
 `clone` follows the `sync` column. Waivers affect only this invocation and never
 edit persistent state. `apply-action` does not evaluate the named record's
@@ -228,6 +236,19 @@ A skip names the option or environment variable responsible, and a condition is
 quoted as written. A record excluded for another reason never has its condition
 evaluated.
 
+A contributed `run` action whose remote lacks
+[`allow-commands`](actions/run.md#in-an-included-manifest) is excluded with a
+warning, at every verbosity, after the inclusion's filters and before the other
+reasons:
+
+```text
+warning: run corp.setup - skipped: remote `corporate` does not set `allow-commands = true`, so the `run` actions it contributes do not run
+```
+
+A `run` action that is selected but whose [trigger](actions/run.md#triggers)
+does not fire is not excluded: `-v` prints `not run:` and the reason under its
+heading.
+
 A condition that [cannot be evaluated](repoformat.md#when-a-condition-cannot-be-evaluated)
 warns at every verbosity, without the `- skipped:` frame. The warning identifies
 the record, condition, failure, and remedy, without revealing the offending value.
@@ -257,7 +278,9 @@ Bookkeeping still runs, including the [run lock](state.md#run-lock) and
 [Templates](repoformat.md#when-a-template-is-evaluated) are evaluated, and
 reports show their resolved values.
 Dynamic commands are arbitrary programs and can themselves change files or
-contact the network. Their captures are saved in the cache.
+contact the network. Their captures are saved in the cache. A
+[`run` action's](actions/run.md#dry-runs) command is never launched, and
+`runs.toml` is left untouched.
 
 Reports use `would link`, `would copy`, and similar wording, in the same order
 and granularity as a real run: one line per child for directory-wide actions,
@@ -319,7 +342,10 @@ plan. Materialize the remote and repeat the command to see the remaining work.
 ## Execution failures
 
 An action failure stops `sync` or an apply command with status 1. Earlier
-changes remain; nothing is rolled back. A
+changes remain; nothing is rolled back, and
+[`runs.toml`](state.md#runstoml-run-action-history) still records them for
+[`after` triggers](actions/run.md#what-changed-means). A `run` action with
+[`allow-failure`](actions/run.md#failure) warns instead, and the run continues. A
 [failed template](repoformat.md#when-a-template-cannot-be-used) is an action
 failure, in dry runs too. Directory-wide actions likewise stop at the first
 failed child, preserving work already completed for earlier children.

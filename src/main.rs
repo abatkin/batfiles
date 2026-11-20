@@ -13,6 +13,7 @@ mod output;
 mod release;
 mod run;
 mod source;
+mod subprocess;
 mod vars;
 mod version;
 

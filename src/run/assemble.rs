@@ -121,7 +121,39 @@ pub(super) fn assemble(
             let mut contributed = RunRecord::contributed(action, number, inclusion.contributor());
             let target_names_contributed =
                 match_and_record_target(&mut run_list, &contributed, selection);
-            let filtered_out = (!included_by_filter).then(|| not_selected(&inclusion));
+            let commands_refused = match &contributed.action {
+                Action::Run(run) if included_by_filter => {
+                    if run.trigger.keeps_state() && !inclusion.is_named() {
+                        return Err(Error::StatefulRunInUnnamedInclusion {
+                            record: contributed.heading.clone(),
+                            inclusion: inclusion.label().to_owned(),
+                        });
+                    }
+                    !remotes
+                        .get(inclusion.remote())
+                        .is_some_and(Remote::allows_commands)
+                }
+                _ => false,
+            };
+            // `apply-action` naming the record does not waive the permission.
+            if commands_refused
+                && contributed
+                    .address
+                    .as_ref()
+                    .is_some_and(|address| selection.names(address))
+            {
+                return Err(Error::CommandsNotAllowed {
+                    record: contributed.heading.clone(),
+                    remote: inclusion.remote().clone(),
+                });
+            }
+            let filtered_out = if !included_by_filter {
+                Some(not_selected(&inclusion))
+            } else if commands_refused {
+                Some(commands_not_allowed(inclusion.remote()))
+            } else {
+                None
+            };
             let inclusion_allowed_whole = matches!(record.disposition, Disposition::Allowed);
             decide(
                 &mut contributed,
@@ -140,6 +172,14 @@ pub(super) fn assemble(
     }
 
     Ok(run_list)
+}
+
+/// The exclusion for a contributed `run` action whose remote does not set `allow-commands`.
+fn commands_not_allowed(remote: &ItemId) -> Exclusion {
+    Exclusion::NotPermitted(format!(
+        "remote `{remote}` does not set `allow-commands = true`, so the `run` actions it \
+         contributes do not run"
+    ))
 }
 
 /// Whether the target names `record`, noting in `run_list` that the target was

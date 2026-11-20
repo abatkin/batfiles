@@ -104,6 +104,7 @@ A repository for git to clone.
 | `ref`                 | [template string](#templates) |    no    | A branch, tag, or commit to follow. Never empty.                            |
 | `allow-dynamic-vars`  | boolean |    no    | Whether an included manifest's [dynamic variables](#dynamic-variables) run. Defaults to `false`. |
 | `allow-env-templates` | boolean |    no    | Whether an included manifest's templates may read `env`; see [templates and the host environment](actions/include-remote.md#templates-and-the-host-environment). Defaults to `false`. |
+| `allow-commands`      | boolean |    no    | Whether an included manifest's [`run`](actions/run.md#in-an-included-manifest) actions run their commands. Defaults to `false`. |
 
 `url` follows [`git-clone` source syntax](actions/git-clone.md#git-clone), and `ref` follows its
 [ref rules](actions/git-clone.md#ref-following-one-branch-tag-or-commit). `branch` is not a field.
@@ -113,7 +114,7 @@ dynamic declarations there declare nothing, and `-v` names those skipped.
 Leaf declarations need no such permission. See
 [dynamic-command execution](environment.md#how-dynamic-commands-are-run).
 
-Either permission applies only to a checkout of the repository `url` names; see
+Each permission applies only to a checkout of the repository `url` names; see
 [permissions follow the origin](safety.md#permissions-follow-the-origin).
 
 A remote supplies content; an action decides where to install it. Only the
@@ -328,14 +329,15 @@ and malformed globs are load errors. Patterns matching nothing are not errors;
 [symlink](actions/symlink.md#symlink) · [symlink-dir](actions/symlink-dir.md#symlink-dir) · [create-dir](actions/create-dir.md#create-dir) ·
 [copy](actions/copy.md#copy) · [copy-dir](actions/copy-dir.md#copy-dir) · [fetch-file](actions/fetch-file.md#fetch-file) ·
 [fetch-archive](actions/fetch-archive.md#fetch-archive) · [git-clone](actions/git-clone.md#git-clone) ·
-[git-clone-list](actions/git-clone-list.md#git-clone-list) · [include-remote](actions/include-remote.md#include-remote)
+[git-clone-list](actions/git-clone-list.md#git-clone-list) · [include-remote](actions/include-remote.md#include-remote) ·
+[run](actions/run.md#run)
 
 `[[actions]]` is an ordered list. Each entry is a closed record selected by its
 required `type` field.
 
 | Field   | Type               | Required | Description                                                            |
 |---------|--------------------|:--------:|------------------------------------------------------------------------|
-| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, and `include-remote` are the ones that exist. |
+| `type`  | action-type string |   yes    | Selects the action variant. `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, `include-remote`, and `run` are the ones that exist. |
 | `id`    | `ID`               |    no    | Makes the action addressable.                                          |
 | `group` | `ID`               |    no    | Places the action in one group. See [groups](#groups).                 |
 | `when`  | condition          |    no    | Runs the action only where the condition is true. See [conditions](#conditions). |
@@ -353,9 +355,10 @@ filesystem type. To download and unpack an archive, use
 [`fetch-archive`](actions/fetch-archive.md#fetch-archive); [`fetch-file`](actions/fetch-file.md#fetch-file) installs the
 downloaded bytes as one file.
 
-[`include-remote`](actions/include-remote.md#include-remote) is the one record that installs nothing of
-its own: it names a [remote](#remotes) and takes what that repository's manifest
-declares, at its position in this list.
+[`include-remote`](actions/include-remote.md#include-remote) and [`run`](actions/run.md#run) install
+nothing of their own. An inclusion names a [remote](#remotes) and takes what that
+repository's manifest declares, at its position in this list; a `run` action
+runs a command, as often as its trigger says.
 
 ### Groups
 
@@ -633,6 +636,7 @@ decompress = true
 | [`git-clone`](actions/git-clone.md#git-clone) | `source`, `dest`, `ref` |
 | [`symlink`](actions/symlink.md#symlink), [`copy`](actions/copy.md#copy), [`create-dir`](actions/create-dir.md#create-dir) | `dest` |
 | [`symlink-dir`](actions/symlink-dir.md#symlink-dir), [`copy-dir`](actions/copy-dir.md#copy-dir), [`git-clone-list`](actions/git-clone-list.md#git-clone-list) | `dest-dir` |
+| [`run`](actions/run.md#run) | `command`: the shell string, or each list element; `cwd`; each `env` value |
 
 No other field is a template.
 
@@ -651,9 +655,11 @@ Each is evaluated once, when needed, including in dry runs:
 
 - a remote's when `sync` or `clone` [materializes](#materialization) it;
 - an action's when the action is dispatched, including by
-  [`apply-action`](commands/apply-action.md#apply-action).
+  [`apply-action`](commands/apply-action.md#apply-action); a `run` action's only
+  when its [trigger](actions/run.md#triggers) fires.
 
-Output shows resolved values. A literal value is checked when the manifest
+Output shows resolved values, except a `run` action's command, which is shown
+as written. A literal value is checked when the manifest
 loads; a templated one is checked by the same rule once it resolves.
 
 ### When a template cannot be used

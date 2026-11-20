@@ -150,6 +150,15 @@ impl ItemAddress {
         Self(format!("{self}{SEGMENT_SEPARATOR}{id}"))
     }
 
+    /// The address of `id` beside the item this address names: `id` for a one-segment address,
+    /// and otherwise this address with its last segment replaced.
+    pub fn sibling(&self, id: &ItemId) -> Self {
+        match self.0.rsplit_once(SEGMENT_SEPARATOR) {
+            None => Self(id.as_str().to_owned()),
+            Some((parent, _)) => Self(format!("{parent}{SEGMENT_SEPARATOR}{id}")),
+        }
+    }
+
     /// Return whether this address starts with every segment of `container`
     /// followed by at least one more segment.
     pub fn within(&self, container: &ItemAddress) -> bool {
@@ -298,6 +307,13 @@ mod tests {
             ItemAddress::qualified(Some(&core), &zshrc),
             ItemAddress::qualified(None, &zshrc)
         );
+    }
+
+    #[test]
+    fn a_sibling_replaces_the_last_segment() {
+        let mise = id("mise");
+        assert_eq!(address("reload").sibling(&mise), address("mise"));
+        assert_eq!(address("corp.reload").sibling(&mise), address("corp.mise"));
     }
 
     #[test]

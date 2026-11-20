@@ -1,6 +1,6 @@
 # Local state files
 
-Machine choices and dynamic captures live in these files. Directory selection
+Machine choices, dynamic captures, and run-action history live in these files. Directory selection
 and defaults are defined by [location precedence](environment.md#location-selection).
 
 | File | Directory | Contents | Safe to discard? |
@@ -9,6 +9,7 @@ and defaults are defined by [location precedence](environment.md#location-select
 | [`vars.toml`](#varstoml-machine-local-variables) | Config | Machine variable values | Clears values |
 | [`dynamic-vars.toml`](#dynamic-varstoml-dynamic-variable-cache) | Cache | Captured command results | Yes; regenerated |
 | [`run.lock`](#run-lock) | Cache | Empty advisory-lock file | Only while no run is active |
+| [`runs.toml`](#runstoml-run-action-history) | State | When actions and remotes last changed, and when each stateful `run` action last succeeded | Yes; stateful `run` commands run again and `every` intervals restart |
 
 Documents follow [manifest reading rules](repoformat.md#reading-the-manifest),
 except that missing state files are empty documents. Mutations use the shared
@@ -158,6 +159,100 @@ Dry runs resolve commands and save captures on the same terms.
   below. One that cannot be written warns rather than fails; the values captured
   still decide that run.
 
+## `runs.toml`: run-action history
+
+Records what [`run` action triggers](actions/run.md#triggers) read: when each
+action and remote last [changed](actions/run.md#what-changed-means), and when
+each `run` action whose trigger keeps state last succeeded. Only `sync`,
+`clone`, and the apply commands read or write it.
+
+### Generations
+
+Each run that writes takes a generation: one more than the `generation` the
+document last saved. Changes and successes record the generation of the run
+that made them, so they can be ordered without relying on the clock. A run
+holds the [run lock](#run-lock) from reading the document to saving it, so no
+two writing runs share a generation. Only `every` reads the success's time.
+
+### Schema
+
+```toml
+generation = 12
+
+[actions.mise]
+last-changed = 12
+
+[actions.mise-install]
+last-success = "2026-06-19T12:00:00Z"
+success-generation = 12
+
+[actions."corp.rebuild-cache"]
+last-changed = 9
+
+[remotes.mise]
+last-changed = 12
+```
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `generation` | non-negative integer | The generation of the run that last saved the document. Required. |
+| `actions` | table of action records | Keyed by action [address](cmdline.md#addresses): the bare ID for a leaf action, the qualified address for a contributed one. |
+| `remotes` | table of remote records | Keyed by the leaf's remote ID. A remote and an action of the same name have separate records. |
+
+| Record field | Type | Meaning |
+| --- | --- | --- |
+| `last-changed` | non-negative integer | The generation of the last run in which the action or remote changed. Absent means never. |
+| `last-success` | RFC 3339 string or offset datetime | Actions only: when the command last exited 0. Absent means never. |
+| `success-generation` | non-negative integer | Actions only: the generation of that success. Absent means `after` treats the command as never having succeeded. |
+
+Every record field is optional. Unknown fields, keys that are not addresses or
+IDs, and datetimes without an offset are invalid.
+
+Only an action or remote with an ID gets a record. A child an inclusion
+contributes is recorded under its qualified address, and its change is also
+its inclusion's.
+
+### Semantics and lifecycle
+
+- A missing file is an empty document, at generation 0.
+- The run reads the document before it materializes remotes. A malformed file
+  fails the command there, and is left untouched.
+- The run records each change and success in memory as each remote or action
+  completes, and saves the document once, when the run ends, whether it
+  succeeded or failed after reading it. A failure in materialization, assembly,
+  or preparation still saves the changes made before it. A run that recorded
+  nothing does not write. A process killed outright loses what its run
+  recorded. A dry run records and writes nothing.
+- A write that fails warns; it does not change the command's exit status.
+  Losing a success can repeat a command; losing a change can leave an `after`
+  command unrun until its target next changes.
+- A future `last-success` counts as age zero.
+- Records whose address or ID matches nothing current are retained, as in
+  `disabled.toml`, so a skipped, excluded, or unreached follower still sees the
+  changes it has not handled. Renaming an action's ID starts it fresh. Changing
+  its command resets nothing.
+- Deleting the file breaks nothing: stateful `run` commands run again, since
+  none has succeeded, and `every` intervals restart.
+
+### The earlier layout
+
+A document without a top-level `generation` value is read in the earlier
+layout, which keyed `run` actions directly by address:
+
+```toml
+[mise-install]
+last-success = "2026-06-19T12:00:00Z"
+
+["corp.rebuild-cache"]
+last-success = "2026-06-18T08:00:00Z"
+pending = true
+```
+
+It is read as generation 0. Its successes keep their times, and count as
+generation 0 for `after`, which has no change older than them. An entry with
+`pending = true` keeps its time but no generation, so an `after` command runs
+once more. The next save writes the current layout.
+
 ## Run lock
 
 An exclusive advisory lock on `<cache-dir>/run.lock`, held for the command's
@@ -212,4 +307,4 @@ Consequences of this policy:
   briefly readable through a world-readable sibling.
 
 Bookkeeping writes follow this policy in [dry runs](cmdline.md#dry-run-behavior)
-too; bootstrap's explicit dry-run exception is described above.
+too; the dry-run exceptions for bootstrap and `runs.toml` are described above.

@@ -55,7 +55,7 @@ struct Owner {
 /// The modules that own filesystem access. Every other module under `src/` is
 /// forbidden from *naming* `std::fs`, a platform `fs` module, or
 /// `std::process::Command`.
-const FILESYSTEM_OWNERS: [Owner; 17] = [
+const FILESYSTEM_OWNERS: [Owner; 19] = [
     Owner {
         path: "src/manifest/clone_list.rs",
         kind: Kind::ReadOnly,
@@ -115,6 +115,18 @@ const FILESYSTEM_OWNERS: [Owner; 17] = [
         path: "src/action/symlink.rs",
         kind: Kind::ModeReader,
         reason: "the platform-specific call every symlink action makes",
+    },
+    Owner {
+        path: "src/subprocess.rs",
+        kind: Kind::Bookkeeping,
+        reason: "builds, waits on, and stops the commands a manifest declares: dynamic variables' \
+                 in both modes, and `run` actions' once the run loop decides they are due",
+    },
+    Owner {
+        path: "src/action/run.rs",
+        kind: Kind::ModeReader,
+        reason: "launches a `run` action's command: an arbitrary, unsandboxed subprocess as the \
+                 invoking user, only when the run performs",
     },
     Owner {
         path: "src/vars/dynamic/command.rs",

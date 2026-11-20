@@ -7,6 +7,7 @@ mod fetch_archive;
 mod fetch_file;
 mod git_clone;
 mod git_clone_list;
+mod run;
 mod symlink;
 
 use crate::error::Error;
@@ -31,14 +32,17 @@ pub(crate) enum PreparedAction<'a> {
 /// Execute a prepared action.
 ///
 /// `tree` is the tree the record came from. Symlink and copy actions resolve sources against
-/// it; clone lists are already prepared. Each action resolves its template fields with `fields`
-/// once, before it does anything else.
+/// it, and a `run` action's command runs in its root; clone lists are already prepared. Each
+/// action resolves its template fields with `fields` once, before it does anything else.
+///
+/// Return whether the action changed something: it installed or replaced a node, created its
+/// directory, cloned or moved a checkout, or ran its command successfully.
 pub(crate) fn dispatch(
     prepared: &PreparedAction<'_>,
     tree: Tree<&ItemId>,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let action = match prepared {
         PreparedAction::CloneList(list) => {
             return git_clone_list::git_clone_list(list, fields, context);
@@ -54,6 +58,7 @@ pub(crate) fn dispatch(
         Action::FetchFile(action) => fetch_file::fetch_file(action, fields, context),
         Action::FetchArchive(action) => fetch_archive::fetch_archive(action, fields, context),
         Action::GitClone(action) => git_clone::git_clone(action, fields, context),
+        Action::Run(action) => run::run(action, tree, fields, context),
         Action::IncludeRemote(_) => {
             unreachable!("an inclusion is expanded during assembly and never dispatched")
         }
@@ -71,7 +76,7 @@ mod tests {
     use super::*;
     use crate::env::Environment;
     use crate::filesystem::mode::RunMode;
-    use crate::location::{Roots, StateRoots};
+    use crate::location::{MachineRoots, Roots};
     use crate::manifest::condition::{Bindings, HostNamespaces};
     use crate::manifest::template::EnvAccess;
     use crate::output::Reporter;
@@ -85,7 +90,7 @@ mod tests {
         let roots = Roots {
             home: tree.path().join("home"),
             batfiles_repo: tree.path().to_path_buf(),
-            state: StateRoots {
+            machine: MachineRoots {
                 config_dir: tree.path().join("config"),
                 cache_dir: tree.path().join("cache"),
             },

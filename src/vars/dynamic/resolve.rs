@@ -287,7 +287,7 @@ fn warning(identity: &DynamicVarKey, error: &CaptureError, fallback: Fallback) -
 }
 
 /// An age in its largest whole unit, truncated: `just now`, `45s`, `3h`, `2d`.
-fn age(age: Duration) -> String {
+pub(crate) fn age(age: Duration) -> String {
     const MINUTE: u64 = 60;
     const HOUR: u64 = 60 * MINUTE;
     const DAY: u64 = 24 * HOUR;

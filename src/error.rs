@@ -78,6 +78,14 @@ pub(crate) enum Error {
         source: Box<TemplateError>,
     },
 
+    /// A `run` action's command that did not succeed.
+    #[error("{record}: the command {failure}")]
+    CommandFailed {
+        /// The record's heading, as run output names it.
+        record: String,
+        failure: crate::subprocess::LaunchFailure,
+    },
+
     /// A manifest that is valid TOML but breaks a rule serde cannot express.
     #[error("invalid configuration in {}: {source}", .path.display())]
     InvalidManifest {
@@ -207,8 +215,23 @@ pub(crate) enum Error {
         remote: ItemId,
         path: PathBuf,
         reason: &'static str,
-        permissions: &'static str,
+        permissions: String,
     },
+
+    /// A contributed `run` action the command names, whose remote does not let it run.
+    #[error(
+        "{record}: remote `{remote}` does not set `allow-commands = true`, so the `run` \
+         actions it contributes do not run"
+    )]
+    CommandsNotAllowed { record: String, remote: ItemId },
+
+    /// A contributed `run` action whose trigger keeps state, from an inclusion without the `id`
+    /// its address needs.
+    #[error(
+        "{record}: its trigger records state under the action's address, which needs an `id` on \
+         {inclusion}"
+    )]
+    StatefulRunInUnnamedInclusion { record: String, inclusion: String },
 
     /// An included remote's materialization has no manifest.
     #[error(

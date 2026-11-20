@@ -9,12 +9,12 @@ use crate::output::Verb;
 use crate::run::context::RunContext;
 use crate::source::fetch;
 
-/// Carry out one `fetch-file` action.
+/// Carry out one `fetch-file` action. Return whether it installed or replaced the file.
 pub(super) fn fetch_file(
     action: &FetchFileAction,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let source = fields.field("source", &action.source, ValueRule::Url)?;
     let sha256 = fields.optional("sha256", action.sha256.as_ref(), ValueRule::Digest)?;
     let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);

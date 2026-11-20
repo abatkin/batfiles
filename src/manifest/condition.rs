@@ -159,15 +159,17 @@ pub(crate) enum Exclusion {
     Deliberate(String),
     /// A condition evaluation failure that excludes the record.
     EvaluationFailed(String),
+    /// A permission the record needs and does not have.
+    NotPermitted(String),
 }
 
 impl Exclusion {
     /// Report caller-supplied wording at `-v` for expected exclusions, or as a
-    /// warning at every verbosity for evaluation failures.
+    /// warning at every verbosity for evaluation failures and missing permissions.
     pub fn report(&self, reporter: &Reporter, message: &str) {
         match self {
             Self::Deliberate(_) => reporter.detail(1, message),
-            Self::EvaluationFailed(_) => reporter.warn(message),
+            Self::EvaluationFailed(_) | Self::NotPermitted(_) => reporter.warn(message),
         }
     }
 
@@ -176,7 +178,7 @@ impl Exclusion {
     pub fn report_heading(&self, reporter: &Reporter, heading: &str) {
         let reason = self.reason();
         let message = match self {
-            Self::Deliberate(_) => format!("{heading} - skipped: {reason}"),
+            Self::Deliberate(_) | Self::NotPermitted(_) => format!("{heading} - skipped: {reason}"),
             Self::EvaluationFailed(_) => format!("{heading}: {reason}"),
         };
         self.report(reporter, &message);
@@ -185,7 +187,9 @@ impl Exclusion {
     /// The reason, for a caller composing the line that names the record.
     pub fn reason(&self) -> &str {
         match self {
-            Self::Deliberate(reason) | Self::EvaluationFailed(reason) => reason,
+            Self::Deliberate(reason)
+            | Self::EvaluationFailed(reason)
+            | Self::NotPermitted(reason) => reason,
         }
     }
 }

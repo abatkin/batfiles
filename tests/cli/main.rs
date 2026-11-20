@@ -26,6 +26,7 @@ mod init;
 mod locations;
 mod manifest;
 mod refresh_content;
+mod run_launch;
 mod run_lock;
 mod selection;
 mod surface;
@@ -49,5 +50,8 @@ mod inclusion_composition;
 mod linking;
 #[cfg(unix)]
 mod remote_origins;
+// Commands run through `sh`.
+#[cfg(unix)]
+mod run_action;
 #[cfg(unix)]
 mod vars_refresh;

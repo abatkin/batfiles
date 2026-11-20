@@ -117,7 +117,7 @@ fn the_machine_guide_selects_work_and_adopts_bootstrap_choices() {
 
 #[test]
 fn the_content_guide_examples_preview_without_network_access() {
-    let guide = toml_blocks(include_str!("../../docs/guides/content.md"), 4);
+    let guide = toml_blocks(include_str!("../../docs/guides/content.md"), 5);
     for example in guide {
         let tree = Tree::new();
         tree.repo_file("files/editor.toml", "theme = \"dark\"\n");

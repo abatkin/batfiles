@@ -199,6 +199,11 @@ impl<'a, 'b> Resolver<'a, 'b> {
         }
     }
 
+    /// The heading of the record whose fields this resolves.
+    pub fn record(&self) -> &str {
+        self.record
+    }
+
     /// `value`, written in `field`, evaluated and checked against `rule`. Failures are
     /// [`Error::Template`].
     pub fn field<'t>(

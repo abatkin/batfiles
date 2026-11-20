@@ -10,18 +10,19 @@ use crate::manifest::disabled::DisabledItems;
 use crate::vars::dynamic::DynamicVarCache;
 use crate::vars::machine::MachineVars;
 
-/// The four location options, as parsed from the command line.
+/// The five location options, as parsed from the command line.
 #[derive(Debug, Default)]
 pub(crate) struct LocationInputs {
     pub batfiles_dir: Option<PathBuf>,
     pub home_dir: Option<PathBuf>,
     pub config_dir: Option<PathBuf>,
     pub cache_dir: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
 }
 
 /// Config and cache roots for machine-local state.
 #[derive(Debug)]
-pub(crate) struct StateRoots {
+pub(crate) struct MachineRoots {
     /// The directory holding `vars.toml` and `disabled.toml`.
     pub config_dir: PathBuf,
     /// The directory holding the disposable `dynamic-vars.toml` cache.
@@ -36,10 +37,18 @@ pub(crate) struct Roots {
     /// The leaf repository.
     pub batfiles_repo: PathBuf,
     /// Batfiles' own bookkeeping, which a repository command reads as well.
-    pub state: StateRoots,
+    pub machine: MachineRoots,
 }
 
-impl StateRoots {
+/// Every root a command that executes actions resolves: the repository roots and the state root.
+#[derive(Debug)]
+pub(crate) struct RunRoots {
+    pub repository: Roots,
+    /// The directory holding batfiles' record of `run` actions.
+    pub state_dir: PathBuf,
+}
+
+impl MachineRoots {
     /// Path to machine-local `disabled.toml` under the config root.
     pub fn disabled_path(&self) -> PathBuf {
         self.config_dir.join(DisabledItems::FILE_NAME)
@@ -76,11 +85,11 @@ pub(crate) fn discover_working_repository() -> Result<Option<PathBuf>, Error> {
 
 /// Resolve config and cache roots without repository discovery. Consult the OS home only if an
 /// unresolved root needs its fallback.
-pub(crate) fn resolve_state_roots(
+pub(crate) fn resolve_machine_roots(
     cli: &LocationInputs,
     env: &Environment,
     os_home: impl FnOnce() -> Result<PathBuf, Error>,
-) -> Result<StateRoots, Error> {
+) -> Result<MachineRoots, Error> {
     let config_dir = config_option(cli, env);
     let cache_dir = cache_option(cli, env);
     let os_home = if config_dir.is_none() || cache_dir.is_none() {
@@ -88,7 +97,26 @@ pub(crate) fn resolve_state_roots(
     } else {
         None
     };
-    Ok(state_roots(config_dir, cache_dir, os_home.as_ref()))
+    Ok(machine_roots(config_dir, cache_dir, os_home.as_ref()))
+}
+
+/// Resolve the state root, which only commands that execute actions use. Consult the OS home
+/// only if no option or variable selects it.
+pub(crate) fn resolve_state_dir(
+    cli: &LocationInputs,
+    env: &Environment,
+    os_home: impl FnOnce() -> Result<PathBuf, Error>,
+) -> Result<PathBuf, Error> {
+    match cli
+        .state_dir
+        .clone()
+        .or_else(|| env.path_var("BATFILES_STATE_DIR"))
+        .or_else(|| xdg_base(env, "XDG_STATE_HOME"))
+    {
+        Some(path) => Ok(path),
+        // Like config and cache, the default uses the OS home, not the selected destination home.
+        None => Ok(os_home()?.join(".local").join("state").join("batfiles")),
+    }
 }
 
 /// Resolve every root, for a command that works from the leaf repository.
@@ -126,7 +154,7 @@ pub(crate) fn resolve_roots(
     Ok(Roots {
         home,
         batfiles_repo,
-        state: state_roots(config_dir, cache_dir, os_home.as_ref()),
+        machine: machine_roots(config_dir, cache_dir, os_home.as_ref()),
     })
 }
 
@@ -135,13 +163,13 @@ const RESOLVED: &str = "the OS home is resolved whenever a root needs it";
 
 /// Fill unresolved config and cache roots from OS-home defaults. `os_home` must be `Some` if
 /// either root is `None`.
-fn state_roots(
+fn machine_roots(
     config_dir: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
     os_home: Option<&PathBuf>,
-) -> StateRoots {
+) -> MachineRoots {
     // State defaults use the OS home, not the selected destination home.
-    StateRoots {
+    MachineRoots {
         config_dir: config_dir
             .unwrap_or_else(|| os_home.expect(RESOLVED).join(".config").join("batfiles")),
         cache_dir: cache_dir

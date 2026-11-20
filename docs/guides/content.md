@@ -18,6 +18,7 @@ want to select them individually.
 | Maintain a Git checkout | [git-clone](../actions/git-clone.md) | Update conservatively |
 | Maintain a list of Git checkouts | [git-clone-list](../actions/git-clone-list.md) | Process each entry |
 | Run another repository's actions | [include-remote](../actions/include-remote.md) | See [composition](composition.md) |
+| Run a command | [run](../actions/run.md) | As its trigger says |
 
 Copies and downloads are *seeds*: after installation, the local content is
 allowed to diverge. A seed's ordinary run does not compare or overwrite it.
@@ -115,3 +116,31 @@ the checkout was kept. See [Git updates](../safety.md#git-updates).
 For several repositories, use a [clone list](../repoformat.md#the-clone-list-format).
 Some per-entry failures warn and continue, so inspect warnings even when a
 clone-list command exits successfully.
+
+## Run a command after an install
+
+A program often needs a command run once it is installed, and again whenever it
+is upgraded. A `run` action following the install does that:
+
+```toml
+[[actions]]
+type = "fetch-file"
+id = "mise"
+source = "https://downloads.example.com/mise/mise-${facts.os}-${facts.arch}"
+dest = "~/.local/bin/mise"
+executable = true
+
+[[actions]]
+type = "run"
+id = "mise-install"
+command = ["~/.local/bin/mise", "install"]
+trigger = { after = "mise" }
+```
+
+The command runs on the first sync, and after that only when the download is
+installed or replaced, including by `--refresh-content`. A leading `~/` in the
+program reaches it even before `~/.local/bin` is on `PATH`. Other
+[triggers](../actions/run.md#triggers) run a command every time, only at
+bootstrap, once, or on an interval. Batfiles records each success in
+[`runs.toml`](../state.md#runstoml-run-action-history); use
+`batfiles apply-action --id mise-install` to run it again regardless.

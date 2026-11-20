@@ -15,9 +15,10 @@ reference that defines it.
 | Dry run | A preview, with `--dry-run`, that reports intended work without changing installed content. See [dry-run behavior](cmdline.md#dry-run-behavior). |
 | Dynamic variable | A variable whose value comes from running a command, cached between runs. See [dynamic variables](repoformat.md#dynamic-variables). |
 | Group | A name shared by actions so they can be applied, skipped, or disabled together. See [groups](repoformat.md#groups). |
+| Trigger | When a `run` action's command runs: always, at bootstrap, once, on an interval, or after something it follows changed. See [triggers](actions/run.md#triggers). |
 | Inclusion | An `include-remote` action, which runs actions from a remote's own manifest. Its `id` prefixes their addresses. See [`include-remote`](actions/include-remote.md#include-remote). |
 | Leaf | Your own dotfiles repository: the one whose `batfiles.toml` a command reads. See [repository layout](repoformat.md#repository-layout). |
-| Machine state | Choices and caches stored on one machine, outside any repository: `vars.toml`, `disabled.toml`, and the dynamic-variable cache. See [state files](state.md). |
+| Machine state | Choices and caches stored on one machine, outside any repository: `vars.toml`, `disabled.toml`, the dynamic-variable cache, and the `run`-action history. See [state files](state.md). |
 | Manifest | A repository's `batfiles.toml`. See [repository format](repoformat.md). |
 | Materialize | Fetch or update a remote into `remotes/<id>` in the leaf. Only `sync` does this. See [materialization](repoformat.md#materialization). |
 | Partial plan | A dry run that could not read some included actions because their remote has not been materialized yet. See [plan completeness](cmdline.md#plan-completeness). |

@@ -7,7 +7,8 @@ batfiles clone <url> [--ref <ref>] [--skip-action <id>]... [--skip-group <group>
 ```
 
 Clone a leaf repository into the selected batfiles directory, adopt its
-bootstrap policy, and [sync](sync.md#sync). [Location selection](../environment.md#location-selection)
+bootstrap policy, and [sync](sync.md#sync), in which a [`run`
+action's](../actions/run.md#triggers) `bootstrap` trigger fires. [Location selection](../environment.md#location-selection)
 excludes working-directory discovery for this command.
 
 The destination must not exist, even as an empty directory or broken symlink.

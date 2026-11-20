@@ -19,7 +19,7 @@ use crate::source::git;
 /// cloning and before reading any state. Keep the clone if the ref cannot be followed, the lock
 /// is held, or synchronization fails.
 pub(crate) fn run(args: &CloneArgs, session: &Session<'_>) -> Result<(), Error> {
-    let roots = session.new_repository_roots()?;
+    let roots = session.new_run_roots()?;
     let invocation = session.invocation(&roots, false, &args.execution);
     let url = args.url.as_str();
     let git_ref = args.git_ref.as_deref();
@@ -46,7 +46,7 @@ pub(crate) fn run(args: &CloneArgs, session: &Session<'_>) -> Result<(), Error> 
         return Err(Error::ClonedWithoutManifest { path: dest.clone() });
     }
 
-    let _lock = RunLock::acquire(&invocation.roots.state.cache_dir)?;
+    let _lock = RunLock::acquire(&invocation.roots.machine.cache_dir)?;
     run::sync(
         &invocation,
         &args.skips.actions.skip_actions,

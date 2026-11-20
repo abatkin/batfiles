@@ -67,6 +67,10 @@ pub(crate) struct GlobalOptions {
     /// Select the directory holding dynamic-vars.toml [default: XDG cache]
     #[arg(long, global = true, value_name = "PATH")]
     pub cache_dir: Option<PathBuf>,
+
+    /// Select the directory holding batfiles' record of run actions [default: XDG state]
+    #[arg(long, global = true, value_name = "PATH")]
+    pub state_dir: Option<PathBuf>,
 }
 
 /// Supported commands and their arguments.

@@ -24,11 +24,11 @@ fn defaults_come_from_the_os_home() {
     assert_eq!(roots.home, PathBuf::from("/os-home"));
     assert_eq!(roots.batfiles_repo, PathBuf::from("/os-home/dotfiles"));
     assert_eq!(
-        roots.state.config_dir,
+        roots.machine.config_dir,
         PathBuf::from("/os-home/.config/batfiles")
     );
     assert_eq!(
-        roots.state.cache_dir,
+        roots.machine.cache_dir,
         PathBuf::from("/os-home/.cache/batfiles")
     );
 }
@@ -44,8 +44,8 @@ fn the_environment_overrides_the_defaults() {
     let roots = resolve(LocationInputs::default(), &env);
     assert_eq!(roots.home, PathBuf::from("/env-home"));
     assert_eq!(roots.batfiles_repo, PathBuf::from("/env-repo"));
-    assert_eq!(roots.state.config_dir, PathBuf::from("/env-config"));
-    assert_eq!(roots.state.cache_dir, PathBuf::from("/env-cache"));
+    assert_eq!(roots.machine.config_dir, PathBuf::from("/env-config"));
+    assert_eq!(roots.machine.cache_dir, PathBuf::from("/env-cache"));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn the_repository_option_outranks_a_manifest_in_the_working_directory() {
 }
 
 #[test]
-fn state_roots_resolve_the_way_the_full_set_resolves_them() {
+fn machine_roots_resolve_the_way_the_full_set_resolves_them() {
     let env = Environment::from_pairs([
         ("BATFILES_CONFIG_DIR", "/env-config"),
         ("XDG_CACHE_HOME", "/xdg/cache"),
@@ -131,15 +131,15 @@ fn state_roots_resolve_the_way_the_full_set_resolves_them() {
         ..LocationInputs::default()
     };
 
-    let state = resolve_state_roots(&cli, &env, os_home).expect("resolution should succeed");
+    let state = resolve_machine_roots(&cli, &env, os_home).expect("resolution should succeed");
 
     assert_eq!(state.config_dir, PathBuf::from("/opt-config"));
     assert_eq!(state.cache_dir, PathBuf::from("/xdg/cache/batfiles"));
 }
 
 #[test]
-fn state_roots_fall_back_to_the_os_home() {
-    let state = resolve_state_roots(&LocationInputs::default(), &empty_env(), os_home)
+fn machine_roots_fall_back_to_the_os_home() {
+    let state = resolve_machine_roots(&LocationInputs::default(), &empty_env(), os_home)
         .expect("resolution should succeed");
 
     assert_eq!(state.config_dir, PathBuf::from("/os-home/.config/batfiles"));
@@ -147,14 +147,14 @@ fn state_roots_fall_back_to_the_os_home() {
 }
 
 #[test]
-fn covered_state_roots_never_need_a_home_at_all() {
+fn covered_machine_roots_never_need_a_home_at_all() {
     let env = Environment::from_pairs([
         ("XDG_CONFIG_HOME", "/xdg/config"),
         ("XDG_CACHE_HOME", "/xdg/cache"),
     ]);
 
-    let state = resolve_state_roots(&LocationInputs::default(), &env, unavailable)
-        .expect("covered state roots should not need the OS home");
+    let state = resolve_machine_roots(&LocationInputs::default(), &env, unavailable)
+        .expect("covered machine roots should not need the OS home");
 
     assert_eq!(state.config_dir, PathBuf::from("/xdg/config/batfiles"));
 }
@@ -163,7 +163,7 @@ fn covered_state_roots_never_need_a_home_at_all() {
 fn a_state_root_left_uncovered_still_requires_the_os_home() {
     let env = Environment::from_pairs([("XDG_CONFIG_HOME", "/xdg/config")]);
     assert!(matches!(
-        resolve_state_roots(&LocationInputs::default(), &env, unavailable),
+        resolve_machine_roots(&LocationInputs::default(), &env, unavailable),
         Err(Error::HomeUnavailable)
     ));
 }
@@ -177,11 +177,11 @@ fn selecting_a_home_does_not_move_config_or_cache() {
     let env = Environment::from_pairs([("BATFILES_HOME", "/env-home")]);
     let roots = resolve(cli, &env);
     assert_eq!(
-        roots.state.config_dir,
+        roots.machine.config_dir,
         PathBuf::from("/os-home/.config/batfiles")
     );
     assert_eq!(
-        roots.state.cache_dir,
+        roots.machine.cache_dir,
         PathBuf::from("/os-home/.cache/batfiles")
     );
 }
@@ -194,10 +194,13 @@ fn xdg_bases_default_config_and_cache() {
     ]);
     let roots = resolve(LocationInputs::default(), &env);
     assert_eq!(
-        roots.state.config_dir,
+        roots.machine.config_dir,
         PathBuf::from("/xdg/config/batfiles")
     );
-    assert_eq!(roots.state.cache_dir, PathBuf::from("/xdg/cache/batfiles"));
+    assert_eq!(
+        roots.machine.cache_dir,
+        PathBuf::from("/xdg/cache/batfiles")
+    );
 }
 
 #[test]
@@ -214,11 +217,12 @@ fn supplying_every_root_never_resolves_the_os_home() {
         home_dir: Some(PathBuf::from("/home")),
         config_dir: Some(PathBuf::from("/config")),
         cache_dir: Some(PathBuf::from("/cache")),
+        state_dir: None,
     };
     let roots = resolve_roots(&cli, &empty_env(), || Ok(None), unavailable)
         .expect("explicit roots should not need the OS home");
-    assert_eq!(roots.state.config_dir, PathBuf::from("/config"));
-    assert_eq!(roots.state.cache_dir, PathBuf::from("/cache"));
+    assert_eq!(roots.machine.config_dir, PathBuf::from("/config"));
+    assert_eq!(roots.machine.cache_dir, PathBuf::from("/cache"));
 }
 
 #[test]
@@ -236,10 +240,13 @@ fn xdg_bases_remove_the_need_for_an_os_home() {
     assert_eq!(roots.home, PathBuf::from("/home"));
     assert_eq!(roots.batfiles_repo, PathBuf::from("/home/dotfiles"));
     assert_eq!(
-        roots.state.config_dir,
+        roots.machine.config_dir,
         PathBuf::from("/xdg/config/batfiles")
     );
-    assert_eq!(roots.state.cache_dir, PathBuf::from("/xdg/cache/batfiles"));
+    assert_eq!(
+        roots.machine.cache_dir,
+        PathBuf::from("/xdg/cache/batfiles")
+    );
 }
 
 #[test]
@@ -266,6 +273,49 @@ fn a_missing_home_requires_the_os_home() {
             || Ok(None),
             unavailable
         ),
+        Err(Error::HomeUnavailable)
+    ));
+}
+
+#[test]
+fn the_state_root_follows_its_precedence() {
+    let state = |cli: &LocationInputs, env: &Environment| {
+        resolve_state_dir(cli, env, unavailable).expect("an explicit state root needs no home")
+    };
+    let both = Environment::from_pairs([
+        ("BATFILES_STATE_DIR", "/env-state"),
+        ("XDG_STATE_HOME", "/xdg/state"),
+    ]);
+    let option = LocationInputs {
+        state_dir: Some(PathBuf::from("/opt-state")),
+        ..LocationInputs::default()
+    };
+    assert_eq!(state(&option, &both), PathBuf::from("/opt-state"));
+    assert_eq!(
+        state(&LocationInputs::default(), &both),
+        PathBuf::from("/env-state")
+    );
+    let xdg =
+        Environment::from_pairs([("BATFILES_STATE_DIR", ""), ("XDG_STATE_HOME", "/xdg/state")]);
+    assert_eq!(
+        state(&LocationInputs::default(), &xdg),
+        PathBuf::from("/xdg/state/batfiles")
+    );
+}
+
+#[test]
+fn the_state_root_falls_back_to_the_os_home_whatever_home_is_selected() {
+    let cli = LocationInputs {
+        home_dir: Some(PathBuf::from("/alt-home")),
+        ..LocationInputs::default()
+    };
+    let env = Environment::from_pairs([("BATFILES_HOME", "/env-home")]);
+    assert_eq!(
+        resolve_state_dir(&cli, &env, os_home).expect("resolution should succeed"),
+        PathBuf::from("/os-home/.local/state/batfiles")
+    );
+    assert!(matches!(
+        resolve_state_dir(&cli, &env, unavailable),
         Err(Error::HomeUnavailable)
     ));
 }

@@ -116,6 +116,15 @@ need no permission. The permission applies only to a checkout of the repository
 the remote's `url` names; see
 [permissions follow the origin](../safety.md#permissions-follow-the-origin).
 
+## Commands
+
+A contributed [`run`](run.md#in-an-included-manifest) action runs its command
+only if the leaf sets [`allow-commands`](../repoformat.md#git) on the remote.
+Without it, the action is excluded with a warning naming the remote and the
+field, and `apply-action` naming it fails. A contributed `run` action whose
+trigger keeps state needs this inclusion to have an `id`, which its address in
+`runs.toml` begins with. An included `run` action cannot follow a remote.
+
 ## What an included action may not write
 
 Included repository paths must refer to the declaring repository's own tree.

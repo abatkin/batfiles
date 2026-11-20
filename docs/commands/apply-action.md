@@ -11,6 +11,10 @@ action behavior and the [shared execution options](../cmdline.md#shared-action-e
 The [selection table](../cmdline.md#selection-by-command) defines which exclusions naming
 an action bypasses. Apply commands use existing remote materializations.
 
+A [`run` action](../actions/run.md#triggers) runs its command whatever its
+trigger says, and a success is recorded as usual. A contributed one still needs
+its remote's `allow-commands`; without it, naming the action fails.
+
 These failures exit 1:
 
 - An invalid address, checked before the repository is opened.

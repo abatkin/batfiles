@@ -17,7 +17,8 @@ An existing group with no eligible actions exits 0 and reports:
 nothing to apply: every action in the group is disabled, skipped, excluded by its own condition, or was not contributed
 ```
 
-`-v` gives individual reasons. Inclusions count only through the actions they
+A [`run` action](../actions/run.md#triggers) runs only if its trigger fires;
+the `bootstrap` trigger never does here. `-v` gives individual reasons. Inclusions count only through the actions they
 contribute, so a group containing an inclusion that contributes nothing also
 has nothing to apply.
 

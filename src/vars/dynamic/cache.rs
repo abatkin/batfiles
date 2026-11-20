@@ -29,7 +29,7 @@ pub(crate) struct CachedVar {
 }
 
 impl DynamicVarCache {
-    /// The document's file name; [`StateRoots`](crate::location::StateRoots)
+    /// The document's file name; [`MachineRoots`](crate::location::MachineRoots)
     /// decides its directory.
     pub const FILE_NAME: &'static str = "dynamic-vars.toml";
 

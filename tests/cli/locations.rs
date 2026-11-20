@@ -1,4 +1,4 @@
-//! Where a command decides to work: the four roots, their precedence, and
+//! Where a command decides to work: the five roots, their precedence, and
 //! which commands resolve none.
 
 use crate::support::*;
@@ -15,9 +15,109 @@ fn verbose_reports_every_resolved_root() {
         ("home:       ", "home"),
         ("config:     ", "config"),
         ("cache:      ", "cache"),
+        ("state:      ", "state"),
     ] {
         let expected = format!("{label}{}", display(&tree.path(root)));
         assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+    }
+    let cache = stderr.find("cache:").expect("a cache line");
+    let state = stderr.find("state:").expect("a state line");
+    assert!(cache < state, "the state root is reported last:\n{stderr}");
+}
+
+#[test]
+fn every_command_that_executes_actions_resolves_the_state_root() {
+    let tree = Tree::new();
+    // The apply commands report their roots before failing to find their targets.
+    for args in [
+        &["sync", "-v"][..],
+        &["sync", "-v", "--dry-run"],
+        &["apply-action", "-v", "--id", "zshrc"],
+        &["apply-group", "-v", "--group", "unused"],
+    ] {
+        let assertion = tree.batfiles().args(args).assert();
+        let stderr = stderr_of(&assertion);
+        let expected = format!("state:      {}", display(&tree.path("state")));
+        assert!(
+            stderr.contains(&expected),
+            "{args:?} did not report `{expected}`:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_run_with_no_run_action_creates_no_state_directory() {
+    let tree = Tree::new();
+    tree.batfiles().arg("sync").assert().success();
+    assert!(
+        !tree.path("state").exists(),
+        "a state directory was created with nothing to keep in it"
+    );
+}
+
+#[test]
+fn the_state_option_outranks_its_variable() {
+    let tree = Tree::new();
+    let chosen = tree.path("from-the-option");
+    let assertion = tree
+        .batfiles()
+        .args(["sync", "-v", "--state-dir"])
+        .arg(&chosen)
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(&format!("state:      {}", display(&chosen))),
+        "the option did not win:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_state_root_falls_back_to_xdg_and_then_the_os_home() {
+    let tree = Tree::new();
+    let assertion = tree
+        .batfiles()
+        .env_remove("BATFILES_STATE_DIR")
+        .env("XDG_STATE_HOME", tree.path("xdg-state"))
+        .args(["sync", "-v"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    let expected = format!("state:      {}", display(&tree.path("xdg-state/batfiles")));
+    assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+
+    let os_home = tree.path("os-home");
+    let assertion = tree
+        .batfiles()
+        .env_remove("BATFILES_STATE_DIR")
+        .env("HOME", &os_home)
+        .env("USERPROFILE", &os_home)
+        .args(["sync", "-v"])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    let expected = format!(
+        "state:      {}",
+        display(&tree.path("os-home/.local/state/batfiles"))
+    );
+    assert!(stderr.contains(&expected), "no `{expected}` in:\n{stderr}");
+}
+
+#[test]
+fn commands_that_execute_no_actions_do_not_resolve_the_state_root() {
+    let tree = Tree::new();
+    for args in [
+        &["vars", "list", "-v"][..],
+        &["vars", "refresh", "-v"],
+        &["vars", "get", "-v", "editor"],
+        &["disable-action", "-v", "vim"],
+    ] {
+        let assertion = tree.batfiles().args(args).assert();
+        let stderr = stderr_of(&assertion);
+        assert!(
+            !stderr.contains("state:"),
+            "{args:?} resolved the state root:\n{stderr}"
+        );
     }
 }
 
@@ -252,7 +352,7 @@ fn init_resolves_no_roots() {
         .success();
 
     let stderr = stderr_of(&assertion);
-    for label in ["repository:", "home:", "config:", "cache:"] {
+    for label in ["repository:", "home:", "config:", "cache:", "state:"] {
         assert!(
             !stderr.contains(label),
             "`init` resolved the {label} root:\n{stderr}"

@@ -10,15 +10,16 @@ use crate::filesystem::mode::RunMode;
 use crate::output::{Reporter, Verb};
 
 /// Leave a validated clone's dirty worktree unchanged with a warning. Follow
-/// the declared ref, or update the current branch from its upstream.
+/// the declared ref, or update the current branch from its upstream. Return whether the
+/// checkout moved to a different commit.
 pub(super) fn update_clone(
     dest: &Path,
     git_ref: Option<&str>,
     reporter: &Reporter,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     if is_dirty(dest)? {
         warn_skipped_update(reporter, dest, "it has uncommitted changes");
-        return Ok(());
+        return Ok(false);
     }
     match git_ref {
         Some(git_ref) => update_to_ref(dest, git_ref, reporter),
@@ -26,21 +27,23 @@ pub(super) fn update_clone(
     }
 }
 
-/// Bring a clone to the `ref` its record declares, and say what that took.
-fn update_to_ref(dest: &Path, git_ref: &str, reporter: &Reporter) -> Result<(), Error> {
+/// Bring a clone to the `ref` its record declares, and say what that took. Return whether the
+/// checkout moved.
+fn update_to_ref(dest: &Path, git_ref: &str, reporter: &Reporter) -> Result<bool, Error> {
     run_git(Some(dest), "fetch", &["fetch", "--all"], dest)?;
 
-    report_update(
+    Ok(report_update(
         dest,
         follow_ref(dest, git_ref, reporter)?,
         git_ref,
         reporter,
-    );
-    Ok(())
+    ))
 }
 
-/// Report a completed update or checkout at normal verbosity; unchanged clones at `-v`.
-fn report_update(dest: &Path, outcome: UpdateOutcome, target: &str, reporter: &Reporter) {
+/// Report a completed update or checkout at normal verbosity; unchanged clones at `-v`. Return
+/// whether the checkout moved.
+fn report_update(dest: &Path, outcome: UpdateOutcome, target: &str, reporter: &Reporter) -> bool {
+    let moved = matches!(outcome, UpdateOutcome::Advanced | UpdateOutcome::Switched);
     match outcome {
         UpdateOutcome::Unchanged => reporter.detail(1, &format!("unchanged {}", dest.display())),
         UpdateOutcome::Advanced => reporter.info(&format!(
@@ -55,6 +58,7 @@ fn report_update(dest: &Path, outcome: UpdateOutcome, target: &str, reporter: &R
         )),
         UpdateOutcome::Skipped => {}
     }
+    moved
 }
 
 /// What following a declared `ref` came to.
@@ -294,19 +298,18 @@ fn head_branch(dest: &Path) -> Result<Option<String>, Error> {
 
 /// Bring an existing clone up to date on the branch it is already on, or say
 /// why it was left alone.
-fn update_tracking(dest: &Path, reporter: &Reporter) -> Result<(), Error> {
+fn update_tracking(dest: &Path, reporter: &Reporter) -> Result<bool, Error> {
     let Some(upstream) = upstream(dest)? else {
         warn_skipped_update(reporter, dest, "it is not on a branch that tracks a remote");
-        return Ok(());
+        return Ok(false);
     };
     run_git(Some(dest), "fetch", &["fetch"], dest)?;
-    report_update(
+    Ok(report_update(
         dest,
         fast_forward(dest, &upstream, reporter)?,
         &upstream,
         reporter,
-    );
-    Ok(())
+    ))
 }
 
 /// Warn that the clone was not updated, including the reason.

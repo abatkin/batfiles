@@ -19,6 +19,7 @@ Windows names are uppercased at capture. Values are never case-folded.
 | `BATFILES_HOME`       | `--home-dir`      | Selects the destination home directory.                                           |
 | `BATFILES_CONFIG_DIR` | `--config-dir`    | Selects the directory containing `vars.toml` and `disabled.toml`.                 |
 | `BATFILES_CACHE_DIR`  | `--cache-dir`     | Selects the directory containing the dynamic-variable cache, `dynamic-vars.toml`. |
+| `BATFILES_STATE_DIR`  | `--state-dir`     | Selects the directory containing the `run`-action record, `runs.toml`.            |
 
 See [location selection](#location-selection) for precedence and which roots
 each command resolves.
@@ -125,6 +126,9 @@ cache when a declaration needs it. Inspect values and origins with
 
 ## How dynamic commands are run
 
+These rules also govern a [`run` action's](actions/run.md#how-the-command-runs)
+command, except where its page says otherwise.
+
 Dynamic commands run as the invoking user without a sandbox, in real and dry
 runs. They inherit batfiles' environment; resolved variables are not exported.
 Their working directory is the declaring repository's root: the leaf or remote
@@ -132,8 +136,12 @@ materialization.
 
 | Declaration | Launch |
 | --- | --- |
-| String | `sh -c` on Unix; `cmd /C` on Windows |
+| String | `sh -c` on Unix; on Windows, `cmd /S /C` with the string quoted, so `cmd` reads it as written |
 | List of strings | Direct program and arguments, without a shell |
+
+A relative program with a directory part, such as `./bin/setup`, is found from
+the working directory. A bare name, such as `git`, is looked up on `PATH` as
+usual.
 
 The login shell and its startup files are not used. Standard input is closed.
 Standard error is inherited verbatim, or disconnected under `--quiet`;
@@ -202,7 +210,8 @@ Commands resolve only the roots they need:
 | Commands | Roots |
 | --- | --- |
 | Enable/disable commands; `vars set`, `get`, `unset`, `list --machine-only` | Config and cache |
-| `sync`, apply commands, `clone`, normal `vars list`, `vars refresh` | Repository, home, config, cache |
+| `sync`, apply commands, `clone` | Repository, home, config, cache, state |
+| Normal `vars list`, `vars refresh` | Repository, home, config, cache |
 | `init`, `version`, `update` | None |
 
 `init` separately checks the OS home to refuse initialization directly in it;
@@ -216,6 +225,7 @@ Choose the first available value in each row:
 | Leaf repository | `--batfiles-dir` → `BATFILES_DIR` → current directory containing `batfiles.toml` → `<selected-home>/dotfiles` |
 | Config | `--config-dir` → `BATFILES_CONFIG_DIR` → `$XDG_CONFIG_HOME/batfiles` → `<os-home>/.config/batfiles` |
 | Cache | `--cache-dir` → `BATFILES_CACHE_DIR` → `$XDG_CACHE_HOME/batfiles` → `<os-home>/.cache/batfiles` |
+| State | `--state-dir` → `BATFILES_STATE_DIR` → `$XDG_STATE_HOME/batfiles` → `<os-home>/.local/state/batfiles` |
 
 An absent or empty location variable is unset. Values are not trimmed.
 OS home uses nonempty `$HOME` on Unix, otherwise the passwd entry; Windows uses
@@ -228,19 +238,21 @@ directory or inspect that file is fatal when discovery is needed. Explicit
 repository selection avoids discovery. `clone` also skips discovery and uses
 the other three repository choices.
 
-Config and cache fallbacks always use **OS home**, independently of
+Config, cache, and state fallbacks always use **OS home**, independently of
 `--home-dir`/`BATFILES_HOME`. Only the repository fallback follows the selected
-destination home. Set config/cache options or environment variables explicitly
-to relocate machine state.
+destination home. Set config, cache, or state options or environment variables
+explicitly to relocate machine state.
 
 OS home is consulted only when a needed root lacks an explicit value. A command
 that needs it and cannot determine it fails; it never falls back to the current
 directory. Selecting all required roots works without a determinable home.
 Config/cache-only commands do not use the destination-home options.
 
-`-v` prints only resolved roots: `repository:`, `home:`, `config:`, `cache:` in
-that order, or just the last two for state-only commands. Cache selection also
-determines which runs share the [run lock](state.md#run-lock).
+`-v` prints only resolved roots: `repository:`, `home:`, `config:`, `cache:`,
+`state:` in that order, leaving out those the command does not resolve. A
+command that does not resolve the state root never fails for want of one. Cache
+selection also determines which runs share the [run lock](state.md#run-lock),
+which stays in the cache directory.
 
 ## Color
 

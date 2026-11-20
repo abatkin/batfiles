@@ -111,7 +111,7 @@ tested example, see [the acceptance fixture](tests/fixtures/leaf).
 
 ## Supported features
 
-Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, `include-remote`.
+Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `fetch-file`, `fetch-archive`, `git-clone`, `git-clone-list`, `include-remote`, `run`.
 
 | Need | Feature |
 | --- | --- |
@@ -121,13 +121,14 @@ Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `
 | Download content | `fetch-file`, `fetch-archive`, with optional SHA-256 verification |
 | Manage repositories or plugin lists | `git-clone`, `git-clone-list` |
 | Compose repositories | `[remotes]` supplies content; `include-remote` includes actions |
+| Run a command once, on a schedule, or after something changes | `run`, with its success recorded in [`runs.toml`](docs/state.md#runstoml-run-action-history) |
 | Choose content per machine | Groups, persistent disables, run-only skips, variables and conditions |
 | Vary paths and URLs per machine | [Templates](docs/repoformat.md#templates) such as `dest = "~/.cache/${facts.os}"` |
 | Discover machine values | Cached [dynamic variables](docs/repoformat.md#dynamic-variables) |
 
 See the [action reference](docs/repoformat.md#actions) for fields, filters, and
 examples. **Symlink actions require Unix**; executing them on Windows fails.
-Directory, copy, download, and Git actions support Windows. CI tests Linux,
+Directory, copy, download, Git, and `run` actions support Windows. CI tests Linux,
 macOS, and Windows.
 
 ## Product principles

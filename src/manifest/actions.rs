@@ -8,10 +8,12 @@ use super::DeclarationName;
 use super::ReadAs;
 use super::check::{
     ManifestError, SourceShape, ValueRule, check_archive_root, check_child_filter,
-    check_inclusion_filters, check_inclusion_remote, check_optional_template, check_source,
-    check_template,
+    check_inclusion_filters, check_inclusion_remote, check_optional_template, check_run,
+    check_source, check_template,
 };
+use super::duration::FriendlyDuration;
 use super::remote::Remote;
+use super::trigger::{EnvName, RunCommand, Trigger};
 use crate::manifest::condition::{Condition, Gate};
 use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::{ItemAddress, ItemId, ItemIdList};
@@ -33,6 +35,7 @@ pub(crate) enum Action {
     GitClone(GitCloneAction),
     GitCloneList(GitCloneListAction),
     IncludeRemote(IncludeRemoteAction),
+    Run(RunAction),
 }
 
 impl Action {
@@ -49,6 +52,7 @@ impl Action {
             Self::GitClone(it) => ("git-clone", &it.id, &it.group, &it.when, &it.unless),
             Self::GitCloneList(it) => ("git-clone-list", &it.id, &it.group, &it.when, &it.unless),
             Self::IncludeRemote(it) => ("include-remote", &it.id, &it.group, &it.when, &it.unless),
+            Self::Run(it) => ("run", &it.id, &it.group, &it.when, &it.unless),
         };
         ActionMetadata {
             kind,
@@ -59,16 +63,19 @@ impl Action {
         }
     }
 
-    /// Validate paths, URLs, digests, archive roots, and Git refs, using `record` in
-    /// diagnostics. Source remotes must appear in `remotes`. Check an inclusion's remote
-    /// declaration only for [`ReadAs::Leaf`].
+    /// Validate paths, URLs, digests, archive roots, Git refs, and `run` triggers, using
+    /// `record` in diagnostics. Source and `after` remotes must appear in `remotes`, and an
+    /// `after` action must be declared earlier than this one, at `positions`. Check an
+    /// inclusion's remote declaration only for [`ReadAs::Leaf`].
     pub fn validate(
         &self,
         record: &DeclarationName,
+        positions: &BTreeMap<&ItemId, usize>,
         remotes: &BTreeMap<ItemId, Remote>,
         read_as: ReadAs,
     ) -> Result<(), ManifestError> {
         match self {
+            Self::Run(action) => check_run(action, record, positions, remotes, read_as),
             Self::Symlink(action) => {
                 check_source(&action.source, SourceShape::Any, record, remotes)?;
                 check_template(&action.dest, "dest", ValueRule::Destination, record)
@@ -144,7 +151,8 @@ impl Action {
             | Self::FetchFile(_)
             | Self::FetchArchive(_)
             | Self::GitClone(_)
-            | Self::IncludeRemote(_) => None,
+            | Self::IncludeRemote(_)
+            | Self::Run(_) => None,
         }
     }
 
@@ -453,6 +461,46 @@ pub(crate) struct IncludeRemoteAction {
     pub vars: BTreeMap<VarName, String>,
 }
 
+/// `run`: run a command, as often as its trigger says.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct RunAction {
+    pub id: Option<ItemId>,
+    pub group: Option<ItemId>,
+    pub when: Option<Condition>,
+    pub unless: Option<Condition>,
+    /// What to run, evaluated only when the trigger fires.
+    pub command: RunCommand,
+    /// Where to run it: `~` for the selected home, and a relative path from the declaring
+    /// repository's root, which is the default.
+    pub cwd: Option<TemplateString>,
+    /// Variables to set for the command, on top of the inherited environment.
+    #[serde(default)]
+    pub env: BTreeMap<EnvName, TemplateString>,
+    #[serde(default)]
+    pub trigger: Trigger,
+    /// How long the command may run. Never zero: rejected as the document is read.
+    #[serde(default, deserialize_with = "positive_timeout")]
+    pub command_timeout: Option<FriendlyDuration>,
+    /// Whether a failed command warns instead of failing the run.
+    #[serde(default)]
+    pub allow_failure: bool,
+}
+
+/// Deserialize an optional positive `command-timeout`, rejecting zero.
+fn positive_timeout<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<FriendlyDuration>, D::Error> {
+    let timeout = Option::<FriendlyDuration>::deserialize(deserializer)?;
+    if timeout.is_some_and(|value| value.get().is_zero()) {
+        return Err(serde::de::Error::custom(
+            "`command-timeout` must be greater than zero: a zero timeout would kill the command \
+             before it could start",
+        ));
+    }
+    Ok(timeout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,6 +561,7 @@ mod tests {
                 "type = \"include-remote\"\nremote = \"core\"\n",
                 "include-remote",
             ),
+            ("type = \"run\"\ncommand = \"true\"\n", "run"),
         ] {
             assert_eq!(described(record, 1), format!("{kind} action 1"));
         }

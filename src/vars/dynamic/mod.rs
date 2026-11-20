@@ -12,10 +12,12 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 
 pub(crate) use self::cache::DynamicVarCache;
-pub(crate) use self::resolve::{CachePolicy, DynamicValueState, DynamicVarKey, ResolvedDynamicVar};
+pub(crate) use self::resolve::{
+    CachePolicy, DynamicValueState, DynamicVarKey, ResolvedDynamicVar, age,
+};
 use self::resolve::{PendingDeclaration, resolve};
 use crate::error::Error;
-use crate::location::StateRoots;
+use crate::location::MachineRoots;
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Remote;
 use crate::manifest::remote::Tree;
@@ -107,7 +109,7 @@ impl<'a> DynamicVarResolver<'a> {
     /// Create a resolver for action execution, including declarations shadowed by machine-local
     /// values. The leaf's `remotes` determine which remotes may run dynamic commands.
     pub fn for_run(
-        state: &StateRoots,
+        state: &MachineRoots,
         policy: CachePolicy,
         remotes: &BTreeMap<ItemId, Remote>,
         reporter: &'a Reporter,
@@ -122,14 +124,14 @@ impl<'a> DynamicVarResolver<'a> {
 
     /// Create a resolver for `vars list`, skipping declarations shadowed by machine-local
     /// values and excluding remote declarations.
-    pub fn for_listing(state: &StateRoots, policy: CachePolicy, reporter: &'a Reporter) -> Self {
+    pub fn for_listing(state: &MachineRoots, policy: CachePolicy, reporter: &'a Reporter) -> Self {
         Self::new(state, policy, true, BTreeSet::new(), reporter)
     }
 
     /// Create a resolver that forces `targets` and uses the run policy for other declarations
     /// needed by [`layer`](Self::layer).
     pub fn for_refresh(
-        state: &StateRoots,
+        state: &MachineRoots,
         targets: RefreshTargets,
         remotes: &BTreeMap<ItemId, Remote>,
         reporter: &'a Reporter,
@@ -141,7 +143,7 @@ impl<'a> DynamicVarResolver<'a> {
     }
 
     fn new(
-        state: &StateRoots,
+        state: &MachineRoots,
         policy: CachePolicy,
         skip_shadowed: bool,
         allowed: BTreeSet<ItemId>,

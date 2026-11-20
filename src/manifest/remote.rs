@@ -116,6 +116,15 @@ impl Remote {
         }
     }
 
+    /// Whether an included manifest's `run` actions may run their commands. Only a `git`
+    /// remote has a manifest to include.
+    pub fn allows_commands(&self) -> bool {
+        match self {
+            Self::Git(remote) => remote.allow_commands,
+            Self::File(_) | Self::Archive(_) => false,
+        }
+    }
+
     /// Whether templates in an included manifest's records may read `env`. Only a `git`
     /// remote has a manifest to include.
     pub fn allows_env_templates(&self) -> bool {
@@ -163,6 +172,11 @@ pub(crate) struct GitRemote {
     /// the `env` namespace.
     #[serde(default)]
     pub allow_env_templates: bool,
+
+    /// Whether the `run` actions in the manifest an `include-remote` reads from this remote may
+    /// run their commands.
+    #[serde(default)]
+    pub allow_commands: bool,
 
     /// The condition under which this machine materializes the remote at all.
     pub when: Option<Condition>,

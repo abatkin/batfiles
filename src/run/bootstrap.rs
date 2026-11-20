@@ -7,7 +7,7 @@ use crate::env::Environment;
 use crate::error::Error;
 use crate::filesystem::mode::RunMode;
 use crate::filesystem::paths;
-use crate::location::StateRoots;
+use crate::location::MachineRoots;
 use crate::manifest::condition::{Bindings, Gate};
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::manifest::disabled::{Change, DisabledItems};
@@ -95,7 +95,7 @@ impl BootstrapDecisions {
         &self,
         candidates: &DefaultDisabled,
         bindings: &Bindings<'_>,
-        roots: &StateRoots,
+        roots: &MachineRoots,
         mode: RunMode,
         reporter: &Reporter,
     ) -> Result<DisabledItems, Error> {

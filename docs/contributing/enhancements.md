@@ -78,3 +78,21 @@ supported releases. The [current site](distribution.md#the-pages-workflow)
 publishes one book from main and labels unreleased behavior. Versioned editions
 would need a policy for corrections, stable URLs, search scope, and retaining
 old editions without publishing stale installer entry points.
+
+## A stateless "once" for `run` actions
+
+A `creates = "<path>"` field on a [`run` action](../actions/run.md#run) that
+skips the command while the path exists, as a "once" that needs no `id` or
+`runs.toml` entry and that deleting the path resets.
+
+## Forcing `run` actions to run again
+
+A `sync` option that waives every `run` action's trigger for one run, as
+`apply-action` waives one. Today a re-run takes `apply-action` per action, or
+renaming its `id`.
+
+## Stopping a timed-out command's descendants
+
+A timed-out `run` action or dynamic variable kills only the process batfiles
+started. Killing its process group, or job object on Windows, would also stop
+what it started in the background.

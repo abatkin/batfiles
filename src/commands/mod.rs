@@ -19,8 +19,8 @@ use crate::error::Error;
 use crate::filesystem::mode::RunMode;
 use crate::filesystem::replace::ConflictPolicy;
 use crate::location::{
-    LocationInputs, Roots, StateRoots, detect_os_home, discover_working_repository, resolve_roots,
-    resolve_state_roots,
+    LocationInputs, MachineRoots, Roots, RunRoots, detect_os_home, discover_working_repository,
+    resolve_machine_roots, resolve_roots, resolve_state_dir,
 };
 use crate::output::Reporter;
 use crate::run::Invocation;
@@ -38,17 +38,17 @@ pub(crate) struct Session<'a> {
 
 impl Session<'_> {
     /// Resolve config and cache roots without repository discovery, and report them at `-v`.
-    pub fn state_roots(&self) -> Result<StateRoots, Error> {
-        let state = resolve_state_roots(&self.location_inputs(), self.env, detect_os_home)?;
-        self.report_state_roots(&state);
-        Ok(state)
+    pub fn machine_roots(&self) -> Result<MachineRoots, Error> {
+        let machine = resolve_machine_roots(&self.location_inputs(), self.env, detect_os_home)?;
+        self.report_machine_roots(&machine);
+        Ok(machine)
     }
 
-    /// [`Self::state_roots`], holding the run lock under their cache directory.
-    pub fn locked_state_roots(&self) -> Result<(StateRoots, RunLock), Error> {
-        let state = self.state_roots()?;
-        let lock = RunLock::acquire(&state.cache_dir)?;
-        Ok((state, lock))
+    /// [`Self::machine_roots`], holding the run lock under their cache directory.
+    pub fn locked_machine_roots(&self) -> Result<(MachineRoots, RunLock), Error> {
+        let machine = self.machine_roots()?;
+        let lock = RunLock::acquire(&machine.cache_dir)?;
+        Ok((machine, lock))
     }
 
     /// Resolve every root, for a command that reads the leaf repository.
@@ -59,24 +59,33 @@ impl Session<'_> {
     /// [`Self::repository_roots`], holding the run lock under their cache directory.
     pub fn locked_repository_roots(&self) -> Result<(Roots, RunLock), Error> {
         let roots = self.repository_roots()?;
-        let lock = RunLock::acquire(&roots.state.cache_dir)?;
+        let lock = RunLock::acquire(&roots.machine.cache_dir)?;
+        Ok((roots, lock))
+    }
+
+    /// [`Self::repository_roots`] and the state root, for `sync` and the apply commands, holding
+    /// the run lock under their cache directory.
+    pub fn locked_run_roots(&self) -> Result<(RunRoots, RunLock), Error> {
+        let roots = self.run_roots(self.repository_roots()?)?;
+        let lock = RunLock::acquire(&roots.repository.machine.cache_dir)?;
         Ok((roots, lock))
     }
 
     /// Resolve roots for `clone`, without searching for an existing repository.
-    pub fn new_repository_roots(&self) -> Result<Roots, Error> {
-        self.roots(|| Ok(None))
+    pub fn new_run_roots(&self) -> Result<RunRoots, Error> {
+        self.run_roots(self.roots(|| Ok(None))?)
     }
 
     /// The pipeline's inputs for a command that executes actions.
     pub fn invocation<'s>(
         &'s self,
-        roots: &'s Roots,
+        roots: &'s RunRoots,
         dry_run: bool,
         execution: &'s ExecutionOptions,
     ) -> Invocation<'s> {
         Invocation {
-            roots,
+            roots: &roots.repository,
+            state_dir: &roots.state_dir,
             mode: RunMode::new(dry_run),
             vars: &execution.vars,
             refresh_vars: execution.refresh_vars,
@@ -112,23 +121,38 @@ impl Session<'_> {
         );
         self.reporter
             .detail(1, &format!("{:<12}{}", "home:", roots.home.display()));
-        self.report_state_roots(&roots.state);
+        self.report_machine_roots(&roots.machine);
         Ok(roots)
     }
 
-    /// The four location options used by root resolution.
+    /// Add the state root to resolved repository roots, and report it at `-v`.
+    fn run_roots(&self, repository: Roots) -> Result<RunRoots, Error> {
+        let state_dir = resolve_state_dir(&self.location_inputs(), self.env, detect_os_home)?;
+        self.reporter
+            .detail(1, &format!("{:<12}{}", "state:", state_dir.display()));
+        Ok(RunRoots {
+            repository,
+            state_dir,
+        })
+    }
+
+    /// The location options used by root resolution.
     fn location_inputs(&self) -> LocationInputs {
         LocationInputs {
             batfiles_dir: self.global.batfiles_dir.clone(),
             home_dir: self.global.home_dir.clone(),
             config_dir: self.global.config_dir.clone(),
             cache_dir: self.global.cache_dir.clone(),
+            state_dir: self.global.state_dir.clone(),
         }
     }
 
     /// Report the config and cache paths at `-v`.
-    fn report_state_roots(&self, state: &StateRoots) {
-        for (label, path) in [("config:", &state.config_dir), ("cache:", &state.cache_dir)] {
+    fn report_machine_roots(&self, machine: &MachineRoots) {
+        for (label, path) in [
+            ("config:", &machine.config_dir),
+            ("cache:", &machine.cache_dir),
+        ] {
             self.reporter
                 .detail(1, &format!("{label:<12}{}", path.display()));
         }

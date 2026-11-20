@@ -14,6 +14,7 @@ pub(crate) mod item;
 pub(crate) mod remote;
 pub(crate) mod repo_path;
 pub(crate) mod template;
+pub(crate) mod trigger;
 pub(crate) mod vars;
 
 use std::collections::BTreeMap;
@@ -132,6 +133,13 @@ impl Manifest {
             }
         }
 
+        // Where each ID is first declared, for `after` targets.
+        let mut positions: BTreeMap<&ItemId, usize> = BTreeMap::new();
+        for (index, action) in self.actions.iter().enumerate() {
+            if let Some(id) = action.id() {
+                positions.entry(id).or_insert(index + 1);
+            }
+        }
         let mut seen: BTreeMap<&ItemId, usize> = BTreeMap::new();
         for (index, action) in self.actions.iter().enumerate() {
             let action_number = index + 1;
@@ -157,7 +165,7 @@ impl Manifest {
                 check_included_source(source, &record)?;
             }
 
-            action.validate(&record, &self.remotes, read_as)?;
+            action.validate(&record, &positions, &self.remotes, read_as)?;
         }
         self.default_disabled.validate()
     }

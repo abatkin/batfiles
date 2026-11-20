@@ -29,6 +29,15 @@ Enabling a group does not override its members' conditions. Conversely,
 `apply-action` deliberately bypasses the named action's own condition and
 persistent disable. See [selection](../cmdline.md#selection-by-command).
 
+## A command did not run
+
+A selected [`run` action](../actions/run.md#triggers) whose trigger did not fire
+prints `not run:` and the reason at `-v`: `not a bootstrap run`, `already ran`,
+`ran 3h ago`, or `nothing it follows changed`. Run it regardless with
+`batfiles apply-action --id <id>`. An `after` target counts only what changed in
+the run, so a change made outside batfiles does not fire it. A contributed
+command that warns about `allow-commands` needs that permission on its remote.
+
 ## Batfiles selected the wrong repository
 
 Run from the directory containing `batfiles.toml`, or provide

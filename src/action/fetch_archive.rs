@@ -11,19 +11,19 @@ use crate::run::context::RunContext;
 use crate::source::archive;
 use crate::source::fetch;
 
-/// Carry out one `fetch-archive` action.
+/// Carry out one `fetch-archive` action. Return whether it installed or replaced the contents.
 pub(super) fn fetch_archive(
     action: &FetchArchiveAction,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let source = fields.field("source", &action.source, ValueRule::Url)?;
     let sha256 = fields.optional("sha256", action.sha256.as_ref(), ValueRule::Digest)?;
     let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());
     let mut executable = ExecutableFilter::new(action.executable.as_ref());
     let mut extracted = false;
-    install::seed_directory(
+    let changed = install::seed_directory(
         install::SeedDescription {
             verb: Verb::Extract,
             origin: source.clone().into_owned(),
@@ -55,5 +55,5 @@ pub(super) fn fetch_archive(
             executable.report_unmatched(&source, context.reporter());
         }
     }
-    Ok(())
+    Ok(changed)
 }

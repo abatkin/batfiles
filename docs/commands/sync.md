@@ -38,6 +38,9 @@ fetching action's wording. Replaced file/archive materializations say
 `refetched`; unchanged ones appear only at `-v`. Remote exclusions use
 [exclusion reporting](../cmdline.md#exclusion-reporting).
 
+A [`run` action](../actions/run.md#triggers) runs only if its trigger fires.
+Its `bootstrap` trigger fires only under `--bootstrap`.
+
 `--bootstrap` performs [clone's bootstrap](clone.md#what-the-bootstrap-decides).
 The four enable/disable options in the syntax are accepted only with it;
 otherwise they are usage errors. In a dry run, bootstrap reports its decisions

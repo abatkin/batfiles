@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::env::Environment;
 use crate::error::Error;
-use crate::location::StateRoots;
+use crate::location::MachineRoots;
 use crate::manifest::remote::Tree;
 use crate::manifest::vars::VarSpec;
 use crate::output::{Reporter, quoted_value};
@@ -130,7 +130,7 @@ impl VarScope {
     pub fn resolve(
         manifest: &BTreeMap<VarName, VarSpec>,
         repository: &std::path::Path,
-        roots: &StateRoots,
+        roots: &MachineRoots,
         env: &Environment,
         cli: &[(VarName, String)],
         dynamic: &mut DynamicVarResolver<'_>,

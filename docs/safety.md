@@ -13,6 +13,12 @@ repository's commands always run; an included remote's run only where the leaf
 sets [`allow-dynamic-vars`](repoformat.md#git) on it. What such a command does
 besides printing its value is outside every rule below.
 
+A [`run` action's](actions/run.md#run) command is likewise an arbitrary program
+run as the invoking user, with no sandbox, though never in a dry run. A leaf's
+always runs when its trigger fires; an included remote's only where the leaf
+sets [`allow-commands`](repoformat.md#git) on it. Nothing a command does is
+covered by the rules below.
+
 Batfiles assumes the user trusts the leaf repository and deliberately selected
 its included repositories. Those repositories can name destinations outside the
 home directory and contribute installation actions. Git and filesystem access
@@ -371,13 +377,13 @@ update another checkout. Git inherits configuration and credentials subject to
 
 ### Permissions follow the origin
 
-[`allow-dynamic-vars` and `allow-env-templates`](repoformat.md#git) grant a
-permission to the repository a Git remote's `url` names, not to whatever is
-checked out at `remotes/<id>`. Before an inclusion of a remote granted either one
+[`allow-dynamic-vars`, `allow-env-templates`, and `allow-commands`](repoformat.md#git)
+grant a permission to the repository a Git remote's `url` names, not to whatever is
+checked out at `remotes/<id>`. Before an inclusion of a remote granted any of them
 is used, batfiles compares the `origin` URL recorded in the checkout's own
 `.git` with `url` as it resolves now. `sync`, `clone`, apply commands, and
 `vars refresh` check, dry runs included: reading that configuration is the one
-Git command a dry run runs. A remote granted neither permission is not checked.
+Git command a dry run runs. A remote granted none of them is not checked.
 
 - A URL with a scheme, or a `host:path` address, must match exactly.
 - A local path matches once a relative one is resolved against the working
@@ -386,7 +392,8 @@ Git command a dry run runs. A remote granted neither permission is not checked.
 
 A different origin, no origin, more than one origin URL, one Git cannot read,
 or a checkout without a `.git` directory of its own fails the run before the
-inclusion's variables or actions are used. The error names the remote and the
+inclusion's variables or actions are used, and so before any command it
+contributes starts. The error names the remote and the
 checkout but no URL. Move the checkout aside and run `sync` to clone the
 declared repository.
 

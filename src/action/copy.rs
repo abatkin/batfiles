@@ -22,13 +22,14 @@ use crate::run::context::RunContext;
 /// it, together with every directory holding one.
 type SelectedPaths = BTreeSet<PathBuf>;
 
-/// Carry out one `copy` action: one file or one directory, at one destination.
+/// Carry out one `copy` action: one file or one directory, at one destination. Return whether
+/// it installed or replaced the copy.
 pub(super) fn copy(
     action: &CopyAction,
     tree: Tree<&ItemId>,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);
     let source = context.source(tree, &action.source)?;
     let kind = kind_of_source(&source)?;
@@ -40,19 +41,19 @@ pub(super) fn copy(
         return Err(Error::FilteredSourceIsAFile { path: source });
     }
     let selected = select(&source, &mut filter)?;
-    seed(&source, kind, &dest, &Copied::root(&selected), context)?;
+    let changed = seed(&source, kind, &dest, &Copied::root(&selected), context)?;
     filter.report_unmatched(&source.display().to_string(), context.reporter());
-    Ok(())
+    Ok(changed)
 }
 
 /// Carry out one `copy-dir` action: one copy per direct child of a directory,
-/// all of them in one destination directory.
+/// all of them in one destination directory. Return whether it installed or replaced a child.
 pub(super) fn copy_dir(
     action: &CopyDirAction,
     tree: Tree<&ItemId>,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let dest_dir = fields.field("dest-dir", &action.dest_dir, ValueRule::Destination)?;
     let dest_dir = context.destination(&dest_dir);
     let source_dir = context.source_directory(tree, &action.source_dir)?;
@@ -63,7 +64,7 @@ pub(super) fn copy_dir(
         Some(filter) => Some(select(&source_dir, filter)?),
         None => None,
     };
-    for_each_child(
+    let children = for_each_child(
         context,
         &ChildInstall {
             source_dir: &source_dir,
@@ -90,7 +91,7 @@ pub(super) fn copy_dir(
     if let Some(filter) = &filter {
         filter.report_unmatched(&source_dir.display().to_string(), context.reporter());
     }
-    Ok(())
+    Ok(children.changed)
 }
 
 /// Which of a copied directory's contents are copied.
@@ -166,14 +167,14 @@ fn select_under(
 }
 
 /// Seed `dest` with a copy of `source`, using its classified content kind and copying what
-/// `copied` says of a directory.
+/// `copied` says of a directory. Return whether it installed or replaced the copy.
 fn seed(
     source: &Path,
     kind: ContentKind,
     dest: &Path,
     copied: &Copied,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let seed = install::SeedDescription {
         verb: Verb::Copy,
         origin: source.display().to_string(),

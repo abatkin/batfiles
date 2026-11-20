@@ -10,19 +10,21 @@ use super::update::{follow_ref, update_clone};
 use crate::error::Error;
 use crate::filesystem::directory;
 use crate::filesystem::paths::{self, ExistingNode, Occupancy, RepositoryRoot};
-use crate::filesystem::replace::{ConflictDecision, ConflictResolver};
+use crate::filesystem::replace::{ConflictDecision, ConflictResolver, ExistingContent};
 use crate::output::{Reporter, Verb};
 
 /// Clone into a vacant or replaceable destination, or update an existing clone. Resolve other
 /// occupants, including unusable clones, using `resolver`. Existing clones retain their
 /// configured remotes regardless of `url`. Dry runs inspect and report without invoking Git.
+/// Return whether it cloned, or an update moved the checkout to a different commit; a dry run
+/// reports a clone it would make.
 pub(crate) fn clone_or_update(
     url: &str,
     dest: &Path,
     git_ref: Option<&str>,
     repository: &RepositoryRoot,
     resolver: &ConflictResolver<'_>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let (mode, reporter) = (resolver.mode(), resolver.reporter());
     let clone_here = || clone(url, dest, git_ref, resolver);
     match Occupancy::at(dest, repository)? {
@@ -34,7 +36,7 @@ pub(crate) fn clone_or_update(
                     Verb::Update.for_mode(mode),
                     dest.display()
                 ));
-                return Ok(());
+                return Ok(false);
             }
             let failure = match validate_clone(dest) {
                 Ok(()) => return update_clone(dest, git_ref, reporter),
@@ -46,8 +48,8 @@ pub(crate) fn clone_or_update(
             };
             match resolver.resolve(dest, &found)? {
                 ConflictDecision::Refuse => Err(failure.into()),
-                ConflictDecision::Skip => Ok(()),
-                ConflictDecision::Replace(keep) => resolver.replace(dest, keep, clone_here),
+                ConflictDecision::Skip => Ok(false),
+                ConflictDecision::Replace(keep) => replacing(resolver, dest, keep, clone_here),
             }
         }
         Occupancy::Unmanaged(found) => match resolver.resolve(dest, &found)? {
@@ -55,8 +57,8 @@ pub(crate) fn clone_or_update(
                 path: dest.to_path_buf(),
                 found,
             }),
-            ConflictDecision::Skip => Ok(()),
-            ConflictDecision::Replace(keep) => resolver.replace(dest, keep, clone_here),
+            ConflictDecision::Skip => Ok(false),
+            ConflictDecision::Replace(keep) => replacing(resolver, dest, keep, clone_here),
         },
         Occupancy::Replaceable { written, .. } => {
             if mode.writes() {
@@ -74,17 +76,33 @@ pub(crate) fn clone_or_update(
     }
 }
 
+/// Set `dest` aside under `keep` and clone in its place, returning whether the clone was made.
+fn replacing(
+    resolver: &ConflictResolver<'_>,
+    dest: &Path,
+    keep: ExistingContent,
+    clone: impl FnOnce() -> Result<bool, Error>,
+) -> Result<bool, Error> {
+    let mut cloned = false;
+    resolver.replace(dest, keep, || {
+        cloned = clone()?;
+        Ok(())
+    })?;
+    Ok(cloned)
+}
+
 /// Clone into a vacant destination, creating parents and following the declared ref. Report the
-/// operation or dry-run intent.
+/// operation or dry-run intent. Return whether it cloned, which a skipped parent conflict
+/// prevents.
 fn clone(
     url: &str,
     dest: &Path,
     git_ref: Option<&str>,
     resolver: &ConflictResolver<'_>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let (mode, reporter) = (resolver.mode(), resolver.reporter());
     if !directory::create_parents(dest, resolver)? {
-        return Ok(());
+        return Ok(false);
     }
     if mode.writes() {
         clone_repository(url, dest, git_ref, reporter)?;
@@ -95,7 +113,7 @@ fn clone(
         dest.display(),
         ref_suffix(git_ref)
     ));
-    Ok(())
+    Ok(true)
 }
 
 /// Clone into a vacant destination and follow `git_ref` where one is given, without reporting

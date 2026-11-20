@@ -38,6 +38,7 @@
   - [git-clone](actions/git-clone.md)
   - [git-clone-list](actions/git-clone-list.md)
   - [include-remote](actions/include-remote.md)
+  - [run](actions/run.md)
 - [Environment and locations](environment.md)
 - [Safety and backups](safety.md)
 - [State and cache](state.md)

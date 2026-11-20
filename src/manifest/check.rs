@@ -8,8 +8,10 @@ use std::path::{Component, Path};
 use thiserror::Error;
 
 use super::DeclarationName;
-use super::actions::IncludeRemoteAction;
+use super::ReadAs;
+use super::actions::{IncludeRemoteAction, RunAction};
 use super::remote::Remote;
+use super::trigger::{AfterTarget, Trigger};
 use crate::manifest::condition::{Condition, SyntaxError};
 use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::ItemId;
@@ -213,6 +215,64 @@ pub(crate) enum ManifestError {
         value: String,
     },
 
+    /// A `run` action whose trigger keeps state, without the `id` that state is kept under.
+    #[error(
+        "{record}: a `{trigger}` trigger records when the command last succeeded under the \
+         action's address, so the action needs an `id`"
+    )]
+    StatefulTriggerWithoutId {
+        record: DeclarationName,
+        trigger: &'static str,
+    },
+
+    /// An `after` target naming no action in the manifest.
+    #[error(
+        "{record}: `after` names `{target}`, which no action in this manifest declares; write \
+         `@{target}` to follow a remote"
+    )]
+    AfterTargetUnknown {
+        record: DeclarationName,
+        target: ItemId,
+    },
+
+    /// An `after` target naming the action that declares it.
+    #[error("{record}: `after` names `{target}`, the action itself")]
+    AfterTargetSelf {
+        record: DeclarationName,
+        target: ItemId,
+    },
+
+    /// An `after` target declared later in the manifest.
+    #[error(
+        "{record}: `after` names `{target}`, which is action {at}; an action follows only \
+         actions declared before it"
+    )]
+    AfterTargetLater {
+        record: DeclarationName,
+        target: ItemId,
+        at: usize,
+    },
+
+    /// An `after` remote the manifest does not declare.
+    #[error(
+        "{record}: `after` names `@{remote}`, which this manifest does not declare; add a \
+         `[remotes.{remote}]` record"
+    )]
+    AfterRemoteUndeclared {
+        record: DeclarationName,
+        remote: ItemId,
+    },
+
+    /// An included `run` action following a remote.
+    #[error(
+        "{record}: `after` names `@{remote}`, which an included action may not do; remote \
+         references belong to the leaf repository"
+    )]
+    IncludedAfterNamesRemote {
+        record: DeclarationName,
+        remote: ItemId,
+    },
+
     /// A filter over direct children whose pattern could only match below one.
     #[error(
         "{record}: {field} pattern `{pattern}` contains `/`; this action's filters match \
@@ -239,6 +299,8 @@ pub(crate) enum ValueRule {
     GitRef,
     /// A SHA-256 digest.
     Digest,
+    /// Any text, such as part of a command.
+    Text,
 }
 
 impl ValueRule {
@@ -254,7 +316,7 @@ impl ValueRule {
             {
                 Err(ValueError::DigestNotSha256)
             }
-            Self::GitSource | Self::GitRef | Self::Digest => Ok(()),
+            Self::GitSource | Self::GitRef | Self::Digest | Self::Text => Ok(()),
         }
     }
 }
@@ -314,6 +376,76 @@ pub(super) fn check_template(
         }),
         None => Ok(()),
     }
+}
+
+/// Check a `run` action: its command parses, a stateful trigger has an `id` to keep state under,
+/// and each `after` target is an action declared earlier, at `positions`, or a remote in
+/// `remotes` that a [`ReadAs::Leaf`] manifest declares.
+pub(super) fn check_run(
+    action: &RunAction,
+    record: &DeclarationName,
+    positions: &BTreeMap<&ItemId, usize>,
+    remotes: &BTreeMap<ItemId, Remote>,
+    read_as: ReadAs,
+) -> Result<(), ManifestError> {
+    for part in action.command.parts() {
+        check_template(part, "command", ValueRule::Text, record)?;
+    }
+    check_optional_template(action.cwd.as_ref(), "cwd", ValueRule::Destination, record)?;
+    for value in action.env.values() {
+        check_template(value, "env", ValueRule::Text, record)?;
+    }
+    if action.trigger.keeps_state() && action.id.is_none() {
+        return Err(ManifestError::StatefulTriggerWithoutId {
+            record: record.clone(),
+            trigger: action.trigger.kind(),
+        });
+    }
+    let Trigger::After(targets) = &action.trigger else {
+        return Ok(());
+    };
+    for target in targets {
+        match target {
+            AfterTarget::Action(target) if action.id.as_ref() == Some(target) => {
+                return Err(ManifestError::AfterTargetSelf {
+                    record: record.clone(),
+                    target: target.clone(),
+                });
+            }
+            AfterTarget::Action(target) => match (positions.get(target), record) {
+                (None, _) => {
+                    return Err(ManifestError::AfterTargetUnknown {
+                        record: record.clone(),
+                        target: target.clone(),
+                    });
+                }
+                (Some(&at), DeclarationName::Action(number)) if at > *number => {
+                    return Err(ManifestError::AfterTargetLater {
+                        record: record.clone(),
+                        target: target.clone(),
+                        at,
+                    });
+                }
+                (Some(_), _) => {}
+            },
+            AfterTarget::Remote(remote) => match read_as {
+                ReadAs::Included => {
+                    return Err(ManifestError::IncludedAfterNamesRemote {
+                        record: record.clone(),
+                        remote: remote.clone(),
+                    });
+                }
+                ReadAs::Leaf if !remotes.contains_key(remote) => {
+                    return Err(ManifestError::AfterRemoteUndeclared {
+                        record: record.clone(),
+                        remote: remote.clone(),
+                    });
+                }
+                ReadAs::Leaf => {}
+            },
+        }
+    }
+    Ok(())
 }
 
 /// Check a record's `when` and `unless`: at most one is written, and it parses.

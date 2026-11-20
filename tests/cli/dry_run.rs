@@ -27,7 +27,7 @@ fn a_dry_run_writes_nothing_at_all_into_the_home() {
 
 /// Total action count in the leaf fixture. Output parity excludes the two seeds sharing a
 /// destination.
-const PARITY_ACTIONS: usize = 14;
+const PARITY_ACTIONS: usize = 15;
 
 #[test]
 fn a_dry_runs_lines_are_the_real_runs_lines_in_another_tense() {
@@ -195,6 +195,8 @@ fn in_past_tense(line: &str) -> String {
         ("would create ", "created "),
         ("would remove ", "removed "),
         ("would keep ", "kept "),
+        // A command is named before it runs, so its line keeps the action's own heading.
+        ("would run ", "run "),
     ] {
         if let Some(rest) = line.strip_prefix(prospective) {
             return format!("{past}{rest}");

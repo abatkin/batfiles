@@ -25,13 +25,14 @@ fn symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
     Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
-/// Create or repair the symlink declared by one `symlink` action.
+/// Create or repair the symlink declared by one `symlink` action. Return whether it created or
+/// replaced the link.
 pub(super) fn link(
     action: &SymlinkAction,
     tree: Tree<&ItemId>,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     require_symlink_support("symlink")?;
 
     let dest = context.destination(&fields.field("dest", &action.dest, ValueRule::Destination)?);
@@ -40,13 +41,14 @@ pub(super) fn link(
 }
 
 /// Carry out one `symlink-dir` action: one link per direct child of a
-/// directory, all of them in one destination directory.
+/// directory, all of them in one destination directory. Return whether it created or replaced
+/// a link.
 pub(super) fn link_dir(
     action: &SymlinkDirAction,
     tree: Tree<&ItemId>,
     fields: &Resolver<'_, '_>,
     context: &RunContext,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     require_symlink_support("symlink-dir")?;
 
     let dest_dir = fields.field("dest-dir", &action.dest_dir, ValueRule::Destination)?;
@@ -55,7 +57,7 @@ pub(super) fn link_dir(
     paths::refuse_destination_inside_source(&source_dir, &dest_dir)?;
 
     let mut filter = EntryFilter::new(action.include.as_ref(), action.exclude.as_ref());
-    let enumerated = for_each_child(
+    let children = for_each_child(
         context,
         &ChildInstall {
             source_dir: &source_dir,
@@ -70,10 +72,10 @@ pub(super) fn link_dir(
         },
         |source, dest| link_one(source, dest, context),
     )?;
-    if let Some(filter) = filter.as_ref().filter(|_| enumerated) {
+    if let Some(filter) = filter.as_ref().filter(|_| children.enumerated) {
         filter.report_unmatched(&source_dir.display().to_string(), context.reporter());
     }
-    Ok(())
+    Ok(children.changed)
 }
 
 /// Refuse an action type that makes symlinks where batfiles cannot make one.
@@ -86,8 +88,9 @@ fn require_symlink_support(action_type: &'static str) -> Result<(), Error> {
 }
 
 /// Create one symlink, repair it, or leave it alone; settle an unmanaged node
-/// in the way under the run's conflict policy.
-fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Error> {
+/// in the way under the run's conflict policy. Return whether the link was created or
+/// replaced.
+fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<bool, Error> {
     let reporter = context.reporter();
     let mode = context.mode();
     let resolver = context.conflict_resolver();
@@ -96,6 +99,7 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
             if points_at == paths::canonicalize_or_normalize(target) =>
         {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
+            Ok(false)
         }
         Occupancy::Replaceable { written, .. } => {
             paths::refuse_destination_inside_source(target, dest)?;
@@ -111,29 +115,29 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
                 target.display(),
                 written.display()
             ));
+            Ok(true)
         }
         Occupancy::Vacant => {
             paths::refuse_destination_inside_source(target, dest)?;
             // Resolve the conflict before creating parent directories.
             if !directory::create_parents(dest, &resolver)? {
-                return Ok(());
+                return Ok(false);
             }
             if mode.writes() {
                 create(target, dest)?;
             }
             report_link(target, dest, context);
+            Ok(true)
         }
         Occupancy::Unmanaged(found) => {
             paths::refuse_destination_inside_source(target, dest)?;
             paths::refuse_setting_aside_a_source(target, dest)?;
             match resolver.resolve(dest, &found)? {
-                ConflictDecision::Refuse => {
-                    return Err(Error::DestinationExists {
-                        path: dest.to_path_buf(),
-                        found,
-                    });
-                }
-                ConflictDecision::Skip => {}
+                ConflictDecision::Refuse => Err(Error::DestinationExists {
+                    path: dest.to_path_buf(),
+                    found,
+                }),
+                ConflictDecision::Skip => Ok(false),
                 ConflictDecision::Replace(keep) => {
                     resolver.replace(dest, keep, || {
                         if mode.writes() {
@@ -142,11 +146,11 @@ fn link_one(target: &Path, dest: &Path, context: &RunContext) -> Result<(), Erro
                         Ok(())
                     })?;
                     report_link(target, dest, context);
+                    Ok(true)
                 }
             }
         }
     }
-    Ok(())
 }
 
 /// Report a symlink creation or planned creation.

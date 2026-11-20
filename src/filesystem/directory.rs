@@ -23,6 +23,16 @@ pub(crate) enum DirectoryOutcome {
 }
 
 impl DirectoryOutcome {
+    /// Whether there is a directory to install into, which a skipped conflict prevents.
+    pub fn usable(&self) -> bool {
+        !matches!(self, Self::Skipped)
+    }
+
+    /// Whether the directory was created, or in a dry run would be.
+    pub fn created(&self) -> bool {
+        matches!(self, Self::Created { .. })
+    }
+
     /// Report what this cleared, in order, as ordinary progress. Touches no
     /// filesystem; `mode` sets the tense.
     pub fn report_removals(&self, mode: RunMode, reporter: &Reporter) {

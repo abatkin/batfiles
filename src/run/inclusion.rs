@@ -53,6 +53,11 @@ impl Inclusion {
         &self.remote
     }
 
+    /// Whether it has an `id` to qualify its records' addresses.
+    pub fn is_named(&self) -> bool {
+        self.id.is_some()
+    }
+
     /// How a report names it.
     pub fn label(&self) -> &str {
         &self.label
@@ -96,6 +101,7 @@ impl Inclusion {
         match exclusion {
             Exclusion::Deliberate(_) => Exclusion::Deliberate(reason),
             Exclusion::EvaluationFailed(_) => Exclusion::EvaluationFailed(reason),
+            Exclusion::NotPermitted(_) => Exclusion::NotPermitted(reason),
         }
     }
 
@@ -136,8 +142,8 @@ impl Inclusion {
 impl Inclusion {
     /// Refuse `checkout`, a Git remote's materialization, if `declared` grants the remote a
     /// permission and the checkout's recorded origin is not the repository `declared`'s `url`
-    /// names. A missing, ambiguous, or unreadable origin is refused too. Either permission
-    /// triggers the check; a remote granted neither, or not a Git remote, is not checked.
+    /// names. A missing, ambiguous, or unreadable origin is refused too. Any permission
+    /// triggers the check; a remote granted none, or not a Git remote, is not checked.
     fn verify_checkout(
         &self,
         declared: &Remote,
@@ -147,11 +153,18 @@ impl Inclusion {
         let Remote::Git(git) = declared else {
             return Ok(());
         };
-        let permissions = match (git.allow_dynamic_vars, git.allow_env_templates) {
-            (false, false) => return Ok(()),
-            (true, false) => "allow-dynamic-vars",
-            (false, true) => "allow-env-templates",
-            (true, true) => "allow-dynamic-vars and allow-env-templates",
+        let granted: Vec<&str> = [
+            (git.allow_dynamic_vars, "allow-dynamic-vars"),
+            (git.allow_env_templates, "allow-env-templates"),
+            (git.allow_commands, "allow-commands"),
+        ]
+        .into_iter()
+        .filter_map(|(granted, name)| granted.then_some(name))
+        .collect();
+        let permissions = match granted.as_slice() {
+            [] => return Ok(()),
+            [one] => (*one).to_owned(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
         };
         let heading = format!("remote {}", self.remote);
         let url = Resolver::new(&heading, bindings, EnvAccess::Allowed).field(

@@ -14,7 +14,7 @@ pub(crate) fn run(
     change: Change,
     session: &Session<'_>,
 ) -> Result<(), Error> {
-    let (roots, _lock) = session.locked_state_roots()?;
+    let (roots, _lock) = session.locked_machine_roots()?;
     let reporter = session.reporter;
     // Validate all names before reading or writing state.
     let names = parse_all(names, reporter)?;

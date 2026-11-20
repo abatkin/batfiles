@@ -18,7 +18,7 @@ pub(crate) struct MachineVars {
 }
 
 impl MachineVars {
-    /// The document's file name; [`StateRoots`](crate::location::StateRoots) decides its directory.
+    /// The document's file name; [`MachineRoots`](crate::location::MachineRoots) decides its directory.
     pub const FILE_NAME: &'static str = "vars.toml";
 
     /// Load the document, treating a missing file as no values.

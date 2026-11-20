@@ -458,3 +458,28 @@ remote = "broken"
         "{document}"
     );
 }
+
+#[test]
+fn a_relative_program_runs_under_a_relative_repository_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tree = declaring(r#"{ command = ["./probe"] }"#);
+    tree.repo_file("probe", "#!/bin/sh\nprintf work\n");
+    fs::set_permissions(tree.path("repo/probe"), fs::Permissions::from_mode(0o755))
+        .expect("an executable probe");
+    let relative = |args: &[&str]| {
+        tree.batfiles()
+            .current_dir(tree.root())
+            .args(["--batfiles-dir", "repo"])
+            .args(args)
+            .assert()
+            .success()
+    };
+
+    relative(&["vars", "refresh"]);
+    relative(&["sync", "--refresh-vars"]);
+    assert!(
+        tree.home("work").is_dir(),
+        "the command's value was not read"
+    );
+}

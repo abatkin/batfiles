@@ -64,6 +64,9 @@ pub(crate) fn excluded(
 /// the leaf root `repository`; `tool_owned` refuses an unmanaged node at one, and carries the
 /// run's mode and reporter. Dry runs report intent without Git or downloads. Stop on the first
 /// failure.
+///
+/// Call `changed` with each remote that changed, as soon as it has: fetched or refetched, cloned,
+/// or moved to a different commit.
 pub(crate) fn materialize(
     remotes: &BTreeMap<ItemId, Remote>,
     bindings: &Bindings<'_>,
@@ -71,6 +74,7 @@ pub(crate) fn materialize(
     repository: &RepositoryRoot,
     tool_owned: &ConflictResolver<'_>,
     refetch: bool,
+    mut changed: impl FnMut(&ItemId),
 ) -> Result<(), Error> {
     let reporter = tool_owned.reporter();
     for (id, remote) in remotes {
@@ -82,40 +86,43 @@ pub(crate) fn materialize(
         reporter.detail(1, &heading);
         let fields = Resolver::new(&heading, bindings, EnvAccess::Allowed);
         let dest = materialization(repository.path(), id);
-        match remote {
+        let moved = match remote {
             Remote::Git(remote) => {
                 let url = fields.field("url", &remote.url, ValueRule::GitSource)?;
                 let git_ref = fields.optional("ref", remote.git_ref.as_ref(), ValueRule::GitRef)?;
-                git::clone_or_update(&url, &dest, git_ref.as_deref(), repository, tool_owned)?;
+                let moved =
+                    git::clone_or_update(&url, &dest, git_ref.as_deref(), repository, tool_owned)?;
                 // A successful Git materialization invalidates any earlier file/archive stamp.
                 if tool_owned.mode().writes() {
                     tomlfile::remove(&stamp_path(&dest))?;
                 }
+                moved
             }
-            Remote::File(remote) => {
-                fetch(
-                    id,
-                    Stamp::file(remote, &fields)?,
-                    None,
-                    None,
-                    &dest,
-                    refetch,
-                    tool_owned,
-                )?;
-            }
+            Remote::File(remote) => fetch(
+                id,
+                Stamp::file(remote, &fields)?,
+                None,
+                None,
+                &dest,
+                refetch,
+                tool_owned,
+            )?,
             Remote::Archive(remote) => {
                 let filter = EntryFilter::new(remote.include.as_ref(), remote.exclude.as_ref());
                 let executable = ExecutableFilter::new(remote.executable.as_ref());
                 let wanted = Stamp::archive(remote, &fields)?;
-                fetch(id, wanted, filter, executable, &dest, refetch, tool_owned)?;
+                fetch(id, wanted, filter, executable, &dest, refetch, tool_owned)?
             }
+        };
+        if moved {
+            changed(id);
         }
     }
     Ok(())
 }
 
 /// Fetch a file or archive unless its stamp matches `wanted` and `refetch` is false. Refuse
-/// occupied destinations without a matching ownership stamp.
+/// occupied destinations without a matching ownership stamp. Return whether it fetched.
 fn fetch(
     id: &ItemId,
     wanted: Stamp,
@@ -124,7 +131,7 @@ fn fetch(
     dest: &Path,
     refetch: bool,
     tool_owned: &ConflictResolver<'_>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let stamp = stamp_path(dest);
     let found = FilesystemEntryKind::at(dest)?;
     let recorded = read_stamp(&stamp)?;
@@ -133,7 +140,7 @@ fn fetch(
     let replacing = match decide(found.as_ref(), recorded.as_ref(), &wanted, refetch) {
         Plan::Unchanged => {
             reporter.detail(1, &format!("unchanged {}", dest.display()));
-            return Ok(());
+            return Ok(false);
         }
         Plan::Refuse(found) => {
             return Err(Error::MaterializationNotFetched {
@@ -209,7 +216,7 @@ fn fetch(
             executable.report_unmatched(url, reporter);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Return the stamp path beside a materialization.

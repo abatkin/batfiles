@@ -124,6 +124,18 @@ group = "bin"
 source = "bin/batgrep"
 dest = "~/.local/bin/batgrep"
 
+# The helper is a script, so check that it still parses: once on a new machine,
+# and again whenever its link is made or remade. The command runs in the
+# repository root, so it names the script by its path there. It follows the link
+# even where the link is disabled, which is why it runs on a machine that never
+# installs the helper.
+[[actions]]
+type = "run"
+id = "batgrep-check"
+group = "bin"
+command = ["sh", "-n", "bin/batgrep"]
+trigger = { after = "batgrep" }
+
 # The whole of `files/` in one entry: adding a dotfile there needs no manifest
 # change, which is the reason this exists rather than three more `symlink`
 # records. The names are undotted in the repository and dotted in the home.

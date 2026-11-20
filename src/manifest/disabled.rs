@@ -23,7 +23,7 @@ pub(crate) struct DisabledItems {
 }
 
 impl DisabledItems {
-    /// The document's file name; [`StateRoots`](crate::location::StateRoots) decides its directory.
+    /// The document's file name; [`MachineRoots`](crate::location::MachineRoots) decides its directory.
     pub const FILE_NAME: &'static str = "disabled.toml";
 
     /// Load the document, treating a missing file as an empty disabled set.

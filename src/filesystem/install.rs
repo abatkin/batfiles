@@ -45,12 +45,13 @@ pub(crate) struct Seeding<'a> {
 
 /// Seed a file using `fill`, which receives the open staging file and its path for diagnostics.
 /// Call `fill` only in perform mode. On error, do not publish and attempt staging cleanup.
+/// Return whether the seed was installed or replaced, or in a dry run would be.
 pub(crate) fn seed_file(
     seed: SeedDescription<'_>,
     dest: &Path,
     seeding: &Seeding<'_>,
     fill: impl FnOnce(fs::File, &Path) -> Result<(), Error>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     seed_content(
         seed,
         ContentKind::File,
@@ -62,13 +63,14 @@ pub(crate) fn seed_file(
 }
 
 /// Seed a directory using `fill`, which receives the staging directory path. Call `fill` only
-/// in perform mode. On error, do not publish and attempt staging cleanup.
+/// in perform mode. On error, do not publish and attempt staging cleanup. Return whether the
+/// seed was installed or replaced, or in a dry run would be.
 pub(crate) fn seed_directory(
     seed: SeedDescription<'_>,
     dest: &Path,
     seeding: &Seeding<'_>,
     fill: impl FnOnce(&Path) -> Result<(), Error>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     seed_content(
         seed,
         ContentKind::Directory,
@@ -82,7 +84,7 @@ pub(crate) fn seed_directory(
 /// Build and publish a seed, keeping occupied destinations unless content refresh is enabled.
 /// Check source containment and create missing parents before staging. `make` creates the
 /// staging node and `fill` populates it. Dry runs report intent without creating content or
-/// parents.
+/// parents. Return whether the seed was installed or replaced.
 fn seed_content<T>(
     seed: SeedDescription<'_>,
     kind: ContentKind,
@@ -90,7 +92,7 @@ fn seed_content<T>(
     seeding: &Seeding<'_>,
     make: impl FnOnce(&Path) -> io::Result<T>,
     fill: impl FnOnce(T, &Path) -> Result<(), Error>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let resolver = &seeding.resolver;
     let (mode, reporter) = (resolver.mode(), resolver.reporter());
     // Skip rebuilding occupied seeds under `--no-overwrite`.
@@ -99,7 +101,7 @@ fn seed_content<T>(
         Occupancy::Vacant => None,
         _ if !refreshing => {
             report_kept(dest, mode, reporter);
-            return Ok(());
+            return Ok(false);
         }
         Occupancy::Replaceable { .. } => Some(OccupiedDestination::Replaceable),
         Occupancy::Unmanaged(found) => Some(OccupiedDestination::Unmanaged(found)),
@@ -113,17 +115,17 @@ fn seed_content<T>(
                 paths::refuse_setting_aside_a_source(source, dest)?;
             }
             if !refresh_seed(kind, dest, existing, resolver, make, fill)? {
-                return Ok(());
+                return Ok(false);
             }
             Verb::Refresh
         }
         None => {
             if !directory::create_parents(dest, resolver)? {
-                return Ok(());
+                return Ok(false);
             }
             if mode.writes() && !build_and_publish(kind, dest, reporter, make, fill)? {
                 report_kept(dest, mode, reporter);
-                return Ok(());
+                return Ok(false);
             }
             seed.verb
         }
@@ -134,7 +136,7 @@ fn seed_content<T>(
         dest.display(),
         seed.origin
     ));
-    Ok(())
+    Ok(true)
 }
 
 /// What a refresh finds at an occupied seed destination.

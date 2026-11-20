@@ -18,18 +18,30 @@ pub(super) struct ChildInstall<'a> {
     pub verb: Verb,
 }
 
+/// What [`for_each_child`] did.
+pub(super) struct Children {
+    /// Whether the children were enumerated, which a skipped conflict prevents.
+    pub enumerated: bool,
+    /// Whether the destination directory was created, or any `install_one` installed or replaced
+    /// a child.
+    pub changed: bool,
+}
+
 /// Ensure the destination directory exists, then call `install_one(source, dest)` for each
-/// direct child `selects` accepts, in name order. Stop if the directory conflict is skipped or
-/// a child fails. Return whether the children were enumerated, which a skipped conflict
-/// prevents.
+/// direct child `selects` accepts, in name order; it returns whether it installed or replaced
+/// the child. Stop if the directory conflict is skipped or a child fails.
 pub(super) fn for_each_child(
     context: &RunContext,
     install: &ChildInstall,
     mut selects: impl FnMut(&OsStr) -> bool,
-    install_one: impl Fn(&Path, &Path) -> Result<(), Error>,
-) -> Result<bool, Error> {
-    if !context.ensure_directory(install.dest_dir)? {
-        return Ok(false);
+    install_one: impl Fn(&Path, &Path) -> Result<bool, Error>,
+) -> Result<Children, Error> {
+    let directory = context.ensure_directory(install.dest_dir)?;
+    if !directory.usable() {
+        return Ok(Children {
+            enumerated: false,
+            changed: false,
+        });
     }
 
     let children = paths::children_of(install.source_dir)?;
@@ -53,14 +65,19 @@ pub(super) fn for_each_child(
             ),
         );
     }
+    // Creating the destination is a change even when no child is installed into it.
+    let mut changed = directory.created();
     for child in selected {
         let installed = installed_name(&child, install.dot_prefix)?;
-        install_one(
+        changed |= install_one(
             &install.source_dir.join(&child),
             &install.dest_dir.join(installed),
         )?;
     }
-    Ok(true)
+    Ok(Children {
+        enumerated: true,
+        changed,
+    })
 }
 
 /// Return the installed child name. With `dot_prefix`, prepend `.` or fail if the name already

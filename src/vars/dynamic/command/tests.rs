@@ -2,20 +2,6 @@ use super::*;
 use crate::manifest::duration::FriendlyDuration;
 
 #[test]
-fn the_poll_interval_doubles_up_to_the_ceiling_and_stops_there() {
-    let mut interval = FIRST_POLL_INTERVAL;
-    let mut sequence = vec![interval];
-    for _ in 0..5 {
-        interval = next_poll_interval(interval);
-        sequence.push(interval);
-    }
-    assert_eq!(
-        sequence,
-        [1, 2, 4, 8, 10, 10].map(Duration::from_millis).to_vec()
-    );
-}
-
-#[test]
 fn a_declaration_without_a_timeout_gets_the_documented_default() {
     assert_eq!(
         FriendlyDuration::new("5s").expect("valid").get(),
@@ -27,6 +13,7 @@ fn a_declaration_without_a_timeout_gets_the_documented_default() {
 #[cfg(unix)]
 mod running {
     use super::*;
+    use crate::manifest::vars::CommandSpec;
     use tempfile::TempDir;
 
     fn spec_of(

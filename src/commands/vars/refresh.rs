@@ -51,8 +51,12 @@ pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), E
             .collect(),
     )?;
 
-    let mut dynamic =
-        DynamicVarResolver::for_refresh(&roots.state, targets.clone(), &manifest.remotes, reporter);
+    let mut dynamic = DynamicVarResolver::for_refresh(
+        &roots.machine,
+        targets.clone(),
+        &manifest.remotes,
+        reporter,
+    );
     if targets.reaches_remotes() {
         refresh_with_remotes(manifest, &targets, &roots, env, &mut dynamic, reporter)?;
     } else {
@@ -79,7 +83,7 @@ fn refresh_with_remotes(
     let variables = Rc::new(VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,
-        &roots.state,
+        &roots.machine,
         env,
         &[],
         dynamic,
@@ -90,7 +94,7 @@ fn refresh_with_remotes(
     let host = HostNamespaces::capture(env);
     let bindings = Bindings::new(&variables, &host);
     let selection =
-        Selection::without_run_skips(DisabledItems::load(&roots.state.disabled_path())?);
+        Selection::without_run_skips(DisabledItems::load(&roots.machine.disabled_path())?);
     let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
     let repository = paths::anchor(&roots.batfiles_repo)?;
     let reach = reachability(&manifest.actions, &selection, &bindings, &excluded_remotes);

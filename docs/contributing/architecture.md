@@ -38,10 +38,11 @@ where rendering requires it.
 and SSH agent. Keep Git's subprocess launch and environment handling in
 `source/git/process.rs`. The supported environment is specified in
 [environment.md](../environment.md#variables-passed-on-to-git). The only other
-subprocesses are a dynamic variable's command, launched in
-`vars/dynamic/command.rs`, and in `commands/update.rs` the `version` of a release
-`update` has downloaded and, on Windows, the hidden PowerShell that removes the
-executable it set aside.
+subprocesses are the commands a manifest declares, built and stopped in
+`subprocess.rs`: a dynamic variable's, captured in `vars/dynamic/command.rs`, and
+a `run` action's, launched in `action/run.rs`; and in `commands/update.rs` the
+`version` of a release `update` has downloaded and, on Windows, the hidden
+PowerShell that removes the executable it set aside.
 
 **7. Dry-run never simulates a filesystem.** Use the same action implementations
 in both modes, with writes gated at helpers. See [Dry-run](#dry-run).
@@ -121,8 +122,8 @@ path; their replacement policy differs from seeds.
 | `filesystem/` | Path inspection, the write helpers, `RunMode`, and state-document replacement. |
 
 The crate root keeps `main.rs`, `app.rs` (parsing, and one dispatch call per
-command), and the shared `env`, `error`, `location`, `output`, `release`, and
-`version`.
+command), and the shared `env`, `error`, `location`, `output`, `release`,
+`subprocess`, and `version`.
 
 ### Vocabulary
 
@@ -165,10 +166,12 @@ Code names follow these terms beside the user-facing ones:
 | `run/assemble.rs` | Expansion and selection in one pass, and each opened inclusion's scope. |
 | `run/compose.rs` | What an opened inclusion contributes: its filters' verdicts, dropped nested inclusions, and the warnings composing it gives. |
 | `run/clone_list.rs` | A clone list read for one run, with each entry decided against the selection. |
+| `run/history.rs` | `runs.toml`: reading either layout, the run's generation, recording changes and successes in memory, and saving them once. |
 | `run/inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
 | `run/selection.rs` | Targets and exclusions, decided on a record's or a clone-list entry's addresses and condition. |
+| `run/triggers.rs` | Whether a `run` action's trigger fires, comparing an `after` action's last success with its targets' last changes. |
 | `vars/dynamic/` | Running dynamic variables' commands, and their cache. |
-| `action/` | Dispatch of prepared install records. |
+| `action/` | Dispatch of prepared install records. Each reports whether it changed something, which `run/triggers.rs` reads. |
 
 A run proceeds in this order:
 
@@ -177,9 +180,10 @@ A run proceeds in this order:
 2. For `clone` and `sync --bootstrap`, [adopt](../state.md#bootstrap-adoption)
    the bootstrap policy, which writes `disabled.toml` before it is read, or
    under `--dry-run` hands the run the lists it would have written.
-3. Capture the selection, decide remote conditions, and build the `RunContext`.
-4. For `sync` and `clone`, [materialize](../repoformat.md#materialization) remotes.
-   Apply commands use the trees already present.
+3. Capture the selection, decide remote conditions, build the `RunContext`, and
+   read `runs.toml`.
+4. For `sync` and `clone`, [materialize](../repoformat.md#materialization) remotes,
+   recording each that changes. Apply commands use the trees already present.
 5. Assemble and select, opening only reached, admitted
    [inclusions](../actions/include-remote.md#include-remote) and resolving each opened
    remote's dynamic variables, if the leaf allows them.
@@ -188,11 +192,15 @@ A run proceeds in this order:
    Then warn about unmatched skips, and fail an apply command whose target
    names nothing, before any action writes.
 7. Walk the list once in declaration order: report exclusions and dispatch
-   admitted records. An admitted inclusion prints its heading and then walks
-   the records it contributed, reading their repository paths from its
-   remote's materialization.
+   admitted records, deciding each `run` action's trigger first and recording
+   each change and success. An admitted inclusion prints its heading and then
+   walks the records it contributed, reading their repository paths from its
+   remote's materialization, and records their changes as its own too.
+8. Save `runs.toml` if the run recorded anything, after step 7 or after any
+   failure from step 4 on.
 
-Steps 1, 2, 4, and 5 can write before assembly or preparation fails. Preparation
+Steps 1, 2, 4, and 5 can write before assembly or preparation fails, and step 8
+then saves what step 4 recorded. Preparation
 precedes every action's writes, not every write in the command. Only
 dispatched records count as applied work; an inclusion never reaches the
 dispatcher. The user-visible rules are specified in
@@ -248,7 +256,7 @@ network, which remote inclusion assembles under `sync`.
 
 What only a whole machine can answer belongs in `tests/docker/`, which
 `task test:docker` builds and runs and `task ci` includes. The tests under
-`tests/cli/` pin all four roots at a temporary directory, so the container is
+`tests/cli/` pin all five roots at a temporary directory, so the container is
 where batfiles decides for itself: a real `$HOME`, XDG defaults, and no state of
 any kind. Keep it to acceptance -- end-to-end scenarios over the fixture
 repositories above, with the container-only additions to a manifest in an
@@ -290,7 +298,8 @@ Actions must not implement an alternate dry-run path or simulate earlier writes.
 The user-visible contract, including source validation, shared destinations,
 per-child output, and reporting limits, is owned by
 [cmdline.md](../cmdline.md#dry-run-behavior). Batfiles bookkeeping runs in both
-modes: the state documents `filesystem/tomlfile.rs` rewrites, and the
+modes: the state documents `filesystem/tomlfile.rs` rewrites, except `runs.toml`, which
+`run/history.rs` leaves alone in a dry run, and the
 dynamic-variable commands `vars/dynamic/command.rs` runs, which never consult
 `RunMode` because the plan itself depends on their values.
 

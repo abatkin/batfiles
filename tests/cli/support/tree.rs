@@ -165,7 +165,7 @@ impl Tree {
         names
     }
 
-    /// A command with all four roots selected inside this tree.
+    /// A command with all five roots selected inside this tree.
     pub(crate) fn batfiles(&self) -> Command {
         let mut command = batfiles();
         command
@@ -173,8 +173,10 @@ impl Tree {
             .env("BATFILES_DIR", self.path("repo"))
             .env("BATFILES_CONFIG_DIR", self.path("config"))
             .env("BATFILES_CACHE_DIR", self.path("cache"))
+            .env("BATFILES_STATE_DIR", self.path("state"))
             .env_remove("XDG_CONFIG_HOME")
-            .env_remove("XDG_CACHE_HOME");
+            .env_remove("XDG_CACHE_HOME")
+            .env_remove("XDG_STATE_HOME");
         command
     }
 }

@@ -7,12 +7,15 @@ pub(crate) mod bootstrap;
 pub(crate) mod clone_list;
 mod compose;
 pub(crate) mod context;
+mod history;
 pub(crate) mod inclusion;
 pub(crate) mod lock;
 mod record;
 pub(crate) mod selection;
+mod triggers;
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::rc::Rc;
 
 use self::assemble::assemble;
@@ -34,16 +37,19 @@ use crate::run::bootstrap::BootstrapDecisions;
 use crate::run::clone_list::PreparedList;
 use crate::run::context::{DestinationOptions, RunContext};
 use crate::run::selection::{Disposition, Selection, Target};
+use crate::run::triggers::{Triggers, Verdict};
 use crate::source::remotes;
 use crate::vars::dynamic::{CachePolicy, DynamicVarResolver};
 use crate::vars::name::VarName;
 use crate::vars::scope::VarScope;
 
-/// What a command hands the pipeline: resolved roots, mode, `--var` values, and destination
+/// What a command hands the pipeline: resolved roots and the state root, mode, `--var` values, and destination
 /// options, with the session's environment and reporter. Nothing in it depends on the manifest;
 /// the pipeline derives a [`RunContext`] from it after loading one.
 pub(crate) struct Invocation<'a> {
     pub roots: &'a Roots,
+    /// The directory holding [`history::RunHistory`].
+    pub state_dir: &'a Path,
     pub mode: RunMode,
     /// `--var` values, in the order they were written.
     pub vars: &'a [(VarName, String)],
@@ -99,14 +105,14 @@ enum RunKind<'a> {
         bootstrap: Option<&'a BootstrapDecisions>,
     },
     /// `apply-action` and `apply-group`: use existing materializations and fetch
-    /// nothing.
-    Apply,
+    /// nothing. `waived` is the address `apply-action` names, whose trigger it waives.
+    Apply { waived: Option<&'a ItemAddress> },
 }
 
 impl RunKind<'_> {
     /// Whether the command materializes declared remotes before assembly.
     fn materializes(&self) -> bool {
-        !matches!(self, Self::Apply)
+        !matches!(self, Self::Apply { .. })
     }
 
     /// Whether materializing fetches file and archive remotes that are current.
@@ -124,7 +130,15 @@ impl RunKind<'_> {
     fn bootstrap(&self) -> Option<&BootstrapDecisions> {
         match self {
             Self::Sync { bootstrap, .. } => *bootstrap,
-            Self::Apply => None,
+            Self::Apply { .. } => None,
+        }
+    }
+
+    /// The address whose `run` trigger the command waives, if any.
+    fn waived(&self) -> Option<&ItemAddress> {
+        match self {
+            Self::Apply { waived } => *waived,
+            Self::Sync { .. } => None,
         }
     }
 }
@@ -140,7 +154,7 @@ pub(crate) fn apply_action(invocation: &Invocation<'_>, id: &str) -> Result<(), 
             actions: &[],
             groups: &[],
         },
-        RunKind::Apply,
+        RunKind::Apply { waived: Some(&id) },
         invocation,
     )?;
 
@@ -167,7 +181,7 @@ pub(crate) fn apply_group(
             actions: skip_actions,
             groups: &[],
         },
-        RunKind::Apply,
+        RunKind::Apply { waived: None },
         invocation,
     )?;
 
@@ -199,6 +213,7 @@ enum PlannedRecord<'a> {
     /// records' templates resolve against `bindings`, reading `env` as `env` allows.
     Inclusion {
         heading: &'a str,
+        address: Option<&'a ItemAddress>,
         remote: &'a ItemId,
         steps: Vec<Step<'a>>,
         bindings: Bindings<'a>,
@@ -248,6 +263,7 @@ fn prepare<'a>(
                 };
                 Ok(PlannedRecord::Inclusion {
                     heading: &record.heading,
+                    address: record.address.as_ref(),
                     remote,
                     steps,
                     bindings,
@@ -322,26 +338,70 @@ fn entry_addresses<'a>(plan: &'a [PlannedRecord<'_>]) -> Vec<&'a ItemAddress> {
         .collect()
 }
 
+/// What carrying out one step came to.
+#[derive(Default)]
+struct Outcome {
+    /// Whether the record was dispatched, including a `run` action its trigger passed over.
+    dispatched: bool,
+    /// Whether the record changed something.
+    changed: bool,
+}
+
 /// Carry out one step, whose record is read from `tree` and whose templates resolve against
-/// `bindings`, reading `env` as `env` allows. Returns whether the record was dispatched.
+/// `bindings`, reading `env` as `env` allows. A `run` action runs only if `triggers` says so.
+/// A change, and a `run` action's success, is recorded there.
 fn execute(
     step: &Step<'_>,
     tree: Tree<&ItemId>,
     bindings: &Bindings<'_>,
     env: EnvAccess<'_>,
     context: &RunContext<'_>,
-) -> Result<bool, Error> {
+    triggers: &mut Triggers<'_>,
+) -> Result<Outcome, Error> {
     match step {
-        Step::NotRequested => Ok(false),
+        Step::NotRequested => Ok(Outcome::default()),
         Step::ReportExclusion(record, exclusion) => {
             exclusion.report_heading(context.reporter(), &record.heading);
-            Ok(false)
+            Ok(Outcome::default())
         }
         Step::Run(record, prepared) => {
-            context.reporter().detail(1, &record.heading);
+            let reporter = context.reporter();
+            reporter.detail(1, &record.heading);
+            let passed_over = Outcome {
+                dispatched: true,
+                changed: false,
+            };
+            let run = match &record.action {
+                Action::Run(run) => Some(run),
+                _ => None,
+            };
+            if let Some(run) = run {
+                match triggers.decide(record, run, context.mode()) {
+                    Verdict::Run => {}
+                    Verdict::Skip(reason) => {
+                        reporter.detail(1, &format!("not run: {reason}"));
+                        return Ok(passed_over);
+                    }
+                    Verdict::IfChanged(preview) => {
+                        reporter.info(&format!("{}: {preview}", record.heading));
+                        return Ok(passed_over);
+                    }
+                }
+            }
             let fields = Resolver::new(&record.heading, bindings, env);
-            action::dispatch(prepared, tree, &fields, context)?;
-            Ok(true)
+            let changed = action::dispatch(prepared, tree, &fields, context)?;
+            if changed {
+                if let Some(run) = run {
+                    triggers.succeeded(record, run);
+                }
+                if let Some(address) = &record.address {
+                    triggers.changed(address);
+                }
+            }
+            Ok(Outcome {
+                dispatched: true,
+                changed,
+            })
         }
     }
 }
@@ -367,12 +427,16 @@ fn run_pipeline(
     } else {
         CachePolicy::Auto
     };
-    let mut dynamic =
-        DynamicVarResolver::for_run(&invocation.roots.state, policy, &manifest.remotes, reporter);
+    let mut dynamic = DynamicVarResolver::for_run(
+        &invocation.roots.machine,
+        policy,
+        &manifest.remotes,
+        reporter,
+    );
     let scope = Rc::new(VarScope::resolve(
         &manifest.vars,
         &invocation.roots.batfiles_repo,
-        &invocation.roots.state,
+        &invocation.roots.machine,
         invocation.env,
         invocation.vars,
         &mut dynamic,
@@ -389,11 +453,11 @@ fn run_pipeline(
         Some(bootstrap) => bootstrap.adopt(
             &manifest.default_disabled,
             &bindings,
-            &invocation.roots.state,
+            &invocation.roots.machine,
             invocation.mode,
             reporter,
         )?,
-        None => DisabledItems::load(&invocation.roots.state.disabled_path())?,
+        None => DisabledItems::load(&invocation.roots.machine.disabled_path())?,
     };
 
     let selection = Selection::new(
@@ -414,74 +478,129 @@ fn run_pipeline(
         reporter,
     )?;
 
-    // Materializations must exist before opening inclusions and preparing clone lists.
-    if kind.materializes() {
-        context.materialize(&manifest.remotes, &bindings, kind.refreshes_remotes())?;
-    }
-
-    let run_list = assemble(
-        manifest.actions,
-        &manifest.remotes,
-        &selection,
-        &context,
-        &scope,
-        &host,
-        &mut dynamic,
-    );
-    // Save earlier inclusions' captures even if a later inclusion failed.
-    dynamic.save();
-    let run_list = run_list?;
-
-    let plan = prepare(
-        &run_list,
-        &selection,
-        &context,
-        &scope,
-        &host,
-        &manifest.remotes,
+    // Read before materializing, so that a later failure still records the remotes that changed.
+    let mut triggers = Triggers::new(
+        invocation.state_dir,
+        invocation.mode,
+        kind.bootstrap().is_some(),
+        kind.waived(),
     )?;
-    // Included addresses are known only after assembly, and entry addresses after preparation.
-    let list_entries = entry_addresses(&plan);
-    run_list.warn_unmatched(&selection, &list_entries, reporter);
-    let entry_found = list_entries.iter().any(|address| selection.names(address));
-    if let Some(error) =
-        run_list.unmatched_target_error(&selection, invocation.roots.manifest_path(), entry_found)
-    {
-        return Err(error);
-    }
+    let loaded = Loaded {
+        kind: &kind,
+        invocation,
+        remotes: &manifest.remotes,
+        selection: &selection,
+        context: &context,
+        scope: &scope,
+        host: &host,
+    };
+    let result = loaded.run(manifest.actions, &mut dynamic, &mut triggers);
+    triggers.save(reporter);
+    result
+}
 
-    let mut processed_action_count = 0;
+/// What the pipeline loaded before reading `runs.toml`.
+struct Loaded<'a> {
+    kind: &'a RunKind<'a>,
+    invocation: &'a Invocation<'a>,
+    /// The leaf's remote declarations.
+    remotes: &'a BTreeMap<ItemId, Remote>,
+    selection: &'a Selection<'a>,
+    context: &'a RunContext<'a>,
+    /// The leaf's variables.
+    scope: &'a Rc<VarScope>,
+    host: &'a HostNamespaces,
+}
 
-    for prepared in &plan {
-        match prepared {
-            PlannedRecord::Step(step) => {
-                processed_action_count += usize::from(execute(
-                    step,
-                    Tree::Leaf,
-                    &bindings,
-                    EnvAccess::Allowed,
-                    &context,
-                )?);
-            }
-            PlannedRecord::Inclusion {
-                heading,
-                remote,
-                steps,
-                bindings,
-                env,
-            } => {
-                reporter.detail(1, heading);
-                for step in steps {
-                    processed_action_count += usize::from(execute(
+impl Loaded<'_> {
+    /// Materialize remotes, assemble and select `actions`, prepare clone lists, check the
+    /// target, and execute actions in declaration order, recording changes and successes in
+    /// `triggers`. Return the number of dispatched actions, as [`run_pipeline`] does.
+    fn run(
+        &self,
+        actions: Vec<Action>,
+        dynamic: &mut DynamicVarResolver<'_>,
+        triggers: &mut Triggers<'_>,
+    ) -> Result<usize, Error> {
+        let Self {
+            kind,
+            invocation,
+            remotes,
+            selection,
+            context,
+            scope,
+            host,
+        } = *self;
+        let reporter = invocation.reporter;
+        let bindings = Bindings::new(scope, host);
+
+        // Materializations must exist before opening inclusions and preparing clone lists.
+        if kind.materializes() {
+            context.materialize(remotes, &bindings, kind.refreshes_remotes(), |remote| {
+                triggers.remote_changed(remote);
+            })?;
+        }
+
+        let run_list = assemble(actions, remotes, selection, context, scope, host, dynamic);
+        // Save earlier inclusions' captures even if a later inclusion failed.
+        dynamic.save();
+        let run_list = run_list?;
+
+        let plan = prepare(&run_list, selection, context, scope, host, remotes)?;
+        // Included addresses are known only after assembly, and entry addresses after preparation.
+        let list_entries = entry_addresses(&plan);
+        run_list.warn_unmatched(selection, &list_entries, reporter);
+        let entry_found = list_entries.iter().any(|address| selection.names(address));
+        if let Some(error) = run_list.unmatched_target_error(
+            selection,
+            invocation.roots.manifest_path(),
+            entry_found,
+        ) {
+            return Err(error);
+        }
+
+        let mut processed_action_count = 0;
+
+        for prepared in &plan {
+            match prepared {
+                PlannedRecord::Step(step) => {
+                    let outcome = execute(
                         step,
-                        Tree::Remote(remote),
-                        bindings,
-                        *env,
-                        &context,
-                    )?);
+                        Tree::Leaf,
+                        &bindings,
+                        EnvAccess::Allowed,
+                        context,
+                        triggers,
+                    )?;
+                    processed_action_count += usize::from(outcome.dispatched);
+                }
+                PlannedRecord::Inclusion {
+                    heading,
+                    address,
+                    remote,
+                    steps,
+                    bindings,
+                    env,
+                } => {
+                    reporter.detail(1, heading);
+                    for step in steps {
+                        let outcome = execute(
+                            step,
+                            Tree::Remote(remote),
+                            bindings,
+                            *env,
+                            context,
+                            triggers,
+                        )?;
+                        processed_action_count += usize::from(outcome.dispatched);
+                        // A contributed record's change is its inclusion's too.
+                        if let Some(address) = address.filter(|_| outcome.changed) {
+                            triggers.changed(address);
+                        }
+                    }
                 }
             }
         }
+        Ok(processed_action_count)
     }
-    Ok(processed_action_count)
 }
