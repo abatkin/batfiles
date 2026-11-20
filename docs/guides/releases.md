@@ -109,8 +109,9 @@ Such a URL never changes, though, so the remote keeps its first download until
 
 ## Caveats
 
-- A tag floats, so a download built from one cannot be verified with a fixed
-  `sha256`; see [what is not sandboxed](../safety.md#what-is-not-sandboxed).
+- A fixed `sha256` matches one release, so the download fails on the next
+  release until you update it; leave it out to follow releases unattended. See
+  [what is not sandboxed](../safety.md#what-is-not-sandboxed).
 - The lookup sends no credentials, so it sees only public repositories.
   `github-url` names another GitHub host, such as GitHub Enterprise Server; see
   [the field](../repoformat.md#the-github-url-field).

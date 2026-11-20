@@ -580,8 +580,9 @@ fetches it. A [file or archive remote](#materialization) refetches when its
 resolved URL changes, so the next `sync` after a release downloads it. A
 [seed](safety.md#seeds-do-not-replace-and-so-do-not-refuse), such as
 `fetch-archive`, keeps what it first installed until
-[`--refresh-content`](safety.md#refreshing-seeds). A floating tag cannot be
-pinned with `sha256`; see [what is not sandboxed](safety.md#what-is-not-sandboxed).
+[`--refresh-content`](safety.md#refreshing-seeds). A fixed `sha256` matches only one
+release, so a download following the latest has none; see
+[what is not sandboxed](safety.md#what-is-not-sandboxed).
 
 ##### The `github-url` field
 
