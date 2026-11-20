@@ -299,6 +299,10 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
             "resolves to a value that is not a valid URL".to_owned(),
         ),
         (
+            Some("https://[::gg]".to_owned()),
+            "resolves to a value that is not a valid URL".to_owned(),
+        ),
+        (
             Some(format!("{}?sekrit", server.address())),
             "resolves to a value that has a query or fragment, so the release path cannot be \
              appended to it"
@@ -338,6 +342,28 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
         assert_eq!(cache_document(&tree), seeded, "{value:?}");
     }
     assert_eq!(server.requests(), 0, "an invalid github-url was asked");
+}
+
+#[test]
+fn a_github_url_template_holding_credentials_is_never_quoted() {
+    let server = releasing("v1");
+    let tree = declaring("https://user:sekrit@${env.BATFILES_TEST_GHE}", "");
+    let assertion = tree
+        .batfiles()
+        .args(["vars", "list"])
+        .env("BATFILES_TEST_GHE", &server.address()[7..])
+        .assert()
+        .success();
+    let stderr = stderr_of(&assertion);
+    assert!(
+        stderr.contains(
+            "dynamic variable `tag` could not be refreshed: `github-url` resolves to a value \
+             that contains credentials before `@`; a release lookup sends none"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("sekrit"), "{stderr}");
+    assert_eq!(server.requests(), 0);
 }
 
 #[test]
@@ -446,6 +472,10 @@ fn a_malformed_declaration_is_rejected_when_the_manifest_loads() {
         (
             "github-release = \"o/r\"\ngithub-url = \"htps://me:sekrit@ghe.example\"",
             "variable `tag`: github-url is not an http:// or https:// URL",
+        ),
+        (
+            "github-release = \"o/r\"\ngithub-url = \"https://u:sekrit@${env.\"",
+            "variable `tag`: github-url is not a valid template",
         ),
         (
             "github-release = \"o/r\"\ngithub-url = \"https://bad host\"",

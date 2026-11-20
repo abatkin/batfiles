@@ -197,6 +197,15 @@ pub(crate) enum ManifestError {
         source: Box<SyntaxError>,
     },
 
+    /// A template field's value does not parse, said without quoting a value that may hold
+    /// credentials.
+    #[error("{record}: {field} {problem}")]
+    SyntaxUnquoted {
+        record: DeclarationName,
+        field: &'static str,
+        problem: String,
+    },
+
     /// A template field's literal value breaks its field's rule.
     #[error("{record}: {field}{} {source}", written(.value))]
     Value {
@@ -318,7 +327,8 @@ pub(crate) enum ValueRule {
 }
 
 impl ValueRule {
-    /// Whether an error may quote `value`: not a release host that could hold credentials.
+    /// Whether an error may quote `value`, a literal or a template as written: not a release
+    /// host that could hold credentials.
     pub fn may_show(self, value: &str) -> bool {
         !matches!(self, Self::ReleaseHost) || !value.contains('@')
     }
@@ -399,9 +409,17 @@ pub(super) fn check_template(
     rule: ValueRule,
     record: &DeclarationName,
 ) -> Result<(), ManifestError> {
-    value
-        .syntax()
-        .map_err(|error| syntax_error(record, field, error))?;
+    value.syntax().map_err(|error| {
+        if rule.may_show(value.source()) {
+            syntax_error(record, field, error)
+        } else {
+            ManifestError::SyntaxUnquoted {
+                record: record.clone(),
+                field,
+                problem: error.problem(),
+            }
+        }
+    })?;
     match value.literal() {
         Some(literal) => rule.check(literal).map_err(|source| ManifestError::Value {
             record: record.clone(),
@@ -752,15 +770,33 @@ fn check_release_host(value: &str) -> Result<(), ValueError> {
     }
 }
 
-/// Whether the HTTP client parses `value` as a URI whose authority is a host and, if it has
-/// one, a numeric port.
+/// Whether the HTTP client parses `value` as a URI whose authority is a [host](is_host) and,
+/// if it has one, a numeric port.
 fn requestable(value: &str) -> bool {
     let Ok(uri) = value.parse::<ureq::http::Uri>() else {
         return false;
     };
     uri.authority().is_some_and(|authority| {
-        authority.port_u16().is_some() || authority.as_str() == authority.host()
+        is_host(authority.host())
+            && (authority.port_u16().is_some() || authority.as_str() == authority.host())
     })
+}
+
+/// Whether `host` is a bracketed IPv6 address or a name of ASCII letters, digits, `-`, `.`,
+/// and `_`, which covers DNS names and IPv4 addresses.
+fn is_host(host: &str) -> bool {
+    match host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        Some(address) => address.parse::<std::net::Ipv6Addr>().is_ok(),
+        None => {
+            !host.is_empty()
+                && host
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+        }
+    }
 }
 
 /// Check a `[vars]` entry: a `github-url` parses, reads only `env` and `facts`, and, if it is

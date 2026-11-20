@@ -358,10 +358,12 @@ impl<'a> DynamicVarResolver<'a> {
         let bindings = Bindings::new(&no_variables, self.host);
         match url.evaluate(ValueRule::ReleaseHost, &bindings, env) {
             Ok(resolved) => Ok(resolved.strip_suffix('/').unwrap_or(&resolved).to_owned()),
-            Err(error) => Err(format!(
+            // A template that could hold credentials is not quoted.
+            Err(error) if ValueRule::ReleaseHost.may_show(url.source()) => Err(format!(
                 "`github-url` {} {error}",
                 quoted_value(url.source())
             )),
+            Err(error) => Err(format!("`github-url` {error}")),
         }
     }
 
