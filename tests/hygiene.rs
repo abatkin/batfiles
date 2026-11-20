@@ -74,7 +74,7 @@ const FILESYSTEM_OWNERS: [Owner; 19] = [
     Owner {
         path: "src/source/fetch.rs",
         kind: Kind::Downstream,
-        reason: "writes a download or a file:// source, or what it decompresses to, into a staging file install.rs opened, and widens its mode",
+        reason: "writes a download or a file:// source, or what it decompresses to, into a staging file install.rs opened, and widens its mode; its release-lookup request writes nothing, and is made in both modes",
     },
     Owner {
         path: "src/source/archive/mod.rs",

@@ -4,13 +4,15 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::rc::Rc;
 
 use serde::Deserialize;
 use simple_expressions::evaluator::VariableResolver;
-use simple_expressions::template::Template;
+use simple_expressions::template::{Segment, Template};
 use simple_expressions::types::error::{Error as ExpressionError, Result as ExpressionResult};
+use simple_expressions::types::expression::Expr;
 use simple_expressions::types::object::Object;
 use simple_expressions::types::value::Value;
 
@@ -48,6 +50,32 @@ impl TemplateString {
         self.parsed.as_ref().ok().and_then(Template::as_literal)
     }
 
+    /// The root names the value's expressions read, such as `env` in `${env.HOME}`, sorted.
+    /// None if it does not parse.
+    pub fn roots(&self) -> BTreeSet<&str> {
+        let mut roots = BTreeSet::new();
+        if let Ok(template) = &self.parsed {
+            for segment in template.segments() {
+                if let Segment::Expression { expr, .. } = segment {
+                    collect_roots(expr, &mut roots);
+                }
+            }
+        }
+        roots
+    }
+
+    /// The value, evaluated against `bindings` with `env` as `env` permits, and checked
+    /// against `rule`. A literal value was checked when its manifest loaded and is returned as
+    /// is.
+    pub fn evaluate(
+        &self,
+        rule: ValueRule,
+        bindings: &Bindings<'_>,
+        env: EnvAccess<'_>,
+    ) -> Result<Cow<'_, str>, TemplateError> {
+        self.resolve(rule, &TemplateScope::new(bindings, env))
+    }
+
     /// The value, evaluated in `scope` and checked against `rule`. A literal value was checked
     /// when its manifest loaded and is returned as is.
     fn resolve(
@@ -78,12 +106,57 @@ impl From<String> for TemplateString {
     }
 }
 
+/// Two templates are equal when they are written alike.
+impl PartialEq for TemplateString {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
+impl Eq for TemplateString {}
+
 /// Debug output shows the original template text.
 impl fmt::Debug for TemplateString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("TemplateString")
             .field(&self.source())
             .finish()
+    }
+}
+
+/// Add every variable `expr` reads to `roots`. A member name is not a variable.
+fn collect_roots<'e>(expr: &'e Expr, roots: &mut BTreeSet<&'e str>) {
+    match expr {
+        Expr::Literal(_) => {}
+        Expr::Var(name) => {
+            roots.insert(name);
+        }
+        Expr::ListLiteral(items) => items.iter().for_each(|item| collect_roots(item, roots)),
+        Expr::DictLiteral(pairs) => {
+            for (key, value) in pairs {
+                collect_roots(key, roots);
+                collect_roots(value, roots);
+            }
+        }
+        Expr::Member { object, .. } => collect_roots(object, roots),
+        Expr::Index { object, index } => {
+            collect_roots(object, roots);
+            collect_roots(index, roots);
+        }
+        Expr::Call { callee, args } => {
+            collect_roots(callee, roots);
+            args.iter().for_each(|arg| collect_roots(arg, roots));
+        }
+        Expr::Unary { expr, .. } => collect_roots(expr, roots),
+        Expr::Binary { first, rest } => {
+            collect_roots(first, roots);
+            rest.iter()
+                .for_each(|(_, operand)| collect_roots(operand, roots));
+        }
+        Expr::Power { bases, exponent } => {
+            bases.iter().for_each(|base| collect_roots(base, roots));
+            collect_roots(exponent, roots);
+        }
     }
 }
 

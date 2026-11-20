@@ -126,7 +126,9 @@ See [bootstrap defaults](../repoformat.md#default-disabled-bootstrap-entries).
 [Dynamic variables](../repoformat.md#dynamic-variables) capture a command's
 output or success and cache it. Use them when a static machine choice is not
 enough. Their commands run with your permissions, including during dry-run.
-Included repositories need explicit permission to run them.
+Included repositories need explicit permission to run them. To track a
+project's latest GitHub release instead, see
+[install from GitHub releases](releases.md).
 
 Use `batfiles vars refresh` to refresh the declarations in play, or
 `batfiles sync --refresh-vars` to refresh those evaluated by that run.

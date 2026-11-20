@@ -98,7 +98,7 @@ fn a_malformed_dynamic_variable_declaration_is_rejected_by_line() {
         ),
         (
             "[vars]\nemail = { cache = \"1h\" }\n",
-            "missing field `command`",
+            "needs `command` or `github-release`",
         ),
         ("[vars]\nemail = { command = [] }\n", "has nothing to run"),
         (

@@ -68,6 +68,9 @@ decompress = true
 executable = true
 ```
 
+To follow a project's GitHub releases instead of a fixed URL, see
+[install from GitHub releases](releases.md).
+
 Add `sha256` with the expected 64-digit digest to verify the downloaded bytes.
 Without a digest, identity depends on the chosen source and transport. Use
 `fetch-archive` to unpack an archive, and `decompress = true` on `fetch-file`

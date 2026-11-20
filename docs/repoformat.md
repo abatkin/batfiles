@@ -102,16 +102,19 @@ A repository for git to clone.
 |-----------------------|---------|:--------:|-----------------------------------------------------------------------------|
 | `url`                 | [template string](#templates) |   yes    | A repository for git to clone. Never empty.                                 |
 | `ref`                 | [template string](#templates) |    no    | A branch, tag, or commit to follow. Never empty.                            |
-| `allow-dynamic-vars`  | boolean |    no    | Whether an included manifest's [dynamic variables](#dynamic-variables) run. Defaults to `false`. |
+| `allow-dynamic-vars`  | boolean |    no    | Whether an included manifest's [dynamic-variable](#dynamic-variables) commands run. Defaults to `false`. |
 | `allow-env-templates` | boolean |    no    | Whether an included manifest's templates may read `env`; see [templates and the host environment](actions/include-remote.md#templates-and-the-host-environment). Defaults to `false`. |
 | `allow-commands`      | boolean |    no    | Whether an included manifest's [`run`](actions/run.md#in-an-included-manifest) actions run their commands. Defaults to `false`. |
 
 `url` follows [`git-clone` source syntax](actions/git-clone.md#git-clone), and `ref` follows its
 [ref rules](actions/git-clone.md#ref-following-one-branch-tag-or-commit). `branch` is not a field.
 
-`allow-dynamic-vars` permits commands in an included manifest. Without it,
-dynamic declarations there declare nothing, and `-v` names those skipped.
-Leaf declarations need no such permission. See
+`allow-dynamic-vars` permits dynamic-variable commands in an included manifest.
+Without it, command declarations there declare nothing, and `-v` names those
+skipped. Its [`github-release`](#github-release-declarations) declarations still
+resolve: a lookup runs no code, so a remote with no permissions can supply a
+dynamic value, as it can already supply any static value. Leaf declarations need
+no permission. See
 [dynamic-command execution](environment.md#how-dynamic-commands-are-run).
 
 Each permission applies only to a checkout of the repository `url` names; see
@@ -465,22 +468,47 @@ work = "false"
 profile = "personal"
 rank = "3"
 email = { command = ["git", "config", "user.email"], cache = "1d" }
+fzf_tag = { github-release = "junegunn/fzf" }
 ```
 
 Variables feed `when`, `unless`, and [templates](#templates). A `[vars]` value
-is not a template, so one variable cannot refer to another. Static values must
-be strings, including empty strings: `work = true` and `rank = 3` are load
-errors. A table must match the dynamic-variable schema.
+is not a template, so one variable cannot refer to another; the one exception,
+a `github-release` declaration's [`github-url`](#the-github-url-field), reads
+only `env` and `facts`. Static values must be strings, including empty
+strings: `work = true` and `rank = 3` are load errors. A table must match the
+dynamic-variable schema.
 
 See [variable precedence](environment.md#variable-precedence) for machine
-values, environment and CLI overrides, and inclusion scopes. Dynamic commands
-may run even when no condition uses them; see
+values, environment and CLI overrides, and inclusion scopes. Dynamic
+declarations are captured even when no condition uses them; see
 [evaluation](state.md#when-declarations-are-evaluated).
 
 ### Dynamic variables
 
-A table under `[vars]` declares a variable whose value a command produces. Both
-TOML spellings are the same record:
+A table under `[vars]` declares a variable whose value is captured rather than
+written: by running a [command](#command-declarations), or by looking up a
+[GitHub release](#github-release-declarations). A table is exactly one kind:
+`github-release` together with `command`, `capture`, or `command-timeout` is a
+load error, as is `github-url` or `timeout` beside `command`, and the error
+names the conflicting field. A table with neither `command` nor
+`github-release` is a load error too. Both kinds share `cache`:
+
+| Field   | Type     | Required | Default | Description                                                          |
+|---------|----------|:--------:|---------|----------------------------------------------------------------------|
+| `cache` | duration |    no    | `"1d"`  | How long a captured value is reused before it is captured again.     |
+
+[Cache rules](state.md#dynamic-varstoml-dynamic-variable-cache) define reuse,
+refresh, and failure fallback.
+
+A declaration with no captured or cached value still declares the variable;
+it reads as the empty string and overrides lower layers. Consequently `when`
+on it closes but `unless` opens. Use `when` when installation requires a
+successful answer.
+
+#### Command declarations
+
+A `command` declaration's value is what a command produces. Both TOML
+spellings are the same record:
 
 ```toml
 [vars]
@@ -497,26 +525,99 @@ command-timeout = "5s"
 |-------------------|------------------------------------|:--------:|------------|---------------------------------------------------------------------------------|
 | `command`         | string or non-empty list of strings |   yes    |            | A shell command line, or a program and its arguments run without a shell.       |
 | `capture`         | `"stdout"` or `"status"`           |    no    | `"stdout"` | The trimmed standard output, or `"true"`/`"false"` from the exit status.        |
-| `cache`           | duration                           |    no    | `"1d"`     | How long a captured value is reused before the command runs again.              |
 | `command-timeout` | duration                           |    no    | `"5s"`     | How long the command may run before it is killed. Greater than zero.            |
 
 Unknown fields, empty command lists, invalid capture modes or durations, and
 zero timeouts are load errors.
 
 [Execution](environment.md#how-dynamic-commands-are-run) defines shell selection,
-working directory, streams, limits, and capture semantics.
-[Cache rules](state.md#dynamic-varstoml-dynamic-variable-cache) define reuse,
-refresh, and failure fallback. Remote declarations require
-[`allow-dynamic-vars`](#git).
+working directory, streams, limits, and capture semantics. Remote command
+declarations require [`allow-dynamic-vars`](#git).
 
-A declaration with no captured or cached value still declares the variable;
-it reads as the empty string and overrides lower layers. Consequently `when`
-on it closes but `unless` opens. Use `when` when installation requires a
-successful answer.
+#### GitHub release declarations
+
+A `github-release` declaration's value is the tag of a GitHub repository's
+latest release, so a manifest can follow a project's releases without a fixed
+URL. A [template](#templates) builds the download URL from it:
+
+```toml
+[vars.fzf_tag]
+github-release = "junegunn/fzf"
+cache = "1d"
+
+[remotes.fzf]
+type = "archive"
+url = "https://github.com/junegunn/fzf/releases/download/${fzf_tag}/fzf-${fzf_tag.substring(1)}-linux_${{'x86_64': 'amd64', 'aarch64': 'arm64'}[facts.arch]}.tar.gz"
+```
+
+| Field            | Type                                      | Required | Default                | Description                                                        |
+|------------------|-------------------------------------------|:--------:|------------------------|--------------------------------------------------------------------|
+| `github-release` | string                                    |   yes    |                        | `OWNER/REPO` whose latest release's tag is the value.              |
+| `github-url`     | [restricted template](#the-github-url-field) |    no    | `"https://github.com"` | The GitHub host to ask, as an `http://` or `https://` URL.         |
+| `timeout`        | duration                                  |    no    | `"10s"`                | How long the whole lookup may take. Greater than zero.             |
+
+`OWNER/REPO` is checked as the manifest loads: an owner of ASCII letters,
+digits, and `-`; one `/`; and a repository of those, `_`, and `.`, but not `.`
+or `..`. A scheme, a host, or a `.git` suffix is a load error. It is not a
+template.
+
+The value is the tag exactly as GitHub names it, such as `v0.65.2`, with
+nothing stripped; remove a prefix in the template, as
+`${fzf_tag.substring(1)}` does above. "Latest" is GitHub's: the most recent
+release that is neither a draft nor a prerelease.
+[How a lookup is made](environment.md#how-github-release-lookups-are-made)
+defines the request and its failures. A lookup runs no code, so a remote's
+declarations need no permission. Asset naming (`amd64` or `x86_64`, `darwin` or
+`macos`, with or without a `v`) is the manifest's to spell; batfiles does not
+guess it.
+
+When an asset's name holds no version, no variable is needed:
+`https://github.com/OWNER/REPO/releases/latest/download/ASSET` is a plain URL
+that always names the latest release's asset.
+
+What a download built from the tag does on a new release depends on what
+fetches it. A [file or archive remote](#materialization) refetches when its
+resolved URL changes, so the next `sync` after a release downloads it. A
+[seed](safety.md#seeds-do-not-replace-and-so-do-not-refuse), such as
+`fetch-archive`, keeps what it first installed until
+[`--refresh-content`](safety.md#refreshing-seeds). A floating tag cannot be
+pinned with `sha256`; see [what is not sandboxed](safety.md#what-is-not-sandboxed).
+
+##### The `github-url` field
+
+`github-url` names the host a declaration asks: GitHub Enterprise Server, for
+example. Declarations may mix hosts. No environment variable changes the
+default.
+
+```toml
+[vars.internal_cli_tag]
+github-release = "platform/cli"
+github-url = "${env.GHE_URL}"
+```
+
+It is a template that reads only `env` and `facts`, which exist before any
+variable resolves. A reference to a variable, bare or through `vars`, is a load
+error: "`github-url` may read `env` and `facts`, not variables". In an included
+manifest, reading `env` needs the remote's
+[`allow-env-templates`](actions/include-remote.md#templates-and-the-host-environment),
+as any template there does; a literal URL needs nothing.
+
+The value must be an `http://` or `https://` URL, and one trailing `/` is
+removed. A literal is checked when the manifest loads, a templated value each
+time the declaration resolves, including under `vars list --no-refresh`, because
+the resolved URL is part of what a cache entry
+[records](state.md#dynamic-varstoml-dynamic-variable-cache).
+
+A `github-url` that fails to evaluate or resolves to an invalid URL fails the
+lookup rather than the run: the variable reads as empty, with a warning, and no
+cached value is used, since there is no URL to match an entry against. An
+unset environment variable is the empty string, so `${env.GHE_URL}` on a
+machine without it warns rather than stopping a `sync`. Errors name the field
+and its template, never the resolved value.
 
 #### Duration values
 
-`cache` and `command-timeout` are strings holding a number and a unit,
+`cache`, `command-timeout`, and `timeout` are strings holding a number and a unit,
 optionally repeated: `30s`, `5m`, `1h`, `1d`, `1w`, `1h 30m`. Units may be
 abbreviated or spelled out (`2 hrs`, `90 minutes`), separated by whitespace or
 commas, and sub-second units are accepted (`500ms`). A clock-style `HH:MM:SS`
@@ -527,8 +628,8 @@ written, and only for hours or smaller: `1.5h` and `1m 30.5s` are durations,
 A day is exactly 24 hours and a week exactly 7 days. Months and years have no
 fixed length, so they are not durations. A negative duration, written `-1h` or
 `1h ago`, is invalid. Zero is a valid `cache`, where it means a value is never
-fresh, and an invalid `command-timeout`, which would kill every command before
-it could answer.
+fresh, and an invalid `command-timeout` or `timeout`, which would stop every
+capture before it could answer.
 
 ## Conditions
 
@@ -637,6 +738,7 @@ decompress = true
 | [`symlink`](actions/symlink.md#symlink), [`copy`](actions/copy.md#copy), [`create-dir`](actions/create-dir.md#create-dir) | `dest` |
 | [`symlink-dir`](actions/symlink-dir.md#symlink-dir), [`copy-dir`](actions/copy-dir.md#copy-dir), [`git-clone-list`](actions/git-clone-list.md#git-clone-list) | `dest-dir` |
 | [`run`](actions/run.md#run) | `command`: the shell string, or each list element; `cwd`; each `env` value |
+| [`github-release`](#github-release-declarations) variable | `github-url`, which reads only `env` and `facts` |
 
 No other field is a template.
 
@@ -653,6 +755,8 @@ Templates are parsed when the manifest loads, so a syntax error is a load error
 naming the record and field.
 Each is evaluated once, when needed, including in dry runs:
 
+- a `github-url` each time its declaration resolves, against `env` and `facts`
+  alone; see [the field](#the-github-url-field);
 - a remote's when `sync` or `clone` [materializes](#materialization) it;
 - an action's when the action is dispatched, including by
   [`apply-action`](commands/apply-action.md#apply-action); a `run` action's only
@@ -667,7 +771,9 @@ loads; a templated one is checked by the same rule once it resolves.
 A template that fails to evaluate, or resolves to an invalid value, fails its
 record instead of skipping it as a [condition](#when-a-condition-cannot-be-evaluated)
 does: an [execution failure](cmdline.md#execution-failures) for an action, a
-[materialization failure](#materialization) for a remote.
+[materialization failure](#materialization) for a remote. A `github-url` is the
+exception: it fails its lookup, and the variable
+[reads as empty](#the-github-url-field).
 
 ```text
 error: create-dir action 2: dest "~/${nope}" cannot be evaluated at character 3: `nope` is not declared. ...

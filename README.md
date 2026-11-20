@@ -98,7 +98,7 @@ Running it again prints nothing, because correct destinations are left alone.
 `--no-overwrite` skips conflicts instead and `--interactive` asks. See
 [destination safety](docs/safety.md#replacing-what-is-already-there).
 A dry run leaves installation content alone but can run dynamic-variable
-commands and write bookkeeping; see [dry-run behavior](docs/cmdline.md#dry-run-behavior).
+commands, make release lookups, and write bookkeeping; see [dry-run behavior](docs/cmdline.md#dry-run-behavior).
 
 For machine-specific actions, declare `[vars]` defaults and add `when` or
 `unless` [conditions](docs/repoformat.md#conditions). For example, `work = "false"`
@@ -125,6 +125,7 @@ Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `
 | Choose content per machine | Groups, persistent disables, run-only skips, variables and conditions |
 | Vary paths and URLs per machine | [Templates](docs/repoformat.md#templates) such as `dest = "~/.cache/${facts.os}"` |
 | Discover machine values | Cached [dynamic variables](docs/repoformat.md#dynamic-variables) |
+| Follow a project's GitHub releases | A [`github-release`](docs/repoformat.md#github-release-declarations) variable holding the latest tag, in a download URL |
 
 See the [action reference](docs/repoformat.md#actions) for fields, filters, and
 examples. **Symlink actions require Unix**; executing them on Windows fails.

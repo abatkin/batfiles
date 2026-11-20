@@ -101,7 +101,7 @@ impl VarValue {
     fn state(&self) -> Option<String> {
         match self {
             Self::Static(_) => None,
-            Self::Dynamic(resolved) => Some(resolved.state.describe()),
+            Self::Dynamic(resolved) => Some(resolved.describe()),
         }
     }
 }

@@ -16,42 +16,37 @@ mod running {
     use crate::manifest::vars::CommandSpec;
     use tempfile::TempDir;
 
-    fn spec_of(
-        command: CommandSpec,
-        capture: CaptureMode,
-        timeout: Option<&str>,
-    ) -> DynamicVarSpec {
-        DynamicVarSpec {
+    fn spec_of(command: CommandSpec, capture: CaptureMode, timeout: Option<&str>) -> CommandSource {
+        CommandSource {
             command,
             capture,
-            cache: None,
             command_timeout: timeout.map(|text| FriendlyDuration::new(text).expect("valid")),
         }
     }
 
-    fn shell(line: &str, capture: CaptureMode) -> DynamicVarSpec {
+    fn shell(line: &str, capture: CaptureMode) -> CommandSource {
         spec_of(CommandSpec::Shell(line.to_owned()), capture, None)
     }
 
-    fn args<const N: usize>(args: [&str; N], capture: CaptureMode) -> DynamicVarSpec {
+    fn args<const N: usize>(args: [&str; N], capture: CaptureMode) -> CommandSource {
         let args = args.iter().map(|arg| (*arg).to_owned()).collect();
         spec_of(CommandSpec::Args(args), capture, None)
     }
 
     /// Capture a command in a temporary directory with stderr suppressed.
-    fn run(spec: &DynamicVarSpec) -> CaptureOutcome {
+    fn run(spec: &CommandSource) -> CaptureOutcome {
         let dir = TempDir::new().expect("temp dir");
         capture(spec, dir.path(), true)
     }
 
-    fn captured(spec: &DynamicVarSpec) -> String {
+    fn captured(spec: &CommandSource) -> String {
         match run(spec) {
             CaptureOutcome::Captured(value) => value,
             other => panic!("expected a captured value, got {other:?}"),
         }
     }
 
-    fn failure(spec: &DynamicVarSpec) -> CaptureError {
+    fn failure(spec: &CommandSource) -> CaptureError {
         match run(spec) {
             CaptureOutcome::Failed(error) => error,
             other => panic!("expected a failure, got {other:?}"),
@@ -59,7 +54,7 @@ mod running {
     }
 
     /// `dd` copying exactly `bytes` NULs, which trimming leaves alone.
-    fn writes_bytes(bytes: u64, timeout: &str) -> DynamicVarSpec {
+    fn writes_bytes(bytes: u64, timeout: &str) -> CommandSource {
         spec_of(
             CommandSpec::Args(vec![
                 "dd".to_owned(),

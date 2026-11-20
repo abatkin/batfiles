@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::manifest::vars::{CaptureMode, DynamicVarSpec};
+use crate::manifest::vars::{CaptureMode, CommandSource};
 use crate::subprocess::{self, WaitOutcome, stop};
 
 /// `command-timeout`'s default.
@@ -29,7 +29,7 @@ const FALSE: &str = "false";
 ///
 /// Inherit the process environment and stderr, suppressing stderr when `quiet`. Disconnect
 /// stdin. Limit captured stdout to [`MAX_OUTPUT`] bytes and enforce the declaration's timeout.
-pub(crate) fn capture(spec: &DynamicVarSpec, cwd: &Path, quiet: bool) -> CaptureOutcome {
+pub(crate) fn capture(spec: &CommandSource, cwd: &Path, quiet: bool) -> CaptureOutcome {
     let started = Instant::now();
     let timeout = spec
         .command_timeout

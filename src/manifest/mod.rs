@@ -26,7 +26,7 @@ use serde::Deserialize;
 use crate::error::Error as CrateError;
 use crate::filesystem::tomlfile;
 use crate::manifest::actions::Action;
-use crate::manifest::check::{check_conditions, check_included_source};
+use crate::manifest::check::{check_conditions, check_included_source, check_var};
 use crate::manifest::default_disabled::DefaultDisabled;
 use crate::manifest::item::{ItemId, ItemKind};
 use crate::manifest::remote::Remote;
@@ -45,6 +45,8 @@ pub(crate) enum DeclarationName {
     Candidate { kind: ItemKind, number: usize },
     /// A `[remotes]` entry, by the ID it was declared under.
     Remote(ItemId),
+    /// A `[vars]` entry, by its name.
+    Var(VarName),
 }
 
 impl fmt::Display for DeclarationName {
@@ -53,6 +55,7 @@ impl fmt::Display for DeclarationName {
             Self::Action(number) => write!(f, "action {number}"),
             Self::Candidate { kind, number } => write!(f, "default-disabled {kind} {number}"),
             Self::Remote(id) => write!(f, "remote `{id}`"),
+            Self::Var(name) => write!(f, "variable `{name}`"),
         }
     }
 }
@@ -166,6 +169,9 @@ impl Manifest {
             }
 
             action.validate(&record, &positions, &self.remotes, read_as)?;
+        }
+        for (name, spec) in &self.vars {
+            check_var(spec, &DeclarationName::Var(name.clone()))?;
         }
         self.default_disabled.validate()
     }

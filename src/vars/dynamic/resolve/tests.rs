@@ -108,29 +108,46 @@ fn an_age_is_one_truncated_unit() {
 #[test]
 fn each_state_describes_itself_for_a_listing() {
     let hours = Duration::from_secs(3 * 3600);
-    assert_eq!(DynamicValueState::Refreshed.describe(), "command");
+    let command = |state: DynamicValueState| state.describe("command");
+    assert_eq!(command(DynamicValueState::Refreshed), "command");
     assert_eq!(
-        DynamicValueState::Fresh { age: hours }.describe(),
+        DynamicValueState::Refreshed.describe("github-release"),
+        "github-release"
+    );
+    assert_eq!(
+        command(DynamicValueState::Fresh { age: hours }),
         "cached 3h ago"
     );
     assert_eq!(
-        DynamicValueState::Retained { age: hours }.describe(),
+        command(DynamicValueState::Retained { age: hours }),
         "command failed, cached 3h ago"
     );
     assert_eq!(
-        DynamicValueState::Assumed.describe(),
+        DynamicValueState::Retained { age: hours }.describe("github-release"),
+        "github-release failed, cached 3h ago"
+    );
+    assert_eq!(
+        command(DynamicValueState::Assumed),
         "command could not start"
     );
     assert_eq!(
-        DynamicValueState::Missing(MissingValueReason::CommandFailed).describe(),
+        command(DynamicValueState::Missing(
+            MissingValueReason::CaptureFailed
+        )),
         "command failed"
     );
     assert_eq!(
-        DynamicValueState::Missing(MissingValueReason::NoCacheEntry).describe(),
+        command(DynamicValueState::Missing(MissingValueReason::NoCacheEntry)),
         "not cached"
     );
     assert_eq!(
-        DynamicValueState::Stale { age: hours }.describe(),
+        command(DynamicValueState::Missing(
+            MissingValueReason::OtherDeclaration
+        )),
+        "cached for a different declaration"
+    );
+    assert_eq!(
+        command(DynamicValueState::Stale { age: hours }),
         "stale, cached 3h ago"
     );
 }
@@ -140,7 +157,7 @@ fn each_state_describes_itself_for_a_listing() {
 #[cfg(unix)]
 mod policy {
     use super::*;
-    use crate::manifest::vars::{CaptureMode, CommandSpec};
+    use crate::manifest::vars::{CaptureMode, CommandSpec, GithubRepository};
     use crate::output::Verbosity;
     use std::cell::Cell;
     use tempfile::TempDir;
@@ -151,35 +168,37 @@ mod policy {
         dir.path().join(MARKER).exists()
     }
 
-    fn shell(line: &str, capture: CaptureMode) -> DynamicVarSpec {
-        DynamicVarSpec {
+    fn shell(line: &str, capture: CaptureMode) -> CommandSource {
+        CommandSource {
             command: CommandSpec::Shell(line.to_owned()),
             capture,
-            cache: None,
             command_timeout: None,
         }
     }
 
-    fn succeeds(value: &str) -> DynamicVarSpec {
+    fn succeeds(value: &str) -> CommandSource {
         shell(
             &format!("touch {MARKER}; printf %s {value}"),
             CaptureMode::Stdout,
         )
     }
 
-    fn fails() -> DynamicVarSpec {
+    fn fails() -> CommandSource {
         shell(&format!("touch {MARKER}; exit 1"), CaptureMode::Stdout)
     }
 
     fn declaration<'a>(
         identity: &DynamicVarKey,
-        spec: &'a DynamicVarSpec,
+        spec: &'a CommandSource,
         dir: &'a TempDir,
     ) -> PendingDeclaration<'a> {
         PendingDeclaration {
             identity: identity.clone(),
-            spec,
-            cwd: dir.path(),
+            capture: Capture::Command {
+                spec,
+                cwd: dir.path(),
+            },
+            cache: None,
             policy: CachePolicy::Auto,
             shadowed: false,
         }
@@ -192,6 +211,7 @@ mod policy {
                 value: value.to_owned(),
                 captured_at: judged_at()
                     - SignedDuration::try_from(duration(ago).get()).expect("in range"),
+                from: None,
             },
         );
     }
@@ -230,7 +250,7 @@ mod policy {
 
     /// Resolve `spec` as the leaf variable `email` with the supplied cache state.
     fn one(
-        spec: &DynamicVarSpec,
+        spec: &CommandSource,
         seeded: Option<(&str, &str)>,
         policy: CachePolicy,
     ) -> (DynamicVarResolution, DynamicVarCache, bool) {
@@ -271,6 +291,7 @@ mod policy {
                 CachedVar {
                     value: "new".to_owned(),
                     captured_at: judged_at(),
+                    from: Some(Provenance::command(&succeeds("new"))),
                 }
             );
         }
@@ -386,17 +407,16 @@ mod policy {
         assert_eq!(only(&resolution).value, None);
         assert_eq!(
             only(&resolution).state,
-            DynamicValueState::Missing(MissingValueReason::CommandFailed)
+            DynamicValueState::Missing(MissingValueReason::CaptureFailed)
         );
         assert!(cache.entries.is_empty());
     }
 
     #[test]
     fn an_assumed_false_beats_a_cached_value_and_is_not_written_back() {
-        let spec = DynamicVarSpec {
+        let spec = CommandSource {
             command: CommandSpec::Args(vec!["batfiles-no-such-program-exists".to_owned()]),
             capture: CaptureMode::Status,
-            cache: None,
             command_timeout: None,
         };
         let (resolution, cache, _) = one(&spec, Some(("true", "2d")), CachePolicy::Auto);
@@ -404,5 +424,133 @@ mod policy {
         assert_eq!(only(&resolution).state, DynamicValueState::Assumed);
         assert!(!resolution.changed);
         assert_eq!(entry(&cache, &leaf("email")).value, "true");
+    }
+
+    /// Put an entry captured by `by` in the cache for `email`, an hour ago.
+    fn seed_from(cache: &mut DynamicVarCache, by: &CommandSource) {
+        seed(cache, &leaf("email"), "theirs", "1h");
+        cache
+            .entries
+            .get_mut(&leaf("email").cache_key())
+            .expect("seeded")
+            .from = Some(Provenance::command(by));
+    }
+
+    #[test]
+    fn an_entry_another_declaration_captured_is_captured_again() {
+        let dir = TempDir::new().expect("temp dir");
+        let spec = succeeds("mine");
+        let email = leaf("email");
+        let mut cache = DynamicVarCache::default();
+        seed_from(&mut cache, &shell("printf theirs", CaptureMode::Stdout));
+        let resolution = resolve_at(
+            &[declaration(&email, &spec, &dir)],
+            CachePolicy::Auto,
+            &mut cache,
+        );
+        assert_eq!(only(&resolution).state, DynamicValueState::Refreshed);
+        assert_eq!(only(&resolution).value.as_deref(), Some("mine"));
+        assert_eq!(entry(&cache, &email).from, Some(Provenance::command(&spec)));
+    }
+
+    #[test]
+    fn a_capture_mode_is_part_of_what_captured_an_entry() {
+        let dir = TempDir::new().expect("temp dir");
+        let spec = succeeds("mine");
+        let status = CommandSource {
+            capture: CaptureMode::Status,
+            ..spec.clone()
+        };
+        let email = leaf("email");
+        let mut cache = DynamicVarCache::default();
+        seed_from(&mut cache, &status);
+        let resolution = resolve_at(
+            &[declaration(&email, &spec, &dir)],
+            CachePolicy::Auto,
+            &mut cache,
+        );
+        assert_eq!(only(&resolution).state, DynamicValueState::Refreshed);
+    }
+
+    #[test]
+    fn a_failure_never_falls_back_on_another_declarations_value() {
+        let dir = TempDir::new().expect("temp dir");
+        let spec = fails();
+        let email = leaf("email");
+        let mut cache = DynamicVarCache::default();
+        seed_from(&mut cache, &succeeds("theirs"));
+        let resolution = resolve_at(
+            &[declaration(&email, &spec, &dir)],
+            CachePolicy::Auto,
+            &mut cache,
+        );
+        assert_eq!(only(&resolution).value, None);
+        assert_eq!(
+            only(&resolution).state,
+            DynamicValueState::Missing(MissingValueReason::CaptureFailed)
+        );
+        assert_eq!(entry(&cache, &email).value, "theirs");
+    }
+
+    #[test]
+    fn never_reports_an_entry_another_declaration_captured() {
+        let dir = TempDir::new().expect("temp dir");
+        let spec = succeeds("mine");
+        let email = leaf("email");
+        let mut cache = DynamicVarCache::default();
+        seed_from(&mut cache, &succeeds("theirs"));
+        let resolution = resolve_at(
+            &[declaration(&email, &spec, &dir)],
+            CachePolicy::Never,
+            &mut cache,
+        );
+        assert_eq!(only(&resolution).value, None);
+        assert_eq!(
+            only(&resolution).state,
+            DynamicValueState::Missing(MissingValueReason::OtherDeclaration)
+        );
+        assert!(!ran(&dir));
+    }
+
+    #[test]
+    fn an_entry_recording_nothing_serves_any_declaration() {
+        let (resolution, _, ran) = one(&succeeds("new"), Some(("cached", "1h")), CachePolicy::Auto);
+        assert_eq!(only(&resolution).value.as_deref(), Some("cached"));
+        assert!(!ran);
+    }
+
+    #[test]
+    fn a_release_with_no_host_has_no_value_whatever_is_cached() {
+        let repository = GithubRepository::try_from("o/r".to_owned()).expect("valid");
+        let spec = GithubReleaseSource {
+            repository: repository.clone(),
+            github_url: None,
+            timeout: None,
+        };
+        let tag = leaf("tag");
+        let mut cache = DynamicVarCache::default();
+        seed(&mut cache, &tag, "v1", "1h");
+        for policy in [CachePolicy::Auto, CachePolicy::Never] {
+            let resolution = resolve_at(
+                &[PendingDeclaration {
+                    identity: tag.clone(),
+                    capture: Capture::Lookup {
+                        spec: &spec,
+                        host: Err("`github-url` is broken".to_owned()),
+                    },
+                    cache: None,
+                    policy,
+                    shadowed: false,
+                }],
+                policy,
+                &mut cache,
+            );
+            assert_eq!(only(&resolution).value, None);
+            assert_eq!(only(&resolution).kind, "github-release");
+            assert_eq!(
+                only(&resolution).state,
+                DynamicValueState::Missing(MissingValueReason::CaptureFailed)
+            );
+        }
     }
 }

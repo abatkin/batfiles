@@ -276,6 +276,86 @@ fn the_cache_follows_the_selected_cache_root() {
     assert!(!cache(&tree).exists());
 }
 
+// Provenance
+
+/// Put `profile`'s entry in the cache, captured an hour ago by the command declaration `from`.
+fn seed_from(tree: &Tree, value: &str, from: &str) {
+    let captured = Timestamp::now() - SignedDuration::from_hours(1);
+    fs::write(
+        cache(tree),
+        format!("[profile]\nvalue = \"{value}\"\ncaptured-at = \"{captured}\"\nfrom = {from}\n"),
+    )
+    .expect("a cache document");
+}
+
+#[test]
+fn a_capture_records_the_declaration_that_made_it() {
+    let tree = declaring(COUNTED);
+    sync(&tree, &[]);
+    let document = cache_document(&tree);
+    assert!(
+        document.contains(
+            r#"from = { command = "echo ran >> runs; printf work", capture = "stdout" }"#
+        ),
+        "{document}"
+    );
+}
+
+#[test]
+fn a_value_another_command_or_capture_produced_is_captured_again() {
+    for from in [
+        r#"{ command = "printf lab", capture = "stdout" }"#,
+        r#"{ command = ["sh", "-c", "echo ran >> runs; printf work"], capture = "stdout" }"#,
+        r#"{ command = "echo ran >> runs; printf work", capture = "status" }"#,
+    ] {
+        let tree = declaring(COUNTED);
+        seed_from(&tree, "lab", from);
+        let stderr = sync(&tree, &["-vv"]);
+        assert_eq!(runs(&tree), 1, "{from}: {stderr}");
+        assert!(tree.home("work").is_dir(), "{from}: {stderr}");
+    }
+}
+
+#[test]
+fn a_failed_capture_never_falls_back_on_another_commands_value() {
+    let tree = declaring(r#"{ command = "exit 3" }"#);
+    seed_from(
+        &tree,
+        "work",
+        r#"{ command = "printf work", capture = "stdout" }"#,
+    );
+    let stderr = sync(&tree, &["-vv"]);
+    assert!(!tree.home("work").exists(), "{stderr}");
+    assert!(
+        stderr.contains("profile = no value (batfiles.toml, command failed)"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_entry_recording_no_declaration_serves_any() {
+    let tree = declaring(COUNTED);
+    seed(&tree, "profile", "work", SignedDuration::from_hours(1));
+    sync(&tree, &[]);
+    assert_eq!(runs(&tree), 0);
+    assert!(tree.home("work").is_dir());
+}
+
+#[test]
+fn no_refresh_reports_a_value_another_declaration_produced() {
+    let tree = declaring(COUNTED);
+    seed_from(
+        &tree,
+        "lab",
+        r#"{ command = "printf lab", capture = "stdout" }"#,
+    );
+    assert_eq!(
+        list(&tree, &["--no-refresh"]),
+        "profile = no value (batfiles.toml, cached for a different declaration)\n"
+    );
+    assert_eq!(runs(&tree), 0);
+}
+
 // `vars list`
 
 fn list(tree: &Tree, args: &[&str]) -> String {
@@ -389,8 +469,8 @@ fn a_remote_runs_no_command_unless_the_leaf_allows_it() {
     assert!(!tree.home("team").exists(), "{stderr}");
     assert!(
         stderr.contains(
-            "remote `corporate` is not allowed to run dynamic variables, so it does not \
-             declare `team`"
+            "remote `corporate` is not allowed to run dynamic-variable commands, so it does \
+             not declare `team`"
         ),
         "{stderr}"
     );

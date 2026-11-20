@@ -17,6 +17,7 @@ use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::ItemId;
 use crate::manifest::repo_path::{REMOTE_PREFIX, RepoPath};
 use crate::manifest::template::TemplateString;
+use crate::manifest::vars::{DynamicSource, DynamicVarSpec, VarSpec};
 use crate::source::fetch::{FileUrlError, file_url_path};
 
 /// How a message names the tree a path is read from.
@@ -273,6 +274,16 @@ pub(crate) enum ManifestError {
         remote: ItemId,
     },
 
+    /// A `github-url` reading something other than the host namespaces.
+    #[error(
+        "{record}: `github-url` reads `{root}`; `github-url` may read `env` and `facts`, not \
+         variables"
+    )]
+    GithubUrlReadsVariable {
+        record: DeclarationName,
+        root: String,
+    },
+
     /// A filter over direct children whose pattern could only match below one.
     #[error(
         "{record}: {field} pattern `{pattern}` contains `/`; this action's filters match \
@@ -299,6 +310,8 @@ pub(crate) enum ValueRule {
     GitRef,
     /// A SHA-256 digest.
     Digest,
+    /// An `http://` or `https://` URL to ask.
+    HttpUrl,
     /// Any text, such as part of a command.
     Text,
 }
@@ -309,6 +322,7 @@ impl ValueRule {
         match self {
             Self::Destination => check_dest(value),
             Self::Url => check_url(value),
+            Self::HttpUrl if !is_http_url(value) => Err(ValueError::NotAnHttpUrl),
             Self::GitSource if value.trim().is_empty() => Err(ValueError::GitSourceEmpty),
             Self::GitRef if value.trim().is_empty() => Err(ValueError::GitRefEmpty),
             Self::Digest
@@ -316,7 +330,7 @@ impl ValueRule {
             {
                 Err(ValueError::DigestNotSha256)
             }
-            Self::GitSource | Self::GitRef | Self::Digest | Self::Text => Ok(()),
+            Self::GitSource | Self::GitRef | Self::Digest | Self::HttpUrl | Self::Text => Ok(()),
         }
     }
 }
@@ -333,6 +347,9 @@ pub(crate) enum ValueError {
 
     #[error("is not an http://, https://, or file:// URL")]
     NotAUrl,
+
+    #[error("is not an http:// or https:// URL")]
+    NotAnHttpUrl,
 
     #[error(transparent)]
     FileUrl(FileUrlError),
@@ -672,11 +689,7 @@ fn check_dest(dest: &str) -> Result<(), ValueError> {
 
 /// Validate a fetch URL.
 fn check_url(source: &str) -> Result<(), ValueError> {
-    let scheme = |prefix: &str| {
-        let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
-        source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
-    };
-    if scheme("http://") || scheme("https://") {
+    if is_http_url(source) {
         return Ok(());
     }
     match file_url_path(source) {
@@ -685,6 +698,45 @@ fn check_url(source: &str) -> Result<(), ValueError> {
         None => Err(ValueError::NotAUrl),
     }
 }
+
+/// Whether `source` starts with `http://` or `https://`, in any case, and has more after it.
+fn is_http_url(source: &str) -> bool {
+    let scheme = |prefix: &str| {
+        let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
+        source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
+    };
+    scheme("http://") || scheme("https://")
+}
+
+/// Check a `[vars]` entry: a `github-url` parses, reads only `env` and `facts`, and, if it is
+/// literal, is an http(s) URL.
+pub(super) fn check_var(spec: &VarSpec, record: &DeclarationName) -> Result<(), ManifestError> {
+    let VarSpec::Dynamic(DynamicVarSpec {
+        source: DynamicSource::GithubRelease(release),
+        ..
+    }) = spec
+    else {
+        return Ok(());
+    };
+    let Some(url) = &release.github_url else {
+        return Ok(());
+    };
+    check_template(url, "github-url", ValueRule::HttpUrl, record)?;
+    match url
+        .roots()
+        .into_iter()
+        .find(|root| !HOST_NAMESPACES.contains(root))
+    {
+        Some(root) => Err(ManifestError::GithubUrlReadsVariable {
+            record: record.clone(),
+            root: root.to_owned(),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// The namespaces that exist before any variable resolves.
+const HOST_NAMESPACES: [&str; 2] = ["env", "facts"];
 
 /// Validate an optional archive-root path or the `*` automatic-root selector.
 pub(super) fn check_archive_root(

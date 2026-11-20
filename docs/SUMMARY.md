@@ -12,6 +12,7 @@
 - [Everyday use](guides/everyday.md)
 - [Configure a machine](guides/machines.md)
 - [Manage files and downloads](guides/content.md)
+- [Install from GitHub releases](guides/releases.md)
 - [Share configuration](guides/composition.md)
 - [Troubleshooting](guides/troubleshooting.md)
 

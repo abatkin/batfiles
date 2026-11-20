@@ -16,6 +16,7 @@ mod documentation;
 mod fetch_actions;
 mod git_clone_action;
 mod git_remotes;
+mod github_release;
 mod groups;
 mod inclusion;
 mod inclusion_addresses;

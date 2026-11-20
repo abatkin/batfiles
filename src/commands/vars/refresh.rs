@@ -1,4 +1,4 @@
-//! `vars refresh`: run dynamic variables' commands whatever the cache holds,
+//! `vars refresh`: capture dynamic variables whatever the cache holds,
 //! for the leaf and for every remote in play on this machine. See
 //! [`docs/cmdline.md`](../../../docs/cmdline.md#vars-refresh).
 
@@ -18,8 +18,8 @@ use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::manifest::disabled::DisabledItems;
 use crate::manifest::item::{ItemAddress, ItemId};
-use crate::manifest::remote::Tree;
-use crate::manifest::vars::VarSpec;
+use crate::manifest::remote::{Remote, Tree};
+use crate::manifest::vars::{DynamicSource, VarSpec};
 use crate::output::Reporter;
 use crate::run::inclusion::{self, Inclusion};
 use crate::run::selection::{Selection, Subject};
@@ -51,14 +51,24 @@ pub(crate) fn run(keys: &[DynamicVarKey], session: &Session<'_>) -> Result<(), E
             .collect(),
     )?;
 
+    let host = HostNamespaces::capture(env);
     let mut dynamic = DynamicVarResolver::for_refresh(
         &roots.machine,
         targets.clone(),
         &manifest.remotes,
+        &host,
         reporter,
     );
     if targets.reaches_remotes() {
-        refresh_with_remotes(manifest, &targets, &roots, env, &mut dynamic, reporter)?;
+        refresh_with_remotes(
+            manifest,
+            &targets,
+            &roots,
+            env,
+            &host,
+            &mut dynamic,
+            reporter,
+        )?;
     } else {
         let leaf = ManifestSource {
             tree: Tree::Leaf,
@@ -77,6 +87,7 @@ fn refresh_with_remotes(
     asked: &RefreshTargets,
     roots: &Roots,
     env: &Environment,
+    host: &HostNamespaces,
     dynamic: &mut DynamicVarResolver<'_>,
     reporter: &Reporter,
 ) -> Result<(), Error> {
@@ -91,8 +102,7 @@ fn refresh_with_remotes(
     )?);
     // Save leaf captures even if later reachability or key validation fails.
     dynamic.save();
-    let host = HostNamespaces::capture(env);
-    let bindings = Bindings::new(&variables, &host);
+    let bindings = Bindings::new(&variables, host);
     let selection =
         Selection::without_run_skips(DisabledItems::load(&roots.machine.disabled_path())?);
     let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
@@ -135,10 +145,16 @@ fn refresh_with_remotes(
                         path: remotes::materialization(&repository, remote),
                     },
                     Some(included) => {
+                        let commands_allowed = manifest
+                            .remotes
+                            .get(remote)
+                            .is_some_and(Remote::allows_dynamic_vars);
                         for key in asked.keys_for(remote) {
-                            if let Some(reason) =
-                                declared(included.vars.get(&key.name), Tree::Remote(remote))
-                            {
+                            if let Some(reason) = declared(
+                                included.vars.get(&key.name),
+                                Tree::Remote(remote),
+                                commands_allowed,
+                            ) {
                                 refusals.push(UnrefreshableKey::of(key, reason));
                             }
                         }
@@ -221,29 +237,37 @@ fn reachability(
 /// Why a key cannot be refreshed, as far as the leaf manifest alone can tell.
 fn declared_in_leaf(key: &DynamicVarKey, manifest: &Manifest) -> Option<UnrefreshableReason> {
     let Tree::Remote(remote) = &key.tree else {
-        return declared(manifest.vars.get(&key.name), Tree::Leaf);
+        return declared(manifest.vars.get(&key.name), Tree::Leaf, true);
     };
-    match manifest.remotes.get(remote) {
-        None => Some(UnrefreshableReason::UnknownRemote {
+    if manifest.remotes.contains_key(remote) {
+        None
+    } else {
+        Some(UnrefreshableReason::UnknownRemote {
             remote: remote.clone(),
+        })
+    }
+}
+
+/// Why `spec`, looked up in `tree`'s `[vars]`, is not a declaration this command may refresh:
+/// not a dynamic one, or a command when `commands_allowed` is not set.
+fn declared(
+    spec: Option<&VarSpec>,
+    tree: Tree<&ItemId>,
+    commands_allowed: bool,
+) -> Option<UnrefreshableReason> {
+    match (spec, tree) {
+        (None, _) => Some(UnrefreshableReason::NotDeclared {
+            tree: tree.cloned(),
         }),
-        Some(declaration) if !declaration.allows_dynamic_vars() => {
+        (Some(VarSpec::Static(_)), _) => Some(UnrefreshableReason::Static),
+        (Some(VarSpec::Dynamic(spec)), Tree::Remote(remote))
+            if !commands_allowed && matches!(spec.source, DynamicSource::Command(_)) =>
+        {
             Some(UnrefreshableReason::NotAllowed {
                 remote: remote.clone(),
             })
         }
-        Some(_) => None,
-    }
-}
-
-/// Why `spec`, looked up in `tree`'s `[vars]`, is not a dynamic declaration.
-fn declared(spec: Option<&VarSpec>, tree: Tree<&ItemId>) -> Option<UnrefreshableReason> {
-    match spec {
-        None => Some(UnrefreshableReason::NotDeclared {
-            tree: tree.cloned(),
-        }),
-        Some(VarSpec::Static(_)) => Some(UnrefreshableReason::Static),
-        Some(VarSpec::Dynamic(_)) => None,
+        (Some(VarSpec::Dynamic(_)), _) => None,
     }
 }
 
@@ -315,14 +339,14 @@ pub(crate) enum UnrefreshableReason {
     #[error("{} does not declare it", declarer(.tree.as_ref()))]
     NotDeclared { tree: Tree<ItemId> },
 
-    #[error("it is a static variable, with no command to run")]
+    #[error("it is a static variable, with nothing to capture")]
     Static,
 
     #[error("batfiles.toml declares no remote `{remote}`")]
     UnknownRemote { remote: ItemId },
 
     #[error(
-        "remote `{remote}` is not allowed to run dynamic variables; set \
+        "remote `{remote}` is not allowed to run dynamic-variable commands; set \
          `allow-dynamic-vars = true` on it to run them"
     )]
     NotAllowed { remote: ItemId },

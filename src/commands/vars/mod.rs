@@ -12,6 +12,7 @@ use crate::env::Environment;
 use crate::error::Error;
 use crate::location::{MachineRoots, Roots};
 use crate::manifest::Manifest;
+use crate::manifest::condition::HostNamespaces;
 use crate::output::Reporter;
 use crate::run::lock::RunLock;
 use crate::vars::dynamic::{CachePolicy, DynamicVarResolver};
@@ -171,7 +172,8 @@ fn list_leaf(
     reporter: &Reporter,
 ) -> Result<(), Error> {
     let manifest = Manifest::load(&roots.manifest_path())?;
-    let mut dynamic = DynamicVarResolver::for_listing(&roots.machine, policy, reporter);
+    let host = HostNamespaces::capture(env);
+    let mut dynamic = DynamicVarResolver::for_listing(&roots.machine, policy, &host, reporter);
     let scope = VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,

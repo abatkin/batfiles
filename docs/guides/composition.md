@@ -98,5 +98,7 @@ remote's own condition controls that.
 
 An inclusion can pass static values through `vars = { profile = "work" }`.
 Included dynamic commands are disabled unless the leaf explicitly sets
-`allow-dynamic-vars = true` on the Git remote. See
+`allow-dynamic-vars = true` on the Git remote; included
+[`github-release`](../repoformat.md#github-release-declarations) lookups run
+no code and need no permission. See
 [inclusion variables](../actions/include-remote.md#variables-for-one-inclusion).

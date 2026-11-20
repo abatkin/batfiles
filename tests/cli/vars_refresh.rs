@@ -109,7 +109,7 @@ fn every_key_that_cannot_be_refreshed_is_named_and_nothing_runs() {
     assert_eq!(
         stderr,
         "error: cannot refresh 3 dynamic variables:\n  \
-         `editor`: it is a static variable, with no command to run\n  \
+         `editor`: it is a static variable, with nothing to capture\n  \
          `nope`: batfiles.toml does not declare it\n  \
          `ghost.team`: batfiles.toml declares no remote `ghost`\n"
     );
@@ -249,7 +249,7 @@ fn a_remote_not_allowed_to_run_commands_refreshes_nothing() {
     let stderr = refresh(&tree, &["-v"]);
     assert!(stderr.contains("nothing to refresh"), "{stderr}");
     assert!(
-        stderr.contains("remote `corporate` is not allowed to run dynamic variables"),
+        stderr.contains("remote `corporate` is not allowed to run dynamic-variable commands"),
         "{stderr}"
     );
     assert_eq!(runs(&tree, "remote-runs"), 0);
@@ -258,7 +258,7 @@ fn a_remote_not_allowed_to_run_commands_refreshes_nothing() {
     assert!(
         stderr.contains(
             "cannot refresh `corporate.team`: remote `corporate` is not allowed to run \
-             dynamic variables"
+             dynamic-variable commands"
         ),
         "{stderr}"
     );
@@ -353,7 +353,7 @@ fn a_remote_key_must_name_a_dynamic_declaration_of_that_remote() {
         stderr,
         "error: cannot refresh 2 dynamic variables:\n  \
          `corporate.nope`: batfiles.toml of remote `corporate` does not declare it\n  \
-         `corporate.site`: it is a static variable, with no command to run\n"
+         `corporate.site`: it is a static variable, with nothing to capture\n"
     );
     assert_eq!(runs(&tree, "remote-runs"), 1);
 }

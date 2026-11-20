@@ -30,6 +30,10 @@ URL, so one in an included manifest reads the host environment only with
 
 A configured SHA-256 digest verifies downloaded bytes. Without one, content
 identity and authenticity depend on the transport and source the user selected.
+A download whose URL is built from a
+[`github-release`](repoformat.md#github-release-declarations) tag cannot have
+one: its version floats, so no fixed digest matches every release it will
+fetch, and only the transport vouches for it.
 Batfiles does not require signed Git commits or make branches immutable; pin a
 commit or otherwise control the source when upstream changes are unacceptable.
 Updating a remote can change both files and included actions on the next run.
