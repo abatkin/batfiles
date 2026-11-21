@@ -54,7 +54,7 @@ fn tag_of(repository: &GithubRepository, answer: &Unfollowed) -> Result<String, 
             let path = location
                 .find(['?', '#'])
                 .map_or(location.as_str(), |end| &location[..end]);
-            if let Some(at) = path.rfind(TAG_PATH) {
+            if let Some(at) = path.find(TAG_PATH) {
                 let encoded = &path[at + TAG_PATH.len()..];
                 return match percent_encoding::percent_decode_str(encoded).decode_utf8() {
                     Ok(tag) if tag.is_empty() => Err(LookupError::EmptyTag),

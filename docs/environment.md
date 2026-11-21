@@ -189,9 +189,10 @@ Lookups run one at a time, in real and dry runs, like commands.
 
 The lookup succeeds when the answer is a redirect (301, 302, 303, 307, or 308)
 whose `Location`, absolute or relative and without any query or fragment,
-contains `/releases/tag/`. The value is everything after the last
-`/releases/tag/`, percent-decoded, exactly as GitHub names the tag, so a tag
-holding a `/` stays whole and a `v` prefix is kept. The response is trusted:
+contains `/releases/tag/`. The release-route boundary is its first
+`/releases/tag/`; the value is everything after it, percent-decoded, exactly as
+GitHub names the tag, so a tag holding a `/` stays whole and a `v` prefix is
+kept. The response is trusted:
 the `Location` is not checked against the host or repository asked.
 
 | Answer | Failure reason |

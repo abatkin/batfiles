@@ -19,7 +19,7 @@ fn reason(status: u16, location: Option<&str>) -> String {
 }
 
 #[test]
-fn the_tag_is_everything_after_the_last_release_tag_path_decoded() {
+fn the_tag_is_everything_after_the_release_route_boundary_decoded() {
     for location in [
         "https://github.com/o/r/releases/tag/v1.2.3",
         "/o/r/releases/tag/v1.2.3",
@@ -32,8 +32,8 @@ fn the_tag_is_everything_after_the_last_release_tag_path_decoded() {
         "release/1.0 rc"
     );
     assert_eq!(
-        answered(307, Some("/releases/tag/releases/tag/x/releases/tag/a/b")).expect("a tag"),
-        "a/b"
+        answered(307, Some("/o/r/releases/tag/feature/releases/tag/v1")).expect("a tag"),
+        "feature/releases/tag/v1"
     );
 }
 
