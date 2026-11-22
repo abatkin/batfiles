@@ -17,6 +17,7 @@ use crate::manifest::entry_filter::GlobFilter;
 use crate::manifest::item::ItemId;
 use crate::manifest::repo_path::{REMOTE_PREFIX, RepoPath};
 use crate::manifest::template::TemplateString;
+use crate::manifest::vars::{DynamicSource, DynamicVarSpec, VarSpec};
 use crate::source::fetch::{FileUrlError, file_url_path};
 
 /// How a message names the tree a path is read from.
@@ -196,6 +197,15 @@ pub(crate) enum ManifestError {
         source: Box<SyntaxError>,
     },
 
+    /// A template field's value does not parse, said without quoting a value that may hold
+    /// credentials.
+    #[error("{record}: {field} {problem}")]
+    SyntaxUnquoted {
+        record: DeclarationName,
+        field: &'static str,
+        problem: String,
+    },
+
     /// A template field's literal value breaks its field's rule.
     #[error("{record}: {field}{} {source}", written(.value))]
     Value {
@@ -273,6 +283,16 @@ pub(crate) enum ManifestError {
         remote: ItemId,
     },
 
+    /// A `github-url` reading something other than the host namespaces.
+    #[error(
+        "{record}: `github-url` reads `{root}`; `github-url` may read `env` and `facts`, not \
+         variables"
+    )]
+    GithubUrlReadsVariable {
+        record: DeclarationName,
+        root: String,
+    },
+
     /// A filter over direct children whose pattern could only match below one.
     #[error(
         "{record}: {field} pattern `{pattern}` contains `/`; this action's filters match \
@@ -299,16 +319,26 @@ pub(crate) enum ValueRule {
     GitRef,
     /// A SHA-256 digest.
     Digest,
+    /// The `http://` or `https://` base a release path is appended to: it names a host, and
+    /// has no credentials, query, or fragment.
+    ReleaseHost,
     /// Any text, such as part of a command.
     Text,
 }
 
 impl ValueRule {
+    /// Whether an error may quote `value`, a literal or a template as written: not a release
+    /// host that could hold credentials.
+    pub fn may_show(self, value: &str) -> bool {
+        !matches!(self, Self::ReleaseHost) || !value.contains('@')
+    }
+
     /// Check `value`.
     pub fn check(self, value: &str) -> Result<(), ValueError> {
         match self {
             Self::Destination => check_dest(value),
             Self::Url => check_url(value),
+            Self::ReleaseHost => check_release_host(value),
             Self::GitSource if value.trim().is_empty() => Err(ValueError::GitSourceEmpty),
             Self::GitRef if value.trim().is_empty() => Err(ValueError::GitRefEmpty),
             Self::Digest
@@ -333,6 +363,21 @@ pub(crate) enum ValueError {
 
     #[error("is not an http://, https://, or file:// URL")]
     NotAUrl,
+
+    #[error("is not an http:// or https:// URL")]
+    NotAnHttpUrl,
+
+    #[error("names no host")]
+    NoHost,
+
+    #[error("contains credentials before `@`; a release lookup sends none")]
+    Credentials,
+
+    #[error("has a query or fragment, so the release path cannot be appended to it")]
+    QueryOrFragment,
+
+    #[error("is not a valid URL")]
+    MalformedUrl,
 
     #[error(transparent)]
     FileUrl(FileUrlError),
@@ -364,14 +409,26 @@ pub(super) fn check_template(
     rule: ValueRule,
     record: &DeclarationName,
 ) -> Result<(), ManifestError> {
-    value
-        .syntax()
-        .map_err(|error| syntax_error(record, field, error))?;
+    value.syntax().map_err(|error| {
+        if rule.may_show(value.source()) {
+            syntax_error(record, field, error)
+        } else {
+            ManifestError::SyntaxUnquoted {
+                record: record.clone(),
+                field,
+                problem: error.problem(),
+            }
+        }
+    })?;
     match value.literal() {
         Some(literal) => rule.check(literal).map_err(|source| ManifestError::Value {
             record: record.clone(),
             field,
-            value: value.source().to_owned(),
+            value: if rule.may_show(literal) {
+                value.source().to_owned()
+            } else {
+                String::new()
+            },
             source,
         }),
         None => Ok(()),
@@ -672,11 +729,7 @@ fn check_dest(dest: &str) -> Result<(), ValueError> {
 
 /// Validate a fetch URL.
 fn check_url(source: &str) -> Result<(), ValueError> {
-    let scheme = |prefix: &str| {
-        let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
-        source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
-    };
-    if scheme("http://") || scheme("https://") {
+    if is_http_url(source) {
         return Ok(());
     }
     match file_url_path(source) {
@@ -685,6 +738,105 @@ fn check_url(source: &str) -> Result<(), ValueError> {
         None => Err(ValueError::NotAUrl),
     }
 }
+
+/// Whether `source` starts with `http://` or `https://`, in any case, and has more after it.
+fn is_http_url(source: &str) -> bool {
+    let scheme = |prefix: &str| {
+        let (source, prefix) = (source.as_bytes(), prefix.as_bytes());
+        source.len() > prefix.len() && source[..prefix.len()].eq_ignore_ascii_case(prefix)
+    };
+    scheme("http://") || scheme("https://")
+}
+
+/// Check a release lookup's base URL: `http://` or `https://`, then a host with no
+/// credentials, then an optional path with no query or fragment, all of it a URI the HTTP
+/// client can request.
+fn check_release_host(value: &str) -> Result<(), ValueError> {
+    if !is_http_url(value) {
+        return Err(ValueError::NotAnHttpUrl);
+    }
+    let (_, rest) = value.split_once("://").unwrap_or_default();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        Err(ValueError::Credentials)
+    } else if authority.is_empty() || authority.starts_with(':') {
+        Err(ValueError::NoHost)
+    } else if rest.contains(['?', '#']) {
+        Err(ValueError::QueryOrFragment)
+    } else if !is_authority(authority) || value.parse::<ureq::http::Uri>().is_err() {
+        Err(ValueError::MalformedUrl)
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether `authority` is, in full, a [host](is_host) followed by nothing or by `:` and a
+/// decimal port from 1 to 65535.
+fn is_authority(authority: &str) -> bool {
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(bracketed) => match bracketed.split_once(']') {
+            Some((address, rest)) => (&authority[..address.len() + 2], rest),
+            None => return false,
+        },
+        None => authority.split_at(authority.find(':').unwrap_or(authority.len())),
+    };
+    let port_ok = match port.strip_prefix(':') {
+        None => port.is_empty(),
+        Some(digits) => {
+            !digits.is_empty()
+                && digits.bytes().all(|byte| byte.is_ascii_digit())
+                && digits.parse::<u16>().is_ok_and(|port| port > 0)
+        }
+    };
+    port_ok && is_host(host)
+}
+
+/// Whether `host` is a bracketed IPv6 address or a name of ASCII letters, digits, `-`, `.`,
+/// and `_`, which covers DNS names and IPv4 addresses.
+fn is_host(host: &str) -> bool {
+    match host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        Some(address) => address.parse::<std::net::Ipv6Addr>().is_ok(),
+        None => {
+            !host.is_empty()
+                && host
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+        }
+    }
+}
+
+/// Check a `[vars]` entry: a `github-url` parses, reads only `env` and `facts`, and, if it is
+/// literal, is an http(s) URL.
+pub(super) fn check_var(spec: &VarSpec, record: &DeclarationName) -> Result<(), ManifestError> {
+    let VarSpec::Dynamic(DynamicVarSpec {
+        source: DynamicSource::GithubRelease(release),
+        ..
+    }) = spec
+    else {
+        return Ok(());
+    };
+    let Some(url) = &release.github_url else {
+        return Ok(());
+    };
+    check_template(url, "github-url", ValueRule::ReleaseHost, record)?;
+    match url
+        .roots()
+        .into_iter()
+        .find(|root| !HOST_NAMESPACES.contains(root))
+    {
+        Some(root) => Err(ManifestError::GithubUrlReadsVariable {
+            record: record.clone(),
+            root: root.to_owned(),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// The namespaces that exist before any variable resolves.
+const HOST_NAMESPACES: [&str; 2] = ["env", "facts"];
 
 /// Validate an optional archive-root path or the `*` automatic-root selector.
 pub(super) fn check_archive_root(

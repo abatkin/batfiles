@@ -1,13 +1,15 @@
-//! Resolve dynamic variables by running commands or reading `dynamic-vars.toml`. Commands may
-//! have side effects and run during dry runs too. See [command
-//! execution](../../../docs/environment.md#how-dynamic-commands-are-run).
+//! Resolve dynamic variables by running commands, looking up releases, or reading
+//! `dynamic-vars.toml`. Commands may have side effects; both kinds capture during dry runs too.
+//! See [command execution](../../../docs/environment.md#how-dynamic-commands-are-run).
 
 mod cache;
 mod command;
+mod lookup;
 mod resolve;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use jiff::Timestamp;
 
@@ -15,16 +17,22 @@ pub(crate) use self::cache::DynamicVarCache;
 pub(crate) use self::resolve::{
     CachePolicy, DynamicValueState, DynamicVarKey, ResolvedDynamicVar, age,
 };
-use self::resolve::{PendingDeclaration, resolve};
+use self::resolve::{Capture, PendingDeclaration, resolve};
 use crate::error::Error;
 use crate::location::MachineRoots;
+use crate::manifest::check::ValueRule;
+use crate::manifest::condition::{Bindings, HostNamespaces};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Remote;
 use crate::manifest::remote::Tree;
-use crate::manifest::vars::VarSpec;
-use crate::output::Reporter;
+use crate::manifest::template::EnvAccess;
+use crate::manifest::vars::{DynamicSource, GithubReleaseSource, VarSpec};
+use crate::output::{Reporter, quoted_value};
 use crate::vars::name::VarName;
-use crate::vars::scope::VarValue;
+use crate::vars::scope::{VarScope, VarValue};
+
+/// `github-url`'s default.
+const DEFAULT_GITHUB_URL: &str = "https://github.com";
 
 /// Resolve each dynamic declaration at most once per invocation, sharing remote results across
 /// inclusions. Load the cache on demand and save only captured values.
@@ -36,10 +44,14 @@ pub(crate) struct DynamicVarResolver<'a> {
     forced: Option<RefreshTargets>,
     /// Whether to skip declarations shadowed by machine-local values.
     skip_shadowed: bool,
-    /// The remotes whose declarations may run.
+    /// The remotes whose command declarations may run.
     allowed: BTreeSet<ItemId>,
-    /// Remotes already reported as not allowed to run their declarations.
+    /// The remotes whose `github-url` templates may read `env`.
+    env_templates: BTreeSet<ItemId>,
+    /// Remotes already reported as not allowed to run their commands.
     refused: BTreeSet<ItemId>,
+    /// The `env` and `facts` a `github-url` reads.
+    host: &'a HostNamespaces,
     reporter: &'a Reporter,
     cache: Option<DynamicVarCache>,
     resolved: BTreeMap<DynamicVarKey, ResolvedDynamicVar>,
@@ -107,25 +119,38 @@ pub(crate) struct ManifestSource<'a> {
 
 impl<'a> DynamicVarResolver<'a> {
     /// Create a resolver for action execution, including declarations shadowed by machine-local
-    /// values. The leaf's `remotes` determine which remotes may run dynamic commands.
+    /// values. The leaf's `remotes` determine which remotes may run dynamic commands and which
+    /// may read `env` in a `github-url`; `host` holds what a `github-url` reads.
     pub fn for_run(
         state: &MachineRoots,
         policy: CachePolicy,
         remotes: &BTreeMap<ItemId, Remote>,
+        host: &'a HostNamespaces,
         reporter: &'a Reporter,
     ) -> Self {
-        let allowed = remotes
-            .iter()
-            .filter(|(_, remote)| remote.allows_dynamic_vars())
-            .map(|(id, _)| id.clone())
-            .collect();
-        Self::new(state, policy, false, allowed, reporter)
+        let having = |permission: fn(&Remote) -> bool| {
+            remotes
+                .iter()
+                .filter(|(_, remote)| permission(remote))
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        Self {
+            allowed: having(Remote::allows_dynamic_vars),
+            env_templates: having(Remote::allows_env_templates),
+            ..Self::new(state, policy, false, host, reporter)
+        }
     }
 
     /// Create a resolver for `vars list`, skipping declarations shadowed by machine-local
     /// values and excluding remote declarations.
-    pub fn for_listing(state: &MachineRoots, policy: CachePolicy, reporter: &'a Reporter) -> Self {
-        Self::new(state, policy, true, BTreeSet::new(), reporter)
+    pub fn for_listing(
+        state: &MachineRoots,
+        policy: CachePolicy,
+        host: &'a HostNamespaces,
+        reporter: &'a Reporter,
+    ) -> Self {
+        Self::new(state, policy, true, host, reporter)
     }
 
     /// Create a resolver that forces `targets` and uses the run policy for other declarations
@@ -134,11 +159,12 @@ impl<'a> DynamicVarResolver<'a> {
         state: &MachineRoots,
         targets: RefreshTargets,
         remotes: &BTreeMap<ItemId, Remote>,
+        host: &'a HostNamespaces,
         reporter: &'a Reporter,
     ) -> Self {
         Self {
             forced: Some(targets),
-            ..Self::for_run(state, CachePolicy::Auto, remotes, reporter)
+            ..Self::for_run(state, CachePolicy::Auto, remotes, host, reporter)
         }
     }
 
@@ -146,7 +172,7 @@ impl<'a> DynamicVarResolver<'a> {
         state: &MachineRoots,
         policy: CachePolicy,
         skip_shadowed: bool,
-        allowed: BTreeSet<ItemId>,
+        host: &'a HostNamespaces,
         reporter: &'a Reporter,
     ) -> Self {
         Self {
@@ -154,8 +180,10 @@ impl<'a> DynamicVarResolver<'a> {
             policy,
             forced: None,
             skip_shadowed,
-            allowed,
+            allowed: BTreeSet::new(),
+            env_templates: BTreeSet::new(),
             refused: BTreeSet::new(),
+            host,
             reporter,
             cache: None,
             resolved: BTreeMap::new(),
@@ -163,37 +191,31 @@ impl<'a> DynamicVarResolver<'a> {
         }
     }
 
-    /// Build a variable layer from one manifest's `[vars]`, resolving commands according to
-    /// policy. Listing resolvers use `machine` to skip shadowed declarations.
+    /// Build a variable layer from one manifest's `[vars]`, resolving dynamic declarations
+    /// according to policy. Listing resolvers use `machine` to skip shadowed declarations.
     ///
-    /// Remotes without permission to run commands contribute only static values and are
-    /// reported at `-v`. Cache read failures return an error.
+    /// A remote without permission to run commands does not declare its command declarations,
+    /// which are reported at `-v`. Cache read failures return an error.
     pub fn layer(
         &mut self,
         vars: &BTreeMap<VarName, VarSpec>,
         source: &ManifestSource<'_>,
         machine: &BTreeMap<VarName, String>,
     ) -> Result<BTreeMap<VarName, VarValue>, Error> {
-        if let Tree::Remote(remote) = source.tree
-            && !self.allowed.contains(remote)
-        {
-            return Ok(self.refuse(vars, remote));
-        }
         self.resolve(vars, source, machine, false)?;
 
         Ok(vars
             .iter()
-            .map(|(name, spec)| {
+            .filter_map(|(name, spec)| {
                 let value = match spec {
                     VarSpec::Static(value) => VarValue::Static(value.clone()),
-                    VarSpec::Dynamic(_) => VarValue::Dynamic(
-                        self.resolved
-                            .get(&identity(source, name))
-                            .cloned()
-                            .expect("every declaration was resolved above"),
-                    ),
+                    // Only a command its remote may not run is left unresolved, and it
+                    // declares nothing.
+                    VarSpec::Dynamic(_) => {
+                        VarValue::Dynamic(self.resolved.get(&identity(source, name))?.clone())
+                    }
                 };
-                (name.clone(), value)
+                Some((name.clone(), value))
             })
             .collect())
     }
@@ -205,12 +227,6 @@ impl<'a> DynamicVarResolver<'a> {
         vars: &BTreeMap<VarName, VarSpec>,
         source: &ManifestSource<'_>,
     ) -> Result<(), Error> {
-        if let Tree::Remote(remote) = source.tree
-            && !self.allowed.contains(remote)
-        {
-            self.refuse(vars, remote);
-            return Ok(());
-        }
         self.resolve(vars, source, &BTreeMap::new(), true)
     }
 
@@ -222,8 +238,9 @@ impl<'a> DynamicVarResolver<'a> {
             .filter(|(identity, _)| self.policy_of(identity) == CachePolicy::Force)
     }
 
-    /// Resolve every unresolved dynamic declaration in `vars`, or only the
-    /// forced ones when `only_forced` is set.
+    /// Resolve every unresolved dynamic declaration in `vars`, or only the forced ones when
+    /// `only_forced` is set. Skip, and report, command declarations of a remote not allowed to
+    /// run them.
     fn resolve(
         &mut self,
         vars: &BTreeMap<VarName, VarSpec>,
@@ -231,26 +248,48 @@ impl<'a> DynamicVarResolver<'a> {
         machine: &BTreeMap<VarName, String>,
         only_forced: bool,
     ) -> Result<(), Error> {
-        let pending: Vec<PendingDeclaration<'_>> = vars
-            .iter()
-            .filter_map(|(name, spec)| match spec {
-                VarSpec::Static(_) => None,
-                VarSpec::Dynamic(spec) => {
-                    let identity = identity(source, name);
-                    Some(PendingDeclaration {
-                        policy: self.policy_of(&identity),
-                        identity,
-                        spec,
-                        cwd: source.root,
-                        shadowed: self.skip_shadowed && machine.contains_key(name),
-                    })
+        let refused = match source.tree {
+            Tree::Remote(remote) if !self.allowed.contains(remote) => Some(remote),
+            _ => None,
+        };
+        let mut unrun = Vec::new();
+        let mut pending = Vec::new();
+        for (name, spec) in vars {
+            let VarSpec::Dynamic(spec) = spec else {
+                continue;
+            };
+            let identity = identity(source, name);
+            let policy = self.policy_of(&identity);
+            let capture = match &spec.source {
+                DynamicSource::Command(_) if refused.is_some() => {
+                    unrun.push(format!("`{name}`"));
+                    continue;
                 }
-            })
-            .filter(|declaration| {
-                !self.resolved.contains_key(&declaration.identity)
-                    && (!only_forced || declaration.policy == CachePolicy::Force)
-            })
-            .collect();
+                _ if self.resolved.contains_key(&identity)
+                    || (only_forced && policy != CachePolicy::Force) =>
+                {
+                    continue;
+                }
+                DynamicSource::Command(command) => Capture::Command {
+                    spec: command,
+                    cwd: source.root,
+                },
+                DynamicSource::GithubRelease(release) => Capture::Lookup {
+                    spec: release,
+                    host: self.github_url(release, source.tree),
+                },
+            };
+            pending.push(PendingDeclaration {
+                identity,
+                capture,
+                cache: spec.cache,
+                policy,
+                shadowed: self.skip_shadowed && machine.contains_key(name),
+            });
+        }
+        if let Some(remote) = refused {
+            self.refuse(remote, &unrun);
+        }
 
         if !pending.is_empty() {
             let cache = match self.cache.take() {
@@ -277,34 +316,55 @@ impl<'a> DynamicVarResolver<'a> {
         }
     }
 
-    /// Return a remote's static values, omitting disallowed dynamic declarations. Report
-    /// omissions at `-v`, once per remote.
-    fn refuse(
-        &mut self,
-        vars: &BTreeMap<VarName, VarSpec>,
-        remote: &ItemId,
-    ) -> BTreeMap<VarName, VarValue> {
-        let mut layer = BTreeMap::new();
-        let mut unrun = Vec::new();
-        for (name, spec) in vars {
-            match spec {
-                VarSpec::Static(value) => {
-                    layer.insert(name.clone(), VarValue::Static(value.clone()));
-                }
-                VarSpec::Dynamic(_) => unrun.push(format!("`{name}`")),
-            }
-        }
+    /// Report at `-v`, once per remote, the command declarations `unrun` that `remote` does not
+    /// declare because it may not run commands.
+    fn refuse(&mut self, remote: &ItemId, unrun: &[String]) {
         if !unrun.is_empty() && self.refused.insert(remote.clone()) {
             self.reporter.detail(
                 1,
                 &format!(
-                    "remote `{remote}` is not allowed to run dynamic variables, so it does not \
-                     declare {}; set `allow-dynamic-vars = true` on it to run them",
+                    "remote `{remote}` is not allowed to run dynamic-variable commands, so it \
+                     does not declare {}; set `allow-dynamic-vars = true` on it to run them",
                     unrun.join(", ")
                 ),
             );
         }
-        layer
+    }
+
+    /// The host a release declaration in `tree` asks: its `github-url`, evaluated against `env`
+    /// and `facts` alone, with one trailing `/` removed. A failure names the field and its
+    /// template, never the value.
+    fn github_url(
+        &self,
+        release: &GithubReleaseSource,
+        tree: Tree<&ItemId>,
+    ) -> Result<String, String> {
+        let Some(url) = &release.github_url else {
+            return Ok(DEFAULT_GITHUB_URL.to_owned());
+        };
+        let env = match tree {
+            Tree::Remote(remote) if !self.env_templates.contains(remote) => {
+                EnvAccess::DeniedBy(remote)
+            }
+            _ => EnvAccess::Allowed,
+        };
+        // Manifest validation refuses a `github-url` reading any variable, so none are bound.
+        let no_variables = Rc::new(VarScope::stack(
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &[],
+        ));
+        let bindings = Bindings::new(&no_variables, self.host);
+        match url.evaluate(ValueRule::ReleaseHost, &bindings, env) {
+            Ok(resolved) => Ok(resolved.strip_suffix('/').unwrap_or(&resolved).to_owned()),
+            // A template that could hold credentials is not quoted.
+            Err(error) if ValueRule::ReleaseHost.may_show(url.source()) => Err(format!(
+                "`github-url` {} {error}",
+                quoted_value(url.source())
+            )),
+            Err(error) => Err(format!("`github-url` {error}")),
+        }
     }
 
     /// Write the cache if anything was captured since the last save. A cache

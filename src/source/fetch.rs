@@ -1,6 +1,7 @@
 //! Download HTTP or `file://` content into a caller-provided staging or scratch
 //! file, decompressing a fetched file whole where it is declared compressed. HTTP
-//! transfers require status 200; both verify an optional SHA-256 digest.
+//! transfers require status 200; both verify an optional SHA-256 digest. Also make the
+//! single unfollowed request a release lookup asks.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -91,7 +92,7 @@ pub(crate) fn download(
             copy_hashed(file, into, built_at, unreadable)?
         }
         None => {
-            let mut response = agent()
+            let mut response = agent(Transfer::Download)
                 .get(url)
                 .call()
                 .map_err(|error| failed(url, error))?;
@@ -233,13 +234,54 @@ fn platform_path(decoded: Vec<u8>) -> Result<PathBuf, FileUrlError> {
     Ok(PathBuf::from(if drive { &path[1..] } else { &path }))
 }
 
-/// The client every fetch goes through.
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_connect(Some(CONNECT_TIMEOUT))
-        .timeout_recv_response(Some(RESPONSE_TIMEOUT))
-        .timeout_recv_body(Some(BODY_TIMEOUT))
-        .max_redirects(MAX_REDIRECTS)
+/// The status and `Location` of a response to a request that follows no redirect.
+#[derive(Debug)]
+pub(crate) struct Unfollowed {
+    pub status: u16,
+    /// The `Location` header, if present and visible ASCII.
+    pub location: Option<String>,
+}
+
+/// Ask for `url` once, following no redirect, and return the response's status and
+/// `Location` whatever the status is. `timeout` bounds the whole request; a request that
+/// exceeds it fails with [`ureq::Error::Timeout`].
+pub(crate) fn request_unfollowed(url: &str, timeout: Duration) -> Result<Unfollowed, ureq::Error> {
+    let response = agent(Transfer::Lookup { timeout }).get(url).call()?;
+    let location = response
+        .headers()
+        .get(ureq::http::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    Ok(Unfollowed {
+        status: response.status().as_u16(),
+        location,
+    })
+}
+
+/// What a request is for, which decides its timeouts and redirect handling.
+#[derive(Debug, Clone, Copy)]
+enum Transfer {
+    /// A download: redirects are followed, and an error status fails it.
+    Download,
+    /// One request answered as it is, redirect or error status alike, within `timeout`.
+    Lookup { timeout: Duration },
+}
+
+/// The client every request goes through.
+fn agent(transfer: Transfer) -> ureq::Agent {
+    let builder = ureq::Agent::config_builder();
+    let builder = match transfer {
+        Transfer::Download => builder
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_recv_response(Some(RESPONSE_TIMEOUT))
+            .timeout_recv_body(Some(BODY_TIMEOUT))
+            .max_redirects(MAX_REDIRECTS),
+        Transfer::Lookup { timeout } => builder
+            .timeout_global(Some(timeout))
+            .max_redirects(0)
+            .http_status_as_error(false),
+    };
+    builder
         .user_agent(format!("batfiles/{}", crate::version::VERSION))
         // Use the OS trust store, including locally installed corporate CAs.
         .tls_config(

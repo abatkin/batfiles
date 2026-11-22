@@ -1,10 +1,11 @@
 # Environment variables
 
-Environment parsing, precedence, host inputs, and subprocess execution.
+Environment parsing, precedence, host inputs, subprocess execution, and release lookups.
 
 [Locations](#location-selection) · [Skips](#run-only-skips) ·
 [Bootstrap](#bootstrap-enable-and-disable-lists) · [Variables](#variable-precedence) ·
-[Dynamic commands](#how-dynamic-commands-are-run) · [Host facts](#host-facts) ·
+[Dynamic commands](#how-dynamic-commands-are-run) ·
+[Release lookups](#how-github-release-lookups-are-made) · [Host facts](#host-facts) ·
 [Host environment](#host-environment) · [Color](#color) ·
 [Releases](#release-base) · [Git](#variables-passed-on-to-git)
 
@@ -115,10 +116,12 @@ last value. Execution commands merge these layers in real and dry runs.
 Each opened inclusion has a separate scope, even when two include the same
 remote. Its values never affect the leaf, another inclusion, or its own gate.
 
-A dynamic declaration belongs to its declaring manifest's layer. A remote
-command that is not [allowed](repoformat.md#git) declares nothing. An allowed
-declaration producing no value still overrides lower layers and reads as the
-empty string.
+A dynamic declaration, a command or a `github-release` lookup, belongs to its
+declaring manifest's layer. A remote command that is not
+[allowed](repoformat.md#git) declares nothing; a remote's lookups need no
+permission. A declaration producing no value still overrides lower layers and
+reads as the empty string. A higher layer is how one machine pins a value, such
+as `--var fzf_tag=v0.60.0`.
 
 Malformed or unreadable `vars.toml` fails merging; so does a malformed dynamic
 cache when a declaration needs it. Inspect values and origins with
@@ -163,6 +166,54 @@ the command and closes the pipe, refusing further writes rather than storing
 them. [Cache rules](state.md#freshness-and-refresh-behavior) define fallback and
 how failure to start differs from a captured nonzero status.
 
+## How GitHub release lookups are made
+
+A [`github-release`](repoformat.md#github-release-declarations) declaration's
+value is the tag of a repository's latest release: GitHub's own notion of
+latest, the most recent release that is not a draft or a prerelease. Batfiles
+asks for the repository's release page and reads the tag from where it is
+redirected, without following the redirect:
+
+```text
+GET <github-url>/OWNER/REPO/releases/latest
+```
+
+`<github-url>` is the declaration's resolved
+[`github-url`](repoformat.md#the-github-url-field), `https://github.com` by
+default. The request follows the shared
+[transfer's](repoformat.md#the-transfer-both-fetching-actions-share) proxy and
+TLS trust rules, and sends no credentials, so it sees only public repositories;
+a `github-url` holding any is refused rather than sent. It runs no code, and
+needs no permission in an included manifest.
+Lookups run one at a time, in real and dry runs, like commands.
+
+The lookup succeeds when the answer is a redirect (301, 302, 303, 307, or 308)
+whose `Location`, absolute or relative and without any query or fragment,
+contains `/releases/tag/`. The release-route boundary is its first
+`/releases/tag/`; the value is everything after it, percent-decoded, exactly as
+GitHub names the tag, so a tag holding a `/` stays whole and a `v` prefix is
+kept. The response is trusted:
+the `Location` is not checked against the host or repository asked.
+
+| Answer | Failure reason |
+| --- | --- |
+| No connection, a DNS or TLS failure, or no answer within `timeout` | The request failed, or timed out |
+| `404` | GitHub has no public repository `OWNER/REPO` |
+| A redirect to `.../releases` | `OWNER/REPO` has no published release |
+| A redirect to `.../releases/latest` | `OWNER/REPO` has moved to the new location; update `github-release` |
+| Any other status, or a redirect elsewhere | Not a redirect to a release |
+| An empty tag, or one that is not UTF-8 | The tag is unusable |
+
+A renamed repository's redirect is not followed: the manifest should name its
+current home. A `github-url` that fails to evaluate or resolves to an invalid
+URL also fails the lookup. Reasons are ASCII, and quote server-supplied text
+only when it is printable ASCII. [Cache rules](state.md#freshness-and-refresh-behavior)
+define what a failed lookup falls back on.
+
+`timeout`, ten seconds by default, bounds the whole lookup rather than each
+phase of it. A refused connection or a failed DNS lookup fails at once; only a
+network that drops packets costs up to `timeout` for each declaration.
+
 ## Host facts
 
 `facts` is a read-only string namespace for [conditions](repoformat.md#conditions)
@@ -189,8 +240,10 @@ separately. A qualified Windows name is tracked in
 ## Host environment
 
 `env` exposes the captured process environment as read-only strings, separate
-from user variables, to [conditions](repoformat.md#conditions) and
-[templates](repoformat.md#templates) (in an included manifest, only with
+from user variables, to [conditions](repoformat.md#conditions),
+[templates](repoformat.md#templates), and a `github-release` declaration's
+[`github-url`](repoformat.md#the-github-url-field) (in an included manifest,
+only with
 [permission](actions/include-remote.md#templates-and-the-host-environment)).
 An unset key is the empty string. Use member syntax for
 identifier-compatible names or index syntax for any name:

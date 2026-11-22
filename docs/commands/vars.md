@@ -61,7 +61,7 @@ rank    = "9" (BATFILES_VAR_*; over batfiles.toml)
 | Option | Effect |
 | --- | --- |
 | `--machine-only` | List only persisted `vars.toml` values; read no repository, variable environment layer, or dynamic cache |
-| `--no-refresh` | Run no dynamic commands and write no cache; report cached values |
+| `--no-refresh` | Run no dynamic commands, make no release lookups, and write no cache; report cached values |
 
 Dynamic-variable evaluation follows the [cache rules](../state.md#when-declarations-are-evaluated).
 `--no-refresh` adds nothing to `--machine-only`. A normal listing requires a
@@ -93,20 +93,27 @@ layer still appear with the winning origin:
 profile = "lab" (vars.toml; over include-remote `corp`, batfiles.toml)
 ```
 
-A winning dynamic declaration includes its capture state:
+A winning dynamic declaration includes its capture state, naming its source by
+kind, `command` or `github-release`:
 
 ```text
-email  = "me@corp.example" (batfiles.toml, command)
-has_op = "false" (batfiles.toml, command could not start)
-shell  = "zsh" (batfiles.toml, cached 3h ago)
-team   = "platform" (batfiles.toml, command failed, cached 2d ago)
-token  = no value (batfiles.toml, command failed)
+email   = "me@corp.example" (batfiles.toml, command)
+fzf_tag = "v0.65.2" (batfiles.toml, github-release)
+has_op  = "false" (batfiles.toml, command could not start)
+rg_tag  = "14.1.1" (batfiles.toml, github-release failed, cached 2d ago)
+shell   = "zsh" (batfiles.toml, cached 3h ago)
+team    = "platform" (batfiles.toml, command failed, cached 2d ago)
+token   = no value (batfiles.toml, command failed)
 ```
 
-`command` means captured now; cache ages use the largest whole unit. Under
-`--no-refresh`, stale entries say `stale, cached 2d ago` and missing entries say
-`no value (batfiles.toml, not cached)`. Overridden declarations have no separate
-capture state. Listings explicitly expose values; mutation reports name only
+`command` and `github-release` mean captured now; cache ages use the largest
+whole unit. Under `--no-refresh`, stale entries say `stale, cached 2d ago`,
+missing entries say `no value (batfiles.toml, not cached)`, and an entry
+another declaration captured says
+`no value (batfiles.toml, cached for a different declaration)`; see
+[cache provenance](../state.md#freshness-and-refresh-behavior). A `github-url`
+is still evaluated under `--no-refresh`, since the cache entry it matches
+depends on it. Overridden declarations have no separate capture state. Listings explicitly expose values; mutation reports name only
 keys, and `vars get` supplies a bare persisted value for scripts.
 
 ## `vars refresh`
@@ -115,7 +122,8 @@ keys, and `vars get` supplies a bare persisted value for scripts.
 batfiles vars refresh [<key>...]
 ```
 
-Run dynamic commands regardless of cache freshness and save their captures.
+Capture dynamic variables regardless of cache freshness, running their commands
+and making their release lookups, and save their captures.
 With no keys, refresh every declaration [in play](../state.md#when-declarations-are-evaluated),
 including ones overridden by machine values. With keys, refresh only those
 named, plus leaf resolution needed to decide remote eligibility.
@@ -126,23 +134,31 @@ leaf's `[remotes]` ID, not an inclusion ID. Other syntax, including the cache's
 `--var` is not accepted.
 
 Remote eligibility uses the leaf scope. Its declarations resolve first, reusing
-fresh values and running stale ones; explicitly named leaf keys are refreshed
+fresh values and capturing stale ones; explicitly named leaf keys are refreshed
 before deciding eligibility. Naming only leaf keys reads no remote.
 
-Keys are checked before their commands run. All invalid requests are collected
-in one error with a reason per key; exit status is 1. A key is refused if it:
+Keys are checked in two passes. The leaf manifest alone decides, before
+anything is captured, whether a leaf key is a dynamic declaration and whether a
+remote key's remote is declared and named by some `include-remote`. A remote
+key's other checks wait for the leaf resolution above, whose captures are saved
+even when a remote key is then refused. Each pass collects the invalid keys it
+finds into one error, with a reason per key, and exit status 1; a request the
+first pass refuses is not checked by the second, so a remote key's own reason
+can appear only once the first-pass problems are fixed. A key is refused if it:
 
 - Is undeclared or static.
-- Names an undeclared remote, one out of play, one not allowed to run commands,
-  or one not materialized.
+- Names an undeclared remote, or one no `include-remote` includes, before
+  anything is captured.
+- Names a remote out of play, or one not materialized.
+- Names a command declaration in a remote without
+  [`allow-dynamic-vars`](../repoformat.md#git). A `github-release` declaration
+  there is refreshed, and a remote a key names is read to tell which kind it is.
 
-Leaf values already refreshed to decide remote eligibility remain refreshed
-when a remote key is refused. With no keys, an unmaterialized remote in play
-warns and is skipped. This command fetches nothing; use `sync` first.
+With no keys, an unmaterialized remote in play warns and is skipped. This command fetches nothing; use `sync` first.
 
 Each capture reports a line such as ``refreshed `email` `` on standard error, without its value;
 `--quiet` suppresses it. A command with nothing to refresh says so. Capture
-failures warn and retain cached values; other captures are saved, then the
+failures warn and retain cached values of the same declaration; other captures are saved, then the
 command exits 1 with the failure count. A status command that could not start
 counts as failed because its assumed `"false"` was not captured.
 

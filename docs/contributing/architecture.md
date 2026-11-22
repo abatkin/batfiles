@@ -118,7 +118,7 @@ path; their replacement policy differs from seeds.
 | `action/` | Each action type's implementation, and dispatch. |
 | `manifest/` | The manifest and its declarations: items, conditions, templates, repository paths, entry filters, clone lists, and `disabled.toml`. |
 | `vars/` | Variable names, `vars.toml`, environment overrides, dynamic variables, and the resolved `VarScope`. |
-| `source/` | Downloads, archives, Git, and remote materialization. |
+| `source/` | Downloads, archives, Git, and remote materialization. `source/fetch.rs` holds the one HTTP client, for downloads and for the release lookups `vars/dynamic/lookup.rs` makes. |
 | `filesystem/` | Path inspection, the write helpers, `RunMode`, and state-document replacement. |
 
 The crate root keeps `main.rs`, `app.rs` (parsing, and one dispatch call per
@@ -170,7 +170,7 @@ Code names follow these terms beside the user-facing ones:
 | `run/inclusion.rs` | An inclusion's identity, whether this machine opens it, and reading its manifest from a materialization. Shared with `vars refresh`. |
 | `run/selection.rs` | Targets and exclusions, decided on a record's or a clone-list entry's addresses and condition. |
 | `run/triggers.rs` | Whether a `run` action's trigger fires, comparing an `after` action's last success with its targets' last changes. |
-| `vars/dynamic/` | Running dynamic variables' commands, and their cache. |
+| `vars/dynamic/` | Capturing dynamic variables, by running their commands or looking up their releases, and their cache. |
 | `action/` | Dispatch of prepared install records. Each reports whether it changed something, which `run/triggers.rs` reads. |
 
 A run proceeds in this order:
@@ -300,8 +300,9 @@ per-child output, and reporting limits, is owned by
 [cmdline.md](../cmdline.md#dry-run-behavior). Batfiles bookkeeping runs in both
 modes: the state documents `filesystem/tomlfile.rs` rewrites, except `runs.toml`, which
 `run/history.rs` leaves alone in a dry run, and the
-dynamic-variable commands `vars/dynamic/command.rs` runs, which never consult
-`RunMode` because the plan itself depends on their values.
+dynamic-variable commands `vars/dynamic/command.rs` runs and the release
+lookups `vars/dynamic/lookup.rs` makes, which never consult `RunMode` because
+the plan itself depends on their values.
 
 ### Filesystem ownership checks
 
@@ -326,7 +327,8 @@ specified in [repoformat.md](../repoformat.md#conditions) and
 [environment.md](../environment.md#variable-precedence). A manifest's layer holds
 its dynamic variables' resolved values beside its static ones; one
 `DynamicVarResolver` per command resolves each declaration once and owns the
-cache.
+cache. A `github-url` evaluates against `env` and `facts` alone, before any
+variable exists, so no variable depends on another.
 
 ## Centralized decisions
 

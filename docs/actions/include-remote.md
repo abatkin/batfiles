@@ -91,8 +91,12 @@ that inclusion's [scope](../environment.md#variable-precedence), so the leaf and
 this machine can override them without knowing they exist. They never decide the
 inclusion's own condition or the remote's, which use the leaf scope.
 
-Remote dynamic declarations require [`allow-dynamic-vars`](../repoformat.md#git). They share
-one capture and cache entry per remote variable across inclusions; see
+Remote command declarations require [`allow-dynamic-vars`](../repoformat.md#git);
+without it they declare nothing. Remote
+[`github-release`](../repoformat.md#github-release-declarations) declarations
+need no permission: a lookup runs no code, so the remote supplies its value as
+it could a static one. Dynamic declarations share one capture and cache entry per
+remote variable across inclusions; see
 [cache evaluation](../state.md#when-declarations-are-evaluated).
 Use `-vv` to inspect [inclusion variable blocks](../commands/vars.md#vars-list).
 
@@ -111,8 +115,11 @@ url = "git@git.example.com:it/dotfiles.git"
 allow-env-templates = true
 ```
 
-Without it, a lookup in `env` fails the record. Conditions and leaf templates
-need no permission. The permission applies only to a checkout of the repository
+Without it, a lookup in `env` fails the record. A `github-release` declaration's
+[`github-url`](../repoformat.md#the-github-url-field) is a template too, under
+the same permission: without it, reading `env` there fails the lookup, and the
+variable reads as empty with a warning; a literal URL works either way.
+Conditions and leaf templates need no permission. The permission applies only to a checkout of the repository
 the remote's `url` names; see
 [permissions follow the origin](../safety.md#permissions-follow-the-origin).
 

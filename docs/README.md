@@ -23,6 +23,7 @@ Unreleased, with the build it needs. Check your installed version with
 | Compose repositories | [Guide](guides/composition.md), [Remotes](repoformat.md#remotes), [include-remote](actions/include-remote.md#include-remote) |
 | Configure locations and variables | [Environment](environment.md), [variable precedence](environment.md#variable-precedence) |
 | Choose actions and refresh content | [Guide](guides/content.md), [Installation safety](safety.md) |
+| Install a tool from GitHub releases and keep it current | [Guide](guides/releases.md), [`github-release` variables](repoformat.md#github-release-declarations) |
 | Diagnose unexpected behavior | [Troubleshooting](guides/troubleshooting.md) |
 | Look up a term | [Glossary](glossary.md) |
 | Inspect machine state | [State files and cache](state.md) |

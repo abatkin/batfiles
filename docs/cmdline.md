@@ -62,7 +62,7 @@ synchronization.
 | Option              | Purpose                                                                         |
 |---------------------|---------------------------------------------------------------------------------|
 | `--var <key=value>` | Set a one-shot variable. Repeatable; the last value for a key wins.             |
-| `--refresh-vars`    | Run every dynamic variable's command, even where its cached value is fresh.     |
+| `--refresh-vars`    | Capture every dynamic variable again, even where its cached value is fresh.     |
 | `--refresh-content` | Install copies and fetched seeds again over what is at their destinations.     |
 | `--no-overwrite`    | Skip anything in a destination's way instead of backing it up and replacing it. |
 | `--interactive`     | Ask at each destination in the way: back up and replace, overwrite, or skip.    |
@@ -72,7 +72,7 @@ key is a usage error before roots are resolved or files read. An empty value,
 such as `--var profile=`, overrides lower layers. See
 [variable precedence](environment.md#variable-precedence).
 
-`--refresh-vars` forces commands for the declarations this run evaluates; see
+`--refresh-vars` forces captures for the declarations this run evaluates; see
 [cache evaluation](state.md#when-declarations-are-evaluated).
 
 [Conflicts and backups](safety.md#conflicts-and-backups) defines destination
@@ -278,7 +278,9 @@ Bookkeeping still runs, including the [run lock](state.md#run-lock) and
 [Templates](repoformat.md#when-a-template-is-evaluated) are evaluated, and
 reports show their resolved values.
 Dynamic commands are arbitrary programs and can themselves change files or
-contact the network. Their captures are saved in the cache. A
+contact the network. A [`github-release`](repoformat.md#github-release-declarations)
+declaration makes its lookup's network request in a dry run too. Captures of
+both kinds are saved in the cache. A
 [`run` action's](actions/run.md#dry-runs) command is never launched, and
 `runs.toml` is left untouched.
 

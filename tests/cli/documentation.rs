@@ -2,6 +2,8 @@
 
 use std::fs;
 
+#[cfg(unix)]
+use super::support::{Member, Reply, Server, tarball};
 use super::support::{Tree, backup_of, stderr_of};
 
 /// The document's TOML examples, in order. Tests select them by position, so a guide gaining or
@@ -155,4 +157,83 @@ fn the_composition_guide_uses_remote_sources_and_reports_missing_inclusions() {
         .assert()
         .success();
     assert!(!stderr_of(&gated).contains("not materialized"));
+}
+
+/// The releases guide's example, run against a loopback server standing in for github.com, through
+/// a first install, a sync with nothing new, and an upgrade. Its symlink needs Unix.
+#[cfg(unix)]
+#[test]
+fn the_releases_guide_installs_a_tool_and_follows_its_releases() {
+    let guide = toml_blocks(include_str!("../../docs/guides/releases.md"), 2);
+    let latest = "/junegunn/fzf/releases/latest";
+    let release = |tag: &str| Reply::Redirect {
+        status: 302,
+        location: format!("/junegunn/fzf/releases/tag/{tag}"),
+    };
+    let build = |version: &str| {
+        let script = match version {
+            "0.65.2" => "#!/bin/sh\necho '# fzf 0.65.2 integration'\n",
+            _ => "#!/bin/sh\necho '# fzf 0.66.0 integration'\n",
+        };
+        Reply::Bytes(tarball(&[Member::File("fzf", 0o755, script)]))
+    };
+    let mut routes = vec![(latest.to_owned(), release("v0.65.2"))];
+    for (version, arch) in [
+        ("0.65.2", "amd64"),
+        ("0.65.2", "arm64"),
+        ("0.66.0", "amd64"),
+        ("0.66.0", "arm64"),
+    ] {
+        routes.push((
+            format!("/junegunn/fzf/releases/download/v{version}/fzf-{version}-linux_{arch}.tar.gz"),
+            build(version),
+        ));
+    }
+    let server = Server::serving(routes);
+    let declaration = "github-release = \"junegunn/fzf\"";
+    assert!(guide[0].contains(declaration));
+    let manifest = guide[0]
+        .replace("https://github.com", server.address())
+        .replace(
+            declaration,
+            &format!("{declaration}\ngithub-url = \"{}\"", server.address()),
+        );
+
+    let tree = Tree::new();
+    tree.write_manifest(&manifest);
+    let sync = |args: &[&str]| {
+        let assertion = tree
+            .batfiles()
+            .env("HOME", tree.path("home"))
+            .arg("sync")
+            .args(args)
+            .assert()
+            .success();
+        stderr_of(&assertion)
+    };
+    let integration = tree.home(".config/fzf/init.zsh");
+    let stderr = sync(&[]);
+    assert!(tree.home(".local/bin/fzf").is_symlink(), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&integration).expect("the shell integration"),
+        "# fzf 0.65.2 integration\n"
+    );
+
+    fs::remove_file(&integration).expect("the shell integration");
+    sync(&["--refresh-vars"]);
+    assert!(!integration.exists(), "fzf-shell ran with nothing new");
+
+    server.answer(latest, release("v0.66.0"));
+    sync(&["--refresh-vars"]);
+    assert_eq!(
+        fs::read_to_string(&integration).expect("the shell integration"),
+        "# fzf 0.66.0 integration\n"
+    );
+
+    let tree = Tree::new();
+    tree.write_manifest(guide[1]);
+    tree.batfiles()
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success();
 }

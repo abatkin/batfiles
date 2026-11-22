@@ -427,10 +427,12 @@ fn run_pipeline(
     } else {
         CachePolicy::Auto
     };
+    let host = HostNamespaces::capture(invocation.env);
     let mut dynamic = DynamicVarResolver::for_run(
         &invocation.roots.machine,
         policy,
         &manifest.remotes,
+        &host,
         reporter,
     );
     let scope = Rc::new(VarScope::resolve(
@@ -445,7 +447,6 @@ fn run_pipeline(
     // Save leaf captures even if a later phase fails.
     dynamic.save();
     scope.report(reporter);
-    let host = HostNamespaces::capture(invocation.env);
     let bindings = Bindings::new(&scope, &host);
 
     // Bootstrap defaults come only from the leaf manifest.

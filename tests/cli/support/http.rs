@@ -2,8 +2,8 @@
 
 use std::io::{Cursor, Read as _, Write as _};
 use std::net::TcpListener;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 /// What the local server answers one path with.
@@ -19,12 +19,15 @@ pub(crate) enum Reply {
     NotAWholeFile { status: u16, body: &'static str },
     /// A permanent redirect to another path on the same server.
     RedirectTo(&'static str),
+    /// A redirect with this status to this `Location`, as GitHub answers `releases/latest`.
+    Redirect { status: u16, location: String },
 }
 
 /// A loopback HTTP server with configurable responses and request counting.
 pub(crate) struct Server {
     server: Arc<tiny_http::Server>,
     address: String,
+    routes: Arc<Mutex<Vec<(String, Reply)>>>,
     requests: Arc<AtomicUsize>,
     worker: Option<JoinHandle<()>>,
 }
@@ -45,10 +48,12 @@ impl Server {
         let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("a local HTTP server"));
         let address = format!("http://{}", server.server_addr());
         let requests = Arc::new(AtomicUsize::new(0));
+        let routes = Arc::new(Mutex::new(routes));
 
         let worker = {
             let server = Arc::clone(&server);
             let requests = Arc::clone(&requests);
+            let routes = Arc::clone(&routes);
             std::thread::spawn(move || {
                 // `Drop` unblocks the server so the request thread can exit.
                 for request in server.incoming_requests() {
@@ -56,6 +61,8 @@ impl Server {
                     // The first matching route wins, allowing callers to override routes by
                     // prepending them.
                     let reply = routes
+                        .lock()
+                        .expect("the routes")
                         .iter()
                         .find(|(path, _)| *path == request.url())
                         .map_or(Reply::Missing, |(_, reply)| reply.clone());
@@ -67,9 +74,18 @@ impl Server {
         Self {
             server,
             address,
+            routes,
             requests,
             worker: Some(worker),
         }
+    }
+
+    /// Answer `path` with `reply` from now on, ahead of any route given before.
+    pub(crate) fn answer(&self, path: &str, reply: Reply) {
+        self.routes
+            .lock()
+            .expect("the routes")
+            .insert(0, (path.to_owned(), reply));
     }
 
     /// Where the server is, as a manifest writes it: `http://127.0.0.1:<port>`.
@@ -106,7 +122,34 @@ fn response(reply: Reply) -> tiny_http::Response<Cursor<Vec<u8>>> {
             .with_header(
                 tiny_http::Header::from_bytes("Location", path).expect("a location header"),
             ),
+        Reply::Redirect { status, location } => tiny_http::Response::from_string("found\n")
+            .with_status_code(status)
+            .with_header(
+                tiny_http::Header::from_bytes("Location", location).expect("a location header"),
+            ),
     }
+}
+
+/// An address nothing listens on, so a connection to it is refused.
+pub(crate) fn refusing_address() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a local socket");
+    let address = format!("http://{}", listener.local_addr().expect("its address"));
+    drop(listener);
+    address
+}
+
+/// Accept every connection and never answer. Return the server URL.
+pub(crate) fn server_that_never_answers() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a local socket");
+    let address = format!("http://{}", listener.local_addr().expect("its address"));
+    std::thread::spawn(move || {
+        // Hold every connection open until the test process exits.
+        let mut held = Vec::new();
+        for connection in listener.incoming() {
+            held.push(connection);
+        }
+    });
+    address
 }
 
 /// Serve `body` with an overstated content length, then close the connection. Return the server

@@ -38,7 +38,11 @@ pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(),
         path: path.to_path_buf(),
         source,
     })?;
+    write_text(path, &text)
+}
 
+/// [`write`] for a document its owner has already rendered as `text`.
+pub(crate) fn write_text(path: &Path, text: &str) -> Result<(), Error> {
     let write_error = Error::writing(path);
 
     if let Some(parent) = path

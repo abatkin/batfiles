@@ -7,7 +7,7 @@ and defaults are defined by [location precedence](environment.md#location-select
 | --- | --- | --- | --- |
 | [`disabled.toml`](#disabledtoml-disabled-actions-and-groups) | Config | Persistent action/group choices | Clears choices |
 | [`vars.toml`](#varstoml-machine-local-variables) | Config | Machine variable values | Clears values |
-| [`dynamic-vars.toml`](#dynamic-varstoml-dynamic-variable-cache) | Cache | Captured command results | Yes; regenerated |
+| [`dynamic-vars.toml`](#dynamic-varstoml-dynamic-variable-cache) | Cache | Captured command results and release tags | Yes; regenerated |
 | [`run.lock`](#run-lock) | Cache | Empty advisory-lock file | Only while no run is active |
 | [`runs.toml`](#runstoml-run-action-history) | State | When actions and remotes last changed, and when each stateful `run` action last succeeded | Yes; stateful `run` commands run again and `every` intervals restart |
 
@@ -84,7 +84,8 @@ Argument validation and output belong to the [command reference](commands/vars.m
 
 ## `dynamic-vars.toml`: dynamic-variable cache
 
-Stores [dynamic-variable](repoformat.md#dynamic-variables) captures for reuse.
+Stores [dynamic-variable](repoformat.md#dynamic-variables) captures, of commands
+and of `github-release` lookups alike, for reuse.
 
 ### Schema
 
@@ -93,34 +94,66 @@ the leaf's `[remotes]` ID. All inclusions of a remote share one entry per variab
 regardless of their IDs or overrides.
 
 ```toml
+[fzf_tag]
+value = "v0.75.0"
+captured-at = "2026-11-20T12:00:00Z"
+from = { github-release = "junegunn/fzf", github-url = "https://github.com" }
+
 [work_email]
 value = "me@work.com"
 captured-at = "2026-06-19T12:00:00Z"
+from = { command = ["git", "config", "user.email"], capture = "stdout" }
 
 ["remote:core.has_op"]
 value = "true"
 captured-at = "2026-06-19T12:00:00Z"
+from = { command = "command -v op >/dev/null", capture = "status" }
 ```
 
-Each entry has exactly two required string fields: `value` and `captured-at`
-(an RFC 3339 timestamp). Unknown fields and TOML datetime values are invalid.
+| Field | Required | Holds |
+| --- | :---: | --- |
+| `value` | yes | The captured string |
+| `captured-at` | yes | When it was captured, as an RFC 3339 timestamp string |
+| `from` | no | The declaration that captured it, as an inline table of its value-determining fields |
+
+`from` holds a command declaration's `command`, spelled as declared (a string or
+a list), and its `capture`, written even when it is the default; or a
+`github-release` declaration's repository and its resolved `github-url`, with
+no trailing `/`, written even when it is the default, never the template as
+written. `cache`, `timeout`, and `command-timeout` are left out, since they do
+not change the value. A `from` must hold exactly one of those pairs, both
+fields of it, and nothing else. Every capture writes `from`; an entry without
+one was written before entries recorded their declarations, when only commands
+captured, so it serves any command declaration and no `github-release` one.
+Unknown fields, in an entry or in `from`, an incomplete or mixed `from`, and
+TOML datetime values are invalid.
 
 ### Freshness and refresh behavior
+
+An entry belongs to the declaration its `from` records. One whose `from`
+differs from its declaration's counts as **absent** for freshness, refresh, and
+failure fallback; the next successful capture overwrites it. Editing a
+declaration's command, capture mode, repository, or resolved host therefore
+captures again at once, and never serves the old declaration's value.
 
 An entry is fresh while its age is less than the declaration's `cache` duration;
 otherwise it is stale. Future timestamps count as age zero.
 
 | Invocation | Cache use |
 | --- | --- |
-| Action execution or normal `vars list` | Reuse fresh entries; run stale or missing declarations |
-| `--refresh-vars` | Run every evaluated declaration regardless of freshness |
-| `vars list --no-refresh` | Run/write nothing; report fresh, stale, or missing values |
+| Action execution or normal `vars list` | Reuse fresh entries; capture stale or missing declarations |
+| `--refresh-vars` | Capture every evaluated declaration regardless of freshness |
+| `vars list --no-refresh` | Capture and write nothing; report fresh, stale, or missing values, and entries cached for a different declaration |
 | `vars refresh` | Force selected declarations; resolve other required leaf values normally |
 
-A successful capture writes its value and completion timestamp. A
-[capture failure](environment.md#how-dynamic-commands-are-run) retains and uses
-any previous value, fresh or stale, warning with its age. Without a cached
-value, the variable has [no value](repoformat.md#dynamic-variables) and warns.
+A successful capture writes its value, completion timestamp, and `from`. A
+failed capture, a [command's](environment.md#how-dynamic-commands-are-run) or a
+[lookup's](environment.md#how-github-release-lookups-are-made), retains and
+uses any previous value of the same declaration, fresh or stale, warning with
+its age. Without one, the variable has
+[no value](repoformat.md#dynamic-variables) and warns. A `github-url` that
+fails to resolve leaves nothing to match an entry against, so it always reads
+as empty.
 
 A status command that cannot start is an exception: use `"false"` for this run
 regardless of cached contents, warn, and write nothing. Failure to start a
@@ -129,10 +162,11 @@ stdout command uses the ordinary fallback.
 ### When declarations are evaluated
 
 Execution commands resolve all leaf declarations, then those in each opened
-remote the leaf [allows](repoformat.md#git). Higher-layer overrides do not
-suppress evaluation. Unopened inclusions run nothing; shared remote declarations
-resolve once per command. `vars list` resolves only the leaf and skips commands
-whose values `vars.toml` overrides.
+remote: its `github-release` declarations always, and its commands if the leaf
+[allows](repoformat.md#git) them. Higher-layer overrides do not suppress
+evaluation. Unopened inclusions capture nothing; shared remote declarations
+resolve once per command. `vars list` resolves only the leaf and skips
+declarations whose values `vars.toml` overrides.
 
 For `vars refresh`, every leaf declaration is **in play**. A remote is in play
 if at least one inclusion naming it would open on this machine:
@@ -142,11 +176,13 @@ if at least one inclusion naming it would open on this machine:
 
 Run-only skips do not apply. Resolve leaf values first, evaluate those gates
 in the [leaf scope](environment.md#variable-precedence), then read admitted
-remote manifests and resolve their allowed declarations. A remote out of play
-is never read. A malformed admitted manifest fails before its commands run.
+remote manifests and resolve their declarations, commands only where allowed.
+A remote out of play is never read. A malformed admitted manifest fails before
+its commands run.
 
 Once an inclusion opens, disables and skips do not change declaration behavior.
-Dry runs resolve commands and save captures on the same terms.
+Dry runs run commands, make lookups' network requests, and save captures on the
+same terms.
 
 ### Lifecycle
 

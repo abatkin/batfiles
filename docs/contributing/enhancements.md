@@ -96,3 +96,35 @@ renaming its `id`.
 A timed-out `run` action or dynamic variable kills only the process batfiles
 started. Killing its process group, or job object on Windows, would also stop
 what it started in the background.
+
+## Prereleases and matching releases
+
+A [`github-release`](../repoformat.md#github-release-declarations) declaration
+follows GitHub's "latest", which skips drafts and prereleases. Following
+prereleases, or the latest release whose tag matches a pattern, needs GitHub's
+REST API rather than the release page's redirect, and probably a token.
+
+## Verifying a release asset's digest
+
+GitHub publishes a digest for each release asset. A download built from a
+`github-release` tag that follows every new release unattended has no fixed
+`sha256` to pin, but it could be checked against that published digest.
+
+## Private repositories
+
+A lookup sends no credentials, and a `github-url` holding any is refused, so a
+private repository, on github.com or an Enterprise Server, cannot be followed.
+A token read from the environment, sent as an `Authorization` header and never
+recorded in the cache, would reach them.
+
+## Refetching a seed when its URL changes
+
+A `fetch-file` or `fetch-archive` seed built from a `github-release` tag keeps
+what it first installed until `--refresh-content`. An opt-in field could
+reinstall it when its resolved URL changes, as a file or archive remote does.
+
+## Concurrent release lookups
+
+`github-release` lookups run one at a time, like commands, so a network that
+drops packets costs up to `timeout` for each declaration. Lookups need no
+ordering and could run concurrently.

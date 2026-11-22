@@ -23,7 +23,7 @@ pub(crate) enum VarsCommand {
         #[arg(long)]
         machine_only: bool,
 
-        /// Do not run dynamic commands or write the cache
+        /// Do not capture dynamic variables or write the cache
         #[arg(long)]
         no_refresh: bool,
     },
@@ -31,7 +31,7 @@ pub(crate) enum VarsCommand {
     /// Remove one persisted machine-local variable
     Unset { key: String },
 
-    /// Run dynamic variables' commands, even where the cached value is fresh
+    /// Capture dynamic variables, even where the cached value is fresh
     Refresh {
         /// A leaf variable, or `<remote-id>.<name>`; every one in play when
         /// omitted

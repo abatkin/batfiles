@@ -13,7 +13,7 @@ reference that defines it.
 | Condition | A `when` or `unless` expression over variables and host facts that decides whether an action or remote takes part in a run. See [conditions](repoformat.md#conditions). |
 | Destination home | The directory `~` names in a `dest`: your home directory unless `--home-dir` or `BATFILES_HOME` chooses another. See [location selection](environment.md#location-selection). |
 | Dry run | A preview, with `--dry-run`, that reports intended work without changing installed content. See [dry-run behavior](cmdline.md#dry-run-behavior). |
-| Dynamic variable | A variable whose value comes from running a command, cached between runs. See [dynamic variables](repoformat.md#dynamic-variables). |
+| Dynamic variable | A variable whose value is captured, by running a command or looking up a GitHub repository's latest release, and cached between runs. See [dynamic variables](repoformat.md#dynamic-variables). |
 | Group | A name shared by actions so they can be applied, skipped, or disabled together. See [groups](repoformat.md#groups). |
 | Trigger | When a `run` action's command runs: always, at bootstrap, once, on an interval, or after something it follows changed. See [triggers](actions/run.md#triggers). |
 | Inclusion | An `include-remote` action, which runs actions from a remote's own manifest. Its `id` prefixes their addresses. See [`include-remote`](actions/include-remote.md#include-remote). |
