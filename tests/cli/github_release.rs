@@ -178,7 +178,10 @@ fn a_cache_duration_decides_what_is_fresh() {
 }
 
 /// Each way a lookup fails, with the host that fails it and the reason it gives.
-fn failures() -> Vec<(&'static str, Option<Server>, String, String)> {
+/// Each way a lookup fails: its name, the server kept alive for it, the host to ask, the
+/// reason reported, and the declaration's `timeout`. Only the timeout case is short: Windows
+/// retries a refused connection for about two seconds before reporting it.
+fn failures() -> Vec<(&'static str, Option<Server>, String, String, &'static str)> {
     let server = |reply: Reply| Server::serving(vec![(LATEST.to_owned(), reply)]);
     let mut cases = Vec::new();
     for (name, server, reason) in [
@@ -208,27 +211,29 @@ fn failures() -> Vec<(&'static str, Option<Server>, String, String)> {
         ),
     ] {
         let host = server.address().to_owned();
-        cases.push((name, Some(server), host, reason.to_owned()));
+        cases.push((name, Some(server), host, reason.to_owned(), "5s"));
     }
     cases.push((
         "refused",
         None,
         refusing_address(),
         "the release lookup failed".to_owned(),
+        "5s",
     ));
     cases.push((
         "timeout",
         None,
         server_that_never_answers(),
         "the release lookup timed out after 300ms".to_owned(),
+        "300ms",
     ));
     cases
 }
 
 #[test]
 fn a_failed_lookup_with_nothing_cached_reads_as_empty_and_says_why() {
-    for (name, _server, host, reason) in failures() {
-        let tree = declaring(&host, "timeout = \"300ms\"");
+    for (name, _server, host, reason, timeout) in failures() {
+        let tree = declaring(&host, &format!("timeout = \"{timeout}\""));
         let started = std::time::Instant::now();
         let (stdout, stderr) = list(&tree, &[]);
         assert!(
@@ -256,8 +261,8 @@ fn a_failed_lookup_with_nothing_cached_reads_as_empty_and_says_why() {
 
 #[test]
 fn a_failed_lookup_keeps_a_cached_tag_and_says_so() {
-    for (name, _server, host, reason) in failures() {
-        let tree = declaring(&host, "timeout = \"300ms\"");
+    for (name, _server, host, reason, timeout) in failures() {
+        let tree = declaring(&host, &format!("timeout = \"{timeout}\""));
         seed(&tree, "v0", two_days(), Some(&from_release(&host)));
         let (stdout, stderr) = list(&tree, &[]);
         assert_eq!(
