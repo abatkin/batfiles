@@ -446,7 +446,7 @@ fn run_pipeline(
     )?);
     // Save leaf captures even if a later phase fails.
     dynamic.save();
-    scope.report(reporter);
+    scope.report(&host, reporter)?;
     let bindings = Bindings::new(&scope, &host);
 
     // Bootstrap defaults come only from the leaf manifest.
@@ -470,7 +470,7 @@ fn run_pipeline(
         reporter,
     );
 
-    let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
+    let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings)?;
     let context = RunContext::new(
         invocation.roots,
         invocation.mode,

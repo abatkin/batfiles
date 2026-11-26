@@ -1,6 +1,6 @@
 //! Parse and evaluate `when`/`unless` conditions using [Batfiles truthiness
-//! rules](../../docs/repoformat.md#conditions). Bare identifiers require declared variables;
-//! missing namespace keys return empty strings. Evaluation uses inputs captured by
+//! rules](../../docs/repoformat.md#conditions). Bare identifiers require declared variables
+//! with values; missing namespace keys return empty strings. Evaluation uses inputs captured by
 //! [`HostNamespaces::capture`] and performs no I/O.
 
 use std::any::Any;
@@ -19,6 +19,7 @@ use simple_expressions::types::primitive::Primitive;
 use simple_expressions::types::value::Value;
 
 use crate::env::Environment;
+use crate::error::Error;
 use crate::output::{Reporter, quoted_value};
 use crate::vars::scope::VarScope;
 
@@ -26,7 +27,8 @@ use crate::vars::scope::VarScope;
 const FACTS: &str = "facts";
 /// The reserved namespace of host environment variables.
 const ENV: &str = "env";
-/// Reserved namespace for user variables; missing keys return empty strings.
+/// Reserved namespace for user variables; missing keys and variables with no value return empty
+/// strings.
 const VARS: &str = "vars";
 
 /// A condition, parsed as it is read. A condition that does not parse is kept with its error,
@@ -90,18 +92,23 @@ impl<'a> Gate<'a> {
     /// Return `None` if the gate admits the record, otherwise its exclusion.
     /// Evaluation failures also exclude the record. `consequence` supplies an optional
     /// description of the skipped work for the failure diagnostic.
+    ///
+    /// Fails, rather than excluding, when the variables the condition reads refer to each other
+    /// in a cycle or nest too deeply.
     pub fn exclusion(
         self,
         bindings: &Bindings<'_>,
         consequence: Option<&str>,
-    ) -> Option<Exclusion> {
-        match self.admits(bindings) {
+    ) -> Result<Option<Exclusion>, Error> {
+        let admits = self.admits(bindings);
+        bindings.check_reads()?;
+        Ok(match admits {
             Ok(true) => None,
             Ok(false) => Some(Exclusion::Deliberate(self.exclusion_reason())),
             Err(error) => Some(Exclusion::EvaluationFailed(
                 self.evaluation_failure_reason(consequence, &error),
             )),
-        }
+        })
     }
 
     /// Evaluate whether the condition admits the record.
@@ -279,7 +286,8 @@ impl fmt::Display for SyntaxError {
 impl std::error::Error for SyntaxError {}
 
 /// Host facts and environment values captured once per invocation for condition evaluation. See
-/// [host facts](../../docs/environment.md#host-facts).
+/// [host facts](../../docs/environment.md#host-facts). Clones share what was captured.
+#[derive(Clone)]
 pub(crate) struct HostNamespaces {
     facts: Value,
     env: Value,
@@ -325,27 +333,57 @@ impl<'a> Bindings<'a> {
     /// Bind variables and captured host namespaces for evaluation.
     /// Bare identifiers and the `vars` namespace share the same variable scope.
     pub fn new(scope: &Rc<VarScope>, host: &'a HostNamespaces) -> Self {
-        let vars_namespace = Rc::clone(scope);
+        let vars_scope = Rc::clone(scope);
+        let vars_host = host.clone();
         Self {
             scope: Rc::clone(scope),
             host,
-            vars_namespace: Namespace::value(VARS, move |key| {
-                vars_namespace.get(key).unwrap_or_default().to_owned()
+            vars_namespace: Namespace::fallible(VARS, move |key| {
+                let value = vars_scope.lookup(key, &vars_host);
+                // A failed read is fatal however the variable was read.
+                if let Err(error) = vars_scope.check_reads() {
+                    return Err(ExpressionError::EvaluationFailed(error.to_string()));
+                }
+                Ok(value.and_then(Result::ok).unwrap_or_default())
             }),
+        }
+    }
+
+    /// Fail as [`VarScope::check_reads`] does for every read through these bindings.
+    pub fn check_reads(&self) -> Result<(), Error> {
+        self.scope.check_reads()
+    }
+
+    /// Classify an evaluator error raised against these bindings: a bare name that is declared
+    /// but has no value is [`EvalError::NoValue`], not [`EvalError::Undeclared`].
+    pub(super) fn eval_error(&self, error: &ExpressionError) -> EvalError {
+        match error {
+            ExpressionError::ResolveFailed(name) => match self.scope.no_value(name) {
+                Some(reason) => EvalError::NoValue {
+                    name: name.clone(),
+                    reason: reason.to_string(),
+                },
+                None => EvalError::Undeclared { name: name.clone() },
+            },
+            other => EvalError::from_expression(other),
         }
     }
 }
 
-/// Resolve reserved namespaces and declared variables; return `None` for undeclared names.
+/// Resolve reserved namespaces and declared variables with values; return `None` for undeclared
+/// names and for variables with no value.
 impl VariableResolver for Bindings<'_> {
     fn resolve(&self, name: &str) -> Option<Value> {
         match name {
             FACTS => Some(self.host.facts.clone()),
             ENV => Some(self.host.env.clone()),
             VARS => Some(self.vars_namespace.clone()),
-            // `None` becomes the evaluator's `ResolveFailed`, reported as
-            // [`EvalError::Undeclared`].
-            _ => self.scope.get(name).map(|value| string(value.to_owned())),
+            // `None` becomes the evaluator's `ResolveFailed`, which [`Bindings::eval_error`]
+            // classifies.
+            _ => match self.scope.lookup(name, self.host)? {
+                Ok(value) => Some(string(value)),
+                Err(_) => None,
+            },
         }
     }
 }
@@ -355,11 +393,22 @@ impl VariableResolver for Bindings<'_> {
 struct Namespace {
     /// The namespace's own name, which is what a type error reports.
     name: &'static str,
-    lookup: Box<dyn Fn(&str) -> String>,
+    lookup: NamespaceLookup,
 }
+
+/// How a [`Namespace`] finds one key's value.
+type NamespaceLookup = Box<dyn Fn(&str) -> ExpressionResult<String>>;
 
 impl Namespace {
     fn value(name: &'static str, lookup: impl Fn(&str) -> String + 'static) -> Value {
+        Self::fallible(name, move |key| Ok(lookup(key)))
+    }
+
+    /// A namespace whose lookup can fail the expression reading it.
+    fn fallible(
+        name: &'static str,
+        lookup: impl Fn(&str) -> ExpressionResult<String> + 'static,
+    ) -> Value {
         Value::Object(Rc::new(Self {
             name,
             lookup: Box::new(lookup),
@@ -374,11 +423,11 @@ impl Object for Namespace {
 
     /// Look up a member, returning an empty string if it is absent.
     fn get_member(&self, name: &str) -> ExpressionResult<Value> {
-        Ok(string((self.lookup)(name)))
+        (self.lookup)(name).map(string)
     }
 
     fn get_key_value(&self, key: &str) -> ExpressionResult<Value> {
-        Ok(string((self.lookup)(key)))
+        (self.lookup)(key).map(string)
     }
 
     // Keep the default `as_bool`: namespace objects must fail boolean conversion.
@@ -449,7 +498,7 @@ fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalErro
     let evaluator = Evaluator::new_with_coercions(bindings, &COERCIONS);
     let value = evaluator
         .evaluate(expr)
-        .map_err(|error| EvalError::from_expression(&error))?;
+        .map_err(|error| bindings.eval_error(&error))?;
 
     // The same policy the evaluator applies inside `!`, `&&`, and `||`.
     COERCIONS.to_bool(&value).map_err(|_| EvalError::NotBoolean)
@@ -461,6 +510,9 @@ fn eval(condition: &Condition, bindings: &Bindings<'_>) -> Result<bool, EvalErro
 pub(crate) enum EvalError {
     /// A bare identifier that no layer declares.
     Undeclared { name: String },
+    /// A bare identifier whose winning declaration has no value, and why: a reason that names
+    /// variables, never values.
+    NoValue { name: String, reason: String },
     /// The condition's own value is outside the truthiness table.
     NotBoolean,
     /// Any other evaluator error, such as a divide by zero, an index out of
@@ -472,7 +524,7 @@ pub(crate) enum EvalError {
 impl EvalError {
     /// Classify an evaluator error. A key, index, or operand computed at run time may come
     /// from a variable or the host environment, so the message never carries one.
-    pub(super) fn from_expression(error: &ExpressionError) -> Self {
+    fn from_expression(error: &ExpressionError) -> Self {
         let message = match error {
             ExpressionError::ResolveFailed(name) => return Self::Undeclared { name: name.clone() },
             // Use the message without the evaluator's "evaluation failed:" prefix.
@@ -511,6 +563,10 @@ impl fmt::Display for EvalError {
                 "`{name}` is not declared. Add `{name} = \"false\"` to [vars] in batfiles.toml, \
                  run `batfiles vars set {name} <value>`, or write `vars.{name}` if the variable \
                  is meant to be optional"
+            ),
+            Self::NoValue { name, reason } => write!(
+                f,
+                "`{name}` has no value ({reason}); write `vars.{name}` to read it as empty"
             ),
             Self::NotBoolean => f.write_str(NOT_BOOLEAN),
             Self::Failed { message } => f.write_str(message),

@@ -76,19 +76,20 @@ impl Inclusion {
     ///
     /// Evaluate `record` using leaf-scope `bindings`; inclusion variables do not affect its own
     /// condition. Apply target exemptions only when the target directly names this record.
+    /// Fails if the condition reads variables that refer to each other in a cycle.
     pub fn exclusion(
         &self,
         record: Subject<'_>,
         selection: &Selection<'_>,
         bindings: &Bindings<'_>,
         remote_exclusion: Option<&Exclusion>,
-    ) -> Option<Exclusion> {
+    ) -> Result<Option<Exclusion>, Error> {
         let exclusion = if selection.wants(record) {
-            selection.exclusion(record, bindings)
+            selection.exclusion(record, bindings)?
         } else {
-            selection.exclusion_without_waivers(record, bindings)
+            selection.exclusion_without_waivers(record, bindings)?
         };
-        exclusion.or_else(|| remote_exclusion.map(|it| self.restate_remote_exclusion(it)))
+        Ok(exclusion.or_else(|| remote_exclusion.map(|it| self.restate_remote_exclusion(it))))
     }
 
     /// A remote's exclusion, restated for this inclusion with the same severity.

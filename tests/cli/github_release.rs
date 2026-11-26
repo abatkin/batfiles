@@ -250,10 +250,7 @@ fn a_failed_lookup_with_nothing_cached_reads_as_empty_and_says_why() {
             )),
             "{name}: {stderr}"
         );
-        assert!(
-            stderr.contains("it has no value, and reads as empty"),
-            "{name}: {stderr}"
-        );
+        assert!(stderr.contains("it has no value"), "{name}: {stderr}");
         assert!(stderr.is_ascii(), "{name}: {stderr}");
         assert!(!cache(&tree).exists(), "{name}: a failure was cached");
     }
@@ -343,7 +340,7 @@ fn a_github_url_that_resolves_to_no_url_reads_as_empty_whatever_is_cached() {
             assert!(
                 stderr.contains(&format!(
                     "dynamic variable `tag` could not be refreshed: `github-url` \
-                     \"${{env.BATFILES_TEST_GHE}}\" {reason}; it has no value, and reads as empty"
+                     \"${{env.BATFILES_TEST_GHE}}\" {reason}; it has no value"
                 )),
                 "{value:?}: {stderr}"
             );
@@ -612,10 +609,7 @@ fn a_failed_lookup_never_falls_back_on_another_declarations_tag() {
         stdout, "tag = no value (batfiles.toml, github-release failed)\n",
         "{stderr}"
     );
-    assert!(
-        stderr.contains("it has no value, and reads as empty"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("it has no value"), "{stderr}");
 }
 
 #[test]

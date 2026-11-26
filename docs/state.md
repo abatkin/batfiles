@@ -151,9 +151,9 @@ failed capture, a [command's](environment.md#how-dynamic-commands-are-run) or a
 [lookup's](environment.md#how-github-release-lookups-are-made), retains and
 uses any previous value of the same declaration, fresh or stale, warning with
 its age. Without one, the variable has
-[no value](repoformat.md#dynamic-variables) and warns. A `github-url` that
-fails to resolve leaves nothing to match an entry against, so it always reads
-as empty.
+[no value](repoformat.md#variables-with-no-value) and warns. A `github-url` that
+fails to resolve leaves nothing to match an entry against, so the variable
+always has no value.
 
 A status command that cannot start is an exception: use `"false"` for this run
 regardless of cached contents, warn, and write nothing. Failure to start a
@@ -161,8 +161,10 @@ stdout command uses the ordinary fallback.
 
 ### When declarations are evaluated
 
-Execution commands resolve all leaf declarations, then those in each opened
-remote: its `github-release` declarations always, and its commands if the leaf
+Declarations are captured before any [template](repoformat.md#variables) that
+reads them is evaluated, and templates read what they resolved to: a value, or
+no value. Execution commands resolve all leaf declarations, then those in each
+opened remote: its `github-release` declarations always, and its commands if the leaf
 [allows](repoformat.md#git) them. Higher-layer overrides do not suppress
 evaluation. Unopened inclusions capture nothing; shared remote declarations
 resolve once per command. `vars list` resolves only the leaf and skips

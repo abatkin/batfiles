@@ -420,18 +420,23 @@ impl<'a> Selection<'a> {
 
     /// Return the first exclusion, or `None` if admitted. Apply target exemptions, then check
     /// disabled state and run-only skips before evaluating the condition. Evaluation failures
-    /// exclude the record.
-    pub fn exclusion(&self, record: Subject<'_>, bindings: &Bindings<'_>) -> Option<Exclusion> {
+    /// exclude the record; a cycle among the variables the condition reads fails.
+    pub fn exclusion(
+        &self,
+        record: Subject<'_>,
+        bindings: &Bindings<'_>,
+    ) -> Result<Option<Exclusion>, Error> {
         self.decide(record, bindings, TargetWaivers::Apply, Some(NOT_INSTALLED))
     }
 
     /// Return the first exclusion without target exemptions. Check all loaded skip lists and
-    /// the record's condition. Used for inclusions reached indirectly by a target.
+    /// the record's condition. Used for inclusions reached indirectly by a target. Fails as
+    /// [`Self::exclusion`] does.
     pub fn exclusion_without_waivers(
         &self,
         record: Subject<'_>,
         bindings: &Bindings<'_>,
-    ) -> Option<Exclusion> {
+    ) -> Result<Option<Exclusion>, Error> {
         self.decide(record, bindings, TargetWaivers::Ignore, Some(NOT_INSTALLED))
     }
 
@@ -441,21 +446,24 @@ impl<'a> Selection<'a> {
     /// An entry the target names waives its own exclusions and condition. Every other entry
     /// of a list allowed whole is decided without waivers, so naming the list does not waive
     /// its entries' disables; the other entries of a list allowed in part are not requested.
-    /// A failed condition's reason leaves the consequence to the caller's line.
+    /// A failed condition's reason leaves the consequence to the caller's line. Fails as
+    /// [`Self::exclusion`] does.
     pub fn entry_disposition(
         &self,
         entry: Subject<'_>,
         list: &Disposition,
         bindings: &Bindings<'_>,
-    ) -> Disposition {
+    ) -> Result<Disposition, Error> {
         let waivers = if self.target.wants(entry) {
             TargetWaivers::Apply
         } else if matches!(list, Disposition::Allowed) {
             TargetWaivers::Ignore
         } else {
-            return Disposition::NotRequested;
+            return Ok(Disposition::NotRequested);
         };
-        Disposition::from_exclusion(self.decide(entry, bindings, waivers, None))
+        Ok(Disposition::from_exclusion(
+            self.decide(entry, bindings, waivers, None)?,
+        ))
     }
 
     /// The first exclusion `waivers` leave standing. `consequence` completes a failed
@@ -466,15 +474,18 @@ impl<'a> Selection<'a> {
         bindings: &Bindings<'_>,
         waivers: TargetWaivers,
         consequence: Option<&str>,
-    ) -> Option<Exclusion> {
+    ) -> Result<Option<Exclusion>, Error> {
         if let Some(reason) = self.listed_reason(record, waivers) {
-            return Some(Exclusion::Deliberate(reason.to_string()));
+            return Ok(Some(Exclusion::Deliberate(reason.to_string())));
         }
         // Direct action targets waive their own conditions as well as listed exclusions.
-        let gate = record
+        match record
             .gate
-            .filter(|_| waivers.honors_action_exclusions(&self.target))?;
-        gate.exclusion(bindings, consequence)
+            .filter(|_| waivers.honors_action_exclusions(&self.target))
+        {
+            Some(gate) => gate.exclusion(bindings, consequence),
+            None => Ok(None),
+        }
     }
 
     /// The first exclusion either list names, or `None` where neither does.

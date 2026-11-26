@@ -208,7 +208,7 @@ impl<'a> DynamicVarResolver<'a> {
             .iter()
             .filter_map(|(name, spec)| {
                 let value = match spec {
-                    VarSpec::Static(value) => VarValue::Static(value.clone()),
+                    VarSpec::Static(value) => VarValue::written(value),
                     // Only a command its remote may not run is left unresolved, and it
                     // declares nothing.
                     VarSpec::Dynamic(_) => {

@@ -379,7 +379,11 @@ Standalone `git-clone` failures propagate normally.
 Condition evaluation failures also warn and skip the affected action or entry
 without making the command fail. The [condition rules](repoformat.md#when-a-condition-cannot-be-evaluated)
 define this fail-closed behavior; [exclusion reporting](#exclusion-reporting)
-defines the action warning format.
+defines the action warning format. A condition or template reading
+[variables that refer to each other in a cycle, or nest too deeply](repoformat.md#when-a-template-is-evaluated),
+is the exception: it stops the command with status 1. Conditions are decided
+before any action runs, so a cycle a condition reads stops the command before
+any action does.
 
 ## Exit statuses
 

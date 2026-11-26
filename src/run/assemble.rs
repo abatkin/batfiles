@@ -11,6 +11,7 @@ use crate::manifest::actions::Action;
 use crate::manifest::condition::{Bindings, Exclusion, HostNamespaces};
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::{Remote, Tree};
+use crate::manifest::template::TemplateString;
 use crate::output::Reporter;
 use crate::run::context::RunContext;
 use crate::run::inclusion::{self, Inclusion};
@@ -51,7 +52,7 @@ pub(super) fn assemble(
         }
 
         let Action::IncludeRemote(declaration) = &record.action else {
-            decide(&mut record, target_names_record, None, selection, &bindings);
+            decide(&mut record, target_names_record, None, selection, &bindings)?;
             run_list.top_level.push(TopLevelRecord::Action(record));
             continue;
         };
@@ -62,7 +63,7 @@ pub(super) fn assemble(
         if should_open_inclusion {
             let remote_exclusion = context.excluded_remote(inclusion.remote());
             let exclusion =
-                inclusion.exclusion(record.subject(), selection, &bindings, remote_exclusion);
+                inclusion.exclusion(record.subject(), selection, &bindings, remote_exclusion)?;
             let disposition = Disposition::from_exclusion(exclusion);
             record.disposition = if target_names_record {
                 disposition
@@ -102,13 +103,19 @@ pub(super) fn assemble(
             root: &materialized,
         };
         let remote_vars = dynamic.layer(&remote_vars, &source, &BTreeMap::new())?;
+        let remote_env = remotes
+            .get(inclusion.remote())
+            .filter(|remote| !remote.allows_env_templates())
+            .map(|_| inclusion.remote());
         let scope = inclusion_scope(
             &remote_vars,
+            remote_env,
             &declaration.vars,
             inclusion.label(),
             run_scope,
+            host,
             context.reporter(),
-        );
+        )?;
         let scoped = Bindings::new(&scope, host);
 
         let mut records = Vec::with_capacity(included_records.len());
@@ -161,7 +168,7 @@ pub(super) fn assemble(
                 filtered_out,
                 selection,
                 &scoped,
-            );
+            )?;
             records.push(contributed);
         }
         run_list.top_level.push(TopLevelRecord::Inclusion {
@@ -201,46 +208,54 @@ fn match_and_record_target(
 ///
 /// `filtered_out` is an inclusion's filters leaving the record out, which nothing waives and
 /// which comes ahead of every other exclusion, so the record's condition is not evaluated.
+///
+/// Fails if the condition reads variables that refer to each other in a cycle.
 fn decide(
     record: &mut RunRecord,
     requested: bool,
     filtered_out: Option<Exclusion>,
     selection: &Selection<'_>,
     bindings: &Bindings<'_>,
-) {
+) -> Result<(), Error> {
     let reached = matches!(record.action, Action::GitCloneList(_))
         && selection.reaches_into_list(record.address.as_ref());
     if !requested && !reached {
-        return;
+        return Ok(());
     }
     record.disposition = match filtered_out {
         Some(exclusion) => Disposition::Excluded(exclusion),
         None if requested => {
-            Disposition::from_exclusion(selection.exclusion(record.subject(), bindings))
+            Disposition::from_exclusion(selection.exclusion(record.subject(), bindings)?)
         }
         None => Disposition::from_exclusion(
-            selection.exclusion_without_waivers(record.subject(), bindings),
+            selection.exclusion_without_waivers(record.subject(), bindings)?,
         )
         .in_part(),
     };
+    Ok(())
 }
 
 /// The scope for one opened inclusion's records: the run's set with the
-/// remote's `[vars]` below the leaf's and the inclusion's `vars` above them.
+/// remote's `[vars]` below the leaf's and the inclusion's `vars` above them,
+/// evaluated in the run's scope against `host`. `remote_env` is the remote
+/// when its templates may not read `env`.
 ///
 /// Returns the run's set when both layers are empty; otherwise reports the
-/// derived scope at `-vv`.
+/// derived scope at `-vv`. Fails on a cycle among the variables an override, or
+/// the report, reads.
 fn inclusion_scope(
     remote: &BTreeMap<VarName, VarValue>,
-    overrides: &BTreeMap<VarName, String>,
+    remote_env: Option<&ItemId>,
+    overrides: &BTreeMap<VarName, TemplateString>,
     label: &str,
     run: &Rc<VarScope>,
+    host: &HostNamespaces,
     reporter: &Reporter,
-) -> Rc<VarScope> {
+) -> Result<Rc<VarScope>, Error> {
     if remote.is_empty() && overrides.is_empty() {
-        return Rc::clone(run);
+        return Ok(Rc::clone(run));
     }
-    let scope = Rc::new(run.with_inclusion(remote, overrides, label));
-    scope.report_inclusion(reporter);
-    scope
+    let scope = Rc::new(run.with_inclusion(remote, remote_env, overrides, label, host)?);
+    scope.report_inclusion(host, reporter)?;
+    Ok(scope)
 }

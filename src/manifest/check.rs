@@ -19,6 +19,7 @@ use crate::manifest::repo_path::{REMOTE_PREFIX, RepoPath};
 use crate::manifest::template::TemplateString;
 use crate::manifest::vars::{DynamicSource, DynamicVarSpec, VarSpec};
 use crate::source::fetch::{FileUrlError, file_url_path};
+use crate::vars::name::VarName;
 
 /// How a message names the tree a path is read from.
 fn tree_of(written: &RepoPath) -> String {
@@ -291,6 +292,14 @@ pub(crate) enum ManifestError {
     GithubUrlReadsVariable {
         record: DeclarationName,
         root: String,
+    },
+
+    /// An `include-remote` `vars` value that does not parse as a template.
+    #[error("{record}: `vars` value for `{name}` {source}")]
+    OverrideSyntax {
+        record: DeclarationName,
+        name: VarName,
+        source: Box<SyntaxError>,
     },
 
     /// A filter over direct children whose pattern could only match below one.
@@ -642,6 +651,23 @@ pub(super) fn check_inclusion_remote(
     }
 }
 
+/// Check that every `vars` override of an inclusion parses as a template.
+pub(super) fn check_inclusion_vars(
+    action: &IncludeRemoteAction,
+    record: &DeclarationName,
+) -> Result<(), ManifestError> {
+    for (name, value) in &action.vars {
+        value
+            .syntax()
+            .map_err(|error| ManifestError::OverrideSyntax {
+                record: record.clone(),
+                name: name.clone(),
+                source: Box::new(error.clone()),
+            })?;
+    }
+    Ok(())
+}
+
 /// Reject incompatible inclusion filters. At most one of `install-actions`, `install-groups`,
 /// and `exclude-groups` may be present; `exclude-actions` cannot accompany `install-actions`.
 pub(super) fn check_inclusion_filters(
@@ -808,15 +834,16 @@ fn is_host(host: &str) -> bool {
     }
 }
 
-/// Check a `[vars]` entry: a `github-url` parses, reads only `env` and `facts`, and, if it is
-/// literal, is an http(s) URL.
+/// Check a `[vars]` entry: a static value parses as a template; a `github-url` parses, reads
+/// only `env` and `facts`, and, if it is literal, is an http(s) URL.
 pub(super) fn check_var(spec: &VarSpec, record: &DeclarationName) -> Result<(), ManifestError> {
-    let VarSpec::Dynamic(DynamicVarSpec {
-        source: DynamicSource::GithubRelease(release),
-        ..
-    }) = spec
-    else {
-        return Ok(());
+    let release = match spec {
+        VarSpec::Static(value) => return check_template(value, "value", ValueRule::Text, record),
+        VarSpec::Dynamic(DynamicVarSpec {
+            source: DynamicSource::GithubRelease(release),
+            ..
+        }) => release,
+        VarSpec::Dynamic(_) => return Ok(()),
     };
     let Some(url) = &release.github_url else {
         return Ok(());

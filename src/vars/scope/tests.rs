@@ -1,5 +1,22 @@
 use super::*;
 
+/// Host namespaces with an empty environment.
+fn host() -> HostNamespaces {
+    HostNamespaces::capture(&Environment::from_pairs(std::iter::empty::<(&str, &str)>()))
+}
+
+/// The value of `name`, which must not be declared with no value.
+fn get(scope: &Rc<VarScope>, name: &str) -> Option<String> {
+    scope
+        .lookup(name, &host())
+        .map(|resolved| resolved.expect("a declared variable should have a value"))
+}
+
+/// Every line a listing of `scope` prints.
+fn lines(scope: &Rc<VarScope>) -> Vec<String> {
+    scope.lines_for(scope.names(), &host()).expect("no cycle")
+}
+
 fn name(name: &str) -> VarName {
     VarName::try_from(name.to_owned()).expect("valid name")
 }
@@ -24,26 +41,27 @@ fn stacked<const A: usize, const B: usize, const C: usize, const D: usize>(
     machine: [(&str, &str); B],
     environment: [(&str, &str); C],
     cli: [(&str, &str); D],
-) -> VarScope {
-    VarScope::stack(
+) -> Rc<VarScope> {
+    Rc::new(VarScope::stack(
         statics(layer(manifest)),
         layer(machine),
         layer(environment),
         &command_line(cli),
-    )
+    ))
 }
 
 /// The value in force and where it came from.
-fn winner(scope: &VarScope, key: &str) -> (String, Origin) {
-    let (origin, value) = scope
+fn winner(scope: &Rc<VarScope>, key: &str) -> (String, Origin) {
+    let (origin, _) = scope
         .declaring(key)
         .next()
         .expect("some layer should declare it");
-    (value.text().to_owned(), origin.clone())
+    let value = get(scope, key).expect("some layer should declare it");
+    (value, origin.clone())
 }
 
 /// The layers that value overrode, highest first.
-fn shadowed(scope: &VarScope, key: &str) -> Vec<Origin> {
+fn shadowed(scope: &Rc<VarScope>, key: &str) -> Vec<Origin> {
     scope
         .declaring(key)
         .skip(1)
@@ -108,7 +126,7 @@ fn the_set_is_the_union_of_the_layers() {
 fn a_name_no_layer_declares_is_declared_by_no_layer() {
     let scope = stacked([("a", "1")], [], [], []);
     assert_eq!(scope.declaring("absent").count(), 0);
-    assert_eq!(scope.get("absent"), None);
+    assert_eq!(get(&scope, "absent").as_deref(), None);
 }
 
 #[test]
@@ -119,33 +137,22 @@ fn get_answers_with_the_value_in_force() {
         [],
         [],
     );
-    assert_eq!(scope.get("a"), Some("machine"));
-    assert_eq!(scope.get("b"), Some("manifest"));
+    assert_eq!(get(&scope, "a").as_deref(), Some("machine"));
+    assert_eq!(get(&scope, "b").as_deref(), Some("manifest"));
 }
 
 #[test]
 fn get_tells_a_declared_empty_value_from_an_undeclared_name() {
     let scope = stacked([], [], [], [("empty", "")]);
-    assert_eq!(scope.get("empty"), Some(""));
-    assert_eq!(scope.get("missing"), None);
-}
-
-#[test]
-fn a_value_outlives_the_name_it_was_looked_up_by() {
-    // Checked at compile time: the result borrows only from the scope.
-    let scope = stacked([("a", "1")], [], [], []);
-    let value = {
-        let name = "a".to_owned();
-        scope.get(&name)
-    };
-    assert_eq!(value, Some("1"));
+    assert_eq!(get(&scope, "empty").as_deref(), Some(""));
+    assert_eq!(get(&scope, "missing").as_deref(), None);
 }
 
 #[test]
 fn get_accepts_text_that_is_not_a_valid_name() {
     let scope = stacked([("a", "1")], [], [], []);
-    assert_eq!(scope.get("has-dash"), None);
-    assert_eq!(scope.get(""), None);
+    assert_eq!(get(&scope, "has-dash").as_deref(), None);
+    assert_eq!(get(&scope, "").as_deref(), None);
 }
 
 #[test]
@@ -213,34 +220,41 @@ const CORP: &str = "include-remote `corp`";
 const CORP_MANIFEST: &str = "batfiles.toml of include-remote `corp`";
 
 /// `base` derived for an inclusion with `overrides` and no remote `[vars]`.
-fn derived<const N: usize>(base: &VarScope, overrides: [(&str, &str); N]) -> VarScope {
-    base.with_inclusion(&BTreeMap::new(), &layer(overrides), CORP)
+fn derived<const N: usize>(base: &Rc<VarScope>, overrides: [(&str, &str); N]) -> Rc<VarScope> {
+    derived_from(base, [], overrides)
 }
 
 /// `base` derived for an inclusion with remote `[vars]` and `overrides`.
 fn derived_from<const M: usize, const N: usize>(
-    base: &VarScope,
+    base: &Rc<VarScope>,
     remote: [(&str, &str); M],
     overrides: [(&str, &str); N],
-) -> VarScope {
-    base.with_inclusion(&statics(layer(remote)), &layer(overrides), CORP)
+) -> Rc<VarScope> {
+    let overrides = overrides
+        .into_iter()
+        .map(|(key, value)| (name(key), TemplateString::from(value.to_owned())))
+        .collect();
+    let scope = base
+        .with_inclusion(&statics(layer(remote)), None, &overrides, CORP, &host())
+        .expect("no cycle");
+    Rc::new(scope)
 }
 
 /// The lines [`VarScope::report_inclusion`] would print.
-fn override_lines(scope: &VarScope) -> Vec<String> {
+fn override_lines(scope: &Rc<VarScope>) -> Vec<String> {
     match scope.inclusion_block() {
-        Some((_, names)) => scope.lines_for(names),
+        Some((_, names)) => scope.lines_for(names, &host()).expect("no cycle"),
         None => Vec::new(),
     }
 }
 
 /// The heading that block is printed under.
-fn block_heading(scope: &VarScope) -> Option<String> {
+fn block_heading(scope: &Rc<VarScope>) -> Option<String> {
     scope.inclusion_block().map(|(heading, _)| heading)
 }
 
 /// Every layer's origin, lowest precedence first.
-fn origins(scope: &VarScope) -> Vec<Origin> {
+fn origins(scope: &Rc<VarScope>) -> Vec<Origin> {
     scope
         .layers
         .iter()
@@ -302,7 +316,7 @@ fn an_override_beats_the_leaf_and_loses_to_the_machine() {
 #[test]
 fn an_override_adds_a_name_no_other_layer_declares() {
     let scope = derived(&stacked([], [], [], []), [("profile", "work")]);
-    assert_eq!(scope.get("profile"), Some("work"));
+    assert_eq!(get(&scope, "profile").as_deref(), Some("work"));
     assert!(shadowed(&scope, "profile").is_empty());
 }
 
@@ -311,9 +325,9 @@ fn deriving_a_scope_leaves_the_runs_own_set_alone() {
     let base = stacked([("profile", "personal")], [], [], []);
     let work = derived(&base, [("profile", "work")]);
     let other = derived(&base, [("profile", "lab")]);
-    assert_eq!(base.get("profile"), Some("personal"));
-    assert_eq!(work.get("profile"), Some("work"));
-    assert_eq!(other.get("profile"), Some("lab"));
+    assert_eq!(get(&base, "profile").as_deref(), Some("personal"));
+    assert_eq!(get(&work, "profile").as_deref(), Some("work"));
+    assert_eq!(get(&other, "profile").as_deref(), Some("lab"));
 }
 
 #[test]
@@ -345,7 +359,7 @@ fn a_set_no_inclusion_derived_has_no_block_of_its_own() {
 fn an_override_map_declaring_nothing_has_nothing_to_report() {
     let scope = derived(&stacked([("a", "1")], [], [], []), []);
     assert!(override_lines(&scope).is_empty());
-    assert_eq!(scope.get("a"), Some("1"));
+    assert_eq!(get(&scope, "a").as_deref(), Some("1"));
 }
 
 #[test]
@@ -401,9 +415,9 @@ fn an_included_remotes_vars_stay_inside_the_scope_they_were_read_into() {
     let base = stacked([], [], [], []);
     let corp = derived_from(&base, [("profile", "work")], []);
     let other = derived_from(&base, [("profile", "lab")], []);
-    assert_eq!(base.get("profile"), None);
-    assert_eq!(corp.get("profile"), Some("work"));
-    assert_eq!(other.get("profile"), Some("lab"));
+    assert_eq!(get(&base, "profile").as_deref(), None);
+    assert_eq!(get(&corp, "profile").as_deref(), Some("work"));
+    assert_eq!(get(&other, "profile").as_deref(), Some("lab"));
 }
 
 #[test]
@@ -451,7 +465,7 @@ fn a_line_gives_the_value_its_layer_and_what_it_overrode() {
         [("editor", "emacs")],
     );
     assert_eq!(
-        scope.lines(),
+        lines(&scope),
         [
             "editor  = \"emacs\" (--var; over vars.toml, batfiles.toml)",
             "profile = \"personal\" (batfiles.toml)",
@@ -462,10 +476,251 @@ fn a_line_gives_the_value_its_layer_and_what_it_overrode() {
 #[test]
 fn an_empty_value_is_visible_in_a_line() {
     let scope = stacked([], [], [], [("profile", "")]);
-    assert_eq!(scope.lines(), ["profile = \"\" (--var)"]);
+    assert_eq!(lines(&scope), ["profile = \"\" (--var)"]);
 }
 
 #[test]
 fn an_empty_set_has_nothing_to_show() {
-    assert!(stacked([], [], [], []).lines().is_empty());
+    assert!(lines(&stacked([], [], [], [])).is_empty());
+}
+
+/// A leaf scope whose manifest values are `templates` and whose command line sets `cli`.
+fn templated<const A: usize, const B: usize>(
+    templates: [(&str, &str); A],
+    cli: [(&str, &str); B],
+) -> Rc<VarScope> {
+    let manifest = templates
+        .into_iter()
+        .map(|(key, value)| {
+            let template = TemplateString::from(value.to_owned());
+            (name(key), VarValue::written(&template))
+        })
+        .collect();
+    Rc::new(VarScope::stack(
+        manifest,
+        BTreeMap::new(),
+        BTreeMap::new(),
+        &command_line(cli),
+    ))
+}
+
+/// Why `name` has no value, which it must not have.
+fn reason(scope: &Rc<VarScope>, name: &str) -> String {
+    match scope.lookup(name, &host()) {
+        Some(Err(no_value)) => no_value.to_string(),
+        other => panic!("`{name}` should have no value, not {other:?}"),
+    }
+}
+
+/// The message of the cycle `scope` found.
+fn cycle(scope: &VarScope) -> String {
+    scope
+        .check_reads()
+        .expect_err("a cycle should have been found")
+        .to_string()
+}
+
+#[test]
+fn a_template_reads_a_variable_declared_after_it() {
+    let scope = templated(
+        [("email", "me@${profile}.example.com"), ("profile", "home")],
+        [],
+    );
+    assert_eq!(get(&scope, "email").as_deref(), Some("me@home.example.com"));
+}
+
+#[test]
+fn a_template_reads_the_final_value_of_what_it_names() {
+    let scope = templated(
+        [("email", "me@${profile}"), ("profile", "home")],
+        [("profile", "lab")],
+    );
+    assert_eq!(get(&scope, "email").as_deref(), Some("me@lab"));
+}
+
+#[test]
+fn an_overridden_template_is_never_evaluated() {
+    let scope = templated([("b", "${a}"), ("a", "${b}")], [("b", "x")]);
+    assert_eq!(get(&scope, "a").as_deref(), Some("x"));
+    assert!(scope.check_reads().is_ok());
+}
+
+#[test]
+fn a_literal_value_is_static_and_an_escape_is_applied() {
+    let scope = templated([("plain", "text"), ("escaped", "a$${b}")], []);
+    assert_eq!(get(&scope, "escaped").as_deref(), Some("a${b}"));
+    assert_eq!(
+        lines(&scope),
+        [
+            "escaped = \"a${b}\" (batfiles.toml)",
+            "plain   = \"text\" (batfiles.toml)",
+        ]
+    );
+}
+
+#[test]
+fn a_template_naming_an_undeclared_variable_has_no_value() {
+    let scope = templated([("x", "${nope}")], []);
+    assert_eq!(reason(&scope, "x"), "`nope` is not declared");
+    assert!(scope.check_reads().is_ok());
+}
+
+#[test]
+fn a_template_reading_a_variable_with_no_value_has_no_value_and_says_which() {
+    let scope = templated([("x", "${y}"), ("y", "${nope}")], []);
+    assert_eq!(reason(&scope, "x"), "reads `y`: `nope` is not declared");
+}
+
+#[test]
+fn a_vars_lookup_of_a_variable_with_no_value_reads_as_empty() {
+    let scope = templated([("x", "[${vars.y}]"), ("y", "${nope}")], []);
+    assert_eq!(get(&scope, "x").as_deref(), Some("[]"));
+}
+
+#[test]
+fn a_self_reference_is_a_cycle() {
+    let scope = templated([("path", "${path}:x")], []);
+    assert!(scope.lookup("path", &host()).is_some_and(|it| it.is_err()));
+    assert!(
+        cycle(&scope).contains("cycle: path -> path;"),
+        "{}",
+        cycle(&scope)
+    );
+}
+
+#[test]
+fn a_cycle_through_other_variables_names_them_in_the_order_read() {
+    let scope = templated([("a", "${b}"), ("b", "${vars.c}"), ("c", "${a}")], []);
+    let _ = scope.lookup("a", &host());
+    assert!(
+        cycle(&scope).contains("cycle: a -> b -> c -> a;"),
+        "{}",
+        cycle(&scope)
+    );
+}
+
+#[test]
+fn a_cycle_no_read_reaches_goes_unnoticed() {
+    let scope = templated([("a", "${b}"), ("b", "${a}"), ("c", "fine")], []);
+    assert_eq!(get(&scope, "c").as_deref(), Some("fine"));
+    assert!(scope.check_reads().is_ok());
+}
+
+#[test]
+fn a_listing_fails_on_a_cycle() {
+    let scope = templated([("a", "${b}"), ("b", "${a}")], []);
+    let error = scope
+        .lines_for(scope.names(), &host())
+        .expect_err("a cycle");
+    assert!(error.to_string().contains("a -> b -> a"), "{error}");
+}
+
+#[test]
+fn a_listing_shows_a_template_beside_its_value_and_a_reason_for_no_value() {
+    let scope = templated(
+        [
+            ("email", "me@${profile}"),
+            ("profile", "home"),
+            ("broken", "${nope}"),
+        ],
+        [],
+    );
+    assert_eq!(
+        lines(&scope),
+        [
+            "broken  = no value (batfiles.toml, template \"${nope}\", `nope` is not declared)",
+            "email   = \"me@home\" (batfiles.toml, template \"me@${profile}\")",
+            "profile = \"home\" (batfiles.toml)",
+        ]
+    );
+}
+
+#[test]
+fn an_override_is_evaluated_in_the_leaf_scope() {
+    let base = templated([("profile", "personal")], []);
+    let scope = derived(&base, [("profile", "${profile}-corp")]);
+    assert_eq!(get(&scope, "profile").as_deref(), Some("personal-corp"));
+    assert_eq!(
+        override_lines(&scope),
+        [
+            "profile = \"personal-corp\" (include-remote `corp`, template \"${profile}-corp\"; \
+             over batfiles.toml)"
+        ]
+    );
+}
+
+#[test]
+fn each_scope_evaluates_a_leaf_template_against_its_own_values() {
+    let base = templated([("email", "me@${profile}"), ("profile", "personal")], []);
+    let scope = derived(&base, [("profile", "work")]);
+    assert_eq!(get(&base, "email").as_deref(), Some("me@personal"));
+    assert_eq!(get(&scope, "email").as_deref(), Some("me@work"));
+}
+
+#[test]
+fn a_cycle_an_override_reads_fails_the_inclusion() {
+    let base = templated([("a", "${b}"), ("b", "${a}")], []);
+    let overrides = BTreeMap::from([(name("x"), TemplateString::from("${a}".to_owned()))]);
+    let error = base
+        .with_inclusion(&BTreeMap::new(), None, &overrides, CORP, &host())
+        .expect_err("a cycle");
+    assert!(error.to_string().contains("a -> b -> a"), "{error}");
+}
+
+#[test]
+fn an_override_a_higher_layer_overrides_is_never_evaluated() {
+    let base = templated([("a", "${b}"), ("b", "${a}")], [("pick", "valid")]);
+    let overrides = BTreeMap::from([(name("pick"), TemplateString::from("${a}".to_owned()))]);
+    let scope = Rc::new(
+        base.with_inclusion(&BTreeMap::new(), None, &overrides, CORP, &host())
+            .expect("the override is not evaluated"),
+    );
+    assert_eq!(get(&scope, "pick").as_deref(), Some("valid"));
+    assert_eq!(
+        override_lines(&scope),
+        ["pick = \"valid\" (--var; over include-remote `corp`)"]
+    );
+}
+
+/// A leaf whose `v1` reads `v2` and so on, through `templates` templates, ending at a literal.
+fn chained(templates: usize) -> Rc<VarScope> {
+    let manifest = (1..=templates + 1)
+        .map(|index| {
+            let value = if index > templates {
+                "end".to_owned()
+            } else {
+                format!("${{v{}}}", index + 1)
+            };
+            (
+                name(&format!("v{index}")),
+                VarValue::written(&TemplateString::from(value)),
+            )
+        })
+        .collect();
+    Rc::new(VarScope::stack(
+        manifest,
+        BTreeMap::new(),
+        BTreeMap::new(),
+        &[],
+    ))
+}
+
+#[test]
+fn a_read_may_nest_as_many_templates_as_the_limit() {
+    let scope = chained(MAX_DEPTH);
+    assert_eq!(get(&scope, "v1").as_deref(), Some("end"));
+    assert!(scope.check_reads().is_ok());
+}
+
+#[test]
+fn a_read_nesting_more_templates_than_the_limit_fails() {
+    let scope = chained(MAX_DEPTH + 1);
+    assert!(scope.lookup("v1", &host()).is_some_and(|it| it.is_err()));
+    let error = scope.check_reads().expect_err("too deep").to_string();
+    assert!(
+        error.contains("too deeply: v1 -> v2 -> ")
+            && error.contains(&format!(" -> v{}; ", MAX_DEPTH + 1))
+            && error.contains(&format!("at most {MAX_DEPTH} templated")),
+        "{error}"
+    );
 }

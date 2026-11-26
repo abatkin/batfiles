@@ -80,7 +80,7 @@ fn a_warning_names_the_declaration_and_what_the_run_fell_back_on() {
     assert_eq!(
         warning(&leaf("email"), &CaptureError::NotUtf8, Fallback::None),
         "dynamic variable `email` could not be refreshed: produced output that is not \
-             valid UTF-8; it has no value, and reads as empty"
+             valid UTF-8; it has no value"
     );
     let absent = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
     assert_eq!(

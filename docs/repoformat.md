@@ -471,17 +471,44 @@ email = { command = ["git", "config", "user.email"], cache = "1d" }
 fzf_tag = { github-release = "junegunn/fzf" }
 ```
 
-Variables feed `when`, `unless`, and [templates](#templates). A `[vars]` value
-is not a template, so one variable cannot refer to another; the one exception,
-a `github-release` declaration's [`github-url`](#the-github-url-field), reads
-only `env` and `facts`. Static values must be strings, including empty
-strings: `work = true` and `rank = 3` are load errors. A table must match the
-dynamic-variable schema.
+Variables feed `when`, `unless`, and [templates](#templates). Static values
+must be strings, including empty strings: `work = true` and `rank = 3` are load
+errors. A table must match the dynamic-variable schema.
+
+Every string value is a [template](#templates), so a variable can be built from
+host facts, the environment, dynamic variables, and other variables:
+
+```toml
+[vars]
+email     = "me@${profile}.example.com"
+is_mac    = "${facts.os == 'macos'}"
+fzf_ver   = "${fzf_tag.substring(1)}"
+arch_name = "${{'x86_64': 'amd64', 'aarch64': 'arm64'}[facts.arch]}"
+```
+
+A reference names a variable, not a position: `email` may read `profile`
+wherever either is declared. A value without `${` is plain text, and `$${`
+writes a literal `${`. A value that does not parse is a load error naming the
+variable. Values given by `vars.toml`, `BATFILES_VAR_*`, and `--var` are never
+templates.
+[When a template is evaluated](#when-a-template-is-evaluated) covers when a
+value is computed, what it reads, and what happens when it cannot be.
 
 See [variable precedence](environment.md#variable-precedence) for machine
 values, environment and CLI overrides, and inclusion scopes. Dynamic
 declarations are captured even when no condition uses them; see
 [evaluation](state.md#when-declarations-are-evaluated).
+
+### Variables with no value
+
+A declared variable can have **no value**: a template that cannot be evaluated,
+such as one naming an undeclared variable or one that reads a variable with no
+value; or a [dynamic declaration](#dynamic-variables) with nothing captured or
+cached. It still declares the variable and overrides lower layers. Reading it
+as a bare name is an [evaluation failure](#when-a-condition-cannot-be-evaluated);
+reading it as `vars.<name>` gives the empty string, as for an undeclared name.
+[`vars list`](commands/vars.md#vars-list) shows it as `no value` with the
+reason.
 
 ### Dynamic variables
 
@@ -500,10 +527,9 @@ names the conflicting field. A table with neither `command` nor
 [Cache rules](state.md#dynamic-varstoml-dynamic-variable-cache) define reuse,
 refresh, and failure fallback.
 
-A declaration with no captured or cached value still declares the variable;
-it reads as the empty string and overrides lower layers. Consequently `when`
-on it closes but `unless` opens. Use `when` when installation requires a
-successful answer.
+A declaration with no captured or cached value has
+[no value](#variables-with-no-value): a condition reading it by its bare name
+closes for both `when` and `unless`.
 
 #### Command declarations
 
@@ -597,7 +623,8 @@ github-url = "${env.GHE_URL}"
 ```
 
 It is a template that reads only `env` and `facts`, which exist before any
-variable resolves. A reference to a variable, bare or through `vars`, is a load
+variable resolves, since a declaration is captured before the templates that
+read it. A reference to a variable, bare or through `vars`, is a load
 error: "`github-url` may read `env` and `facts`, not variables". In an included
 manifest, reading `env` needs the remote's
 [`allow-env-templates`](actions/include-remote.md#templates-and-the-host-environment),
@@ -615,8 +642,9 @@ the resolved URL is part of what a cache entry
 [records](state.md#dynamic-varstoml-dynamic-variable-cache).
 
 A `github-url` that fails to evaluate or resolves to an invalid URL fails the
-lookup rather than the run: the variable reads as empty, with a warning, and no
-cached value is used, since there is no URL to match an entry against. An
+lookup rather than the run: the variable has
+[no value](#variables-with-no-value), with a warning, and no cached value is
+used, since there is no URL to match an entry against. An
 unset environment variable is the empty string, so `${env.GHE_URL}` on a
 machine without it warns rather than stopping a `sync`. Errors name the field
 and quote it as written, unless it holds an `@` and so could hold credentials;
@@ -674,11 +702,11 @@ index syntax for any key (`env["XDG_CURRENT_DESKTOP"]`).
 
 ### Identifiers
 
-| Lookup | Declared/set | Missing |
-| --- | --- | --- |
-| Bare user variable | Its string value, including empty | Evaluation error |
-| `vars.<name>` | Same user value | Empty string |
-| `facts.<key>`, `env.<key>` | Host value | Empty string |
+| Lookup | Declared/set | [No value](#variables-with-no-value) | Missing |
+| --- | --- | --- | --- |
+| Bare user variable | Its string value, including empty | Evaluation error | Evaluation error |
+| `vars.<name>` | Same user value | Empty string | Empty string |
+| `facts.<key>`, `env.<key>` | Host value | | Empty string |
 
 Use a bare identifier to catch undeclared names, or `vars` for optional ones:
 
@@ -708,14 +736,16 @@ Comparison and `+` retain the expression language's rules. For example,
 
 ### When a condition cannot be evaluated
 
-Undeclared bare identifiers, invalid truthiness, arithmetic overflow, and other
-evaluation failures close the gate for **both `when` and `unless`**. The record
+Undeclared bare identifiers, bare identifiers with
+[no value](#variables-with-no-value), invalid truthiness, arithmetic overflow,
+and other evaluation failures close the gate for **both `when` and `unless`**. The record
 is skipped, with [a warning](cmdline.md#exclusion-reporting) that permits
 [continuation](cmdline.md#execution-failures). Diagnostics include the condition
 and remedy but never the offending value.
 
-A failed dynamic declaration with no cached value is still declared and reads
-as the empty string; it does not cause an undeclared-name error.
+A condition reading variables that
+[refer to each other in a cycle, or nest too deeply](#when-a-template-is-evaluated),
+fails the command instead.
 [Selection](cmdline.md#selection-by-command) determines when action conditions
 are evaluated or waived. Bootstrap conditions are evaluated only when their
 candidates are offered.
@@ -745,6 +775,8 @@ decompress = true
 | [`symlink`](actions/symlink.md#symlink), [`copy`](actions/copy.md#copy), [`create-dir`](actions/create-dir.md#create-dir) | `dest` |
 | [`symlink-dir`](actions/symlink-dir.md#symlink-dir), [`copy-dir`](actions/copy-dir.md#copy-dir), [`git-clone-list`](actions/git-clone-list.md#git-clone-list) | `dest-dir` |
 | [`run`](actions/run.md#run) | `command`: the shell string, or each list element; `cwd`; each `env` value |
+| [`[vars]`](#variables) | Every string value |
+| [`include-remote`](actions/include-remote.md#variables-for-one-inclusion) | Each `vars` value |
 | [`github-release`](#github-release-declarations) variable | `github-url`, which reads only `env` and `facts` |
 
 No other field is a template.
@@ -754,14 +786,20 @@ No other field is a template.
 A template reads what a [condition](#identifiers) on the same record reads.
 Remotes and leaf actions use the leaf's variables; an
 [inclusion's](actions/include-remote.md#variables-for-one-inclusion) actions use
-the inclusion's. A template in an included manifest reads `env` only with its
-remote's [permission](actions/include-remote.md#templates-and-the-host-environment).
+the inclusion's. A template in an included manifest, including a `[vars]` value
+it declares, reads `env` only with its remote's
+[permission](actions/include-remote.md#templates-and-the-host-environment).
 Each `${...}` must give a string, number, or boolean.
 
 Templates are parsed when the manifest loads, so a syntax error is a load error
 naming the record and field.
 Each is evaluated once, when needed, including in dry runs:
 
+- a `[vars]` value the first time a condition, a template, or a listing reads
+  it, as described below;
+- an `include-remote` `vars` value when its inclusion opens, in the leaf's
+  scope; see
+  [variables for one inclusion](actions/include-remote.md#variables-for-one-inclusion);
 - a `github-url` each time its declaration resolves, against `env` and `facts`
   alone; see [the field](#the-github-url-field);
 - a remote's when `sync` or `clone` [materializes](#materialization) it;
@@ -773,14 +811,43 @@ Output shows resolved values, except a `run` action's command, which is shown
 as written. A literal value is checked when the manifest
 loads; a templated one is checked by the same rule once it resolves.
 
+A `[vars]` value reads the **final** value of each variable it names, after
+[precedence](environment.md#variable-precedence), and a value a higher layer
+overrides is never evaluated: with `--var b=x`, `b = "${a}"` does not run. Each
+[scope](environment.md#variable-precedence) evaluates separately, so inside an
+inclusion that overrides `profile`, the leaf's `email = "me@${profile}"` reads
+the override. A value is evaluated at most once per scope.
+
+A value that reads itself, directly or through other variables, fails the
+command when it is read, naming the variables in the order they were read:
+
+```text
+error: variables refer to each other in a cycle: path -> path; a [vars] value cannot read itself, directly or through other variables
+```
+
+A read also fails the command when it would evaluate more than 32 templated
+values nested inside each other, such as `v1 = "${v2}"`, `v2 = "${v3}"`, and so
+on to `v34`. A literal, machine, environment, command-line, or dynamic value at
+the end of the chain does not count toward the limit.
+
+```text
+error: variables read each other too deeply: v1 -> v2 -> ... -> v33; a [vars] value can read through at most 32 templated variables in a row
+```
+
+A cycle or chain nothing reads goes unnoticed, so `sync` can succeed where
+[`vars list` or `-vv`](commands/vars.md#vars-list), which read every variable to
+show it, fail.
+
 ### When a template cannot be used
 
 A template that fails to evaluate, or resolves to an invalid value, fails its
 record instead of skipping it as a [condition](#when-a-condition-cannot-be-evaluated)
 does: an [execution failure](cmdline.md#execution-failures) for an action, a
-[materialization failure](#materialization) for a remote. A `github-url` is the
-exception: it fails its lookup, and the variable
-[reads as empty](#the-github-url-field).
+[materialization failure](#materialization) for a remote. Reading a variable
+with [no value](#variables-with-no-value) by its bare name is such a failure.
+A variable's own template is the exception: the variable has no value, and only
+what reads it fails. So is a `github-url`: it fails its lookup, and the variable
+[has no value](#the-github-url-field).
 
 ```text
 error: create-dir action 2: dest "~/${nope}" cannot be evaluated at character 3: `nope` is not declared. ...

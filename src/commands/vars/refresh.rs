@@ -105,9 +105,9 @@ fn refresh_with_remotes(
     let bindings = Bindings::new(&variables, host);
     let selection =
         Selection::without_run_skips(DisabledItems::load(&roots.machine.disabled_path())?);
-    let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings);
+    let excluded_remotes = remotes::excluded(&manifest.remotes, &bindings)?;
     let repository = paths::anchor(&roots.batfiles_repo)?;
-    let reach = reachability(&manifest.actions, &selection, &bindings, &excluded_remotes);
+    let reach = reachability(&manifest.actions, &selection, &bindings, &excluded_remotes)?;
 
     let wanted: BTreeSet<&ItemId> = match asked {
         RefreshTargets::All => reach.keys().collect(),
@@ -191,13 +191,14 @@ enum Reach {
 }
 
 /// Evaluate inclusion admission for each remote named by an `include-remote`. Apply `selection`
-/// and `excluded_remotes`; omit remotes with no inclusion.
+/// and `excluded_remotes`; omit remotes with no inclusion. Fails if a condition reads variables
+/// that refer to each other in a cycle.
 fn reachability(
     actions: &[Action],
     selection: &Selection<'_>,
     bindings: &Bindings<'_>,
     excluded_remotes: &BTreeMap<ItemId, Exclusion>,
-) -> BTreeMap<ItemId, Reach> {
+) -> Result<BTreeMap<ItemId, Reach>, Error> {
     let mut reach = BTreeMap::new();
     for (index, action) in actions.iter().enumerate() {
         let Action::IncludeRemote(declaration) = action else {
@@ -217,7 +218,7 @@ fn reachability(
             selection,
             bindings,
             excluded_remotes.get(inclusion.remote()),
-        );
+        )?;
         match (
             exclusion,
             reach
@@ -231,7 +232,7 @@ fn reachability(
             }
         }
     }
-    reach
+    Ok(reach)
 }
 
 /// Why a key cannot be refreshed, as far as the leaf manifest alone can tell: a remote key

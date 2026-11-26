@@ -92,7 +92,7 @@ impl TemplateString {
         }
         let text = template
             .evaluate_rendered(scope, &COERCIONS, render)
-            .map_err(|error| TemplateError::from_expression(&error))?;
+            .map_err(|error| TemplateError::from_expression(&error, scope.bindings))?;
         rule.check(&text).map_err(TemplateError::Invalid)?;
         Ok(Cow::Owned(text))
     }
@@ -278,21 +278,22 @@ impl<'a, 'b> Resolver<'a, 'b> {
     }
 
     /// `value`, written in `field`, evaluated and checked against `rule`. Failures are
-    /// [`Error::Template`].
+    /// [`Error::Template`], or [`Error::VariableCycle`] or [`Error::VariableDepth`] when the
+    /// variables it reads refer to each other in a cycle or nest too deeply.
     pub fn field<'t>(
         &self,
         field: &'static str,
         value: &'t TemplateString,
         rule: ValueRule,
     ) -> Result<Cow<'t, str>, Error> {
-        value
-            .resolve(rule, &self.scope)
-            .map_err(|source| Error::Template {
-                record: self.record.to_owned(),
-                field,
-                template: value.source().to_owned(),
-                source: Box::new(source),
-            })
+        let resolved = value.resolve(rule, &self.scope);
+        self.scope.bindings.check_reads()?;
+        resolved.map_err(|source| Error::Template {
+            record: self.record.to_owned(),
+            field,
+            template: value.source().to_owned(),
+            source: Box::new(source),
+        })
     }
 
     /// [`Self::field`] for a field that may be absent.
@@ -324,7 +325,8 @@ pub(crate) enum TemplateError {
 }
 
 impl TemplateError {
-    fn from_expression(error: &ExpressionError) -> Self {
+    /// Classify an evaluator error raised against `bindings`.
+    fn from_expression(error: &ExpressionError, bindings: &Bindings<'_>) -> Self {
         match error {
             ExpressionError::InterpolationFailed {
                 line,
@@ -336,11 +338,11 @@ impl TemplateError {
                     line: *line,
                     column: *column,
                 }),
-                error: EvalError::from_expression(error),
+                error: bindings.eval_error(error),
             },
             other => Self::Evaluation {
                 position: None,
-                error: EvalError::from_expression(other),
+                error: bindings.eval_error(other),
             },
         }
     }

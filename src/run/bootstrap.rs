@@ -109,9 +109,11 @@ impl BootstrapDecisions {
 
         if offered {
             for (kind, name, gate) in entries(candidates) {
-                if let Some(exclusion) =
-                    gate.and_then(|gate| gate.exclusion(bindings, Some(NOT_DISABLED)))
-                {
+                let exclusion = match gate {
+                    Some(gate) => gate.exclusion(bindings, Some(NOT_DISABLED))?,
+                    None => None,
+                };
+                if let Some(exclusion) = exclusion {
                     exclusion.report_heading(reporter, &heading(kind, name));
                     continue;
                 }

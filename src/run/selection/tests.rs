@@ -113,7 +113,9 @@ fn decided_with(
     let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
     let host = HostNamespaces::capture(&empty);
     let bindings = Bindings::new(&variables, &host);
-    selection.decide(record.subject(), &bindings, waivers, Some(NOT_INSTALLED))
+    selection
+        .decide(record.subject(), &bindings, waivers, Some(NOT_INSTALLED))
+        .expect("no cycle")
 }
 
 /// Return the reason for a [`Deliberate`](Exclusion::Deliberate) exclusion; panic on
@@ -630,7 +632,9 @@ fn entry_disposition(
     ));
     let empty = Environment::from_pairs(std::iter::empty::<(&str, &str)>());
     let host = HostNamespaces::capture(&empty);
-    selection.entry_disposition(entry, list, &Bindings::new(&variables, &host))
+    selection
+        .entry_disposition(entry, list, &Bindings::new(&variables, &host))
+        .expect("no cycle")
 }
 
 fn reason_of(disposition: Disposition) -> Option<String> {

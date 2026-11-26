@@ -43,17 +43,21 @@ pub(crate) fn materialization(repository: &Path, id: &ItemId) -> PathBuf {
 /// Evaluate declared remote conditions without I/O.
 /// Returns excluded remotes and their reasons, even when an old tree exists.
 /// Used by sync and apply commands to prevent reads from excluded remotes.
+/// Fails if a condition reads variables that refer to each other in a cycle.
 pub(crate) fn excluded(
     remotes: &BTreeMap<ItemId, Remote>,
     bindings: &Bindings<'_>,
-) -> BTreeMap<ItemId, Exclusion> {
-    remotes
-        .iter()
-        .filter_map(|(id, remote)| {
-            let exclusion = remote.gate()?.exclusion(bindings, Some(NOT_MATERIALIZED))?;
-            Some((id.clone(), exclusion))
-        })
-        .collect()
+) -> Result<BTreeMap<ItemId, Exclusion>, Error> {
+    let mut excluded = BTreeMap::new();
+    for (id, remote) in remotes {
+        let Some(gate) = remote.gate() else {
+            continue;
+        };
+        if let Some(exclusion) = gate.exclusion(bindings, Some(NOT_MATERIALIZED))? {
+            excluded.insert(id.clone(), exclusion);
+        }
+    }
+    Ok(excluded)
 }
 
 /// Materialize admitted remotes in ID order. Update Git clones; fetch missing or changed

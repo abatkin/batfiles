@@ -34,6 +34,7 @@ mod surface;
 mod templates;
 mod unzipping;
 mod update;
+mod var_templates;
 mod vars;
 
 #[cfg(unix)]

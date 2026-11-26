@@ -417,7 +417,7 @@ fn warning(identity: &DynamicVarKey, error: &dyn fmt::Display, fallback: Fallbac
         ),
         Fallback::None => format!(
             "dynamic variable `{identity}` could not be refreshed: {error}; \
-             it has no value, and reads as empty"
+             it has no value"
         ),
         Fallback::Assumed => {
             format!("dynamic variable `{identity}` {error}; assuming `false` for this run")

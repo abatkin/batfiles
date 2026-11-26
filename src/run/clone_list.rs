@@ -28,13 +28,13 @@ pub(crate) struct PreparedEntry {
 
 impl<'a> PreparedList<'a> {
     /// Read and validate the clone list at `path` for `action`, whose record is at `list`,
-    /// and decide each entry in list order with `decide`. Missing or malformed lists return
-    /// an error.
+    /// and decide each entry in list order with `decide`. Missing or malformed lists, and a
+    /// failure `decide` returns, return an error.
     pub fn prepare(
         action: &'a GitCloneListAction,
         path: &Path,
         list: Option<&ItemAddress>,
-        mut decide: impl FnMut(Subject<'_>) -> Disposition,
+        mut decide: impl FnMut(Subject<'_>) -> Result<Disposition, Error>,
     ) -> Result<Self, Error> {
         let entries = clone_list::read(path)?
             .into_iter()
@@ -46,14 +46,14 @@ impl<'a> PreparedList<'a> {
                     address: address.as_ref(),
                     group_address: None,
                     gate: declared.gate(),
-                });
-                PreparedEntry {
+                })?;
+                Ok(PreparedEntry {
                     declared,
                     address,
                     disposition,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_, Error>>()?;
         Ok(Self { action, entries })
     }
 

@@ -325,10 +325,17 @@ beside the records the inclusion contributed and decides every condition on
 them and resolves their templates. Conditions, templates, and precedence are
 specified in [repoformat.md](../repoformat.md#conditions) and
 [environment.md](../environment.md#variable-precedence). A manifest's layer holds
-its dynamic variables' resolved values beside its static ones; one
-`DynamicVarResolver` per command resolves each declaration once and owns the
-cache. A `github-url` evaluates against `env` and `facts` alone, before any
-variable exists, so no variable depends on another.
+its dynamic variables' resolved values beside its unevaluated templates; one
+`DynamicVarResolver` per command resolves each declaration once, before any
+template reads it, and owns the cache. A `github-url` evaluates against `env`
+and `facts` alone, before any variable exists. A `VarScope` evaluates a
+template the first time its name is read and keeps the result, so each scope
+evaluates separately. A read nested inside another template's evaluation
+recurses through the evaluator, so a scope bounds the nesting depth well below
+what overflows a 1 MiB main-thread stack in a debug build. It records a cycle
+or an over-deep read rather than returning it, since the expression evaluator's
+lookups cannot fail; every condition and template field checks the scope
+afterwards and fails the command.
 
 ## Centralized decisions
 

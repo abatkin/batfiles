@@ -124,6 +124,7 @@ Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `
 | Run a command once, on a schedule, or after something changes | `run`, with its success recorded in [`runs.toml`](docs/state.md#runstoml-run-action-history) |
 | Choose content per machine | Groups, persistent disables, run-only skips, variables and conditions |
 | Vary paths and URLs per machine | [Templates](docs/repoformat.md#templates) such as `dest = "~/.cache/${facts.os}"` |
+| Build one value from others | [`[vars]` values](docs/repoformat.md#variables) are templates too, such as `email = "me@${profile}.example.com"` |
 | Discover machine values | Cached [dynamic variables](docs/repoformat.md#dynamic-variables) |
 | Follow a project's GitHub releases | A [`github-release`](docs/repoformat.md#github-release-declarations) variable holding the latest tag, in a download URL |
 

@@ -8,8 +8,8 @@ use super::DeclarationName;
 use super::ReadAs;
 use super::check::{
     ManifestError, SourceShape, ValueRule, check_archive_root, check_child_filter,
-    check_inclusion_filters, check_inclusion_remote, check_optional_template, check_run,
-    check_source, check_template,
+    check_inclusion_filters, check_inclusion_remote, check_inclusion_vars, check_optional_template,
+    check_run, check_source, check_template,
 };
 use super::duration::FriendlyDuration;
 use super::remote::Remote;
@@ -132,7 +132,8 @@ impl Action {
                 if let ReadAs::Leaf = read_as {
                     check_inclusion_remote(&action.remote, record, remotes)?;
                 }
-                check_inclusion_filters(action, record)
+                check_inclusion_filters(action, record)?;
+                check_inclusion_vars(action, record)
             }
         }
     }
@@ -457,8 +458,9 @@ pub(crate) struct IncludeRemoteAction {
 
     /// Variable overrides for contributed records only, applied by
     /// [`VarScope::with_inclusion`](crate::vars::scope::VarScope::with_inclusion).
+    /// Each a template, evaluated in the leaf's scope when the inclusion opens.
     #[serde(default)]
-    pub vars: BTreeMap<VarName, String>,
+    pub vars: BTreeMap<VarName, TemplateString>,
 }
 
 /// `run`: run a command, as often as its trigger says.
@@ -577,8 +579,8 @@ mod tests {
         assert_eq!(
             inclusion.vars,
             BTreeMap::from([
-                (var("editor"), "vi".to_owned()),
-                (var("profile"), "work".to_owned()),
+                (var("editor"), TemplateString::from("vi".to_owned())),
+                (var("profile"), TemplateString::from("work".to_owned())),
             ])
         );
     }

@@ -108,6 +108,14 @@ included remote [vars]
 An empty string overrides a lower value. Repeated `--var` assignments use the
 last value. Execution commands merge these layers in real and dry runs.
 
+Precedence picks one declaration for each name before any value is computed. A
+manifest's `[vars]` values and an inclusion's `vars` overrides are
+[templates](repoformat.md#variables); `vars.toml`, `BATFILES_VAR_*`, and `--var`
+values are literal text. A template reads the final values of the variables it
+names, and one a higher layer overrides is never evaluated. Each scope below
+evaluates its templates separately, against its own values, when they are first
+read; see [when a template is evaluated](repoformat.md#when-a-template-is-evaluated).
+
 | Scope | Decides | Layers used |
 | --- | --- | --- |
 | **Leaf scope** | Leaf actions and entries, inclusion conditions, remote conditions | Leaf `[vars]`, machine, environment, CLI |
@@ -115,12 +123,17 @@ last value. Execution commands merge these layers in real and dry runs.
 
 Each opened inclusion has a separate scope, even when two include the same
 remote. Its values never affect the leaf, another inclusion, or its own gate.
+A leaf template read in an inclusion scope reads that inclusion's values. The
+inclusion's `vars` overrides are the exception: they are evaluated once, in the
+leaf scope, when the inclusion opens, so `profile = "${profile}-corp"` extends
+the leaf's `profile`; see
+[variables for one inclusion](actions/include-remote.md#variables-for-one-inclusion).
 
 A dynamic declaration, a command or a `github-release` lookup, belongs to its
 declaring manifest's layer. A remote command that is not
 [allowed](repoformat.md#git) declares nothing; a remote's lookups need no
 permission. A declaration producing no value still overrides lower layers and
-reads as the empty string. A higher layer is how one machine pins a value, such
+has [no value](repoformat.md#variables-with-no-value). A higher layer is how one machine pins a value, such
 as `--var fzf_tag=v0.60.0`.
 
 Malformed or unreadable `vars.toml` fails merging; so does a malformed dynamic

@@ -450,7 +450,10 @@ fn one_evaluation_decides_a_gate_three_ways() {
     let work = condition("work");
     let nowhere = condition("nowhere");
 
-    let verdict = |gate: Gate<'_>| gate.exclusion(&bindings, Some(CONSEQUENCE));
+    let verdict = |gate: Gate<'_>| {
+        gate.exclusion(&bindings, Some(CONSEQUENCE))
+            .expect("no cycle")
+    };
 
     assert!(verdict(Gate::When(&work)).is_none());
     let Some(Exclusion::Deliberate(reason)) = verdict(Gate::Unless(&work)) else {

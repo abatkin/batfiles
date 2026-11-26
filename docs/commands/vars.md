@@ -106,13 +106,31 @@ team    = "platform" (batfiles.toml, command failed, cached 2d ago)
 token   = no value (batfiles.toml, command failed)
 ```
 
+A winning [template](../repoformat.md#variables) shows its value, then the
+template as written after its origin. A template that could not be evaluated
+shows `no value` with the reason, which names variables but never values. A
+value with no `${` shows as it is:
+
+```text
+email   = "me@personal.example.com" (batfiles.toml, template "me@${profile}.example.com")
+fzf_ver = no value (batfiles.toml, template "${fzf_tag.substring(1)}", reads `fzf_tag`: not cached)
+profile = "personal" (batfiles.toml)
+work    = no value (batfiles.toml, template "${nope}", `nope` is not declared)
+```
+
+An inclusion's override shows the same way under its block. Showing a variable
+evaluates it, so a listing or `-vv` fails on
+[variables that refer to each other in a cycle, or nest too deeply](../repoformat.md#when-a-template-is-evaluated),
+even when nothing else reads them.
+
 `command` and `github-release` mean captured now; cache ages use the largest
 whole unit. Under `--no-refresh`, stale entries say `stale, cached 2d ago`,
 missing entries say `no value (batfiles.toml, not cached)`, and an entry
 another declaration captured says
 `no value (batfiles.toml, cached for a different declaration)`; see
-[cache provenance](../state.md#freshness-and-refresh-behavior). A `github-url`
-is still evaluated under `--no-refresh`, since the cache entry it matches
+[cache provenance](../state.md#freshness-and-refresh-behavior). A template
+reading such a variable has no value, and lists as `fzf_ver` does above. A
+`github-url` is still evaluated under `--no-refresh`, since the cache entry it matches
 depends on it. Overridden declarations have no separate capture state. Listings explicitly expose values; mutation reports name only
 keys, and `vars get` supplies a bare persisted value for scripts.
 

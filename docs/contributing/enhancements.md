@@ -52,16 +52,34 @@ that policy.
 ## Templates in more fields
 
 [Templates](../repoformat.md#templates) cover destinations, fetch and clone
-sources, refs, and digests. Candidates for more:
+sources, refs, digests, `[vars]` values, and inclusion overrides. Candidates
+for more:
 
-- `[vars]` values, so a variable can be built from others. Needs an evaluation
-  order across layers and inclusion scopes, and cycle detection.
 - Clone-list fields: an entry's repository, `ref`, and `dest-name`. Entries are
   read during preparation, so failures and scope need defining there.
-- `include-remote` variable overrides, resolved in the leaf scope before the
-  inclusion's scope is built.
 - Repository-path `source` and `source-dir`. These are checked against declared
   remotes at load, which a templated remote reference would defer.
+
+## Templated dynamic-variable declarations
+
+A dynamic declaration's `command` (the string, or each list element) could be a
+template, and a `github-url` could read variables, not just `env` and `facts`;
+perhaps `github-release` too.
+
+- Record the resolved command in a cache entry's `from`, as the resolved
+  `github-url` is recorded today, so a change of value captures again.
+- Remote entries are shared across inclusions (`remote:<id>.<name>`), and a
+  shared remote declaration resolves once per command. A remote declaration
+  reading inclusion-scoped variables would resolve differently in two
+  inclusions, which would overwrite each other's entry and capture on every
+  run. Remote entries would need keying per inclusion or per resolved
+  declaration, with a matching change to the
+  [cache schema](../state.md#dynamic-varstoml-dynamic-variable-cache).
+- Capture would become part of a scope's lazy evaluation instead of a pass
+  that runs before any scope exists.
+- A variable interpolated into a shell `command` string has the same
+  injection exposure as one in a `run` action's command; document it the same
+  way.
 
 ## Per-inclusion variable listings
 

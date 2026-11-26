@@ -83,13 +83,31 @@ Dynamic declarations are not accepted here. Omitted and empty maps both
 provide no overrides. These values apply to contributed records, including
 clone-list entries; see [scope and precedence](../environment.md#variable-precedence).
 
+Each value is a [template](../repoformat.md#templates), evaluated once when the
+inclusion opens, in the **leaf's** scope, so it reads the leaf's variables and
+may read `env`. Reading a variable of the same name extends the leaf's value:
+
+```toml
+[[actions]]
+type = "include-remote"
+id = "corp"
+remote = "corporate"
+vars = { profile = "${profile}-corp" }
+```
+
+An override cannot read the included remote's own `[vars]`. One that cannot be
+evaluated has [no value](../repoformat.md#variables-with-no-value) in the
+inclusion's scope; a value that does not parse is a load error.
+
 ## Variables an included remote declares
 
 An included manifest may declare its own static or dynamic `[vars]`, using the
 [same schema](../repoformat.md#variables) as the leaf. They are the lowest layer of
 that inclusion's [scope](../environment.md#variable-precedence), so the leaf and
 this machine can override them without knowing they exist. They never decide the
-inclusion's own condition or the remote's, which use the leaf scope.
+inclusion's own condition or the remote's, which use the leaf scope. Its string
+values are templates evaluated in the inclusion's scope, so they can read the
+leaf's variables and the inclusion's overrides as well as their own.
 
 Remote command declarations require [`allow-dynamic-vars`](../repoformat.md#git);
 without it they declare nothing. Remote
@@ -115,11 +133,29 @@ url = "git@git.example.com:it/dotfiles.git"
 allow-env-templates = true
 ```
 
-Without it, a lookup in `env` fails the record. A `github-release` declaration's
-[`github-url`](../repoformat.md#the-github-url-field) is a template too, under
-the same permission: without it, reading `env` there fails the lookup, and the
-variable reads as empty with a warning; a literal URL works either way.
-Conditions and leaf templates need no permission. The permission applies only to a checkout of the repository
+Without it, a lookup in `env` fails the record. The remote's `[vars]` values
+are templates under the same permission: without it, one reading `env` has
+[no value](../repoformat.md#variables-with-no-value), so that `${x}` in a URL
+cannot carry what `x = "${env.TOKEN}"` read. A `github-release` declaration's
+[`github-url`](../repoformat.md#the-github-url-field) is a template too: without
+the permission, reading `env` there fails the lookup, and the variable has no
+value, with a warning; a literal URL works either way.
+
+Conditions and leaf templates need no permission, and a leaf `[vars]` value may
+read `env` wherever it is evaluated, inside an inclusion included. Any leaf
+variable is visible to every inclusion, so one that reads `env` hands that value
+to every remote. To give one inclusion one environment value without
+`allow-env-templates`, pass it through that inclusion's `vars`, which are
+evaluated in the leaf's scope:
+
+```toml
+[[actions]]
+type = "include-remote"
+remote = "corporate"
+vars = { proxy = "${env.HTTPS_PROXY}" }
+```
+
+The permission applies only to a checkout of the repository
 the remote's `url` names; see
 [permissions follow the origin](../safety.md#permissions-follow-the-origin).
 

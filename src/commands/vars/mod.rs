@@ -6,6 +6,7 @@
 pub(crate) mod refresh;
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use crate::commands::Session;
 use crate::env::Environment;
@@ -149,7 +150,7 @@ pub(crate) fn list(
     session: &Session<'_>,
 ) -> Result<(), Error> {
     if machine_only {
-        return list_machine(&session.machine_roots()?, session.reporter);
+        return list_machine(&session.machine_roots()?, session.env, session.reporter);
     }
     let roots = session.repository_roots()?;
     // Only a listing that may refresh the dynamic cache writes state.
@@ -174,7 +175,7 @@ fn list_leaf(
     let manifest = Manifest::load(&roots.manifest_path())?;
     let host = HostNamespaces::capture(env);
     let mut dynamic = DynamicVarResolver::for_listing(&roots.machine, policy, &host, reporter);
-    let scope = VarScope::resolve(
+    let scope = Rc::new(VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,
         &roots.machine,
@@ -182,17 +183,17 @@ fn list_leaf(
         &[],
         &mut dynamic,
         reporter,
-    )?;
+    )?);
     dynamic.save();
-    scope.list(reporter);
-    Ok(())
+    scope.list(&host, reporter)
 }
 
-/// List only persisted machine variables; do not read the repository or environment.
-fn list_machine(state: &MachineRoots, reporter: &Reporter) -> Result<(), Error> {
+/// List only persisted machine variables, which are literal; do not read the repository or the
+/// variable environment layer.
+fn list_machine(state: &MachineRoots, env: &Environment, reporter: &Reporter) -> Result<(), Error> {
     let machine = MachineVars::load(&state.machine_vars_path())?;
-    VarScope::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]).list(reporter);
-    Ok(())
+    let scope = VarScope::stack(BTreeMap::new(), machine.values, BTreeMap::new(), &[]);
+    Rc::new(scope).list(&HostNamespaces::capture(env), reporter)
 }
 
 #[cfg(test)]

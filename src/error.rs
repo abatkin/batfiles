@@ -67,6 +67,22 @@ pub(crate) enum Error {
         source: toml::ser::Error,
     },
 
+    /// Variables whose values read each other. `chain` names them in the order they were
+    /// read, ending with the first repeated, joined by ` -> `.
+    #[error(
+        "variables refer to each other in a cycle: {chain}; a [vars] value cannot read itself, \
+         directly or through other variables"
+    )]
+    VariableCycle { chain: String },
+
+    /// A read that would evaluate more than `limit` templates nested inside each other.
+    /// `chain` names the variables in the order they were read, joined by ` -> `.
+    #[error(
+        "variables read each other too deeply: {chain}; a [vars] value can read through at \
+         most {limit} templated variables in a row"
+    )]
+    VariableDepth { chain: String, limit: usize },
+
     /// A template field of a record that has no usable value.
     #[error("{record}: {field} {} {source}", quoted_value(.template))]
     Template {

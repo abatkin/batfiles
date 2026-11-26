@@ -134,7 +134,7 @@ fn a_failed_refresh_keeps_the_cached_value_and_says_so() {
 }
 
 #[test]
-fn a_failure_with_nothing_cached_reads_as_empty() {
+fn a_failure_with_nothing_cached_has_no_value() {
     let tree = Tree::new();
     tree.write_manifest(
         r#"[vars]
@@ -142,20 +142,36 @@ profile = { command = "exit 3" }
 
 [[actions]]
 type = "create-dir"
-dest = "~/empty"
+dest = "~/when"
 when = "profile == ''"
+
+[[actions]]
+type = "create-dir"
+dest = "~/unless"
+unless = "profile == 'work'"
+
+[[actions]]
+type = "create-dir"
+dest = "~/optional"
+when = "vars.profile == ''"
 "#,
     );
     let stderr = sync(&tree, &["-vv"]);
-    assert!(tree.home("empty").is_dir(), "{stderr}");
-    assert!(
-        stderr.contains("it has no value, and reads as empty"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("it has no value"), "{stderr}");
     assert!(
         stderr.contains("profile = no value (batfiles.toml, command failed)"),
         "{stderr}"
     );
+    assert!(!tree.home("when").exists(), "`when` opened:\n{stderr}");
+    assert!(!tree.home("unless").exists(), "`unless` opened:\n{stderr}");
+    assert!(
+        stderr.contains(
+            "unless \"profile == 'work'\" cannot be evaluated, so it is not installed: \
+             `profile` has no value (command failed); write `vars.profile` to read it as empty"
+        ),
+        "{stderr}"
+    );
+    assert!(tree.home("optional").is_dir(), "{stderr}");
     assert!(!cache(&tree).exists(), "a failure was cached");
 }
 

@@ -13,8 +13,8 @@ use super::template::TemplateString;
 /// A static string or dynamic-variable declaration from `[vars]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VarSpec {
-    /// A value written in the manifest.
-    Static(String),
+    /// A value written in the manifest: a template, evaluated when the variable is first read.
+    Static(TemplateString),
     /// A value captured by running a command or looking up a release.
     Dynamic(DynamicVarSpec),
 }
@@ -31,7 +31,7 @@ impl<'de> Deserialize<'de> for VarSpec {
             }
 
             fn visit_str<E: de::Error>(self, value: &str) -> Result<VarSpec, E> {
-                Ok(VarSpec::Static(value.to_owned()))
+                Ok(VarSpec::Static(TemplateString::from(value.to_owned())))
             }
 
             fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<VarSpec, A::Error> {
@@ -313,7 +313,10 @@ command-timeout = "5s"
         )
         .expect("both spellings should parse");
 
-        assert_eq!(var(&vars, "work"), &VarSpec::Static("false".to_owned()));
+        assert_eq!(
+            var(&vars, "work"),
+            &VarSpec::Static(TemplateString::from("false".to_owned()))
+        );
         assert_eq!(
             var(&vars, "email"),
             &VarSpec::Dynamic(DynamicVarSpec {

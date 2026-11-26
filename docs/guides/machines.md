@@ -101,6 +101,10 @@ On Linux this creates `~/.cache/my-tools-linux`. A template that cannot be
 resolved fails its action. Write `$${` for a literal `${`. See
 [templates](../repoformat.md#templates).
 
+A `[vars]` value is a template too, so a variable can be built from others,
+such as `email = "me@${profile}.example.com"`, and a machine that sets
+`profile` changes `email` with it. See [variables](../repoformat.md#variables).
+
 ## Set bootstrap defaults
 
 A repository can initially disable a group until a user opts into it:
