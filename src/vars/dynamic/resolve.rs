@@ -336,6 +336,18 @@ pub(crate) enum DynamicValueState {
 }
 
 impl DynamicValueState {
+    /// Whether the never policy kept this declaration from being captured: its entry was stale,
+    /// absent, or another declaration's.
+    pub fn uncaptured(&self) -> bool {
+        matches!(
+            self,
+            Self::Stale { .. }
+                | Self::Missing(
+                    MissingValueReason::NoCacheEntry | MissingValueReason::OtherDeclaration
+                )
+        )
+    }
+
     /// How a listing describes the state of a declaration whose source is `kind`, after the
     /// declaration's origin.
     fn describe(&self, kind: &str) -> String {

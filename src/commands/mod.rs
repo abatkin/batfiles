@@ -6,6 +6,7 @@
 pub(crate) mod apply;
 pub(crate) mod clone;
 pub(crate) mod disabled;
+pub(crate) mod facts;
 pub(crate) mod init;
 pub(crate) mod sync;
 pub(crate) mod update;

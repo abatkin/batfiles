@@ -6,8 +6,8 @@ use std::process::ExitCode;
 
 use clap::{ColorChoice, CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, Command, VarsCommand, color};
-use crate::commands::{Session, apply, clone, disabled, init, sync, update, vars};
+use crate::cli::{Cli, Command, FactsCommand, VarsCommand, color};
+use crate::commands::{Session, apply, clone, disabled, facts, init, sync, update, vars};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::manifest::disabled::Change;
@@ -87,7 +87,25 @@ fn dispatch(command: &Command, session: &Session<'_>) -> Result<(), Error> {
             machine_only,
             no_refresh,
         }) => vars::list(*machine_only, *no_refresh, session),
+        Command::Vars(VarsCommand::Eval {
+            template,
+            no_manifest_vars,
+            no_refresh,
+            vars: overrides,
+        }) => vars::eval::run(
+            &vars::eval::EvalRequest {
+                template,
+                no_manifest_vars: *no_manifest_vars,
+                no_refresh: *no_refresh,
+                vars: overrides,
+            },
+            session,
+        ),
         Command::Vars(VarsCommand::Refresh { keys }) => vars::refresh::run(keys, session),
+        Command::Facts(FactsCommand::List) => {
+            facts::list(session.reporter);
+            Ok(())
+        }
     }
 }
 

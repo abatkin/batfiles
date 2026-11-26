@@ -55,7 +55,7 @@ fn every_state_writer_is_refused_before_it_reads_anything() {
     let tree = Tree::new();
     let _held = hold_lock(&tree);
 
-    let commands: [&[&str]; 12] = [
+    let commands: [&[&str]; 13] = [
         &["sync", "--dry-run"],
         &["apply-action", "--id", "anything"],
         &["apply-group", "--group", "anything"],
@@ -68,6 +68,7 @@ fn every_state_writer_is_refused_before_it_reads_anything() {
         &["vars", "refresh"],
         &["vars", "list"],
         &["vars", "refresh", "anything"],
+        &["vars", "eval", "${facts.os}"],
     ];
     for args in commands {
         let assertion = tree.batfiles().args(args).assert().code(1);
@@ -138,6 +139,9 @@ fn readers_run_while_the_lock_is_held() {
     for args in [
         &["vars", "list", "--machine-only"][..],
         &["vars", "list", "--no-refresh"],
+        &["vars", "eval", "--no-refresh", "${facts.os}"],
+        &["vars", "eval", "--no-manifest-vars", "${editor}"],
+        &["facts", "list"],
         &["version"],
     ] {
         tree.batfiles().args(args).assert().success();
@@ -178,4 +182,53 @@ fn a_lock_that_cannot_be_created_fails_the_run() {
     );
     assert!(stderr.starts_with(&expected), "{stderr}");
     assert!(!tree.disabled().exists());
+}
+
+/// A `vars eval` that may refresh holds the lock until it has printed its value: while its
+/// standard output, larger than a pipe holds, is still being written, another run is refused.
+#[test]
+#[cfg(unix)]
+fn an_eval_that_may_refresh_holds_the_lock_until_it_has_printed() {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    let tree = Tree::new();
+    let big = "x".repeat(100_000);
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin("batfiles"))
+        .args(["vars", "eval", "${env.BATFILES_TEST_BIG}"])
+        .env("BATFILES_TEST_BIG", &big)
+        .env("BATFILES_HOME", tree.path("home"))
+        .env("BATFILES_DIR", tree.path("repo"))
+        .env("BATFILES_CONFIG_DIR", tree.path("config"))
+        .env("BATFILES_CACHE_DIR", tree.path("cache"))
+        .env("BATFILES_STATE_DIR", tree.path("state"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("batfiles starts");
+    let mut stdout = child.stdout.take().expect("a piped standard output");
+
+    // The first byte means the value is being written, and the rest cannot fit in the pipe.
+    let mut first = [0_u8; 1];
+    stdout.read_exact(&mut first).expect("the value begins");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path(&tree))
+        .expect("the lock file");
+    assert!(
+        file.try_lock().is_err(),
+        "the lock was released before the value was printed"
+    );
+
+    let mut rest = String::new();
+    stdout
+        .read_to_string(&mut rest)
+        .expect("the rest of the value");
+    assert!(child.wait().expect("batfiles exits").success());
+    assert_eq!(
+        rest.len(),
+        big.len(),
+        "the rest of the value, then its newline"
+    );
 }

@@ -38,6 +38,7 @@ fn help_lists_every_documented_command() {
         "apply-action",
         "apply-group",
         "vars",
+        "facts",
     ] {
         assert!(
             help.contains(command),

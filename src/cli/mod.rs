@@ -2,6 +2,7 @@
 
 mod actions;
 mod disabled;
+mod facts;
 mod init;
 mod options;
 mod update;
@@ -11,6 +12,7 @@ pub(crate) mod color;
 
 pub(crate) use actions::{ApplyActionArgs, ApplyGroupArgs, CloneArgs, SyncArgs};
 pub(crate) use disabled::{ActionAddresses, GroupAddresses};
+pub(crate) use facts::FactsCommand;
 pub(crate) use init::InitArgs;
 pub(crate) use options::{BootstrapOptions, ExecutionOptions};
 pub(crate) use update::UpdateArgs;
@@ -112,6 +114,10 @@ pub(crate) enum Command {
     /// Inspect and manage variables
     #[command(subcommand)]
     Vars(VarsCommand),
+
+    /// Inspect the host facts that conditions and templates read
+    #[command(subcommand)]
+    Facts(FactsCommand),
 }
 
 /// Parsing helpers shared by the command modules' tests.

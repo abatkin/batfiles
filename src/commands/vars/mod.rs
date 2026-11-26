@@ -1,8 +1,10 @@
 //! The `vars` commands. `set`, `get`, and `unset` edit machine-local `vars.toml`,
 //! ignoring repository values and environment/CLI overrides; mutation reports
 //! include keys only, and `vars get` prints the requested stored value. `list`
-//! shows effective values; [`refresh`] reruns dynamic variables' commands.
+//! shows effective values, [`eval`] evaluates a template among them, and
+//! [`refresh`] reruns dynamic variables' commands.
 
+pub(crate) mod eval;
 pub(crate) mod refresh;
 
 use std::collections::BTreeMap;
@@ -172,20 +174,35 @@ fn list_leaf(
     policy: CachePolicy,
     reporter: &Reporter,
 ) -> Result<(), Error> {
-    let manifest = Manifest::load(&roots.manifest_path())?;
     let host = HostNamespaces::capture(env);
-    let mut dynamic = DynamicVarResolver::for_listing(&roots.machine, policy, &host, reporter);
+    leaf_scope(roots, env, &[], policy, &host, reporter)?.list(&host, reporter)
+}
+
+/// The leaf's scope, with `cli` as its `--var` layer. Resolve the manifest's dynamic
+/// declarations using `policy`, skipping those shadowed by machine-local values, and save
+/// captured values to the cache; the caller holds the run lock unless `policy` captures
+/// nothing.
+fn leaf_scope(
+    roots: &Roots,
+    env: &Environment,
+    cli: &[(VarName, String)],
+    policy: CachePolicy,
+    host: &HostNamespaces,
+    reporter: &Reporter,
+) -> Result<Rc<VarScope>, Error> {
+    let manifest = Manifest::load(&roots.manifest_path())?;
+    let mut dynamic = DynamicVarResolver::for_listing(&roots.machine, policy, host, reporter);
     let scope = Rc::new(VarScope::resolve(
         &manifest.vars,
         &roots.batfiles_repo,
         &roots.machine,
         env,
-        &[],
+        cli,
         &mut dynamic,
         reporter,
     )?);
     dynamic.save();
-    scope.list(&host, reporter)
+    Ok(scope)
 }
 
 /// List only persisted machine variables, which are literal; do not read the repository or the

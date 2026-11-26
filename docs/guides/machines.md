@@ -63,6 +63,21 @@ The first lists effective leaf variables and their origins without running
 dynamic commands. The second lists only stored machine values. `vars get` reads
 a stored machine value, not the effective value, and fails if none is stored.
 
+To try a template or a condition's variable before writing it into the
+manifest, evaluate it against this machine's values:
+
+```sh
+batfiles vars eval '${work}'
+batfiles vars eval 'notes-${work}' --var work=true
+```
+
+`vars eval` prints the value, then says whether `when` and `unless` would
+include or skip on a variable holding it: the first prints `false` and says
+`when = "work"` skips. The second shows what `--var work=true` would make of a
+template, `notes-true`, which a condition cannot take as true or false. It may run dynamic commands, as
+`vars list` does; add `--no-refresh` to use cached values. See
+[`vars eval`](../commands/vars.md#vars-eval).
+
 For ordinary leaf variables, command-line overrides win over environment
 values, which win over machine values, which win over manifest defaults.
 See [the complete precedence](../environment.md#variable-precedence), including
@@ -83,7 +98,8 @@ when = "facts.os == 'linux'"
 Other OS values include `macos` and `windows`. Use `unless` for the inverse
 condition; an action cannot declare both. For named profiles, compare strings:
 `when = "profile == 'work'"`, with a declared `profile` variable.
-See [conditions](../repoformat.md#conditions) and [host facts](../environment.md#host-facts).
+`batfiles facts list` prints this machine's facts. See
+[conditions](../repoformat.md#conditions) and [host facts](../environment.md#host-facts).
 
 ## Write a value into a path
 

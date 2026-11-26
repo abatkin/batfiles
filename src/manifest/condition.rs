@@ -306,9 +306,9 @@ impl HostNamespaces {
     }
 }
 
-/// Capture the host OS, architecture, family, and hostname. Use the platform hostname without
-/// truncating at a dot.
-fn facts() -> BTreeMap<String, String> {
+/// Capture the host OS, architecture, family, and hostname, keyed by the names `facts` reads
+/// them by. Use the platform hostname without truncating at a dot.
+pub(crate) fn facts() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("os".to_owned(), std::env::consts::OS.to_owned()),
         ("arch".to_owned(), std::env::consts::ARCH.to_owned()),
@@ -478,6 +478,12 @@ impl Coercions for BatfilesCoercions {
     fn to_number(&self, value: &Value) -> ExpressionResult<Number> {
         STANDARD.to_number(value)
     }
+}
+
+/// How a condition reading a variable that holds `text` would take it: `None` when `text` is
+/// outside the truthiness table, which is an evaluation failure.
+pub(crate) fn truthiness(text: &str) -> Option<bool> {
+    COERCIONS.to_bool(&string(text.to_owned())).ok()
 }
 
 /// Diagnostic for unsupported boolean values. Never include the value, which may contain

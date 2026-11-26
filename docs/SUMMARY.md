@@ -26,6 +26,7 @@
   - [apply-group](commands/apply-group.md)
   - [enable-\*, disable-\*](commands/enable-disable.md)
   - [vars](commands/vars.md)
+  - [facts](commands/facts.md)
   - [version](commands/version.md)
   - [update](commands/update.md)
 - [Manifest and actions](repoformat.md)

@@ -21,7 +21,8 @@ want to replace an editable seed from its source.
 
 Check the reason printed at `-v`: a condition, persistent disable, run-only skip,
 or inclusion filter may exclude it. Use `vars list --no-refresh` to inspect leaf
-values and `sync --dry-run -vv` to inspect values used by opened inclusions.
+values, `vars eval` to evaluate a template or variable among them, and
+`sync --dry-run -vv` to inspect values used by opened inclusions.
 A condition that cannot be evaluated prints a warning and skips its action,
 whether it is written as `when` or `unless`.
 

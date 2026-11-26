@@ -24,6 +24,8 @@ Global options may appear before or after the command name.
 | [`vars set`](commands/vars.md#vars-set), [`get`](commands/vars.md#vars-get), [`unset`](commands/vars.md#vars-unset) | Manage machine-local variables |
 | [`vars list`](commands/vars.md#vars-list) | Inspect effective values and origins |
 | [`vars refresh`](commands/vars.md#vars-refresh) | Refresh cached dynamic variables |
+| [`vars eval`](commands/vars.md#vars-eval) | Evaluate a template as a `[vars]` value would be |
+| [`facts list`](commands/facts.md#facts-list) | Print the host facts |
 
 Shared reference: [execution options](#shared-action-execution-options),
 [output](#output-streams), [selection](#selecting-what-a-run-does),
@@ -85,7 +87,7 @@ exclusive, and `--interactive` cannot accompany `--dry-run`.
 
 | Stream | Content | Effect of `--quiet` |
 | --- | --- | --- |
-| Standard output | Requested data: `version`, `vars get`, `vars list`, `update --check`; the standard output of `run` actions' commands | None for requested data; disconnects commands' standard output |
+| Standard output | Requested data: `version`, `vars get`, `vars list`, `vars eval`, `facts list`, `update --check`; the standard output of `run` actions' commands | None for requested data; disconnects commands' standard output |
 | Standard error | Changes, progress, prompts, warnings, errors | Suppresses informational lines; keeps warnings and errors |
 
 Requested data has no labels or color. Errors and warnings raised by batfiles

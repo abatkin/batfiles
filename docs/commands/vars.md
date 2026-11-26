@@ -134,6 +134,69 @@ reading such a variable has no value, and lists as `fzf_ver` does above. A
 depends on it. Overridden declarations have no separate capture state. Listings explicitly expose values; mutation reports name only
 keys, and `vars get` supplies a bare persisted value for scripts.
 
+## `vars eval`
+
+```text
+batfiles vars eval <template> [--var <key=value>]... [--no-manifest-vars] [--no-refresh]
+```
+
+Evaluate `<template>` as a leaf [`[vars]` value](../repoformat.md#variables)
+would be evaluated, and print the result alone on standard output. It reads the
+leaf's variables after [precedence](../environment.md#variable-precedence),
+`vars`, `facts`, and `env`, as [templates](../repoformat.md#templates) do. Text
+outside `${...}` is kept as written, so quote the template for the shell:
+
+```sh
+batfiles vars eval 'me@${profile}.example.com' --var profile=work
+```
+
+```text
+me@work.example.com
+as a condition, this fails: it is not true, false, 1, 0, yes, no, on, off, or empty
+```
+
+The second line, on standard error, says how a `when` or `unless` reading a
+variable that holds the value would take it, by the
+[truthiness table](../repoformat.md#truthiness). `--quiet` suppresses it. A
+value the table accepts says which way each condition goes:
+
+```text
+as a condition, this is true: `when` includes and `unless` skips
+as a condition, this is false: `when` skips and `unless` includes
+```
+
+| Option | Effect |
+| --- | --- |
+| `--var <key=value>` | Set a one-shot variable, as [execution commands](../cmdline.md#shared-action-execution-options) do; repeatable, the last value for a key wins |
+| `--no-manifest-vars` | Leave out the leaf's `[vars]`: read no repository and resolve no dynamic variable. `vars.toml`, `BATFILES_VAR_*`, `--var`, `facts`, and `env` remain |
+| `--no-refresh` | Run no dynamic commands, make no release lookups, and write no cache; use cached values |
+
+Without `--no-manifest-vars` a manifest is required, and its dynamic
+declarations resolve as they do for `vars list`, under the
+[cache rules](../state.md#when-declarations-are-evaluated), whether or not the
+template reads them. `--no-refresh` adds nothing to
+`--no-manifest-vars`. Only the leaf scope is evaluated; inclusion-local values
+are not.
+
+Under `--no-refresh`, each dynamic variable the template reads, directly or
+through other variables, whose cache entry is stale, missing, or
+[another declaration's](../state.md#freshness-and-refresh-behavior) warns, naming
+the variable and its cache state but not its value:
+
+```text
+warning: the template reads `fzf_tag`, which --no-refresh did not capture: stale, cached 2d ago
+```
+
+A stale value is still used; otherwise the variable has
+[no value](../repoformat.md#variables-with-no-value). The warning is printed
+whether or not the template can then be evaluated.
+
+A template that does not parse fails before anything else is read. One that
+cannot be evaluated, including one reading
+[variables that refer to each other in a cycle, or nest too deeply](../repoformat.md#when-a-template-is-evaluated),
+exits 1 with the reason a template field would give, naming variables but never
+values, and prints nothing on standard output.
+
 ## `vars refresh`
 
 ```text

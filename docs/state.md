@@ -167,8 +167,8 @@ no value. Execution commands resolve all leaf declarations, then those in each
 opened remote: its `github-release` declarations always, and its commands if the leaf
 [allows](repoformat.md#git) them. Higher-layer overrides do not suppress
 evaluation. Unopened inclusions capture nothing; shared remote declarations
-resolve once per command. `vars list` resolves only the leaf and skips
-declarations whose values `vars.toml` overrides.
+resolve once per command. `vars list` and `vars eval` resolve only the leaf and
+skip declarations whose values `vars.toml` overrides.
 
 For `vars refresh`, every leaf declaration is **in play**. A remote is in play
 if at least one inclusion naming it would open on this machine:
@@ -298,7 +298,7 @@ whole run, prevents overlapping state operations by commands sharing that cache.
 
 | Takes the lock | Does not take it |
 | --- | --- |
-| `sync`, apply commands, `clone`, enable/disable commands, `vars set`, `unset`, `refresh`, normal `list` | `vars get`, `list --machine-only`, `list --no-refresh`, `init`, `version`, `update` |
+| `sync`, apply commands, `clone`, enable/disable commands, `vars set`, `unset`, `refresh`, normal `list`, normal `eval` | `vars get`, `list --machine-only`, `list --no-refresh`, `eval --no-refresh`, `eval --no-manifest-vars`, `facts list`, `init`, `version`, `update` |
 
 Dry runs take it too. The lock is acquired after resolving roots and before
 reading state, creating the directory and file if needed. `clone` does so after

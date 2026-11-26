@@ -62,7 +62,7 @@ pub(crate) struct SkipGroupOptions {
 
 /// Parse `KEY=VALUE`, splitting at the first `=` and validating the key. Empty values are
 /// allowed; missing `=` or empty keys are errors.
-fn parse_var(raw: &str) -> Result<(VarName, String), String> {
+pub(super) fn parse_var(raw: &str) -> Result<(VarName, String), String> {
     match raw.split_once('=') {
         Some((key, value)) if !key.is_empty() => match VarName::try_from(key.to_owned()) {
             Ok(key) => Ok((key, value.to_owned())),

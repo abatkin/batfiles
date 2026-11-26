@@ -241,7 +241,8 @@ Member and index access both work: `facts.os` or `facts["os"]`.
 | `facts.hostname` | Platform-reported host name |
 
 Unknown keys return the empty string; later versions may add keys. macOS uses
-`macos`, not `darwin`.
+`macos`, not `darwin`. [`facts list`](commands/facts.md#facts-list) prints this
+machine's values.
 
 On Unix, the hostname retains any configured domain: `silver.example.net` is
 not truncated to `silver`. On Windows it is the short physical DNS hostname,
@@ -275,10 +276,10 @@ Commands resolve only the roots they need:
 
 | Commands | Roots |
 | --- | --- |
-| Enable/disable commands; `vars set`, `get`, `unset`, `list --machine-only` | Config and cache |
+| Enable/disable commands; `vars set`, `get`, `unset`, `list --machine-only`, `eval --no-manifest-vars` | Config and cache |
 | `sync`, apply commands, `clone` | Repository, home, config, cache, state |
-| Normal `vars list`, `vars refresh` | Repository, home, config, cache |
-| `init`, `version`, `update` | None |
+| Normal `vars list`, `vars eval`, `vars refresh` | Repository, home, config, cache |
+| `init`, `version`, `update`, `facts list` | None |
 
 `init` separately checks the OS home to refuse initialization directly in it;
 see [`init`](commands/init.md#init).

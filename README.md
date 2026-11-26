@@ -125,6 +125,7 @@ Supported actions: `symlink`, `symlink-dir`, `create-dir`, `copy`, `copy-dir`, `
 | Choose content per machine | Groups, persistent disables, run-only skips, variables and conditions |
 | Vary paths and URLs per machine | [Templates](docs/repoformat.md#templates) such as `dest = "~/.cache/${facts.os}"` |
 | Build one value from others | [`[vars]` values](docs/repoformat.md#variables) are templates too, such as `email = "me@${profile}.example.com"` |
+| Check a value before relying on it | [`vars eval`](docs/commands/vars.md#vars-eval) evaluates a template against this machine; [`facts list`](docs/commands/facts.md#facts-list) prints its host facts |
 | Discover machine values | Cached [dynamic variables](docs/repoformat.md#dynamic-variables) |
 | Follow a project's GitHub releases | A [`github-release`](docs/repoformat.md#github-release-declarations) variable holding the latest tag, in a download URL |
 

@@ -36,6 +36,7 @@ mod unzipping;
 mod update;
 mod var_templates;
 mod vars;
+mod vars_eval;
 
 #[cfg(unix)]
 mod conflicts;

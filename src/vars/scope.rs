@@ -431,6 +431,32 @@ impl VarScope {
         self.evaluated.borrow().get(name)?.clone().err()
     }
 
+    /// Run `read`, an evaluation of a template that is not itself a declaration, as though it
+    /// were a `[vars]` value named `label`: the variables it reads nest one template deeper,
+    /// toward [`MAX_DEPTH`], and a failed read's chain starts with `label`. `label` must not be
+    /// a variable name, so that no read is taken for a cycle through it.
+    pub fn as_value<T>(&self, label: &str, read: impl FnOnce() -> T) -> T {
+        self.active.borrow_mut().push(label.to_owned());
+        let result = read();
+        self.active.borrow_mut().pop();
+        result
+    }
+
+    /// Each dynamic variable read so far, by name, whose winning declaration the never policy
+    /// kept from being captured, with how a listing describes its state. Sorted by name.
+    pub fn uncaptured_reads(&self) -> Vec<(String, String)> {
+        self.evaluated
+            .borrow()
+            .keys()
+            .filter_map(|name| match self.declaring(name).next() {
+                Some((_, VarValue::Dynamic(resolved))) if resolved.state.uncaptured() => {
+                    Some((name.clone(), resolved.describe()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Fail if any read in this scope found variables that refer to each other in a cycle
     /// ([`Error::VariableCycle`]) or nest more than [`MAX_DEPTH`] templates
     /// ([`Error::VariableDepth`]).

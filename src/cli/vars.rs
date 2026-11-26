@@ -1,9 +1,10 @@
 //! The `vars` command family. These read or edit machine-local variable state
-//! and the dynamic-variable cache; `vars list` and `vars refresh` also read the
-//! repository.
+//! and the dynamic-variable cache; `vars list`, `vars eval`, and `vars refresh`
+//! also read the repository.
 
 use clap::Subcommand;
 
+use super::options::parse_var;
 use crate::manifest::item::ItemId;
 use crate::manifest::remote::Tree;
 use crate::vars::dynamic::DynamicVarKey;
@@ -26,6 +27,24 @@ pub(crate) enum VarsCommand {
         /// Do not capture dynamic variables or write the cache
         #[arg(long)]
         no_refresh: bool,
+    },
+
+    /// Evaluate a template as a [vars] value would be, and print the result
+    Eval {
+        /// The template, such as `me@${profile}.example.com`
+        template: String,
+
+        /// Leave out the leaf's [vars]; read no repository
+        #[arg(long)]
+        no_manifest_vars: bool,
+
+        /// Do not capture dynamic variables or write the cache
+        #[arg(long)]
+        no_refresh: bool,
+
+        /// Set a one-shot variable; repeatable, last value for a key wins
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_var)]
+        vars: Vec<(VarName, String)>,
     },
 
     /// Remove one persisted machine-local variable
@@ -108,6 +127,40 @@ mod tests {
             panic!("expected vars list");
         };
         assert!(machine_only && no_refresh);
+    }
+
+    #[test]
+    fn eval_takes_a_template_and_one_shot_variables() {
+        let VarsCommand::Eval {
+            template,
+            no_manifest_vars,
+            no_refresh,
+            vars: overrides,
+        } = vars(&[
+            "batfiles",
+            "vars",
+            "eval",
+            "${profile}",
+            "--var",
+            "profile=work",
+            "--no-manifest-vars",
+            "--no-refresh",
+        ])
+        else {
+            panic!("expected vars eval");
+        };
+        assert_eq!(template, "${profile}");
+        assert!(no_manifest_vars && no_refresh);
+        assert_eq!(overrides.len(), 1);
+
+        assert_eq!(
+            error_kind(&["batfiles", "vars", "eval"]),
+            ErrorKind::MissingRequiredArgument
+        );
+        assert_eq!(
+            error_kind(&["batfiles", "vars", "eval", "x", "--var", "1up=x"]),
+            ErrorKind::ValueValidation
+        );
     }
 
     fn keys(args: &[&str]) -> Vec<String> {
